@@ -38,8 +38,6 @@
     "shell": {
       "open": true
     },
-    "sql": {
-      "preload": ["sqlite:kanna-v2.db"]
-    }
+    "sql": {}
   }
 }

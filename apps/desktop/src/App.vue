@@ -246,7 +246,12 @@ onMounted(async () => {
     let database: DbHandle;
     if (isTauri) {
       const { default: Database } = await import("@tauri-apps/plugin-sql");
-      database = (await Database.load("sqlite:kanna-v2.db")) as unknown as DbHandle;
+      let dbName = "kanna-v2.db";
+      try {
+        const envDb = await invoke<string>("read_env_var", { name: "KANNA_DB_NAME" });
+        if (envDb) dbName = envDb;
+      } catch {}
+      database = (await Database.load(`sqlite:${dbName}`)) as unknown as DbHandle;
     } else {
       database = getMockDatabase() as unknown as DbHandle;
     }

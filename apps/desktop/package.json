@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "test:e2e": "cd tests/e2e && bun test mock/",
+    "test:e2e:real": "cd tests/e2e && bun test real/",
+    "test:e2e:all": "cd tests/e2e && bun test"
   },
   "dependencies": {
     "@pierre/diffs": "^1.1.0",
