@@ -45,6 +45,7 @@ pub fn run() {
             commands::fs::file_exists,
             commands::fs::read_text_file,
             commands::fs::which_binary,
+            commands::fs::read_env_var,
             // Shell commands
             commands::shell::run_script,
         ])

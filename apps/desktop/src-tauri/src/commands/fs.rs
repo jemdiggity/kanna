@@ -23,3 +23,8 @@ pub fn which_binary(name: String) -> Result<String, String> {
         Err(format!("binary '{}' not found in PATH", name))
     }
 }
+
+#[tauri::command]
+pub fn read_env_var(name: String) -> Result<String, String> {
+    std::env::var(&name).map_err(|_| format!("{} not set", name))
+}

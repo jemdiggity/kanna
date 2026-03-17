@@ -12,12 +12,22 @@ import { useRepo } from "./composables/useRepo";
 import { usePipeline } from "./composables/usePipeline";
 import { usePreferences } from "./composables/usePreferences";
 import { useKeyboardShortcuts } from "./composables/useKeyboardShortcuts";
+import { usePRWorkflow } from "./composables/usePRWorkflow";
 
 const db = ref<DbHandle | null>(null);
 
 const { repos, selectedRepoId, refresh: refreshRepos, importRepo } = useRepo(db);
 const { items, selectedItemId, loadItems, transition, createItem, selectedItem } = usePipeline(db);
 const { load: loadPreferences } = usePreferences(db);
+
+const selectedRepo = computed(() =>
+  repos.value.find((r) => r.id === selectedRepoId.value) ?? null
+);
+
+// PR workflow — only instantiate when db is available
+const prWorkflow = computed(() =>
+  db.value ? usePRWorkflow(db.value) : null
+);
 
 const showNewTaskModal = ref(false);
 const showImportRepoModal = ref(false);
@@ -67,17 +77,39 @@ function navigateItems(direction: -1 | 1) {
   selectedItemId.value = currentItems[nextIndex].id;
 }
 
-function handleMerge() {
+async function handleMakePR() {
   const item = selectedItem();
-  if (item && item.stage === "needs_review") {
-    transition(item.id, "merged" as Stage);
+  if (!item || !selectedRepo.value || !prWorkflow.value) return;
+  try {
+    await prWorkflow.value.createPR(item, selectedRepo.value.path);
+    await loadItems(selectedRepo.value.id);
+    await refreshAllItems();
+  } catch (e) {
+    console.error("PR creation failed:", e);
   }
 }
 
-function handleCloseTask() {
+async function handleMerge() {
   const item = selectedItem();
-  if (item && item.stage !== "merged" && item.stage !== "closed") {
-    transition(item.id, "closed" as Stage);
+  if (!item || !selectedRepo.value || !prWorkflow.value) return;
+  try {
+    await prWorkflow.value.mergePR(item, selectedRepo.value.path);
+    await loadItems(selectedRepo.value.id);
+    await refreshAllItems();
+  } catch (e) {
+    console.error("Merge failed:", e);
+  }
+}
+
+async function handleCloseTask() {
+  const item = selectedItem();
+  if (!item || !selectedRepo.value || !prWorkflow.value) return;
+  try {
+    await prWorkflow.value.closeTask(item, selectedRepo.value.path);
+    await loadItems(selectedRepo.value.id);
+    await refreshAllItems();
+  } catch (e) {
+    console.error("Close failed:", e);
   }
 }
 
@@ -142,7 +174,7 @@ onMounted(async () => {
     />
     <MainPanel
       :item="currentItem"
-      @make-pr="() => {}"
+      @make-pr="handleMakePR"
       @merge="handleMerge"
       @close-task="handleCloseTask"
     />
