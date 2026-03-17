@@ -113,14 +113,29 @@ impl SessionOptions {
     /// Convert these options into CLI arguments.
     ///
     /// Always includes: `--output-format stream-json --input-format stream-json --verbose`
-    pub fn to_cli_args(&self) -> Vec<String> {
+    pub fn to_cli_args(&self, prompt: Option<&str>) -> Vec<String> {
         let mut args = vec![
+            "-p".to_string(),
+        ];
+
+        // The initial prompt goes as the -p argument
+        if let Some(p) = prompt {
+            args.push(p.to_string());
+        }
+
+        args.extend([
             "--output-format".to_string(),
             "stream-json".to_string(),
-            "--input-format".to_string(),
-            "stream-json".to_string(),
             "--verbose".to_string(),
-        ];
+        ]);
+
+        // Only add --input-format stream-json if we need multi-turn (follow-up messages via stdin)
+        if self.resume.is_some() || self.continue_session {
+            args.extend([
+                "--input-format".to_string(),
+                "stream-json".to_string(),
+            ]);
+        }
 
         if let Some(model) = &self.model {
             args.push("--model".to_string());
@@ -312,11 +327,13 @@ mod tests {
     #[test]
     fn test_default_args_always_present() {
         let opts = SessionOptions::builder().build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
+        assert!(args.contains(&"-p".to_string()));
         assert!(args.contains(&"--output-format".to_string()));
         assert!(args.contains(&"stream-json".to_string()));
-        assert!(args.contains(&"--input-format".to_string()));
         assert!(args.contains(&"--verbose".to_string()));
+        // --input-format stream-json is NOT included by default (only for resume/continue)
+        assert!(!args.contains(&"--input-format".to_string()));
     }
 
     #[test]
@@ -324,7 +341,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .model("claude-sonnet-4-6")
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--model").unwrap();
         assert_eq!(args[idx + 1], "claude-sonnet-4-6");
     }
@@ -334,7 +351,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .permission_mode(PermissionMode::AcceptEdits)
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--permission-mode").unwrap();
         assert_eq!(args[idx + 1], "accept-edits");
     }
@@ -344,7 +361,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .permission_mode(PermissionMode::DontAsk)
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--permission-mode").unwrap();
         assert_eq!(args[idx + 1], "dont-ask");
     }
@@ -354,7 +371,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .allowed_tools(vec!["Read", "Edit", "Bash"])
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--allowedTools").unwrap();
         assert_eq!(args[idx + 1], "Read,Edit,Bash");
     }
@@ -364,7 +381,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .disallowed_tools(vec!["Bash"])
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--disallowedTools").unwrap();
         assert_eq!(args[idx + 1], "Bash");
     }
@@ -372,7 +389,7 @@ mod tests {
     #[test]
     fn test_max_turns_flag() {
         let opts = SessionOptions::builder().max_turns(10).build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--max-turns").unwrap();
         assert_eq!(args[idx + 1], "10");
     }
@@ -380,7 +397,7 @@ mod tests {
     #[test]
     fn test_max_budget_flag() {
         let opts = SessionOptions::builder().max_budget_usd(5.0).build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--max-budget-usd").unwrap();
         assert_eq!(args[idx + 1], "5");
     }
@@ -390,7 +407,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .resume("session-123")
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--resume").unwrap();
         assert_eq!(args[idx + 1], "session-123");
     }
@@ -398,7 +415,7 @@ mod tests {
     #[test]
     fn test_continue_flag() {
         let opts = SessionOptions::builder().continue_session().build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         assert!(args.contains(&"--continue".to_string()));
     }
 
@@ -407,7 +424,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .system_prompt("You are a helpful assistant")
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--system-prompt").unwrap();
         assert_eq!(args[idx + 1], "You are a helpful assistant");
     }
@@ -417,7 +434,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .thinking(ThinkingMode::Adaptive)
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--thinking").unwrap();
         assert_eq!(args[idx + 1], "adaptive");
     }
@@ -427,7 +444,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .thinking(ThinkingMode::Disabled)
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--thinking").unwrap();
         assert_eq!(args[idx + 1], "disabled");
     }
@@ -441,7 +458,7 @@ mod tests {
             (Effort::Max, "max"),
         ] {
             let opts = SessionOptions::builder().effort(effort).build();
-            let args = opts.to_cli_args();
+            let args = opts.to_cli_args(None);
             let idx = args.iter().position(|a| a == "--effort").unwrap();
             assert_eq!(args[idx + 1], expected);
         }
@@ -452,7 +469,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .include_partial_messages()
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         assert!(args.contains(&"--include-partial-messages".to_string()));
     }
 
@@ -462,7 +479,7 @@ mod tests {
             .add_directory("/path/to/dir1")
             .add_directory("/path/to/dir2")
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let positions: Vec<_> = args
             .iter()
             .enumerate()
@@ -479,7 +496,7 @@ mod tests {
         let opts = SessionOptions::builder()
             .with_permission_callback()
             .build();
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         let idx = args
             .iter()
             .position(|a| a == "--permission-prompt-tool")
@@ -490,9 +507,9 @@ mod tests {
     #[test]
     fn test_no_optional_flags_when_not_set() {
         let opts = SessionOptions::builder().build();
-        let args = opts.to_cli_args();
-        // Should only have the 5 always-present args
-        assert_eq!(args.len(), 5);
+        let args = opts.to_cli_args(None);
+        // Should only have 4 always-present args: -p, --output-format, stream-json, --verbose
+        assert_eq!(args.len(), 4);
         assert!(!args.contains(&"--model".to_string()));
         assert!(!args.contains(&"--permission-mode".to_string()));
         assert!(!args.contains(&"--continue".to_string()));
@@ -520,7 +537,7 @@ mod tests {
         assert_eq!(opts.model.as_deref(), Some("claude-opus-4-6"));
         assert_eq!(opts.env.get("MY_VAR").map(|s| s.as_str()), Some("my_val"));
 
-        let args = opts.to_cli_args();
+        let args = opts.to_cli_args(None);
         assert!(args.contains(&"--model".to_string()));
         assert!(args.contains(&"--permission-mode".to_string()));
         assert!(args.contains(&"--allowedTools".to_string()));

@@ -15,10 +15,9 @@
 //!         .model("claude-sonnet-4-6")
 //!         .permission_mode(PermissionMode::AcceptEdits)
 //!         .allowed_tools(vec!["Read", "Edit", "Bash"])
-//!         .build()
+//!         .build(),
+//!     "Fix the failing tests",
 //! ).await?;
-//!
-//! session.send("Fix the failing tests").await?;
 //!
 //! while let Some(msg) = session.next_message().await {
 //!     match msg? {

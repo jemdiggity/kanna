@@ -63,17 +63,21 @@ function normalizeMessage(raw: Record<string, unknown>): AgentMessage {
 }
 
 async function pollMessages() {
+  console.log(`[AgentView] Starting poll for session: ${props.sessionId}`)
   while (polling) {
     try {
+      console.log(`[AgentView] Calling agent_next_message...`)
       const raw = await invoke<Record<string, unknown> | null>("agent_next_message", {
         sessionId: props.sessionId,
       })
+      console.log(`[AgentView] Got message:`, raw ? raw.type : "null")
       if (raw) {
         messages.value.push(normalizeMessage(raw))
         await nextTick()
         scrollToBottom()
       } else {
         // null means session ended
+        console.log(`[AgentView] Session ended (null message)`)
         isRunning.value = false
         break
       }

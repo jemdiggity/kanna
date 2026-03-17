@@ -56,9 +56,16 @@ pub struct Usage {
     pub cache_creation_input_tokens: u64,
 }
 
-/// An assistant message containing content blocks.
+/// An assistant message envelope containing the inner message details.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantMessage {
+    /// The inner message with content blocks, model, etc.
+    pub message: AssistantMessageInner,
+}
+
+/// The inner content of an assistant message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantMessageInner {
     /// The content blocks in this message.
     pub content: Vec<ContentBlock>,
     /// The model that generated this message.
@@ -357,21 +364,21 @@ mod tests {
     fn test_deserialize_assistant_message_with_text() {
         let json = r#"{
             "type": "assistant",
-            "content": [
+            "message": { "content": [
                 {"type": "text", "text": "Hello, world!"}
             ],
             "model": "claude-sonnet-4-6"
-        }"#;
+        } }"#;
 
         let msg: Message = serde_json::from_str(json).unwrap();
         match msg {
             Message::Assistant(a) => {
-                assert_eq!(a.content.len(), 1);
-                match &a.content[0] {
+                assert_eq!(a.message.content.len(), 1);
+                match &a.message.content[0] {
                     ContentBlock::Text { text } => assert_eq!(text, "Hello, world!"),
                     _ => panic!("Expected Text content block"),
                 }
-                assert_eq!(a.model.as_deref(), Some("claude-sonnet-4-6"));
+                assert_eq!(a.message.model.as_deref(), Some("claude-sonnet-4-6"));
             }
             _ => panic!("Expected Assistant message"),
         }
@@ -381,17 +388,17 @@ mod tests {
     fn test_deserialize_assistant_message_with_tool_use() {
         let json = r#"{
             "type": "assistant",
-            "content": [
+            "message": { "content": [
                 {"type": "text", "text": "Let me read that file."},
                 {"type": "tool_use", "id": "tu_123", "name": "Read", "input": {"file_path": "/tmp/test.rs"}}
-            ]
+            ] }
         }"#;
 
         let msg: Message = serde_json::from_str(json).unwrap();
         match msg {
             Message::Assistant(a) => {
-                assert_eq!(a.content.len(), 2);
-                match &a.content[1] {
+                assert_eq!(a.message.content.len(), 2);
+                match &a.message.content[1] {
                     ContentBlock::ToolUse { id, name, input } => {
                         assert_eq!(id, "tu_123");
                         assert_eq!(name, "Read");
@@ -408,17 +415,17 @@ mod tests {
     fn test_deserialize_assistant_message_with_thinking() {
         let json = r#"{
             "type": "assistant",
-            "content": [
+            "message": { "content": [
                 {"type": "thinking", "thinking": "Let me consider the options..."},
                 {"type": "text", "text": "Here is my answer."}
-            ]
+            ] }
         }"#;
 
         let msg: Message = serde_json::from_str(json).unwrap();
         match msg {
             Message::Assistant(a) => {
-                assert_eq!(a.content.len(), 2);
-                match &a.content[0] {
+                assert_eq!(a.message.content.len(), 2);
+                match &a.message.content[0] {
                     ContentBlock::Thinking { thinking } => {
                         assert_eq!(thinking, "Let me consider the options...");
                     }

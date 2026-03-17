@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::process::Command;
 
 #[tauri::command]
@@ -27,4 +28,15 @@ pub fn which_binary(name: String) -> Result<String, String> {
 #[tauri::command]
 pub fn read_env_var(name: String) -> Result<String, String> {
     std::env::var(&name).map_err(|_| format!("{} not set", name))
+}
+
+#[tauri::command]
+pub fn append_log(message: String) -> Result<(), String> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/kanna-webview.log")
+        .map_err(|e| e.to_string())?;
+    let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
+    writeln!(file, "{} {}", timestamp, message).map_err(|e| e.to_string())
 }

@@ -51,21 +51,22 @@ pub struct Session {
 }
 
 impl Session {
-    /// Start a new Claude CLI session with the given options.
+    /// Start a new Claude CLI session with the given options and initial prompt.
     ///
-    /// This spawns the `claude` CLI binary and sets up NDJSON communication.
-    pub async fn start(options: SessionOptions) -> Result<Self, Error> {
-        Self::start_with_callback(options, None).await
+    /// The prompt is passed as a `-p` CLI argument. Use `send()` for follow-up messages.
+    pub async fn start(options: SessionOptions, prompt: &str) -> Result<Self, Error> {
+        Self::start_with_callback(options, prompt, None).await
     }
 
     /// Start a new Claude CLI session with a permission callback.
     pub async fn start_with_callback(
         options: SessionOptions,
+        prompt: &str,
         permission_callback: Option<PermissionCallback>,
     ) -> Result<Self, Error> {
         let binary = find_claude_binary()?;
 
-        let args = options.to_cli_args();
+        let args = options.to_cli_args(Some(prompt));
         tracing::debug!(binary = %binary.display(), ?args, "Spawning Claude CLI");
 
         let mut cmd = Command::new(&binary);
@@ -82,6 +83,8 @@ impl Session {
             cmd.env(key, value);
         }
 
+        let needs_stdin = options.resume.is_some() || options.continue_session;
+
         let mut child = cmd.spawn().map_err(Error::SpawnFailed)?;
 
         let child_stdin = child
@@ -93,7 +96,14 @@ impl Session {
             .take()
             .ok_or_else(|| Error::SpawnFailed(std::io::Error::other("failed to capture stdout")))?;
 
-        let stdin = Arc::new(Mutex::new(Some(child_stdin)));
+        // For single-turn sessions (no resume/continue), close stdin immediately
+        // so the CLI knows we're done and processes the -p prompt without waiting.
+        let stdin = if needs_stdin {
+            Arc::new(Mutex::new(Some(child_stdin)))
+        } else {
+            drop(child_stdin);
+            Arc::new(Mutex::new(None))
+        };
         let (messages_tx, messages_rx) = mpsc::channel(MESSAGE_CHANNEL_SIZE);
         let pending_requests: Arc<DashMap<String, oneshot::Sender<serde_json::Value>>> =
             Arc::new(DashMap::new());
@@ -250,11 +260,11 @@ impl Session {
                         match serde_json::from_value::<Message>(value.clone()) {
                             Ok(msg) => {
                                 if messages_tx.send(Ok(msg)).await.is_err() {
-                                    tracing::debug!("Message receiver dropped, stopping reader");
                                     break;
                                 }
                             }
                             Err(e) => {
+                                eprintln!("[SDK DEBUG] Failed to parse '{}': {} — raw: {}", msg_type, e, &value.to_string()[..200.min(value.to_string().len())]);
                                 tracing::warn!(
                                     "Unknown message type '{}', skipping: {}",
                                     msg_type,
@@ -277,9 +287,10 @@ impl Session {
     }
 
     /// Send a text message to the CLI session.
+    ///
+    /// The stream-json input format expects a plain JSON string on stdin.
     pub async fn send(&self, message: impl Into<String>) -> Result<(), Error> {
-        let input = UserInput::text(message);
-        let json = serde_json::to_string(&input)?;
+        let json = serde_json::to_string(&message.into())?;
 
         let mut stdin_guard = self.stdin.lock().await;
         let stdin = stdin_guard.as_mut().ok_or(Error::SessionClosed)?;
