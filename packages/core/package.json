@@ -11,5 +11,8 @@
   },
   "devDependencies": {
     "vitest": "^3"
+  },
+  "dependencies": {
+    "smol-toml": "^1.6.0"
   }
 }
