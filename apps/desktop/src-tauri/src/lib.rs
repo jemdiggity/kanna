@@ -4,17 +4,26 @@ mod daemon_client;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use commands::agent::AgentState;
 use commands::daemon::DaemonState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let daemon_state: DaemonState = Arc::new(Mutex::new(None));
+    let agent_state: AgentState = Arc::new(dashmap::DashMap::new());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_sql::Builder::new().build())
         .manage(daemon_state)
+        .manage(agent_state)
         .invoke_handler(tauri::generate_handler![
+            // Agent commands
+            commands::agent::create_agent_session,
+            commands::agent::agent_next_message,
+            commands::agent::agent_send_message,
+            commands::agent::agent_interrupt,
+            commands::agent::agent_close_session,
             // Daemon commands
             commands::daemon::spawn_session,
             commands::daemon::send_input,

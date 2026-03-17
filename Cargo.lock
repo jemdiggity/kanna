@@ -1953,6 +1953,8 @@ dependencies = [
 name = "kanna-desktop"
 version = "0.0.1"
 dependencies = [
+ "claude-agent-sdk",
+ "dashmap",
  "git2",
  "serde",
  "serde_json",
