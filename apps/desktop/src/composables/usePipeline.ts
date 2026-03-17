@@ -3,7 +3,7 @@ import { invoke } from "../invoke";
 import type { DbHandle } from "@kanna/db";
 import type { PipelineItem } from "@kanna/db";
 import { listPipelineItems, updatePipelineItemStage, insertPipelineItem } from "@kanna/db";
-import { canTransition, type Stage } from "@kanna/core";
+import { canTransition, parseKannaConfig, type Stage } from "@kanna/core";
 
 export function usePipeline(db: Ref<DbHandle | null>) {
   const items = ref<PipelineItem[]>([]);
@@ -20,7 +20,6 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     if (!item) return;
     if (!canTransition(item.stage as Stage, toStage)) return;
     await updatePipelineItemStage(db.value, itemId, toStage);
-    // Refresh the item in the list
     item.stage = toStage;
   }
 
@@ -37,7 +36,26 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       path: worktreePath,
     });
 
-    // 2. Insert pipeline item to DB
+    // 2. Read .kanna.toml config and run setup script if defined
+    try {
+      const configContent = await invoke<string>("read_text_file", {
+        path: `${repoPath}/.kanna.toml`,
+      });
+      if (configContent) {
+        const config = parseKannaConfig(configContent);
+        if (config.tasks?.setup) {
+          await invoke("run_script", {
+            script: config.tasks.setup,
+            cwd: worktreePath,
+            env: {},
+          });
+        }
+      }
+    } catch {
+      // No .kanna.toml or parse error — continue without setup
+    }
+
+    // 3. Insert pipeline item to DB
     await insertPipelineItem(db.value, {
       id,
       repo_id: repoId,
@@ -51,15 +69,16 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       agent_type: null,
     });
 
-    // 3. Spawn Claude agent session
+    // 4. Spawn Claude agent session with dangerously-skip-permissions
     await invoke("create_agent_session", {
       sessionId: id,
       cwd: worktreePath,
       prompt,
       systemPrompt: null,
+      permissionMode: "dontAsk",
     });
 
-    // 4. Refresh pipeline items and select the new one
+    // 5. Refresh pipeline items and select the new one
     await loadItems(repoId);
     selectedItemId.value = id;
   }

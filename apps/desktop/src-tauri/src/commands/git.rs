@@ -33,21 +33,21 @@ pub fn git_diff(repo_path: String, staged: bool) -> Result<String, String> {
             .map_err(|e| e.to_string())?
     };
 
-    let mut output = String::new();
+    let mut output = Vec::new();
     diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        // Include all line types for proper unified diff format:
+        // 'F' = file header, 'H' = hunk header, '+'/'-'/' ' = content
         let origin = line.origin();
         match origin {
-            '+' | '-' | ' ' => output.push(origin),
-            _ => {}
+            '+' | '-' | ' ' => output.push(origin as u8),
+            _ => {} // File/hunk headers don't need origin prefix
         }
-        if let Ok(s) = std::str::from_utf8(line.content()) {
-            output.push_str(s);
-        }
+        output.extend_from_slice(line.content());
         true
     })
     .map_err(|e| e.to_string())?;
 
-    Ok(output)
+    String::from_utf8(output).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
