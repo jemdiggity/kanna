@@ -4,3 +4,5 @@ target/
 *.sqlite
 *.sqlite-journal
 .DS_Store
+.turbo/
+.vscode/
