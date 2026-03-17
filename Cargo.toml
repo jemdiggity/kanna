@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/desktop/src-tauri",
+    "crates/claude-agent-sdk",
     "crates/daemon",
     "crates/tauri-plugin-delta-updater",
 ]
