@@ -81,7 +81,7 @@ async function loadDiff() {
 
 function cleanupInstance() {
   if (fileDiffInstance) {
-    fileDiffInstance.destroy();
+    // FileDiff doesn't have a destroy method — just null the reference
     fileDiffInstance = null;
   }
   // Clear rendered diff elements safely

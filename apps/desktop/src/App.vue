@@ -156,7 +156,15 @@ function handleSelectItem(itemId: string) {
 }
 
 async function handleNewTaskSubmit(prompt: string) {
-  if (!selectedRepoId.value) return;
+  if (!selectedRepoId.value) {
+    // Auto-select the first repo if only one exists
+    if (repos.value.length === 1) {
+      selectedRepoId.value = repos.value[0].id;
+    } else {
+      alert("Select a repository first");
+      return;
+    }
+  }
   const repo = repos.value.find((r) => r.id === selectedRepoId.value);
   if (!repo) return;
   try {
