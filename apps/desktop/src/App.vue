@@ -102,7 +102,9 @@ function handleSelectItem(itemId: string) {
 
 async function handleNewTaskSubmit(prompt: string) {
   if (!selectedRepoId.value) return;
-  await createItem(selectedRepoId.value, prompt);
+  const repo = repos.value.find((r) => r.id === selectedRepoId.value);
+  if (!repo) return;
+  await createItem(selectedRepoId.value, repo.path, prompt);
   showNewTaskModal.value = false;
   await refreshAllItems();
 }

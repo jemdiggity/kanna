@@ -1,4 +1,5 @@
 import { ref, type Ref } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import type { DbHandle } from "@kanna/db";
 import type { PipelineItem } from "@kanna/db";
 import { listPipelineItems, updatePipelineItemStage, insertPipelineItem } from "@kanna/db";
@@ -23,21 +24,42 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     item.stage = toStage;
   }
 
-  async function createItem(repoId: string, prompt: string) {
+  async function createItem(repoId: string, repoPath: string, prompt: string) {
     if (!db.value) return;
     const id = crypto.randomUUID();
+    const branch = `task-${id}`;
+    const worktreePath = `${repoPath}/.kanna-worktrees/${branch}`;
+
+    // 1. Create git worktree
+    await invoke("git_worktree_add", {
+      repoPath,
+      branch,
+      path: worktreePath,
+    });
+
+    // 2. Insert pipeline item to DB
     await insertPipelineItem(db.value, {
       id,
       repo_id: repoId,
       issue_number: null,
       issue_title: null,
       prompt,
-      stage: "queued",
+      stage: "in_progress",
       pr_number: null,
       pr_url: null,
-      branch: null,
+      branch,
       agent_type: null,
     });
+
+    // 3. Spawn Claude agent session
+    await invoke("create_agent_session", {
+      sessionId: id,
+      cwd: worktreePath,
+      prompt,
+      systemPrompt: null,
+    });
+
+    // 4. Refresh pipeline items and select the new one
     await loadItems(repoId);
     selectedItemId.value = id;
   }

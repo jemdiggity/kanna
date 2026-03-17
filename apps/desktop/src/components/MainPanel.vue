@@ -19,7 +19,7 @@ const emit = defineEmits<{
   <main class="main-panel">
     <template v-if="item">
       <TaskHeader :item="item" />
-      <TerminalTabs :session-id="null" />
+      <TerminalTabs :session-id="item.id" />
       <ActionBar
         :item="item"
         @make-pr="emit('make-pr')"
