@@ -6,3 +6,4 @@ target/
 .DS_Store
 .turbo/
 .vscode/
+.kanna-worktrees/
