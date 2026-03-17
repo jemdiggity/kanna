@@ -14,8 +14,14 @@ export function useResourceSweeper(
 
     const prefs = getPrefs()
     try {
-      // Get live sessions from daemon
-      const sessions = await invoke<{ session_id: string; idle_seconds: number }[]>("list_sessions")
+      // Get live sessions from daemon — may fail if daemon isn't running
+      let sessions: { session_id: string; idle_seconds: number }[]
+      try {
+        sessions = await invoke<{ session_id: string; idle_seconds: number }[]>("list_sessions")
+      } catch {
+        // Daemon not connected — nothing to sweep
+        return
+      }
 
       for (const session of sessions) {
         const idleMinutes = session.idle_seconds / 60

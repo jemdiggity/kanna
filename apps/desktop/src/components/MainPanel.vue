@@ -6,6 +6,7 @@ import ActionBar from "./ActionBar.vue";
 
 defineProps<{
   item: PipelineItem | null;
+  repoPath?: string;
 }>();
 
 const emit = defineEmits<{
@@ -19,7 +20,11 @@ const emit = defineEmits<{
   <main class="main-panel">
     <template v-if="item">
       <TaskHeader :item="item" />
-      <TerminalTabs :session-id="item.id" />
+      <TerminalTabs
+        :session-id="item.id"
+        :repo-path="repoPath"
+        :worktree-path="item.branch ? `${repoPath}/.kanna-worktrees/${item.branch}` : undefined"
+      />
       <ActionBar
         :item="item"
         @make-pr="emit('make-pr')"

@@ -277,6 +277,7 @@ onMounted(async () => {
     />
     <MainPanel
       :item="currentItem"
+      :repo-path="selectedRepo?.path"
       @make-pr="handleMakePR"
       @merge="handleMerge"
       @close-task="handleCloseTask"

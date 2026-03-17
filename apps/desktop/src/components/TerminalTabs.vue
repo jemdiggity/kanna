@@ -3,18 +3,22 @@ import { ref } from "vue";
 import { invoke } from "../invoke";
 import AgentView from "./AgentView.vue";
 import TerminalView from "./TerminalView.vue";
+import DiffView from "./DiffView.vue";
 
 const props = defineProps<{
   sessionId: string | null;
   worktreePath?: string;
+  repoPath?: string;
 }>();
+
+const diffViewRef = ref<InstanceType<typeof DiffView> | null>(null);
 
 interface ShellTab {
   id: string;
   label: string;
 }
 
-const activeTab = ref<"agent" | string>("agent");
+const activeTab = ref<"agent" | "diff" | string>("agent");
 const shellTabs = ref<ShellTab[]>([]);
 
 async function addShellTab() {
@@ -53,6 +57,13 @@ async function addShellTab() {
         Agent
       </button>
       <button
+        class="tab"
+        :class="{ active: activeTab === 'diff' }"
+        @click="activeTab = 'diff'; diffViewRef?.refresh()"
+      >
+        Diff
+      </button>
+      <button
         v-for="tab in shellTabs"
         :key="tab.id"
         class="tab"
@@ -67,6 +78,15 @@ async function addShellTab() {
       <template v-if="activeTab === 'agent'">
         <AgentView v-if="sessionId" :session-id="sessionId" />
         <div v-else class="placeholder">No agent session active</div>
+      </template>
+      <template v-if="activeTab === 'diff'">
+        <DiffView
+          v-if="repoPath"
+          ref="diffViewRef"
+          :repo-path="repoPath"
+          :worktree-path="worktreePath"
+        />
+        <div v-else class="placeholder">No repository selected</div>
       </template>
       <template v-for="tab in shellTabs" :key="tab.id">
         <TerminalView
