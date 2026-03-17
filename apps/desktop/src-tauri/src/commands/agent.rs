@@ -1,12 +1,12 @@
-use claude_agent_sdk::{Message, PermissionMode, Session, SessionOptions};
+use claude_agent_sdk::{PermissionMode, Session, SessionOptions};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
 
-/// An agent session with a message buffer so messages aren't lost before the UI starts polling.
+/// Buffer for agent messages. The drainer task pushes messages here,
+/// the frontend polls them via `agent_next_message`.
 pub struct BufferedSession {
-    session: Session,
     buffer: Mutex<Vec<serde_json::Value>>,
     finished: Mutex<bool>,
 }
@@ -16,7 +16,9 @@ pub type AgentState = Arc<DashMap<String, BufferedSession>>;
 
 /// Create a new agent session, starting a Claude CLI process.
 ///
-/// The session is stored in state and messages can be polled via `agent_next_message`.
+/// Spawns a background drainer task that reads messages from the Claude CLI
+/// and pushes them into the session's buffer. The frontend polls the buffer
+/// via `agent_next_message`.
 #[tauri::command]
 pub async fn create_agent_session(
     state: State<'_, AgentState>,
@@ -36,15 +38,12 @@ pub async fn create_agent_session(
     if let Some(sp) = &system_prompt {
         builder = builder.system_prompt(sp);
     }
-
     if let Some(m) = &model {
         builder = builder.model(m);
     }
-
     if let Some(tools) = allowed_tools {
         builder = builder.allowed_tools(tools);
     }
-
     if let Some(mt) = max_turns {
         builder = builder.max_turns(mt);
     }
@@ -53,31 +52,47 @@ pub async fn create_agent_session(
         .await
         .map_err(|e| e.to_string())?;
 
-    let buffered = BufferedSession {
-        session,
-        buffer: Mutex::new(Vec::new()),
-        finished: Mutex::new(false),
-    };
+    // Insert the buffer into state BEFORE spawning the drainer.
+    // This guarantees the entry exists when the frontend starts polling.
+    state.insert(
+        session_id.clone(),
+        BufferedSession {
+            buffer: Mutex::new(Vec::new()),
+            finished: Mutex::new(false),
+        },
+    );
 
-    // Spawn a background task to drain messages into the buffer
+    // The drainer task owns the Session. It reads messages and pushes them
+    // into the DashMap entry's buffer. The Session is NOT stored in the map —
+    // this avoids holding a DashMap Ref guard across .await points.
     let state_clone = state.inner().clone();
-    let sid = session_id.clone();
+    let sid = session_id;
     tokio::spawn(async move {
         loop {
-            let msg = {
-                let entry = state_clone.get(&sid);
-                let Some(entry) = entry else { break };
-                entry.session.next_message().await
-            };
+            // Read next message from Claude CLI. This blocks until a message
+            // arrives or the CLI process exits.
+            let msg = session.next_message().await;
             match msg {
                 Some(Ok(m)) => {
-                    if let Some(entry) = state_clone.get(&sid) {
-                        if let Ok(val) = serde_json::to_value(&m) {
+                    if let Ok(val) = serde_json::to_value(&m) {
+                        // Push into buffer — acquire DashMap Ref only briefly
+                        if let Some(entry) = state_clone.get(&sid) {
                             entry.buffer.lock().await.push(val);
+                        } else {
+                            // Entry removed (session closed) — stop draining
+                            break;
                         }
                     }
                 }
-                Some(Err(_)) | None => {
+                Some(Err(e)) => {
+                    eprintln!("[agent drainer] error for {}: {}", sid, e);
+                    if let Some(entry) = state_clone.get(&sid) {
+                        *entry.finished.lock().await = true;
+                    }
+                    break;
+                }
+                None => {
+                    // CLI process exited — mark session finished
                     if let Some(entry) = state_clone.get(&sid) {
                         *entry.finished.lock().await = true;
                     }
@@ -85,9 +100,9 @@ pub async fn create_agent_session(
                 }
             }
         }
+        // Session dropped here — CLI process cleaned up
     });
 
-    state.insert(session_id, buffered);
     Ok(())
 }
 
@@ -101,7 +116,6 @@ pub async fn agent_next_message(
 ) -> Result<Option<serde_json::Value>, String> {
     let entry = state.get(&session_id).ok_or("Session not found")?;
 
-    // Check buffer first
     {
         let mut buf = entry.buffer.lock().await;
         if !buf.is_empty() {
@@ -109,12 +123,11 @@ pub async fn agent_next_message(
         }
     }
 
-    // If finished and buffer empty, session is done
     if *entry.finished.lock().await {
         return Ok(None);
     }
 
-    // Buffer is empty but session is still running — wait a bit and check again
+    // Buffer empty, not finished — wait briefly then check again
     drop(entry);
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
@@ -128,30 +141,26 @@ pub async fn agent_next_message(
         return Ok(None);
     }
 
-    // Still waiting — return empty (frontend will poll again)
-    // Use a sentinel to indicate "still running, no message yet"
     Ok(Some(serde_json::json!({"type": "waiting"})))
 }
 
 /// Send a follow-up message to an active agent session.
 #[tauri::command]
 pub async fn agent_send_message(
-    state: State<'_, AgentState>,
-    session_id: String,
-    message: String,
+    _state: State<'_, AgentState>,
+    _session_id: String,
+    _message: String,
 ) -> Result<(), String> {
-    let entry = state.get(&session_id).ok_or("Session not found")?;
-    entry.session.send(&message).await.map_err(|e| e.to_string())
+    Err("Multi-turn send not yet supported".into())
 }
 
 /// Interrupt the current agent operation.
 #[tauri::command]
 pub async fn agent_interrupt(
-    state: State<'_, AgentState>,
-    session_id: String,
+    _state: State<'_, AgentState>,
+    _session_id: String,
 ) -> Result<(), String> {
-    let entry = state.get(&session_id).ok_or("Session not found")?;
-    entry.session.interrupt().await.map_err(|e| e.to_string())
+    Err("Interrupt not yet supported".into())
 }
 
 /// Close an agent session and clean up resources.
@@ -160,16 +169,14 @@ pub async fn agent_close_session(
     state: State<'_, AgentState>,
     session_id: String,
 ) -> Result<(), String> {
-    if let Some((_, entry)) = state.remove(&session_id) {
-        entry.session.close().await;
-    }
+    // Removing from the map signals the drainer to stop (it checks for entry existence)
+    state.remove(&session_id);
     Ok(())
 }
 
-/// Parse a permission mode string into the SDK enum.
 fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
     match mode {
-        Some("accept-edits") => PermissionMode::AcceptEdits,
+        Some("acceptEdits") | Some("accept-edits") => PermissionMode::AcceptEdits,
         Some("default") => PermissionMode::Default,
         _ => PermissionMode::DontAsk,
     }

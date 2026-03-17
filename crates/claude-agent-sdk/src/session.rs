@@ -11,7 +11,7 @@ use crate::error::Error;
 use crate::types::control::{
     ControlRequest, ControlRequestEnvelope, ControlResponse, ControlResponseEnvelope,
 };
-use crate::types::messages::{Message, UserInput};
+use crate::types::messages::Message;
 use crate::types::options::SessionOptions;
 use crate::types::permissions::PermissionResult;
 
