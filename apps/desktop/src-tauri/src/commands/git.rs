@@ -28,8 +28,12 @@ pub fn git_diff(repo_path: String, staged: bool) -> Result<String, String> {
         repo.diff_tree_to_index(head.as_ref(), None, None)
             .map_err(|e| e.to_string())?
     } else {
-        // Unstaged diff: index vs working directory
-        repo.diff_index_to_workdir(None, None)
+        // Unstaged diff: index vs working directory, including untracked files
+        let mut opts = git2::DiffOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
+        repo.diff_index_to_workdir(None, Some(&mut opts))
             .map_err(|e| e.to_string())?
     };
 
