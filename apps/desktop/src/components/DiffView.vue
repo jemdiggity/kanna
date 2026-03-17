@@ -5,7 +5,6 @@ import { FileDiff, parsePatchFiles } from "@pierre/diffs";
 import {
   getOrCreateWorkerPoolSingleton,
 } from "@pierre/diffs/worker";
-import { createWorkerFactory } from "@pierre/diffs/worker";
 
 const props = defineProps<{
   repoPath: string;
@@ -24,16 +23,17 @@ let workerPool: any = null;
 async function initWorkerPool() {
   if (workerPool) return workerPool;
   try {
-    const workerFactory = createWorkerFactory(
-      () =>
-        new Worker(
-          new URL("@pierre/diffs/worker/worker.js", import.meta.url),
-          { type: "module" }
-        )
-    );
     workerPool = getOrCreateWorkerPoolSingleton({
-      workerFactory,
-      theme: "github-dark",
+      poolOptions: {
+        workerFactory: () =>
+          new Worker(
+            new URL("@pierre/diffs/worker/worker.js", import.meta.url),
+            { type: "module" }
+          ),
+      },
+      highlighterOptions: {
+        theme: "github-dark",
+      },
     });
     return workerPool;
   } catch (e) {
