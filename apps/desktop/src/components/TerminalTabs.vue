@@ -80,22 +80,34 @@ async function addShellTab() {
       <button class="tab tab-add" @click="addShellTab" title="New shell">+</button>
     </div>
     <div class="tab-content">
-      <template v-if="activeTab === 'agent'">
-        <!-- PTY mode: Claude runs in a real terminal -->
-        <TerminalView v-if="sessionId && agentType === 'pty'" :session-id="sessionId" />
-        <!-- SDK mode: structured NDJSON messages -->
-        <AgentView v-else-if="sessionId && agentType !== 'pty'" :session-id="sessionId" @completed="emit('agent-completed')" />
-        <div v-else class="placeholder">No agent session active</div>
-      </template>
-      <template v-if="activeTab === 'diff'">
-        <DiffView
-          v-if="repoPath"
-          ref="diffViewRef"
-          :repo-path="repoPath"
-          :worktree-path="worktreePath"
-        />
-        <div v-else class="placeholder">No repository selected</div>
-      </template>
+      <!-- PTY mode: keep alive with v-show so scrollback is preserved -->
+      <TerminalView
+        v-if="sessionId && agentType === 'pty'"
+        v-show="activeTab === 'agent'"
+        :session-id="sessionId"
+      />
+      <!-- SDK mode: v-show to preserve state -->
+      <AgentView
+        v-if="sessionId && agentType !== 'pty'"
+        v-show="activeTab === 'agent'"
+        :session-id="sessionId"
+        @completed="emit('agent-completed')"
+      />
+      <div v-if="!sessionId" v-show="activeTab === 'agent'" class="placeholder">
+        No agent session active
+      </div>
+      <!-- Diff tab -->
+      <DiffView
+        v-if="repoPath"
+        v-show="activeTab === 'diff'"
+        ref="diffViewRef"
+        :repo-path="repoPath"
+        :worktree-path="worktreePath"
+      />
+      <div v-if="!repoPath" v-show="activeTab === 'diff'" class="placeholder">
+        No repository selected
+      </div>
+      <!-- Shell tabs -->
       <template v-for="tab in shellTabs" :key="tab.id">
         <TerminalView
           v-show="activeTab === tab.id"
