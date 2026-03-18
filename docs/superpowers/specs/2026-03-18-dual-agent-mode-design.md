@@ -111,7 +111,7 @@ bun test                    # all contract tests
 bun test tests/flags.test.ts  # specific file
 ```
 
-Requires `claude` in PATH with valid auth. Tests use `--max-turns 1`, `--model claude-haiku-4-5-20251001`, and simple prompts to minimize cost and time (~1-2s per test).
+Requires `claude` in PATH with valid auth. Tests use `--max-turns 1`, `--model haiku`, and simple prompts to minimize cost and time (~1-2s per test).
 
 ## Part 2: Dual Agent Mode
 
