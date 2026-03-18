@@ -164,33 +164,8 @@ async fn handle_command(
 
             match pty::PtySession::spawn(&executable, &args, &cwd, &env, cols, rows) {
                 Ok(pty_session) => {
-                    // Get the reader BEFORE inserting (we need it for stream_output)
-                    let pty_reader = match pty_session.try_clone_reader() {
-                        Ok(r) => r,
-                        Err(e) => {
-                            let evt = Event::Error {
-                                message: format!("failed to get PTY reader: {}", e),
-                            };
-                            let _ = write_event(&mut *writer.lock().await, &evt).await;
-                            return;
-                        }
-                    };
-
                     mgr.insert(session_id.clone(), pty_session);
                     drop(mgr);
-
-                    // Create the swappable writer (initially None — no client attached yet)
-                    let active_writer: ActiveWriter = Arc::new(Mutex::new(None));
-                    session_writers.lock().await.insert(session_id.clone(), active_writer.clone());
-
-                    // Spawn ONE reader task for this session's lifetime
-                    let sid = session_id.clone();
-                    let sessions_exit = sessions.clone();
-                    let buffers_clone = output_buffers.clone();
-                    let writers_cleanup = session_writers.clone();
-                    tokio::task::spawn_blocking(move || {
-                        stream_output(sid, pty_reader, active_writer, sessions_exit, buffers_clone, writers_cleanup);
-                    });
 
                     let evt = Event::SessionCreated {
                         session_id: session_id.clone(),
@@ -216,17 +191,49 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &evt).await;
                 return;
             }
-            drop(mgr);
 
-            {
-                let evt = Event::Ok;
-                let _ = write_event(&mut *writer.lock().await, &evt).await;
-            }
+            // First attach: clone reader and start stream_output
+            let is_first_attach = !session_writers.lock().await.contains_key(&session_id);
+            if is_first_attach {
+                let pty_reader = match mgr.sessions.get(&session_id).unwrap().try_clone_reader() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let evt = Event::Error {
+                            message: format!("failed to clone PTY reader: {}", e),
+                        };
+                        drop(mgr);
+                        let _ = write_event(&mut *writer.lock().await, &evt).await;
+                        return;
+                    }
+                };
+                drop(mgr);
 
-            // Replay scrollback and set ActiveWriter atomically.
-            // Hold the output_buffers lock so stream_output can't append
-            // new data between the snapshot and the writer swap.
-            {
+                // Create ActiveWriter pointing to this connection immediately
+                let active_writer: ActiveWriter = Arc::new(Mutex::new(Some(writer.clone())));
+                session_writers.lock().await.insert(session_id.clone(), active_writer.clone());
+
+                {
+                    let evt = Event::Ok;
+                    let _ = write_event(&mut *writer.lock().await, &evt).await;
+                }
+
+                // Start the one reader task — no scrollback to replay (first attach)
+                let sid = session_id.clone();
+                let sessions_exit = sessions.clone();
+                let buffers_clone = output_buffers.clone();
+                let writers_cleanup = session_writers.clone();
+                tokio::task::spawn_blocking(move || {
+                    stream_output(sid, pty_reader, active_writer, sessions_exit, buffers_clone, writers_cleanup);
+                });
+            } else {
+                drop(mgr);
+
+                {
+                    let evt = Event::Ok;
+                    let _ = write_event(&mut *writer.lock().await, &evt).await;
+                }
+
+                // Reattach: replay scrollback and swap writer atomically
                 let buffers = output_buffers.lock().await;
                 if let Some(buf) = buffers.get(&session_id) {
                     if !buf.is_empty() {
@@ -239,8 +246,7 @@ async fn handle_command(
                     }
                 }
 
-                // Set writer while still holding buffers lock — stream_output
-                // is blocked on buffers.lock(), so no output can slip through
+                // Swap writer while holding buffers lock (no output can slip through)
                 let writers = session_writers.lock().await;
                 if let Some(active) = writers.get(&session_id) {
                     let mut w = active.lock().await;
