@@ -23,6 +23,7 @@ const emit = defineEmits<{
       <TaskHeader :item="item" />
       <TerminalTabs
         :session-id="item.id"
+        :agent-type="item.agent_type || 'pty'"
         :repo-path="repoPath"
         :worktree-path="item.branch ? `${repoPath}/.kanna-worktrees/${item.branch}` : undefined"
         @agent-completed="emit('agent-completed')"

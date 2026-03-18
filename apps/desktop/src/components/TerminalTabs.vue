@@ -7,6 +7,7 @@ import DiffView from "./DiffView.vue";
 
 const props = defineProps<{
   sessionId: string | null;
+  agentType?: string;
   worktreePath?: string;
   repoPath?: string;
 }>();
@@ -80,7 +81,10 @@ async function addShellTab() {
     </div>
     <div class="tab-content">
       <template v-if="activeTab === 'agent'">
-        <AgentView v-if="sessionId" :session-id="sessionId" @completed="emit('agent-completed')" />
+        <!-- PTY mode: Claude runs in a real terminal -->
+        <TerminalView v-if="sessionId && agentType === 'pty'" :session-id="sessionId" />
+        <!-- SDK mode: structured NDJSON messages -->
+        <AgentView v-else-if="sessionId && agentType !== 'pty'" :session-id="sessionId" @completed="emit('agent-completed')" />
         <div v-else class="placeholder">No agent session active</div>
       </template>
       <template v-if="activeTab === 'diff'">

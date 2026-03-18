@@ -5,6 +5,8 @@ import type { PipelineItem } from "@kanna/db";
 import { listPipelineItems, updatePipelineItemStage, insertPipelineItem } from "@kanna/db";
 import { canTransition, parseKannaConfig, type Stage } from "@kanna/core";
 
+export type AgentType = "pty" | "sdk";
+
 export function usePipeline(db: Ref<DbHandle | null>) {
   const items = ref<PipelineItem[]>([]);
   const selectedItemId = ref<string | null>(null);
@@ -23,7 +25,12 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     item.stage = toStage;
   }
 
-  async function createItem(repoId: string, repoPath: string, prompt: string) {
+  async function createItem(
+    repoId: string,
+    repoPath: string,
+    prompt: string,
+    agentType: AgentType = "pty"
+  ) {
     if (!db.value) return;
     const id = crypto.randomUUID();
     const branch = `task-${id}`;
@@ -66,21 +73,64 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       pr_number: null,
       pr_url: null,
       branch,
-      agent_type: null,
+      agent_type: agentType,
     });
 
-    // 4. Spawn Claude agent session with dangerously-skip-permissions
-    await invoke("create_agent_session", {
-      sessionId: id,
-      cwd: worktreePath,
-      prompt,
-      systemPrompt: null,
-      permissionMode: "dontAsk",
-    });
+    // 4. Spawn agent based on type
+    if (agentType === "pty") {
+      await spawnPtySession(id, worktreePath, prompt);
+    } else {
+      await invoke("create_agent_session", {
+        sessionId: id,
+        cwd: worktreePath,
+        prompt,
+        systemPrompt: null,
+        permissionMode: "dontAsk",
+      });
+    }
 
     // 5. Refresh pipeline items and select the new one
     await loadItems(repoId);
     selectedItemId.value = id;
+  }
+
+  /** Spawn Claude CLI in a PTY via the daemon with hook notifications. */
+  async function spawnPtySession(sessionId: string, cwd: string, prompt: string) {
+    // Find kanna-hook binary path
+    let kannaHookPath = "kanna-hook";
+    try {
+      kannaHookPath = await invoke<string>("which_binary", { name: "kanna-hook" });
+    } catch {
+      // Fall back to assuming it's in PATH
+    }
+
+    // Build the --settings JSON with hooks that call kanna-hook
+    const hookSettings = JSON.stringify({
+      hooks: {
+        Stop: [
+          { hooks: [{ type: "command", command: `${kannaHookPath} Stop ${sessionId}` }] },
+        ],
+        StopFailure: [
+          { hooks: [{ type: "command", command: `${kannaHookPath} StopFailure ${sessionId}` }] },
+        ],
+        PostToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: `${kannaHookPath} PostToolUse ${sessionId}` }] },
+        ],
+      },
+    });
+
+    // Build Claude CLI command
+    const claudeCmd = `claude --dangerously-skip-permissions --settings '${hookSettings}' -p '${prompt.replace(/'/g, "'\\''")}'`;
+
+    await invoke("spawn_session", {
+      sessionId,
+      cwd,
+      executable: "/bin/zsh",
+      args: ["--login", "-c", claudeCmd],
+      env: {},
+      cols: 120,
+      rows: 40,
+    });
   }
 
   function selectedItem(): PipelineItem | null {

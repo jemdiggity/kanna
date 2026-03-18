@@ -25,6 +25,83 @@ async fn try_connect_daemon() -> Option<DaemonClient> {
     DaemonClient::connect(&socket_path).await.ok()
 }
 
+/// Check if the daemon is running (PID file + socket probe).
+/// If not, try to spawn it.
+async fn ensure_daemon_running() {
+    let dir = daemon_socket_path().parent().unwrap().to_path_buf();
+    let pid_path = dir.join("daemon.pid");
+
+    // Check if already running
+    if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            // Check if process is alive
+            if unsafe { libc::kill(pid, 0) } == 0 {
+                // Process alive — check socket
+                if try_connect_daemon().await.is_some() {
+                    eprintln!("[daemon] already running (pid={})", pid);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Not running — try to spawn
+    eprintln!("[daemon] not running, attempting to spawn...");
+
+    // Look for the daemon binary in common locations
+    let daemon_candidates = [
+        // Dev: built by cargo in the workspace
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| {
+                p.parent()
+                    .map(|d| d.join("kanna-daemon"))
+            }),
+        // Installed alongside the app
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| {
+                p.parent()
+                    .map(|d| d.join("../Resources/kanna-daemon"))
+            }),
+    ];
+
+    let daemon_bin = daemon_candidates
+        .into_iter()
+        .flatten()
+        .find(|p| p.exists());
+
+    let Some(daemon_bin) = daemon_bin else {
+        eprintln!("[daemon] daemon binary not found — PTY sessions will not work");
+        return;
+    };
+
+    eprintln!("[daemon] spawning {:?}", daemon_bin);
+    match std::process::Command::new(&daemon_bin)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+    {
+        Ok(_child) => {
+            // Wait for socket to appear with exponential backoff
+            let mut delay = std::time::Duration::from_millis(50);
+            for _ in 0..10 {
+                tokio::time::sleep(delay).await;
+                if try_connect_daemon().await.is_some() {
+                    eprintln!("[daemon] spawned and connected");
+                    return;
+                }
+                delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(2));
+            }
+            eprintln!("[daemon] spawned but could not connect after retries");
+        }
+        Err(e) => {
+            eprintln!("[daemon] failed to spawn: {}", e);
+        }
+    }
+}
+
 /// Spawn the event bridge: a background task that reads events from a dedicated
 /// daemon connection and emits them as Tauri events.
 fn spawn_event_bridge(app: tauri::AppHandle) {
@@ -91,11 +168,10 @@ pub fn run() {
         .manage(Arc::new(DashMap::new()) as AgentState)
         .manage(Arc::new(Mutex::new(None)) as DaemonState)
         .setup(|app| {
-            // Start the event bridge if the daemon is running
             let handle = app.handle().clone();
             tokio::spawn(async move {
-                // Give the daemon a moment to be ready (app may have just started it)
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                // Ensure daemon is running, then start the event bridge
+                ensure_daemon_running().await;
                 spawn_event_bridge(handle);
             });
             Ok(())
