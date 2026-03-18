@@ -6,6 +6,7 @@ mod socket;
 
 use std::io::Read;
 use std::collections::HashMap;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -41,16 +42,31 @@ async fn main() {
     std::fs::create_dir_all(&dir).expect("Failed to create app support dir");
 
     let pid_path = dir.join("daemon.pid");
+    let socket_path = dir.join("daemon.sock");
+
+    // Attempt handoff from old daemon (if running)
+    let adopted = attempt_handoff(&pid_path, &socket_path).await;
+
+    // Write our PID
     let pid = std::process::id();
     std::fs::write(&pid_path, pid.to_string()).expect("Failed to write PID file");
 
-    let socket_path = dir.join("daemon.sock");
     let listener = bind_socket(&socket_path).expect("Failed to bind Unix socket");
 
     eprintln!("kanna-daemon starting, pid={}, socket={:?}", pid, socket_path);
 
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
     let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
+
+    // Adopt handed-off sessions
+    if !adopted.is_empty() {
+        let mut mgr = sessions.lock().await;
+        for (session_id, pty_session) in adopted {
+            eprintln!("[handoff] adopted session {} (pid={})", session_id, pty_session.pid());
+            mgr.insert(session_id, pty_session);
+            // Note: no stream_output started — client must Attach to start streaming
+        }
+    }
 
     let (hook_tx, _) = broadcast::channel::<String>(256);
 
@@ -83,12 +99,159 @@ async fn main() {
     }
 }
 
+/// Try to take over sessions from an existing daemon.
+/// Returns adopted (session_id, PtySession) pairs.
+async fn attempt_handoff(
+    pid_path: &PathBuf,
+    socket_path: &PathBuf,
+) -> Vec<(String, pty::PtySession)> {
+    // Check if old daemon is running
+    let old_pid = match std::fs::read_to_string(pid_path) {
+        Ok(s) => match s.trim().parse::<i32>() {
+            Ok(pid) if unsafe { libc::kill(pid, 0) } == 0 => pid,
+            _ => return vec![],
+        },
+        Err(_) => return vec![],
+    };
+
+    eprintln!("[handoff] old daemon detected (pid={}), requesting handoff", old_pid);
+
+    // Connect to old daemon
+    let stream = match tokio::net::UnixStream::connect(socket_path).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[handoff] failed to connect to old daemon: {}", e);
+            // Old daemon might be stuck — kill it
+            unsafe { libc::kill(old_pid, libc::SIGTERM) };
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            return vec![];
+        }
+    };
+
+    let raw_fd = stream.as_raw_fd();
+    let (read_half, write_half) = stream.into_split();
+    let mut reader = tokio::io::BufReader::new(read_half);
+    let mut writer = write_half;
+
+    // Send Handoff command
+    let cmd = serde_json::json!({ "type": "Handoff", "version": HANDOFF_VERSION });
+    let mut json = serde_json::to_string(&cmd).unwrap();
+    json.push('\n');
+    use tokio::io::AsyncWriteExt;
+    if let Err(e) = writer.write_all(json.as_bytes()).await {
+        eprintln!("[handoff] failed to send handoff command: {}", e);
+        return vec![];
+    }
+    let _ = writer.flush().await;
+
+    // Read response
+    let mut line = String::new();
+    use tokio::io::AsyncBufReadExt;
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        reader.read_line(&mut line),
+    ).await {
+        Ok(Ok(_)) => {}
+        _ => {
+            eprintln!("[handoff] timeout or error reading handoff response");
+            unsafe { libc::kill(old_pid, libc::SIGTERM) };
+            return vec![];
+        }
+    }
+
+    let event: serde_json::Value = match serde_json::from_str(line.trim()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[handoff] invalid response: {}", e);
+            return vec![];
+        }
+    };
+
+    match event.get("type").and_then(|t| t.as_str()) {
+        Some("HandoffReady") => {}
+        Some("Error") => {
+            let msg = event.get("message").and_then(|m| m.as_str()).unwrap_or("unknown");
+            eprintln!("[handoff] old daemon refused: {}", msg);
+            return vec![];
+        }
+        other => {
+            eprintln!("[handoff] unexpected response type: {:?}", other);
+            return vec![];
+        }
+    }
+
+    // Parse session metadata
+    let session_infos: Vec<protocol::SessionInfo> = match event.get("sessions") {
+        Some(s) => serde_json::from_value(s.clone()).unwrap_or_default(),
+        None => vec![],
+    };
+
+    if session_infos.is_empty() {
+        eprintln!("[handoff] no sessions to adopt");
+        // Wait for old daemon to exit
+        wait_for_exit(old_pid).await;
+        return vec![];
+    }
+
+    eprintln!("[handoff] receiving {} session fds", session_infos.len());
+
+    // Receive master fds via SCM_RIGHTS
+    let fds = match fd_transfer::recv_fds(raw_fd, session_infos.len()) {
+        Ok(fds) => fds,
+        Err(e) => {
+            eprintln!("[handoff] failed to receive fds: {}", e);
+            return vec![];
+        }
+    };
+
+    if fds.len() != session_infos.len() {
+        eprintln!("[handoff] fd count mismatch: got {}, expected {}", fds.len(), session_infos.len());
+        return vec![];
+    }
+
+    // Build adopted sessions
+    let mut adopted = Vec::new();
+    for (info, fd) in session_infos.into_iter().zip(fds) {
+        let owned_fd = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) };
+        let session = pty::PtySession::adopt(
+            owned_fd,
+            info.pid as libc::pid_t,
+            info.cwd,
+        );
+        adopted.push((info.session_id, session));
+    }
+
+    // Wait for old daemon to exit cleanly
+    wait_for_exit(old_pid).await;
+
+    adopted
+}
+
+/// Wait for a process to exit, with a timeout.
+async fn wait_for_exit(pid: i32) {
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return;
+        }
+    }
+    eprintln!("[handoff] old daemon (pid={}) didn't exit, sending SIGTERM", pid);
+    unsafe { libc::kill(pid, libc::SIGTERM) };
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        eprintln!("[handoff] old daemon still alive, sending SIGKILL");
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+}
+
 async fn handle_connection(
     stream: UnixStream,
     sessions: Arc<Mutex<SessionManager>>,
     hook_tx: broadcast::Sender<String>,
     session_writers: SessionWriters,
 ) {
+    // Keep the raw fd for SCM_RIGHTS (used by Handoff)
+    let raw_fd = stream.as_raw_fd();
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let writer = Arc::new(Mutex::new(write_half));
@@ -99,6 +262,10 @@ async fn handle_connection(
         let cmd = read_command(&mut reader).await;
         match cmd {
             None => break,
+            Some(Command::Handoff { version }) => {
+                handle_handoff(version, raw_fd, sessions.clone(), session_writers.clone(), writer.clone()).await;
+                break; // Connection ends after handoff
+            }
             Some(Command::Subscribe) => {
                 if !subscribed.load(std::sync::atomic::Ordering::Relaxed) {
                     subscribed.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -327,8 +494,9 @@ async fn handle_command(
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
 
-        Command::Handoff => {
-            let _ = write_event(&mut *writer.lock().await, &Event::HandoffUnsupported).await;
+        Command::Handoff { .. } => {
+            // Handled in handle_connection before dispatch
+            let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
         }
 
         Command::Subscribe => {
@@ -343,6 +511,84 @@ async fn handle_command(
             let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
         }
     }
+}
+
+/// Current handoff protocol version. Both sides must agree.
+const HANDOFF_VERSION: u32 = 1;
+
+/// Handle a handoff request from a new daemon.
+/// Collects all live sessions, sends metadata + master fds, then exits.
+async fn handle_handoff(
+    version: u32,
+    socket_fd: std::os::unix::io::RawFd,
+    sessions: Arc<Mutex<SessionManager>>,
+    session_writers: SessionWriters,
+    writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+) {
+    if version != HANDOFF_VERSION {
+        let evt = Event::Error {
+            message: format!("handoff version mismatch: expected {}, got {}", HANDOFF_VERSION, version),
+        };
+        let _ = write_event(&mut *writer.lock().await, &evt).await;
+        return;
+    }
+
+    // Collect live sessions and detach them
+    let mut mgr = sessions.lock().await;
+    let session_ids: Vec<String> = mgr.sessions.keys().cloned().collect();
+
+    let mut infos = Vec::new();
+    let mut fds = Vec::new();
+
+    for id in &session_ids {
+        if let Some(session) = mgr.remove(id) {
+            if session.is_alive() {
+                let pid = session.pid();
+                let cwd = session.cwd.clone();
+                let (fd, _, _) = session.detach_for_handoff();
+                infos.push(protocol::SessionInfo {
+                    session_id: id.clone(),
+                    pid,
+                    cwd,
+                    state: protocol::SessionState::Active,
+                    idle_seconds: 0,
+                });
+                fds.push(fd);
+            }
+            // Dead sessions are just dropped
+        }
+    }
+    drop(mgr);
+
+    // Clear all writer slots (stream_output tasks will exit on next read failure)
+    session_writers.lock().await.clear();
+
+    eprintln!("[handoff] transferring {} sessions", infos.len());
+
+    // Send HandoffReady with session metadata
+    let evt = Event::HandoffReady { sessions: infos };
+    let _ = write_event(&mut *writer.lock().await, &evt).await;
+
+    // Flush the writer before sending fds
+    {
+        use tokio::io::AsyncWriteExt;
+        let _ = writer.lock().await.flush().await;
+    }
+
+    // Send master fds via SCM_RIGHTS
+    if !fds.is_empty() {
+        if let Err(e) = fd_transfer::send_fds(socket_fd, &fds) {
+            eprintln!("[handoff] failed to send fds: {}", e);
+        }
+        // Close our copies — the new daemon owns them now
+        for fd in &fds {
+            unsafe { libc::close(*fd) };
+        }
+    }
+
+    eprintln!("[handoff] complete, exiting in 500ms");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    std::process::exit(0);
 }
 
 /// Runs in a blocking thread for the entire lifetime of a session.

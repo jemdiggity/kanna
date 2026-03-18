@@ -37,7 +37,7 @@ pub enum Command {
     },
     List,
     Subscribe,
-    Handoff,
+    Handoff { version: u32 },
     HookEvent {
         session_id: String,
         event: String,
