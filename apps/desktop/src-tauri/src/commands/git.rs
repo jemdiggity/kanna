@@ -39,12 +39,10 @@ pub fn git_diff(repo_path: String, staged: bool) -> Result<String, String> {
 
     let mut output = Vec::new();
     diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
-        // Include all line types for proper unified diff format:
-        // 'F' = file header, 'H' = hunk header, '+'/'-'/' ' = content
         let origin = line.origin();
         match origin {
             '+' | '-' | ' ' => output.push(origin as u8),
-            _ => {} // File/hunk headers don't need origin prefix
+            _ => {} // File/hunk headers — content already includes the full line
         }
         output.extend_from_slice(line.content());
         true

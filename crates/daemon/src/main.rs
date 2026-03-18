@@ -6,6 +6,7 @@ mod socket;
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tokio::io::BufReader;
@@ -17,6 +18,9 @@ const SCROLLBACK_CAPACITY: usize = 256 * 1024; // 256KB, same as Swift version
 
 /// Per-session output ring buffer.
 type OutputBuffers = Arc<Mutex<HashMap<String, VecDeque<u8>>>>;
+
+/// Per-session cancel flag — set to true to stop a previous stream_output task.
+type AttachCancels = Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>;
 
 use protocol::{Command, Event};
 use session::SessionManager;
@@ -47,6 +51,7 @@ async fn main() {
 
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
     let output_buffers: OutputBuffers = Arc::new(Mutex::new(HashMap::new()));
+    let attach_cancels: AttachCancels = Arc::new(Mutex::new(HashMap::new()));
 
     // Broadcast channel for hook events — any connection can send, all connections receive
     let (hook_tx, _) = broadcast::channel::<String>(256);
@@ -70,8 +75,9 @@ async fn main() {
                 let sessions_clone = sessions.clone();
                 let hook_tx_clone = hook_tx.clone();
                 let buffers_clone = output_buffers.clone();
+                let cancels_clone = attach_cancels.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, sessions_clone, hook_tx_clone, buffers_clone).await;
+                    handle_connection(stream, sessions_clone, hook_tx_clone, buffers_clone, cancels_clone).await;
                 });
             }
             Err(e) => {
@@ -86,6 +92,7 @@ async fn handle_connection(
     sessions: Arc<Mutex<SessionManager>>,
     hook_tx: broadcast::Sender<String>,
     output_buffers: OutputBuffers,
+    attach_cancels: AttachCancels,
 ) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
@@ -118,7 +125,7 @@ async fn handle_connection(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(command) => {
-                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, output_buffers.clone()).await;
+                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, output_buffers.clone(), attach_cancels.clone()).await;
             }
         }
     }
@@ -130,6 +137,7 @@ async fn handle_command(
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     hook_tx: &broadcast::Sender<String>,
     output_buffers: OutputBuffers,
+    attach_cancels: AttachCancels,
 ) {
     match command {
         Command::Spawn {
@@ -182,6 +190,17 @@ async fn handle_command(
                 return;
             }
 
+            // Cancel any previous stream_output task for this session
+            {
+                let mut cancels = attach_cancels.lock().await;
+                if let Some(old_cancel) = cancels.get(&session_id) {
+                    old_cancel.store(true, Ordering::Relaxed);
+                }
+                // Create a new cancel flag for this attach
+                let cancel = Arc::new(AtomicBool::new(false));
+                cancels.insert(session_id.clone(), cancel.clone());
+            }
+
             // Get reader from existing session
             let reader = match mgr.sessions_reader(&session_id) {
                 Ok(r) => r,
@@ -218,11 +237,12 @@ async fn handle_command(
             }
 
             let sid = session_id.clone();
+            let cancel_flag = attach_cancels.lock().await.get(&session_id).cloned().unwrap();
             let writer_out = writer.clone();
             let sessions_exit = sessions.clone();
             let buffers_clone = output_buffers.clone();
             tokio::task::spawn_blocking(move || {
-                stream_output(sid, reader, writer_out, sessions_exit, pid, buffers_clone);
+                stream_output(sid, reader, writer_out, sessions_exit, pid, buffers_clone, cancel_flag);
             });
         }
 
@@ -373,6 +393,8 @@ async fn handle_command(
 
 /// Runs in a blocking thread: reads PTY output and sends Output events.
 /// When the process exits, removes it from the session manager and sends Exit.
+/// If `cancelled` is set to true, this task stops reading and exits without
+/// cleaning up the session (a new attach will take over).
 fn stream_output(
     session_id: String,
     mut reader: Box<dyn Read + Send>,
@@ -380,16 +402,28 @@ fn stream_output(
     sessions: Arc<Mutex<SessionManager>>,
     _pid: u32,
     output_buffers: OutputBuffers,
+    cancelled: Arc<AtomicBool>,
 ) {
     let rt = tokio::runtime::Handle::current();
     let mut buf = [0u8; 4096];
 
     loop {
+        // Check if a newer attach has replaced us
+        if cancelled.load(Ordering::Relaxed) {
+            eprintln!("stream_output for session {} cancelled (reattach)", session_id);
+            return; // Exit without removing session — new attach takes over
+        }
+
         match reader.read(&mut buf) {
             Ok(0) => {
                 break;
             }
             Ok(n) => {
+                // Check again after blocking read returns
+                if cancelled.load(Ordering::Relaxed) {
+                    return;
+                }
+
                 let data = buf[..n].to_vec();
 
                 // Append to scrollback ring buffer
@@ -415,10 +449,18 @@ fn stream_output(
                 });
             }
             Err(e) => {
+                if cancelled.load(Ordering::Relaxed) {
+                    return;
+                }
                 eprintln!("PTY read error for session {}: {}", session_id, e);
                 break;
             }
         }
+    }
+
+    // Only clean up if we weren't cancelled (i.e., the process actually exited)
+    if cancelled.load(Ordering::Relaxed) {
+        return;
     }
 
     // Get exit code and clean up

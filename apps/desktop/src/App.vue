@@ -13,6 +13,7 @@ import ImportRepoModal from "./components/ImportRepoModal.vue";
 import PreferencesPanel from "./components/PreferencesPanel.vue";
 import KeyboardShortcutsModal from "./components/KeyboardShortcutsModal.vue";
 import FilePickerModal from "./components/FilePickerModal.vue";
+import DiffModal from "./components/DiffModal.vue";
 import { useRepo } from "./composables/useRepo";
 import { usePipeline } from "./composables/usePipeline";
 import { usePreferences } from "./composables/usePreferences";
@@ -58,6 +59,8 @@ const showImportRepoModal = ref(false);
 const showPreferencesPanel = ref(false);
 const showShortcutsModal = ref(false);
 const showFilePickerModal = ref(false);
+const showDiffModal = ref(false);
+const diffScopes = new Map<string, "branch" | "commit" | "working">();
 const zenMode = ref(false);
 
 const currentItem = computed(() => selectedItem());
@@ -87,9 +90,24 @@ async function refreshAllItems() {
 
 watch([repos, selectedRepoId], refreshAllItems, { immediate: true });
 
+// Sort items the same way the sidebar does
+function sortedItemsForCurrentRepo(): PipelineItem[] {
+  const activityOrder: Record<string, number> = { idle: 0, unread: 1, working: 2 };
+  return items.value
+    .filter((item) => item.repo_id === selectedRepoId.value)
+    .sort((a, b) => {
+      const ao = activityOrder[(a as any).activity || "idle"] ?? 0;
+      const bo = activityOrder[(b as any).activity || "idle"] ?? 0;
+      if (ao !== bo) return ao - bo;
+      const aTime = (a as any).activity_changed_at || a.created_at;
+      const bTime = (b as any).activity_changed_at || b.created_at;
+      return bTime.localeCompare(aTime);
+    });
+}
+
 // Keyboard shortcuts
 function navigateItems(direction: -1 | 1) {
-  const currentItems = items.value;
+  const currentItems = sortedItemsForCurrentRepo();
   if (currentItems.length === 0) return;
 
   const currentIndex = currentItems.findIndex((i) => i.id === selectedItemId.value);
@@ -149,13 +167,22 @@ useKeyboardShortcuts({
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
   toggleZen: () => { zenMode.value = !zenMode.value; },
-  exitZen: () => { zenMode.value = false; },
+  dismiss: () => {
+    if (showShortcutsModal.value) { showShortcutsModal.value = false; return; }
+    if (showFilePickerModal.value) { showFilePickerModal.value = false; return; }
+    if (showDiffModal.value) { showDiffModal.value = false; return; }
+    if (showNewTaskModal.value) { showNewTaskModal.value = false; return; }
+    if (showImportRepoModal.value) { showImportRepoModal.value = false; return; }
+    if (showPreferencesPanel.value) { showPreferencesPanel.value = false; return; }
+    if (zenMode.value) { zenMode.value = false; }
+  },
   openTerminal: () => { /* TODO: emit to TerminalTabs */ },
   openTerminalAtRoot: () => { /* TODO */ },
   closeTerminal: () => { /* TODO */ },
   nextTab: () => { /* TODO */ },
   prevTab: () => { /* TODO */ },
   newWindow: () => { /* TODO: Tauri window API */ },
+  showDiff: () => { showDiffModal.value = !showDiffModal.value; },
   showShortcuts: () => { showShortcutsModal.value = !showShortcutsModal.value; },
   openPreferences: () => { showPreferencesPanel.value = true; },
 });
@@ -415,6 +442,14 @@ onMounted(async () => {
       v-if="showShortcutsModal"
       @close="showShortcutsModal = false"
     />
+    <DiffModal
+      v-if="showDiffModal && selectedRepo?.path"
+      :repo-path="selectedRepo.path"
+      :worktree-path="currentItem?.branch ? `${selectedRepo.path}/.kanna-worktrees/${currentItem.branch}` : undefined"
+      :initial-scope="currentItem ? diffScopes.get(currentItem.id) : undefined"
+      @scope-change="(s: any) => { if (currentItem) diffScopes.set(currentItem.id, s); }"
+      @close="showDiffModal = false"
+    />
     <FilePickerModal
       v-if="showFilePickerModal && currentItem?.branch"
       :worktree-path="`${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}`"
@@ -430,6 +465,7 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.5;
   font-weight: 400;
+  color-scheme: dark;
   color: #e0e0e0;
   background-color: #1a1a1a;
   font-synthesis: none;

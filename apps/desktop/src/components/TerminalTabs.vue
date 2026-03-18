@@ -3,8 +3,6 @@ import { ref } from "vue";
 import { invoke } from "../invoke";
 import AgentView from "./AgentView.vue";
 import TerminalView from "./TerminalView.vue";
-import DiffView from "./DiffView.vue";
-
 const props = defineProps<{
   sessionId: string | null;
   agentType?: string;
@@ -13,8 +11,6 @@ const props = defineProps<{
   prompt?: string;
   spawnPtySession?: (sessionId: string, cwd: string, prompt: string, cols: number, rows: number) => Promise<void>;
 }>();
-
-const diffViewRef = ref<InstanceType<typeof DiffView> | null>(null);
 
 interface ShellTab {
   id: string;
@@ -25,7 +21,7 @@ const emit = defineEmits<{
   (e: "agent-completed"): void;
 }>();
 
-const activeTab = ref<"agent" | "diff" | string>("agent");
+const activeTab = ref<"agent" | string>("agent");
 const shellTabs = ref<ShellTab[]>([]);
 
 async function addShellTab() {
@@ -64,13 +60,6 @@ async function addShellTab() {
         Agent
       </button>
       <button
-        class="tab"
-        :class="{ active: activeTab === 'diff' }"
-        @click="activeTab = 'diff'; diffViewRef?.refresh()"
-      >
-        Diff
-      </button>
-      <button
         v-for="tab in shellTabs"
         :key="tab.id"
         class="tab"
@@ -104,17 +93,6 @@ async function addShellTab() {
       />
       <div v-if="!sessionId" v-show="activeTab === 'agent'" class="placeholder">
         No agent session active
-      </div>
-      <!-- Diff tab -->
-      <DiffView
-        v-if="repoPath"
-        v-show="activeTab === 'diff'"
-        ref="diffViewRef"
-        :repo-path="repoPath"
-        :worktree-path="worktreePath"
-      />
-      <div v-if="!repoPath" v-show="activeTab === 'diff'" class="placeholder">
-        No repository selected
       </div>
       <!-- Shell tabs -->
       <template v-for="tab in shellTabs" :key="tab.id">

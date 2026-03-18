@@ -9,6 +9,11 @@ import {
 const props = defineProps<{
   repoPath: string;
   worktreePath?: string;
+  initialScope?: "branch" | "commit" | "working";
+}>();
+
+const emit = defineEmits<{
+  (e: "scope-change", scope: "branch" | "commit" | "working"): void;
 }>();
 
 const containerRef = ref<HTMLElement | null>(null);
@@ -16,7 +21,7 @@ const diffContent = ref("");
 const loading = ref(false);
 const error = ref<string | null>(null);
 const noDiff = ref(false);
-const scope = ref<"branch" | "commit" | "working">("branch");
+const scope = ref<"branch" | "commit" | "working">(props.initialScope || "branch");
 const diffMode = ref<"unified" | "split">("unified");
 
 let fileDiffInstance: FileDiff | null = null;
@@ -29,12 +34,13 @@ async function initWorkerPool() {
       poolOptions: {
         workerFactory: () =>
           new Worker(
-            new URL("@pierre/diffs/worker/worker.js", import.meta.url),
+            new URL("@pierre/diffs/worker/worker-portable.js", import.meta.url),
             { type: "module" }
           ),
       },
       highlighterOptions: {
         theme: "github-dark",
+        lineDiffType: "word",
       },
     });
     return workerPool;
@@ -45,6 +51,7 @@ async function initWorkerPool() {
 }
 
 async function loadDiff() {
+  emit("scope-change", scope.value);
   const path = props.worktreePath || props.repoPath;
   loading.value = true;
   error.value = null;
@@ -118,7 +125,6 @@ async function renderDiff(patch: string) {
   if (!containerRef.value) return;
 
   const patches = parsePatchFiles(patch);
-  // parsePatchFiles returns [{ patchMetadata, files: [FileDiffMetadata, ...] }]
   const allFiles = patches?.flatMap((p: any) => p.files || []) || [];
   if (allFiles.length === 0) {
     noDiff.value = true;
@@ -139,14 +145,15 @@ async function renderDiff(patch: string) {
     const instance = new FileDiff(
       {
         theme: "github-dark",
-        lineDiffType: "word",
+        diffStyle: "unified",
+        diffIndicators: "classic",
       },
       pool || undefined
     );
 
     instance.render({
       fileDiff: fileMeta,
-      fileContainer: wrapper,
+      containerWrapper: wrapper,
     });
 
     // Keep last instance for cleanup
@@ -180,9 +187,8 @@ defineExpose({ refresh: loadDiff });
         <button :class="{ active: scope === 'working' }" @click="scope = 'working'; loadDiff()">Working</button>
       </div>
     </div>
-    <div v-if="loading" class="diff-status">Loading diff...</div>
-    <div v-else-if="error" class="diff-status diff-error">{{ error }}</div>
-    <div v-else-if="noDiff" class="diff-status">No changes</div>
+    <div v-if="error" class="diff-status diff-error">{{ error }}</div>
+    <div v-else-if="noDiff && !loading" class="diff-status">No changes</div>
     <div ref="containerRef" class="diff-container"></div>
   </div>
 </template>
@@ -243,10 +249,16 @@ defineExpose({ refresh: loadDiff });
 }
 
 .diff-container {
+  flex: 1;
   min-height: 0;
+  overflow: auto;
 }
 
 .diff-container :deep(.diff-file) {
   margin-bottom: 2px;
+}
+
+.diff-container :deep(diffs-container) {
+  color-scheme: dark;
 }
 </style>

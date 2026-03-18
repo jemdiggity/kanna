@@ -18,7 +18,6 @@ const groups = [
       { keys: "Option+Cmd+Down", action: "Next Task" },
       { keys: "Option+Cmd+Up", action: "Previous Task" },
       { keys: "Shift+Cmd+Z", action: "Zen Mode" },
-      { keys: "Escape", action: "Exit Zen Mode" },
     ],
   },
   {
@@ -40,6 +39,7 @@ const groups = [
   {
     title: "Help",
     shortcuts: [
+      { keys: "Cmd+D", action: "View Diff" },
       { keys: "Cmd+/", action: "Keyboard Shortcuts" },
       { keys: "Cmd+,", action: "Preferences" },
     ],

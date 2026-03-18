@@ -11,7 +11,7 @@ export interface KeyboardActions {
   navigateUp: () => void;
   navigateDown: () => void;
   toggleZen: () => void;
-  exitZen: () => void;
+  dismiss: () => void;
   // Terminal
   openTerminal: () => void;
   openTerminalAtRoot: () => void;
@@ -20,6 +20,8 @@ export interface KeyboardActions {
   prevTab: () => void;
   // Window
   newWindow: () => void;
+  // Views
+  showDiff: () => void;
   // Help
   showShortcuts: () => void;
   openPreferences: () => void;
@@ -29,18 +31,11 @@ export function useKeyboardShortcuts(actions: KeyboardActions) {
   function handler(e: KeyboardEvent) {
     const meta = e.metaKey || e.ctrlKey;
 
-    // Skip most shortcuts when typing in text fields
-    const target = e.target as HTMLElement;
-    const inInput = target.tagName === "TEXTAREA" || target.tagName === "INPUT";
-
-    // Escape — always works
+    // Escape — dismiss whatever's open
     if (e.key === "Escape") {
-      actions.exitZen();
+      actions.dismiss();
       return;
     }
-
-    // Don't intercept shortcuts when typing in inputs (except Escape above)
-    if (inInput) return;
 
     // Shift+Cmd+N → New Task
     if (meta && e.shiftKey && e.key === "N") {
@@ -137,6 +132,13 @@ export function useKeyboardShortcuts(actions: KeyboardActions) {
     if (meta && e.altKey && e.key === "ArrowLeft") {
       e.preventDefault();
       actions.prevTab();
+      return;
+    }
+
+    // Cmd+D → Show Diff
+    if (meta && !e.shiftKey && e.key === "d") {
+      e.preventDefault();
+      actions.showDiff();
       return;
     }
 
