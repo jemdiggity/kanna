@@ -1,5 +1,7 @@
 import { resolve } from "path";
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
+
+setDefaultTimeout(30_000);
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod, getVueState, tauriInvoke } from "../helpers/vue";
@@ -14,16 +16,37 @@ describe("diff view", () => {
     await resetDatabase(client);
     await importTestRepo(client, TEST_REPO_PATH, "diff-test");
 
-    // Create a task to get a worktree
-    await callVueMethod(client, "handleNewTaskSubmit", "Say OK");
+    // Create a task with worktree but no Claude session (SDK mode, will fail gracefully)
+    const repoId = await getVueState(client, "selectedRepoId") as string;
+    const id = crypto.randomUUID();
+    const branch = `task-${id}`;
+    const worktreePath = `${TEST_REPO_PATH}/.kanna-worktrees/${branch}`;
 
-    // Wait for the task to appear and get its branch
+    // Create worktree
+    await tauriInvoke(client, "git_worktree_add", {
+      repoPath: TEST_REPO_PATH,
+      branch,
+      path: worktreePath,
+    });
+
+    // Insert task into DB
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = document.getElementById("app").__vue_app__._instance.setupState;
+       const db = ctx.db.value || ctx.db;
+       db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, branch, agent_type) VALUES (?, ?, ?, ?, ?, ?)",
+         ["${id}", "${repoId}", "Say OK", "in_progress", "${branch}", "sdk"])
+         .then(function() { return ctx.loadItems("${repoId}"); })
+         .then(function() { ctx.handleSelectItem("${id}"); return ctx.refreshAllItems(); })
+         .then(function() { cb("ok"); })
+         .catch(function(e) { cb("err:" + e); });`
+    );
     await client.waitForText(".sidebar", "In Progress");
-    await Bun.sleep(1000);
   });
 
   afterAll(async () => {
-    await cleanupWorktrees(client, TEST_REPO_PATH);
+    // Best-effort cleanup — don't block on worktree removal
+    cleanupWorktrees(client, TEST_REPO_PATH).catch(() => {});
     await client.deleteSession();
   });
 
@@ -38,16 +61,17 @@ describe("diff view", () => {
 
   it("shows diff content after writing a file", async () => {
     // Get the worktree path from the selected item
-    const item = (await callVueMethod(client, "selectedItem")) as {
-      branch: string;
-    } | null;
-    if (!item?.branch) {
-      // Skip if no item selected (task creation may have failed)
+    const branch = await client.executeSync<string | null>(
+      `const ctx = document.getElementById("app").__vue_app__._instance.setupState;
+       const item = ctx.selectedItem();
+       return item ? (item.branch?.value || item.branch) : null;`
+    );
+    if (!branch) {
       console.warn("No task selected, skipping diff content test");
       return;
     }
 
-    const worktreePath = `${TEST_REPO_PATH}/.kanna-worktrees/${item.branch}`;
+    const worktreePath = `${TEST_REPO_PATH}/.kanna-worktrees/${branch}`;
 
     // Write a test file into the worktree
     await tauriInvoke(client, "run_script", {

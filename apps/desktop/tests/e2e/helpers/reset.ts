@@ -31,31 +31,26 @@ export async function resetDatabase(client: WebDriverClient): Promise<void> {
   await callVueMethod(client, "refreshRepos");
 }
 
-/** Clean up test-created git worktrees for a repo. */
+/** Clean up test-created git worktrees for a repo. Best-effort — never throws. */
 export async function cleanupWorktrees(
   client: WebDriverClient,
   repoPath: string
 ): Promise<void> {
-  let worktrees: Array<{ name: string; path: string }>;
   try {
     const result = await tauriInvoke(client, "git_worktree_list", { repoPath });
-    worktrees = Array.isArray(result) ? result : [];
-  } catch {
-    return; // Can't list worktrees — skip cleanup
-  }
+    const worktrees = Array.isArray(result) ? result : [];
 
-  for (const wt of worktrees) {
-    // Only remove task- worktrees (not the main worktree)
-    if (wt.name.startsWith("task-")) {
-      try {
-        await tauriInvoke(client, "git_worktree_remove", {
-          repoPath,
-          path: wt.path,
-        });
-      } catch {
-        // Worktree may already be removed
+    for (const wt of worktrees) {
+      if (wt.name?.startsWith("task-")) {
+        try {
+          await tauriInvoke(client, "git_worktree_remove", { repoPath, path: wt.path });
+        } catch {
+          // Worktree may already be removed
+        }
       }
     }
+  } catch {
+    // Cleanup is best-effort — don't fail tests
   }
 }
 

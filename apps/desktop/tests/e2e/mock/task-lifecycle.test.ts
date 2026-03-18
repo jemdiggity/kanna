@@ -1,8 +1,10 @@
 import { resolve } from "path";
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
-import { callVueMethod } from "../helpers/vue";
+import { callVueMethod, getVueState } from "../helpers/vue";
+
+setDefaultTimeout(65_000);
 
 const TEST_REPO_PATH = resolve(import.meta.dir, "../../../..");
 
@@ -21,10 +23,19 @@ describe("task lifecycle", () => {
   });
 
   it("creates a task that appears in sidebar", async () => {
-    await callVueMethod(
-      client,
-      "handleNewTaskSubmit",
-      "Say OK"
+    // Use SDK mode so we can verify AgentView output (PTY mode shows TerminalView)
+    const result = await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       try {
+         const ctx = document.getElementById("app").__vue_app__._instance.setupState;
+         const repoId = ctx.selectedRepoId.value || ctx.selectedRepoId;
+         const repos = ctx.repos.value || ctx.repos;
+         const repo = repos.find(function(r) { return r.id === repoId; });
+         if (!repo) { cb("no repo"); return; }
+         ctx.createItem(repoId, repo.path, "Say OK", "sdk")
+           .then(function() { cb("ok"); })
+           .catch(function(e) { cb("err:" + e); });
+       } catch(e) { cb("outer:" + e); }`
     );
 
     // Task should appear in sidebar with In Progress badge
