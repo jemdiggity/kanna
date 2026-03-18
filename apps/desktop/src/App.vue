@@ -35,14 +35,16 @@ const {
   save: savePreference,
 } = usePreferences(db);
 
-// Resource sweeper — runs every 60s, manages idle sessions and old tasks
-useResourceSweeper(
-  () => db.value,
-  () => ({
-    suspendAfterMinutes: suspendAfterMinutes.value,
-    killAfterMinutes: killAfterMinutes.value,
-  })
-);
+// Resource sweeper — DISABLED: calling list_sessions on the shared command
+// connection corrupts the connection state when PTY sessions are active.
+// TODO: re-enable once daemon commands use separate connections.
+// useResourceSweeper(
+//   () => db.value,
+//   () => ({
+//     suspendAfterMinutes: suspendAfterMinutes.value,
+//     killAfterMinutes: killAfterMinutes.value,
+//   })
+// );
 
 const selectedRepo = computed(() =>
   repos.value.find((r) => r.id === selectedRepoId.value) ?? null
@@ -297,7 +299,8 @@ onMounted(async () => {
     await runMigrations(db.value);
     await refreshRepos();
     await loadPreferences();
-    await reconcileSessions();
+    // DISABLED: reconcileSessions calls list_sessions which corrupts the command connection
+    // await reconcileSessions();
 
     // Transition stale "working" items to "unread" (Claude finished while app was closed)
     if (db.value) {
