@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, onMounted, nextTick } from "vue";
 import { invoke } from "../invoke";
 import TerminalView from "./TerminalView.vue";
 
@@ -8,6 +9,12 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ (e: "close"): void }>();
+const termRef = ref<InstanceType<typeof TerminalView> | null>(null);
+
+onMounted(async () => {
+  await nextTick();
+  termRef.value?.focus();
+});
 
 async function spawnShell(sessionId: string, cwd: string, _prompt: string, cols: number, rows: number) {
   await invoke("spawn_session", {
@@ -26,6 +33,7 @@ async function spawnShell(sessionId: string, cwd: string, _prompt: string, cols:
   <div class="modal-overlay" @click.self="emit('close')">
     <div class="shell-modal">
       <TerminalView
+        ref="termRef"
         :key="sessionId"
         :session-id="sessionId"
         :spawn-options="{ cwd, prompt: '', spawnFn: spawnShell }"

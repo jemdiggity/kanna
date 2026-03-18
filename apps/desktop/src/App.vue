@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { isTauri, getMockDatabase } from "./tauri-mock";
 import { invoke } from "./invoke";
 import { listen } from "./listen";
@@ -173,7 +173,7 @@ useKeyboardShortcuts({
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return; }
     if (showFilePickerModal.value) { showFilePickerModal.value = false; return; }
     if (showDiffModal.value) { showDiffModal.value = false; return; }
-    if (showShellModal.value) { showShellModal.value = false; return; }
+    if (showShellModal.value) { showShellModal.value = false; focusAgentTerminal(); return; }
     if (showNewTaskModal.value) { showNewTaskModal.value = false; return; }
     if (showImportRepoModal.value) { showImportRepoModal.value = false; return; }
     if (showPreferencesPanel.value) { showPreferencesPanel.value = false; return; }
@@ -185,6 +185,13 @@ useKeyboardShortcuts({
   showShortcuts: () => { showShortcutsModal.value = !showShortcutsModal.value; },
   openPreferences: () => { showPreferencesPanel.value = true; },
 });
+
+function focusAgentTerminal() {
+  nextTick(() => {
+    const el = document.querySelector(".main-panel .xterm-helper-textarea") as HTMLElement | null;
+    el?.focus();
+  });
+}
 
 // Handlers
 async function handleSelectRepo(repoId: string) {
@@ -445,7 +452,7 @@ onMounted(async () => {
       v-if="showShellModal && currentItem"
       :session-id="`shell-${currentItem.id}`"
       :cwd="currentItem.branch ? `${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}` : selectedRepo?.path || '/tmp'"
-      @close="showShellModal = false"
+      @close="showShellModal = false; focusAgentTerminal()"
     />
     <DiffModal
       v-if="showDiffModal && selectedRepo?.path"

@@ -9,7 +9,11 @@ const props = defineProps<{
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
-const { init, startListening, fit, dispose } = useTerminal(props.sessionId, props.spawnOptions)
+const { terminal, init, startListening, fit, dispose } = useTerminal(props.sessionId, props.spawnOptions)
+
+defineExpose({
+  focus: () => terminal.value?.focus(),
+})
 
 let resizeObserver: ResizeObserver | null = null
 

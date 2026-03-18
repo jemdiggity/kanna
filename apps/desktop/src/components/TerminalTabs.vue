@@ -21,6 +21,7 @@ const emit = defineEmits<{
     <!-- PTY mode: key by sessionId so switching tasks creates a new terminal -->
     <TerminalView
       v-if="sessionId && agentType === 'pty'"
+      ref="termRef"
       :key="sessionId"
       :session-id="sessionId"
       :spawn-options="spawnPtySession && worktreePath && prompt ? {

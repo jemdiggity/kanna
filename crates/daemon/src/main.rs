@@ -27,6 +27,9 @@ use session::SessionManager;
 use socket::{bind_socket, read_command, write_event};
 
 fn app_support_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("KANNA_DAEMON_DIR") {
+        return PathBuf::from(dir);
+    }
     let home = std::env::var("HOME").expect("HOME not set");
     PathBuf::from(home)
         .join("Library")

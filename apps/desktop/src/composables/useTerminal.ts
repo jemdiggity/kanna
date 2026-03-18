@@ -48,6 +48,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
 
     // Let app-level shortcuts pass through even when terminal has focus
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.key === "Escape") return false
       const meta = e.metaKey || e.ctrlKey
       // Shift+Cmd+N (new task), Cmd+/ (shortcuts), Cmd+P (file picker),
       // Cmd+S (make PR), Cmd+M (merge), Cmd+N (new window)
