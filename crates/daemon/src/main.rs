@@ -1,3 +1,4 @@
+mod fd_transfer;
 mod protocol;
 mod pty;
 mod session;
