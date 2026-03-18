@@ -3,8 +3,8 @@ mod pty;
 mod session;
 mod socket;
 
-use std::collections::{HashMap, VecDeque};
 use std::io::Read;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,14 +12,8 @@ use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, Mutex};
 
-/// Max bytes to buffer per session for scrollback replay on reattach.
-const SCROLLBACK_CAPACITY: usize = 256 * 1024; // 256KB
-
-/// Per-session output ring buffer.
-type OutputBuffers = Arc<Mutex<HashMap<String, VecDeque<u8>>>>;
-
 /// Swappable writer target. stream_output checks this on every read.
-/// None = no client attached (output is buffered but not sent).
+/// None = no client attached (output discarded).
 type ActiveWriter = Arc<Mutex<Option<Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>>>>;
 
 /// Map of session_id → active writer target.
@@ -45,7 +39,6 @@ async fn main() {
     let dir = app_support_dir();
     std::fs::create_dir_all(&dir).expect("Failed to create app support dir");
 
-    // Write PID file
     let pid_path = dir.join("daemon.pid");
     let pid = std::process::id();
     std::fs::write(&pid_path, pid.to_string()).expect("Failed to write PID file");
@@ -56,13 +49,10 @@ async fn main() {
     eprintln!("kanna-daemon starting, pid={}, socket={:?}", pid, socket_path);
 
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
-    let output_buffers: OutputBuffers = Arc::new(Mutex::new(HashMap::new()));
     let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
 
-    // Broadcast channel for hook events — any connection can send, all connections receive
     let (hook_tx, _) = broadcast::channel::<String>(256);
 
-    // Graceful shutdown on Ctrl+C
     let pid_path_clone = pid_path.clone();
     let socket_path_clone = socket_path.clone();
     let sessions_shutdown = sessions.clone();
@@ -80,10 +70,9 @@ async fn main() {
             Ok((stream, _addr)) => {
                 let sessions_clone = sessions.clone();
                 let hook_tx_clone = hook_tx.clone();
-                let buffers_clone = output_buffers.clone();
                 let writers_clone = session_writers.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, sessions_clone, hook_tx_clone, buffers_clone, writers_clone).await;
+                    handle_connection(stream, sessions_clone, hook_tx_clone, writers_clone).await;
                 });
             }
             Err(e) => {
@@ -97,14 +86,12 @@ async fn handle_connection(
     stream: UnixStream,
     sessions: Arc<Mutex<SessionManager>>,
     hook_tx: broadcast::Sender<String>,
-    output_buffers: OutputBuffers,
     session_writers: SessionWriters,
 ) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let writer = Arc::new(Mutex::new(write_half));
 
-    // No automatic broadcast subscription — clients must explicitly Subscribe.
     let subscribed = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     loop {
@@ -129,7 +116,7 @@ async fn handle_connection(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(command) => {
-                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, output_buffers.clone(), session_writers.clone()).await;
+                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, session_writers.clone()).await;
             }
         }
     }
@@ -140,7 +127,6 @@ async fn handle_command(
     sessions: Arc<Mutex<SessionManager>>,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     hook_tx: &broadcast::Sender<String>,
-    output_buffers: OutputBuffers,
     session_writers: SessionWriters,
 ) {
     match command {
@@ -192,7 +178,7 @@ async fn handle_command(
                 return;
             }
 
-            // First attach: clone reader and start stream_output
+            // First attach: clone reader and start the single stream_output task
             let is_first_attach = !session_writers.lock().await.contains_key(&session_id);
             if is_first_attach {
                 let pty_reader = match mgr.sessions.get(&session_id).unwrap().try_clone_reader() {
@@ -208,56 +194,34 @@ async fn handle_command(
                 };
                 drop(mgr);
 
-                // Create ActiveWriter pointing to this connection immediately
                 let active_writer: ActiveWriter = Arc::new(Mutex::new(Some(writer.clone())));
                 session_writers.lock().await.insert(session_id.clone(), active_writer.clone());
 
-                {
-                    let evt = Event::Ok;
-                    let _ = write_event(&mut *writer.lock().await, &evt).await;
-                }
+                let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
 
-                // Start the one reader task — no scrollback to replay (first attach)
                 let sid = session_id.clone();
                 let sessions_exit = sessions.clone();
-                let buffers_clone = output_buffers.clone();
                 let writers_cleanup = session_writers.clone();
                 tokio::task::spawn_blocking(move || {
-                    stream_output(sid, pty_reader, active_writer, sessions_exit, buffers_clone, writers_cleanup);
+                    stream_output(sid, pty_reader, active_writer, sessions_exit, writers_cleanup);
                 });
             } else {
                 drop(mgr);
 
-                {
-                    let evt = Event::Ok;
-                    let _ = write_event(&mut *writer.lock().await, &evt).await;
-                }
-
-                // Reattach: replay scrollback and swap writer atomically
-                let buffers = output_buffers.lock().await;
-                if let Some(buf) = buffers.get(&session_id) {
-                    if !buf.is_empty() {
-                        let data: Vec<u8> = buf.iter().copied().collect();
-                        let evt = Event::Output {
-                            session_id: session_id.clone(),
-                            data,
-                        };
-                        let _ = write_event(&mut *writer.lock().await, &evt).await;
-                    }
-                }
-
-                // Swap writer while holding buffers lock (no output can slip through)
+                // Reattach: just swap the writer target
                 let writers = session_writers.lock().await;
                 if let Some(active) = writers.get(&session_id) {
                     let mut w = active.lock().await;
                     *w = Some(writer.clone());
                 }
+                drop(writers);
+
+                let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
         }
 
         Command::Detach { session_id } => {
             let evt = if sessions.lock().await.contains(&session_id) {
-                // Clear the active writer so output is buffered but not sent
                 let writers = session_writers.lock().await;
                 if let Some(active) = writers.get(&session_id) {
                     let mut w = active.lock().await;
@@ -277,9 +241,8 @@ async fn handle_command(
             match mgr.get_mut(&session_id) {
                 Some(session) => match session.write_input(&data) {
                     Ok(_) => {
-                        let evt = Event::Ok;
                         drop(mgr);
-                        let _ = write_event(&mut *writer.lock().await, &evt).await;
+                        let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
                     }
                     Err(e) => {
                         let evt = Event::Error {
@@ -299,19 +262,13 @@ async fn handle_command(
             }
         }
 
-        Command::Resize {
-            session_id,
-            cols,
-            rows,
-        } => {
+        Command::Resize { session_id, cols, rows } => {
             let mgr = sessions.lock().await;
             let result = mgr.resize(&session_id, cols, rows);
             drop(mgr);
             let evt = match result {
                 Ok(_) => Event::Ok,
-                Err(e) => Event::Error {
-                    message: e.to_string(),
-                },
+                Err(e) => Event::Error { message: e.to_string() },
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -335,9 +292,7 @@ async fn handle_command(
             drop(mgr);
             let evt = match result {
                 Ok(_) => Event::Ok,
-                Err(e) => Event::Error {
-                    message: e.to_string(),
-                },
+                Err(e) => Event::Error { message: e.to_string() },
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -355,13 +310,10 @@ async fn handle_command(
                 mgr.remove(&session_id);
             }
             drop(mgr);
-            // Clean up the writer slot
             session_writers.lock().await.remove(&session_id);
             let evt = match result {
                 Ok(_) => Event::Ok,
-                Err(e) => Event::Error {
-                    message: e.to_string(),
-                },
+                Err(e) => Event::Error { message: e.to_string() },
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -370,31 +322,20 @@ async fn handle_command(
             let mut mgr = sessions.lock().await;
             let sessions_list = mgr.list();
             drop(mgr);
-            let evt = Event::SessionList {
-                sessions: sessions_list,
-            };
+            let evt = Event::SessionList { sessions: sessions_list };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
 
         Command::Handoff => {
-            let evt = Event::HandoffUnsupported;
-            let _ = write_event(&mut *writer.lock().await, &evt).await;
+            let _ = write_event(&mut *writer.lock().await, &Event::HandoffUnsupported).await;
         }
 
         Command::Subscribe => {
             let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
         }
 
-        Command::HookEvent {
-            session_id,
-            event,
-            data,
-        } => {
-            let evt = Event::HookEvent {
-                session_id,
-                event,
-                data,
-            };
+        Command::HookEvent { session_id, event, data } => {
+            let evt = Event::HookEvent { session_id, event, data };
             if let Ok(json) = serde_json::to_string(&evt) {
                 let _ = hook_tx.send(json);
             }
@@ -411,7 +352,6 @@ fn stream_output(
     mut reader: Box<dyn Read + Send>,
     active_writer: ActiveWriter,
     sessions: Arc<Mutex<SessionManager>>,
-    output_buffers: OutputBuffers,
     session_writers: SessionWriters,
 ) {
     let rt = tokio::runtime::Handle::current();
@@ -422,20 +362,6 @@ fn stream_output(
             Ok(0) => break,
             Ok(n) => {
                 let data = buf[..n].to_vec();
-
-                // Append to scrollback ring buffer
-                rt.block_on(async {
-                    let mut buffers = output_buffers.lock().await;
-                    let sb = buffers
-                        .entry(session_id.clone())
-                        .or_insert_with(VecDeque::new);
-                    sb.extend(&data);
-                    while sb.len() > SCROLLBACK_CAPACITY {
-                        sb.pop_front();
-                    }
-                });
-
-                // Send to attached client (if any)
                 let evt = Event::Output {
                     session_id: session_id.clone(),
                     data,
@@ -454,7 +380,6 @@ fn stream_output(
         }
     }
 
-    // Process exited — get exit code and clean up
     let exit_code = {
         let mut mgr = rt.block_on(sessions.lock());
         let code = match mgr.get_mut(&session_id) {
@@ -465,7 +390,6 @@ fn stream_output(
         code
     };
 
-    // Send Exit event to attached client
     let evt = Event::Exit {
         session_id: session_id.clone(),
         code: exit_code,
@@ -475,7 +399,6 @@ fn stream_output(
         if let Some(w) = maybe_writer {
             let _ = write_event(&mut *w.lock().await, &evt).await;
         }
-        // Clean up writer slot
         session_writers.lock().await.remove(&session_id);
     });
 }

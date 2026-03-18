@@ -3,7 +3,7 @@
 //! These tests spawn a real daemon process and communicate with it over
 //! Unix sockets, verifying that:
 //!   - Attach/reattach doesn't split PTY bytes between readers
-//!   - Scrollback is replayed on reattach
+//!   - Reattach swaps writer without scrollback replay
 //!   - Input after reattach reaches the PTY
 //!   - Old stream_output tasks are cancelled on reattach
 
@@ -218,7 +218,7 @@ fn send_input(conn: &mut ClientConn, session_id: &str, data: &[u8]) {
         data: data.to_vec(),
     });
 
-    // The Ok response may be preceded by Output events (from scrollback or live data)
+    // The Ok response may be preceded by Output events
     loop {
         match conn.recv() {
             Evt::Ok => break,
@@ -296,10 +296,6 @@ fn test_reattach_same_connection_no_split_bytes() {
     // Reattach on the same connection
     attach(&mut conn, "sess-reattach");
 
-    // Scrollback replay may arrive — drain it
-    let replayed = conn.drain_output(Duration::from_millis(500));
-    let _ = replayed; // We don't validate scrollback content here
-
     // Now send new data and verify ALL bytes arrive (no split)
     let test_data = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\n";
     send_input(&mut conn, "sess-reattach", test_data);
@@ -332,9 +328,6 @@ fn test_reattach_new_connection_no_split_bytes() {
     let mut conn2 = daemon.connect();
     attach(&mut conn2, "sess-reconnect");
 
-    // Drain scrollback replay
-    conn2.drain_output(Duration::from_millis(500));
-
     // Send data — should all arrive on conn2, none on conn1
     let test_data = b"0123456789ABCDEF\n";
     send_input(&mut conn2, "sess-reconnect", test_data);
@@ -345,32 +338,6 @@ fn test_reattach_new_connection_no_split_bytes() {
         output_str.contains("0123456789ABCDEF"),
         "expected full data on new connection (no split), got: {:?}",
         output_str
-    );
-}
-
-/// Scrollback replay: after reattach, previously output data is replayed.
-#[test]
-fn test_scrollback_replay_on_reattach() {
-    let daemon = DaemonHandle::start();
-    let mut conn = daemon.connect();
-
-    spawn_echo_session(&mut conn, "sess-scroll");
-    attach(&mut conn, "sess-scroll");
-
-    // Send known data
-    send_input(&mut conn, "sess-scroll", b"replay-me\n");
-    conn.drain_output(Duration::from_millis(500));
-
-    // Reattach — should get scrollback replay containing "replay-me"
-    let mut conn2 = daemon.connect();
-    attach(&mut conn2, "sess-scroll");
-
-    let replayed = conn2.drain_output(Duration::from_millis(500));
-    let replay_str = String::from_utf8_lossy(&replayed);
-    assert!(
-        replay_str.contains("replay-me"),
-        "scrollback replay should contain 'replay-me', got: {:?}",
-        replay_str
     );
 }
 

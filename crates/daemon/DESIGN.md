@@ -89,14 +89,20 @@ Cancel flags were added as a mitigation, but they only work when `read()` return
 |--------|----------|-----------|
 | Reader count | One per session | Simpler, no byte-splitting. But if the single reader panics, the session is lost. |
 | Writer swap | `Arc<Mutex<Option<Arc<Mutex<W>>>>>` | Extra lock per output chunk. In practice, PTY output is ~4KB chunks at ~60Hz — negligible overhead. |
-| Detached output | Buffered in scrollback, discarded from writer | No output is lost (scrollback replays on reattach). But scrollback is capped at 256KB. |
+| No scrollback buffer | Rely on SIGWINCH to trigger TUI redraw | Eliminates replay race conditions and 256KB per-session memory. Trade-off: only works with TUI apps that redraw on resize (like Claude CLI). A plain shell would show a blank terminal on reconnect. |
 | Blocking read | `spawn_blocking` with `std::io::Read` | Can't use async I/O for PTY reads (portable-pty gives `Box<dyn Read>`). The blocking thread is pinned for the session lifetime. One thread per session is acceptable for expected scale (<100 sessions). |
 
-## Scrollback Buffer
+## Reconnection Strategy
 
-Each session maintains a ring buffer (`VecDeque<u8>`, 256KB cap) of recent output. On `Attach`, the buffer is replayed before live streaming begins. This provides seamless reconnection after app restart — the user sees recent terminal history.
+The daemon does **not** buffer scrollback. Instead, reconnection relies on the TUI application (Claude CLI) redrawing itself.
 
-The buffer is written by `stream_output` on every read, regardless of whether a client is attached. This means even detached sessions accumulate scrollback for later replay.
+Claude CLI is built on ink (React for terminals). On SIGWINCH (terminal resize), ink re-renders the entire component tree — conversation history, tool outputs, everything. The frontend exploits this:
+
+1. **Reattach** — swap the ActiveWriter to the new connection
+2. **Send Resize** — `resize_session` with the current xterm dimensions triggers SIGWINCH
+3. **Claude redraws** — the full TUI is re-rendered into the terminal
+
+This eliminates the need for scrollback buffers, replay logic, and the race conditions they introduce. The trade-off: a brief blank terminal between reattach and redraw (typically <100ms).
 
 ## Protocol
 
@@ -151,8 +157,8 @@ Tests must run single-threaded (`--test-threads=1`) because each test spawns and
 ### Test Coverage
 
 - Basic spawn/attach/I/O roundtrip
+- Separate-connection spawn/attach/input (mirrors real Tauri architecture)
 - Reattach on same connection (no byte splitting)
 - Reattach on new connection (simulates app restart)
-- Scrollback replay after reattach
 - Input works after reattach
 - Rapid reattach (5 connections, no delays, no workarounds)

@@ -2,12 +2,8 @@ import { ref, onUnmounted } from "vue"
 import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
-import { SerializeAddon } from "@xterm/addon-serialize"
 import { invoke } from "../invoke"
 import { listen } from "../listen"
-
-// Module-level cache: sessionId → serialized ANSI scrollback
-const scrollbackCache = new Map<string, string>()
 
 export interface SpawnOptions {
   cwd: string
@@ -18,7 +14,6 @@ export interface SpawnOptions {
 export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
   const terminal = ref<Terminal | null>(null)
   const fitAddon = new FitAddon()
-  const serializeAddon = new SerializeAddon()
   let unlistenOutput: (() => void) | null = null
   let unlistenExit: (() => void) | null = null
 
@@ -32,26 +27,16 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
     })
     term.loadAddon(fitAddon)
     term.loadAddon(new WebLinksAddon())
-    term.loadAddon(serializeAddon)
     term.open(container)
 
     if (container.offsetWidth > 0 && container.offsetHeight > 0) {
       fitAddon.fit()
     }
 
-    // Restore cached scrollback for tab switches (same app session).
-    // Will be cleared if we reattach to a live daemon session.
-    const cached = scrollbackCache.get(sessionId)
-    if (cached) {
-      term.write(cached)
-    }
-
     // Let app-level shortcuts pass through even when terminal has focus
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.key === "Escape") return false
       const meta = e.metaKey || e.ctrlKey
-      // Shift+Cmd+N (new task), Cmd+/ (shortcuts), Cmd+P (file picker),
-      // Cmd+S (make PR), Cmd+M (merge), Cmd+N (new window)
       if (meta && e.shiftKey && e.key === "N") return false
       if (meta && e.key === "/") return false
       if (meta && e.key === "p") return false
@@ -61,11 +46,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
       if (meta && e.key === "j") return false
       if (meta && !e.shiftKey && e.key === "n") return false
       if (meta && e.shiftKey && e.key === "Z") return false
-      // Cmd+Opt+Left/Right for tab navigation
       if (meta && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return false
-      // Cmd+Opt+Up/Down for task navigation
       if (meta && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) return false
-      return true // let terminal handle everything else
+      return true
     })
 
     // Send keystrokes to daemon
@@ -116,8 +99,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
     try {
       await invoke("attach_session", { sessionId })
       // Attach succeeded — session was alive in daemon.
-      // Daemon replays scrollback buffer, so clear local cache to avoid double-render.
-      scrollbackCache.delete(sessionId)
+      // Send resize to trigger SIGWINCH → Claude redraws its TUI.
       if (terminal.value) {
         terminal.value.reset()
         const { cols, rows } = terminal.value
@@ -147,18 +129,6 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
   }
 
   function dispose() {
-    // Save scrollback before disposing
-    if (terminal.value) {
-      try {
-        const serialized = serializeAddon.serialize()
-        if (serialized) {
-          scrollbackCache.set(sessionId, serialized)
-        }
-      } catch {
-        // Serialize may fail if terminal is already disposed
-      }
-    }
-
     if (unlistenOutput) unlistenOutput()
     if (unlistenExit) unlistenExit()
     terminal.value?.dispose()
