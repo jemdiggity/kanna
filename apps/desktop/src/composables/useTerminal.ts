@@ -2,15 +2,19 @@ import { ref, onUnmounted } from "vue"
 import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
+import { SerializeAddon } from "@xterm/addon-serialize"
 import { invoke } from "../invoke"
 import { listen } from "../listen"
+
+// Module-level cache: sessionId → serialized ANSI scrollback
+const scrollbackCache = new Map<string, string>()
 
 export function useTerminal(sessionId: string) {
   const terminal = ref<Terminal | null>(null)
   const fitAddon = new FitAddon()
+  const serializeAddon = new SerializeAddon()
   let unlistenOutput: (() => void) | null = null
   let unlistenExit: (() => void) | null = null
-  let logged = false
 
   function init(container: HTMLElement) {
     const term = new Terminal({
@@ -22,12 +26,17 @@ export function useTerminal(sessionId: string) {
     })
     term.loadAddon(fitAddon)
     term.loadAddon(new WebLinksAddon())
+    term.loadAddon(serializeAddon)
     term.open(container)
-    // Only fit if the container is visible (has non-zero dimensions)
-    // v-show hidden containers report 0 size — fit() will be called
-    // by the ResizeObserver when the tab becomes visible
+
     if (container.offsetWidth > 0 && container.offsetHeight > 0) {
       fitAddon.fit()
+    }
+
+    // Restore cached scrollback if available
+    const cached = scrollbackCache.get(sessionId)
+    if (cached) {
+      term.write(cached)
     }
 
     // Send keystrokes to daemon
@@ -47,17 +56,11 @@ export function useTerminal(sessionId: string) {
   }
 
   async function startListening() {
-    // Listen for terminal output from daemon
     unlistenOutput = await listen<{ session_id: string; data_b64?: string; data?: number[] }>(
       "terminal_output",
       (event) => {
         if (event.payload.session_id === sessionId && terminal.value) {
-          if (!logged) {
-            console.log("[terminal] payload keys:", Object.keys(event.payload), "has b64:", !!event.payload.data_b64, "has data:", !!event.payload.data)
-            logged = true
-          }
           if (event.payload.data_b64) {
-            // Base64 encoded binary data
             const binary = atob(event.payload.data_b64)
             const bytes = new Uint8Array(binary.length)
             for (let i = 0; i < binary.length; i++) {
@@ -71,7 +74,6 @@ export function useTerminal(sessionId: string) {
       }
     )
 
-    // Listen for session exit
     unlistenExit = await listen<{ session_id: string; code: number }>(
       "session_exit",
       (event) => {
@@ -81,10 +83,10 @@ export function useTerminal(sessionId: string) {
       }
     )
 
-    // Attach to daemon session to start receiving output
+    // Only attach if we don't have cached scrollback (fresh session)
+    // If we have cache, the session was already attached before
     await invoke("attach_session", { sessionId })
 
-    // Sync xterm.js size to the PTY — the spawn may have used different dimensions
     if (terminal.value) {
       const { cols, rows } = terminal.value;
       invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
@@ -96,6 +98,18 @@ export function useTerminal(sessionId: string) {
   }
 
   function dispose() {
+    // Save scrollback before disposing
+    if (terminal.value) {
+      try {
+        const serialized = serializeAddon.serialize()
+        if (serialized) {
+          scrollbackCache.set(sessionId, serialized)
+        }
+      } catch {
+        // Serialize may fail if terminal is already disposed
+      }
+    }
+
     if (unlistenOutput) unlistenOutput()
     if (unlistenExit) unlistenExit()
     terminal.value?.dispose()
