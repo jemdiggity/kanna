@@ -11,6 +11,7 @@ import MainPanel from "./components/MainPanel.vue";
 import NewTaskModal from "./components/NewTaskModal.vue";
 import ImportRepoModal from "./components/ImportRepoModal.vue";
 import PreferencesPanel from "./components/PreferencesPanel.vue";
+import KeyboardShortcutsModal from "./components/KeyboardShortcutsModal.vue";
 import { useRepo } from "./composables/useRepo";
 import { usePipeline } from "./composables/usePipeline";
 import { usePreferences } from "./composables/usePreferences";
@@ -54,6 +55,8 @@ const prWorkflow = computed(() =>
 const showNewTaskModal = ref(false);
 const showImportRepoModal = ref(false);
 const showPreferencesPanel = ref(false);
+const showShortcutsModal = ref(false);
+const showFilePickerModal = ref(false);
 const zenMode = ref(false);
 
 const currentItem = computed(() => selectedItem());
@@ -138,12 +141,21 @@ async function handleCloseTask() {
 
 useKeyboardShortcuts({
   newTask: () => { showNewTaskModal.value = true; },
+  openFile: () => { showFilePickerModal.value = true; },
+  makePR: handleMakePR,
   merge: handleMerge,
   closeTask: handleCloseTask,
-  toggleZen: () => { zenMode.value = !zenMode.value; },
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
+  toggleZen: () => { zenMode.value = !zenMode.value; },
   exitZen: () => { zenMode.value = false; },
+  openTerminal: () => { /* TODO: emit to TerminalTabs */ },
+  openTerminalAtRoot: () => { /* TODO */ },
+  closeTerminal: () => { /* TODO */ },
+  nextTab: () => { /* TODO */ },
+  prevTab: () => { /* TODO */ },
+  newWindow: () => { /* TODO: Tauri window API */ },
+  showShortcuts: () => { showShortcutsModal.value = true; },
   openPreferences: () => { showPreferencesPanel.value = true; },
 });
 
@@ -379,6 +391,10 @@ onMounted(async () => {
       }"
       @update="handlePreferenceUpdate"
       @close="showPreferencesPanel = false"
+    />
+    <KeyboardShortcutsModal
+      v-if="showShortcutsModal"
+      @close="showShortcutsModal = false"
     />
   </div>
 </template>
