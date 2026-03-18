@@ -12,6 +12,7 @@ import NewTaskModal from "./components/NewTaskModal.vue";
 import ImportRepoModal from "./components/ImportRepoModal.vue";
 import PreferencesPanel from "./components/PreferencesPanel.vue";
 import KeyboardShortcutsModal from "./components/KeyboardShortcutsModal.vue";
+import FilePickerModal from "./components/FilePickerModal.vue";
 import { useRepo } from "./composables/useRepo";
 import { usePipeline } from "./composables/usePipeline";
 import { usePreferences } from "./composables/usePreferences";
@@ -395,6 +396,12 @@ onMounted(async () => {
     <KeyboardShortcutsModal
       v-if="showShortcutsModal"
       @close="showShortcutsModal = false"
+    />
+    <FilePickerModal
+      v-if="showFilePickerModal && currentItem?.branch"
+      :worktree-path="`${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}`"
+      :ide-command="ideCommand"
+      @close="showFilePickerModal = false"
     />
   </div>
 </template>

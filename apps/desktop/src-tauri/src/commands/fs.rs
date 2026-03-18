@@ -31,6 +31,48 @@ pub fn read_env_var(name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn list_files(path: String) -> Result<Vec<String>, String> {
+    let root = std::path::Path::new(&path);
+    if !root.is_dir() {
+        return Err(format!("not a directory: {}", path));
+    }
+
+    let skip_dirs = [".git", "node_modules", "target", "dist", ".kanna-worktrees", ".turbo"];
+    let mut files = Vec::new();
+
+    fn walk(
+        dir: &std::path::Path,
+        root: &std::path::Path,
+        skip: &[&str],
+        out: &mut Vec<String>,
+    ) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') && name != ".claude" {
+                continue;
+            }
+            if path.is_dir() {
+                if skip.contains(&name.as_str()) {
+                    continue;
+                }
+                walk(&path, root, skip, out);
+            } else if let Ok(rel) = path.strip_prefix(root) {
+                out.push(rel.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    walk(root, root, &skip_dirs, &mut files);
+    files.sort();
+    Ok(files)
+}
+
+#[tauri::command]
 pub fn append_log(message: String) -> Result<(), String> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
