@@ -90,13 +90,4 @@ impl SessionManager {
         self.sessions.keys().cloned().collect()
     }
 
-    pub fn sessions_reader(
-        &self,
-        session_id: &str,
-    ) -> Result<Box<dyn std::io::Read + Send>, Box<dyn std::error::Error + Send + Sync>> {
-        match self.sessions.get(session_id) {
-            Some(session) => session.try_clone_reader(),
-            None => Err(format!("session not found: {}", session_id).into()),
-        }
-    }
 }

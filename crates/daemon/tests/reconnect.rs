@@ -14,13 +14,12 @@ use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::time::Duration;
 
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // ---- Protocol types (mirrored from daemon) ----
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 enum Cmd {
@@ -46,6 +45,7 @@ enum Cmd {
     List,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum Evt {
@@ -374,36 +374,25 @@ fn test_input_works_after_reattach() {
 }
 
 /// Rapid reattach from separate connections: only the last should receive output.
-/// NOTE: This test exposes a known limitation — old stream_output tasks block
-/// on read() and can't be cancelled until the PTY produces output. With
-/// /bin/cat and no input, blocked readers accumulate and split bytes.
-/// The workaround is to send input between reattaches to unblock old readers.
+/// With the single-reader architecture, this just works — Attach swaps the
+/// writer target atomically, no reader duplication or cancellation needed.
 #[test]
 fn test_rapid_reattach() {
     let daemon = DaemonHandle::start();
 
-    // Spawn on first connection
     let mut conn_spawn = daemon.connect();
     spawn_echo_session(&mut conn_spawn, "sess-rapid");
-    attach(&mut conn_spawn, "sess-rapid");
 
-    // Send input to keep output flowing (unblocks reader.read() so cancel works)
-    send_input(&mut conn_spawn, "sess-rapid", b"warmup\n");
-    conn_spawn.drain_output(Duration::from_millis(300));
-
-    // Rapid reattach: 3 new connections
-    for i in 0..3 {
+    // Rapid reattach: 5 connections attach in quick succession (no delays)
+    for _ in 0..5 {
         let mut c = daemon.connect();
         attach(&mut c, "sess-rapid");
-        // Send a byte to unblock the previous reader
-        send_input(&mut c, "sess-rapid", &format!("{}\n", i).into_bytes());
-        c.drain_output(Duration::from_millis(200));
     }
 
     // Final connection should get clean output
     let mut final_conn = daemon.connect();
     attach(&mut final_conn, "sess-rapid");
-    final_conn.drain_output(Duration::from_millis(500));
+    final_conn.drain_output(Duration::from_millis(300));
 
     send_input(&mut final_conn, "sess-rapid", b"RAPID_TEST_DATA\n");
 

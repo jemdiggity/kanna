@@ -6,7 +6,6 @@ mod socket;
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tokio::io::BufReader;
@@ -14,13 +13,17 @@ use tokio::net::UnixStream;
 use tokio::sync::{broadcast, Mutex};
 
 /// Max bytes to buffer per session for scrollback replay on reattach.
-const SCROLLBACK_CAPACITY: usize = 256 * 1024; // 256KB, same as Swift version
+const SCROLLBACK_CAPACITY: usize = 256 * 1024; // 256KB
 
 /// Per-session output ring buffer.
 type OutputBuffers = Arc<Mutex<HashMap<String, VecDeque<u8>>>>;
 
-/// Per-session cancel flag — set to true to stop a previous stream_output task.
-type AttachCancels = Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>;
+/// Swappable writer target. stream_output checks this on every read.
+/// None = no client attached (output is buffered but not sent).
+type ActiveWriter = Arc<Mutex<Option<Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>>>>;
+
+/// Map of session_id → active writer target.
+type SessionWriters = Arc<Mutex<HashMap<String, ActiveWriter>>>;
 
 use protocol::{Command, Event};
 use session::SessionManager;
@@ -54,7 +57,7 @@ async fn main() {
 
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
     let output_buffers: OutputBuffers = Arc::new(Mutex::new(HashMap::new()));
-    let attach_cancels: AttachCancels = Arc::new(Mutex::new(HashMap::new()));
+    let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
 
     // Broadcast channel for hook events — any connection can send, all connections receive
     let (hook_tx, _) = broadcast::channel::<String>(256);
@@ -78,9 +81,9 @@ async fn main() {
                 let sessions_clone = sessions.clone();
                 let hook_tx_clone = hook_tx.clone();
                 let buffers_clone = output_buffers.clone();
-                let cancels_clone = attach_cancels.clone();
+                let writers_clone = session_writers.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, sessions_clone, hook_tx_clone, buffers_clone, cancels_clone).await;
+                    handle_connection(stream, sessions_clone, hook_tx_clone, buffers_clone, writers_clone).await;
                 });
             }
             Err(e) => {
@@ -95,14 +98,13 @@ async fn handle_connection(
     sessions: Arc<Mutex<SessionManager>>,
     hook_tx: broadcast::Sender<String>,
     output_buffers: OutputBuffers,
-    attach_cancels: AttachCancels,
+    session_writers: SessionWriters,
 ) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let writer = Arc::new(Mutex::new(write_half));
 
     // No automatic broadcast subscription — clients must explicitly Subscribe.
-    // This prevents hook events from mixing with command responses.
     let subscribed = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     loop {
@@ -110,7 +112,6 @@ async fn handle_connection(
         match cmd {
             None => break,
             Some(Command::Subscribe) => {
-                // Opt in to receiving broadcast hook events on this connection
                 if !subscribed.load(std::sync::atomic::Ordering::Relaxed) {
                     subscribed.store(true, std::sync::atomic::Ordering::Relaxed);
                     let mut hook_rx = hook_tx.subscribe();
@@ -128,7 +129,7 @@ async fn handle_connection(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(command) => {
-                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, output_buffers.clone(), attach_cancels.clone()).await;
+                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, output_buffers.clone(), session_writers.clone()).await;
             }
         }
     }
@@ -140,7 +141,7 @@ async fn handle_command(
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     hook_tx: &broadcast::Sender<String>,
     output_buffers: OutputBuffers,
-    attach_cancels: AttachCancels,
+    session_writers: SessionWriters,
 ) {
     match command {
         Command::Spawn {
@@ -163,11 +164,34 @@ async fn handle_command(
 
             match pty::PtySession::spawn(&executable, &args, &cwd, &env, cols, rows) {
                 Ok(pty_session) => {
+                    // Get the reader BEFORE inserting (we need it for stream_output)
+                    let pty_reader = match pty_session.try_clone_reader() {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let evt = Event::Error {
+                                message: format!("failed to get PTY reader: {}", e),
+                            };
+                            let _ = write_event(&mut *writer.lock().await, &evt).await;
+                            return;
+                        }
+                    };
+
                     mgr.insert(session_id.clone(), pty_session);
                     drop(mgr);
 
-                    // Only send SessionCreated — no auto-streaming.
-                    // Client must Attach to start receiving Output events.
+                    // Create the swappable writer (initially None — no client attached yet)
+                    let active_writer: ActiveWriter = Arc::new(Mutex::new(None));
+                    session_writers.lock().await.insert(session_id.clone(), active_writer.clone());
+
+                    // Spawn ONE reader task for this session's lifetime
+                    let sid = session_id.clone();
+                    let sessions_exit = sessions.clone();
+                    let buffers_clone = output_buffers.clone();
+                    let writers_cleanup = session_writers.clone();
+                    tokio::task::spawn_blocking(move || {
+                        stream_output(sid, pty_reader, active_writer, sessions_exit, buffers_clone, writers_cleanup);
+                    });
+
                     let evt = Event::SessionCreated {
                         session_id: session_id.clone(),
                     };
@@ -192,39 +216,23 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &evt).await;
                 return;
             }
-
-            // Cancel any previous stream_output task for this session
-            {
-                let mut cancels = attach_cancels.lock().await;
-                if let Some(old_cancel) = cancels.get(&session_id) {
-                    old_cancel.store(true, Ordering::Relaxed);
-                }
-                // Create a new cancel flag for this attach
-                let cancel = Arc::new(AtomicBool::new(false));
-                cancels.insert(session_id.clone(), cancel.clone());
-            }
-
-            // Get reader from existing session
-            let reader = match mgr.sessions_reader(&session_id) {
-                Ok(r) => r,
-                Err(e) => {
-                    let evt = Event::Error {
-                        message: format!("failed to clone PTY reader: {}", e),
-                    };
-                    drop(mgr);
-                    let _ = write_event(&mut *writer.lock().await, &evt).await;
-                    return;
-                }
-            };
-            let pid = mgr.sessions.get(&session_id).map(|s| s.pid()).unwrap_or(0);
             drop(mgr);
+
+            // Swap the active writer to this connection
+            {
+                let writers = session_writers.lock().await;
+                if let Some(active) = writers.get(&session_id) {
+                    let mut w = active.lock().await;
+                    *w = Some(writer.clone());
+                }
+            }
 
             {
                 let evt = Event::Ok;
                 let _ = write_event(&mut *writer.lock().await, &evt).await;
             }
 
-            // Replay buffered scrollback before streaming live output
+            // Replay buffered scrollback
             {
                 let buffers = output_buffers.lock().await;
                 if let Some(buf) = buffers.get(&session_id) {
@@ -238,20 +246,16 @@ async fn handle_command(
                     }
                 }
             }
-
-            let sid = session_id.clone();
-            let cancel_flag = attach_cancels.lock().await.get(&session_id).cloned().unwrap();
-            let writer_out = writer.clone();
-            let sessions_exit = sessions.clone();
-            let buffers_clone = output_buffers.clone();
-            tokio::task::spawn_blocking(move || {
-                stream_output(sid, reader, writer_out, sessions_exit, pid, buffers_clone, cancel_flag);
-            });
         }
 
         Command::Detach { session_id } => {
-            // Detach just acknowledges — the output task will stop when reader drops
             let evt = if sessions.lock().await.contains(&session_id) {
+                // Clear the active writer so output is buffered but not sent
+                let writers = session_writers.lock().await;
+                if let Some(active) = writers.get(&session_id) {
+                    let mut w = active.lock().await;
+                    *w = None;
+                }
                 Event::Ok
             } else {
                 Event::Error {
@@ -340,11 +344,12 @@ async fn handle_command(
                     format!("session not found: {}", session_id),
                 )),
             };
-            // Remove the session after killing
             if result.is_ok() {
                 mgr.remove(&session_id);
             }
             drop(mgr);
+            // Clean up the writer slot
+            session_writers.lock().await.remove(&session_id);
             let evt = match result {
                 Ok(_) => Event::Ok,
                 Err(e) => Event::Error {
@@ -370,7 +375,6 @@ async fn handle_command(
         }
 
         Command::Subscribe => {
-            // Handled in handle_connection before dispatch
             let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
         }
 
@@ -379,7 +383,6 @@ async fn handle_command(
             event,
             data,
         } => {
-            // Broadcast the hook event to all connected clients
             let evt = Event::HookEvent {
                 session_id,
                 event,
@@ -388,45 +391,29 @@ async fn handle_command(
             if let Ok(json) = serde_json::to_string(&evt) {
                 let _ = hook_tx.send(json);
             }
-            // Acknowledge to the sender
             let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
         }
     }
 }
 
-/// Runs in a blocking thread: reads PTY output and sends Output events.
-/// When the process exits, removes it from the session manager and sends Exit.
-/// If `cancelled` is set to true, this task stops reading and exits without
-/// cleaning up the session (a new attach will take over).
+/// Runs in a blocking thread for the entire lifetime of a session.
+/// ONE reader per session — never duplicated. Output is sent to whatever
+/// client is currently attached via the swappable ActiveWriter.
 fn stream_output(
     session_id: String,
     mut reader: Box<dyn Read + Send>,
-    writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    active_writer: ActiveWriter,
     sessions: Arc<Mutex<SessionManager>>,
-    _pid: u32,
     output_buffers: OutputBuffers,
-    cancelled: Arc<AtomicBool>,
+    session_writers: SessionWriters,
 ) {
     let rt = tokio::runtime::Handle::current();
     let mut buf = [0u8; 4096];
 
     loop {
-        // Check if a newer attach has replaced us
-        if cancelled.load(Ordering::Relaxed) {
-            eprintln!("stream_output for session {} cancelled (reattach)", session_id);
-            return; // Exit without removing session — new attach takes over
-        }
-
         match reader.read(&mut buf) {
-            Ok(0) => {
-                break;
-            }
+            Ok(0) => break,
             Ok(n) => {
-                // Check again after blocking read returns
-                if cancelled.load(Ordering::Relaxed) {
-                    return;
-                }
-
                 let data = buf[..n].to_vec();
 
                 // Append to scrollback ring buffer
@@ -436,37 +423,31 @@ fn stream_output(
                         .entry(session_id.clone())
                         .or_insert_with(VecDeque::new);
                     sb.extend(&data);
-                    // Trim from front if over capacity
                     while sb.len() > SCROLLBACK_CAPACITY {
                         sb.pop_front();
                     }
                 });
 
+                // Send to attached client (if any)
                 let evt = Event::Output {
                     session_id: session_id.clone(),
                     data,
                 };
-                let writer_clone = writer.clone();
-                rt.block_on(async move {
-                    let _ = write_event(&mut *writer_clone.lock().await, &evt).await;
+                rt.block_on(async {
+                    let maybe_writer = active_writer.lock().await.clone();
+                    if let Some(w) = maybe_writer {
+                        let _ = write_event(&mut *w.lock().await, &evt).await;
+                    }
                 });
             }
             Err(e) => {
-                if cancelled.load(Ordering::Relaxed) {
-                    return;
-                }
                 eprintln!("PTY read error for session {}: {}", session_id, e);
                 break;
             }
         }
     }
 
-    // Only clean up if we weren't cancelled (i.e., the process actually exited)
-    if cancelled.load(Ordering::Relaxed) {
-        return;
-    }
-
-    // Get exit code and clean up
+    // Process exited — get exit code and clean up
     let exit_code = {
         let mut mgr = rt.block_on(sessions.lock());
         let code = match mgr.get_mut(&session_id) {
@@ -477,11 +458,17 @@ fn stream_output(
         code
     };
 
+    // Send Exit event to attached client
     let evt = Event::Exit {
         session_id: session_id.clone(),
         code: exit_code,
     };
-    rt.block_on(async move {
-        let _ = write_event(&mut *writer.lock().await, &evt).await;
+    rt.block_on(async {
+        let maybe_writer = active_writer.lock().await.clone();
+        if let Some(w) = maybe_writer {
+            let _ = write_event(&mut *w.lock().await, &evt).await;
+        }
+        // Clean up writer slot
+        session_writers.lock().await.remove(&session_id);
     });
 }
