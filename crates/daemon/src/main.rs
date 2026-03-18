@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 use protocol::{Command, Event};
 use session::SessionManager;
@@ -40,6 +40,9 @@ async fn main() {
 
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
 
+    // Broadcast channel for hook events — any connection can send, all connections receive
+    let (hook_tx, _) = broadcast::channel::<String>(256);
+
     // Graceful shutdown on Ctrl+C
     let pid_path_clone = pid_path.clone();
     let socket_path_clone = socket_path.clone();
@@ -57,8 +60,9 @@ async fn main() {
         match listener.accept().await {
             Ok((stream, _addr)) => {
                 let sessions_clone = sessions.clone();
+                let hook_tx_clone = hook_tx.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, sessions_clone).await;
+                    handle_connection(stream, sessions_clone, hook_tx_clone).await;
                 });
             }
             Err(e) => {
@@ -68,26 +72,46 @@ async fn main() {
     }
 }
 
-async fn handle_connection(stream: UnixStream, sessions: Arc<Mutex<SessionManager>>) {
+async fn handle_connection(
+    stream: UnixStream,
+    sessions: Arc<Mutex<SessionManager>>,
+    hook_tx: broadcast::Sender<String>,
+) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let writer = Arc::new(Mutex::new(write_half));
+
+    // Subscribe to hook broadcast — relay any hook events from other connections to this client
+    let mut hook_rx = hook_tx.subscribe();
+    let writer_hook = writer.clone();
+    let hook_relay = tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        while let Ok(msg) = hook_rx.recv().await {
+            let mut w = writer_hook.lock().await;
+            let _ = w.write_all(msg.as_bytes()).await;
+            let _ = w.write_all(b"\n").await;
+            let _ = w.flush().await;
+        }
+    });
 
     loop {
         let cmd = read_command(&mut reader).await;
         match cmd {
             None => break,
             Some(command) => {
-                handle_command(command, sessions.clone(), writer.clone()).await;
+                handle_command(command, sessions.clone(), writer.clone(), &hook_tx).await;
             }
         }
     }
+
+    hook_relay.abort();
 }
 
 async fn handle_command(
     command: Command,
     sessions: Arc<Mutex<SessionManager>>,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    hook_tx: &broadcast::Sender<String>,
 ) {
     match command {
         Command::Spawn {
@@ -306,12 +330,26 @@ async fn handle_command(
         }
 
         Command::Handoff => {
-            // Handoff: serialize state for a new daemon instance to take over.
-            // For now, respond with HandoffUnsupported since full handoff requires
-            // passing open FDs across process boundaries (SCM_RIGHTS), which is
-            // beyond the initial scope.
             let evt = Event::HandoffUnsupported;
             let _ = write_event(&mut *writer.lock().await, &evt).await;
+        }
+
+        Command::HookEvent {
+            session_id,
+            event,
+            data,
+        } => {
+            // Broadcast the hook event to all connected clients
+            let evt = Event::HookEvent {
+                session_id,
+                event,
+                data,
+            };
+            if let Ok(json) = serde_json::to_string(&evt) {
+                let _ = hook_tx.send(json);
+            }
+            // Acknowledge to the sender
+            let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
         }
     }
 }
