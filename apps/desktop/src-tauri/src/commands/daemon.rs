@@ -7,6 +7,19 @@ use crate::daemon_client::DaemonClient;
 
 pub type DaemonState = Arc<Mutex<Option<DaemonClient>>>;
 
+/// Send a command and read the Ok/Error response, discarding it.
+async fn send_and_ack(state: &DaemonState) -> Result<(), String> {
+    let mut guard = state.lock().await;
+    let client = guard.as_mut().ok_or("daemon not connected")?;
+    let response = client.read_event().await?;
+    let event: serde_json::Value = serde_json::from_str(&response).unwrap_or_default();
+    if let Some("Error") = event.get("type").and_then(|t| t.as_str()) {
+        let msg = event.get("message").and_then(|m| m.as_str()).unwrap_or("daemon error");
+        return Err(msg.to_string());
+    }
+    Ok(())
+}
+
 fn daemon_socket_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home)
@@ -80,8 +93,11 @@ pub async fn send_input(
     });
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    guard.as_mut().unwrap().send_command(&json).await
+    {
+        let mut guard = state.lock().await;
+        guard.as_mut().unwrap().send_command(&json).await?;
+    }
+    send_and_ack(&state).await
 }
 
 #[tauri::command]
@@ -99,8 +115,11 @@ pub async fn resize_session(
     });
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    guard.as_mut().unwrap().send_command(&json).await
+    {
+        let mut guard = state.lock().await;
+        guard.as_mut().unwrap().send_command(&json).await?;
+    }
+    send_and_ack(&state).await
 }
 
 #[tauri::command]
@@ -116,8 +135,11 @@ pub async fn signal_session(
     });
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    guard.as_mut().unwrap().send_command(&json).await
+    {
+        let mut guard = state.lock().await;
+        guard.as_mut().unwrap().send_command(&json).await?;
+    }
+    send_and_ack(&state).await
 }
 
 #[tauri::command]
@@ -131,8 +153,11 @@ pub async fn kill_session(
     });
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    guard.as_mut().unwrap().send_command(&json).await
+    {
+        let mut guard = state.lock().await;
+        guard.as_mut().unwrap().send_command(&json).await?;
+    }
+    send_and_ack(&state).await
 }
 
 #[tauri::command]
