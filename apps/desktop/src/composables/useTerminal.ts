@@ -39,7 +39,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
       fitAddon.fit()
     }
 
-    // Restore cached scrollback if available
+    // Restore cached scrollback for tab switches (same app session).
+    // Will be cleared if we reattach to a live daemon session.
     const cached = scrollbackCache.get(sessionId)
     if (cached) {
       term.write(cached)
@@ -92,8 +93,11 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
     // Try to attach first — session may already exist in daemon (e.g. after app restart)
     try {
       await invoke("attach_session", { sessionId })
-      // Attach succeeded — session was alive, sync size
+      // Attach succeeded — session was alive
+      // Clear stale scrollback cache and reset terminal to avoid garbled overlay
+      scrollbackCache.delete(sessionId)
       if (terminal.value) {
+        terminal.value.reset()
         const { cols, rows } = terminal.value
         invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
       }
