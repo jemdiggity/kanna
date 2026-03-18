@@ -218,21 +218,14 @@ async fn handle_command(
             }
             drop(mgr);
 
-            // Swap the active writer to this connection
-            {
-                let writers = session_writers.lock().await;
-                if let Some(active) = writers.get(&session_id) {
-                    let mut w = active.lock().await;
-                    *w = Some(writer.clone());
-                }
-            }
-
             {
                 let evt = Event::Ok;
                 let _ = write_event(&mut *writer.lock().await, &evt).await;
             }
 
-            // Replay buffered scrollback
+            // Replay scrollback and set ActiveWriter atomically.
+            // Hold the output_buffers lock so stream_output can't append
+            // new data between the snapshot and the writer swap.
             {
                 let buffers = output_buffers.lock().await;
                 if let Some(buf) = buffers.get(&session_id) {
@@ -244,6 +237,14 @@ async fn handle_command(
                         };
                         let _ = write_event(&mut *writer.lock().await, &evt).await;
                     }
+                }
+
+                // Set writer while still holding buffers lock — stream_output
+                // is blocked on buffers.lock(), so no output can slip through
+                let writers = session_writers.lock().await;
+                if let Some(active) = writers.get(&session_id) {
+                    let mut w = active.lock().await;
+                    *w = Some(writer.clone());
                 }
             }
         }

@@ -231,6 +231,34 @@ fn send_input(conn: &mut ClientConn, session_id: &str, data: &[u8]) {
 
 // ---- Tests ----
 
+/// Mimics the real Tauri flow: Spawn on shared conn, Attach on dedicated conn,
+/// Input on shared conn, Output received on dedicated conn.
+#[test]
+fn test_separate_conn_spawn_attach_input() {
+    let daemon = DaemonHandle::start();
+
+    // Shared connection (like DaemonState) — used for Spawn, Input, Resize
+    let mut shared = daemon.connect();
+    spawn_echo_session(&mut shared, "sess-split");
+
+    // Dedicated connection (like attach_session) — used for Attach + output streaming
+    let mut dedicated = daemon.connect();
+    attach(&mut dedicated, "sess-split");
+    dedicated.drain_output(Duration::from_millis(200));
+
+    // Send input on the SHARED connection (different from attach connection)
+    send_input(&mut shared, "sess-split", b"hello\n");
+
+    // Output should arrive on the DEDICATED connection
+    let output = dedicated.collect_output(5);
+    let output_str = String::from_utf8_lossy(&output);
+    assert!(
+        output_str.contains("hello"),
+        "output should arrive on dedicated attach connection, got: {:?}",
+        output_str
+    );
+}
+
 /// Basic: spawn, attach, send input, receive output.
 #[test]
 fn test_spawn_attach_io() {
