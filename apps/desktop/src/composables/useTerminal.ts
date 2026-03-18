@@ -52,6 +52,10 @@ export function useTerminal(sessionId: string) {
       "terminal_output",
       (event) => {
         if (event.payload.session_id === sessionId && terminal.value) {
+          if (!logged) {
+            console.log("[terminal] payload keys:", Object.keys(event.payload), "has b64:", !!event.payload.data_b64, "has data:", !!event.payload.data)
+            logged = true
+          }
           if (event.payload.data_b64) {
             // Base64 encoded binary data
             const binary = atob(event.payload.data_b64)
