@@ -1,0 +1,59 @@
+<script setup lang="ts">
+import { invoke } from "../invoke";
+import TerminalView from "./TerminalView.vue";
+
+const props = defineProps<{
+  sessionId: string;
+  cwd: string;
+}>();
+
+const emit = defineEmits<{ (e: "close"): void }>();
+
+async function spawnShell(sessionId: string, cwd: string, _prompt: string, cols: number, rows: number) {
+  await invoke("spawn_session", {
+    sessionId,
+    cwd,
+    executable: "/bin/zsh",
+    args: ["--login"],
+    env: { TERM: "xterm-256color" },
+    cols,
+    rows,
+  });
+}
+</script>
+
+<template>
+  <div class="modal-overlay" @click.self="emit('close')">
+    <div class="shell-modal">
+      <TerminalView
+        :key="sessionId"
+        :session-id="sessionId"
+        :spawn-options="{ cwd, prompt: '', spawnFn: spawnShell }"
+      />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.shell-modal {
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 8px;
+  width: 90vw;
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 4px;
+}
+</style>

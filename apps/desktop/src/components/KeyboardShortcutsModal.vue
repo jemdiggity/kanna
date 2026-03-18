@@ -23,11 +23,7 @@ const groups = [
   {
     title: "Terminal",
     shortcuts: [
-      { keys: "Cmd+T", action: "Open Terminal" },
-      { keys: "Shift+Cmd+T", action: "Terminal at Repo Root" },
-      { keys: "Cmd+W", action: "Close Terminal" },
-      { keys: "Option+Cmd+Right", action: "Next Tab" },
-      { keys: "Option+Cmd+Left", action: "Previous Tab" },
+      { keys: "Cmd+J", action: "Shell Terminal" },
     ],
   },
   {

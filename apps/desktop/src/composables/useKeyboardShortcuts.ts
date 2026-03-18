@@ -13,11 +13,7 @@ export interface KeyboardActions {
   toggleZen: () => void;
   dismiss: () => void;
   // Terminal
-  openTerminal: () => void;
-  openTerminalAtRoot: () => void;
-  closeTerminal: () => void;
-  nextTab: () => void;
-  prevTab: () => void;
+  openShell: () => void;
   // Window
   newWindow: () => void;
   // Views
@@ -100,38 +96,10 @@ export function useKeyboardShortcuts(actions: KeyboardActions) {
       return;
     }
 
-    // Cmd+T → Open Terminal
-    if (meta && !e.shiftKey && e.key === "t") {
+    // Cmd+J → Open Shell
+    if (meta && e.key === "j") {
       e.preventDefault();
-      actions.openTerminal();
-      return;
-    }
-
-    // Shift+Cmd+T → Open Terminal at Repo Root
-    if (meta && e.shiftKey && e.key === "T") {
-      e.preventDefault();
-      actions.openTerminalAtRoot();
-      return;
-    }
-
-    // Cmd+W → Close Terminal
-    if (meta && e.key === "w") {
-      e.preventDefault();
-      actions.closeTerminal();
-      return;
-    }
-
-    // Option+Cmd+Right → Next Tab
-    if (meta && e.altKey && e.key === "ArrowRight") {
-      e.preventDefault();
-      actions.nextTab();
-      return;
-    }
-
-    // Option+Cmd+Left → Previous Tab
-    if (meta && e.altKey && e.key === "ArrowLeft") {
-      e.preventDefault();
-      actions.prevTab();
+      actions.openShell();
       return;
     }
 

@@ -57,6 +57,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
       if (meta && e.key === "s") return false
       if (meta && e.key === "m") return false
       if (meta && e.key === "d") return false
+      if (meta && e.key === "j") return false
       if (meta && !e.shiftKey && e.key === "n") return false
       if (meta && e.shiftKey && e.key === "Z") return false
       // Cmd+Opt+Left/Right for tab navigation

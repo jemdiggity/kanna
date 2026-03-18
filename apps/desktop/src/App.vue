@@ -14,6 +14,7 @@ import PreferencesPanel from "./components/PreferencesPanel.vue";
 import KeyboardShortcutsModal from "./components/KeyboardShortcutsModal.vue";
 import FilePickerModal from "./components/FilePickerModal.vue";
 import DiffModal from "./components/DiffModal.vue";
+import ShellModal from "./components/ShellModal.vue";
 import { useRepo } from "./composables/useRepo";
 import { usePipeline } from "./composables/usePipeline";
 import { usePreferences } from "./composables/usePreferences";
@@ -60,6 +61,7 @@ const showPreferencesPanel = ref(false);
 const showShortcutsModal = ref(false);
 const showFilePickerModal = ref(false);
 const showDiffModal = ref(false);
+const showShellModal = ref(false);
 const diffScopes = new Map<string, "branch" | "commit" | "working">();
 const zenMode = ref(false);
 
@@ -171,16 +173,13 @@ useKeyboardShortcuts({
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return; }
     if (showFilePickerModal.value) { showFilePickerModal.value = false; return; }
     if (showDiffModal.value) { showDiffModal.value = false; return; }
+    if (showShellModal.value) { showShellModal.value = false; return; }
     if (showNewTaskModal.value) { showNewTaskModal.value = false; return; }
     if (showImportRepoModal.value) { showImportRepoModal.value = false; return; }
     if (showPreferencesPanel.value) { showPreferencesPanel.value = false; return; }
     if (zenMode.value) { zenMode.value = false; }
   },
-  openTerminal: () => { /* TODO: emit to TerminalTabs */ },
-  openTerminalAtRoot: () => { /* TODO */ },
-  closeTerminal: () => { /* TODO */ },
-  nextTab: () => { /* TODO */ },
-  prevTab: () => { /* TODO */ },
+  openShell: () => { showShellModal.value = !showShellModal.value; },
   newWindow: () => { /* TODO: Tauri window API */ },
   showDiff: () => { showDiffModal.value = !showDiffModal.value; },
   showShortcuts: () => { showShortcutsModal.value = !showShortcutsModal.value; },
@@ -441,6 +440,12 @@ onMounted(async () => {
     <KeyboardShortcutsModal
       v-if="showShortcutsModal"
       @close="showShortcutsModal = false"
+    />
+    <ShellModal
+      v-if="showShellModal && currentItem"
+      :session-id="`shell-${currentItem.id}`"
+      :cwd="currentItem.branch ? `${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}` : selectedRepo?.path || '/tmp'"
+      @close="showShellModal = false"
     />
     <DiffModal
       v-if="showDiffModal && selectedRepo?.path"
