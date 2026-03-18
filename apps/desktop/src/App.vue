@@ -4,7 +4,7 @@ import { isTauri, getMockDatabase } from "./tauri-mock";
 import { invoke } from "./invoke";
 import { listen } from "./listen";
 import type { DbHandle, PipelineItem } from "@kanna/db";
-import { listPipelineItems, updatePipelineItemActivity } from "@kanna/db";
+import { listPipelineItems, updatePipelineItemActivity, getSetting, setSetting } from "@kanna/db";
 import type { Stage } from "@kanna/core";
 import Sidebar from "./components/Sidebar.vue";
 import MainPanel from "./components/MainPanel.vue";
@@ -163,10 +163,12 @@ useKeyboardShortcuts({
 // Handlers
 async function handleSelectRepo(repoId: string) {
   selectedRepoId.value = repoId;
+  if (db.value) setSetting(db.value, "selected_repo_id", repoId);
 }
 
 function handleSelectItem(itemId: string) {
   selectedItemId.value = itemId;
+  if (db.value) setSetting(db.value, "selected_item_id", itemId);
   // Mark as read if unread
   const item = allItems.value.find((i) => i.id === itemId);
   if (item && item.activity === "unread" && db.value) {
@@ -303,7 +305,30 @@ onMounted(async () => {
         "SELECT * FROM pipeline_item WHERE activity = 'working'"
       );
       for (const item of workingItems) {
+        // Try to reattach — if session is still alive in daemon, keep "working"
+        if (item.agent_type === "pty") {
+          try {
+            await invoke("attach_session", { sessionId: item.id });
+            // Session alive — keep working
+            continue;
+          } catch {
+            // Session dead — mark unread
+          }
+        }
         await updatePipelineItemActivity(db.value, item.id, "unread");
+      }
+    }
+
+    // Restore persisted selection
+    if (db.value) {
+      const savedRepo = await getSetting(db.value, "selected_repo_id");
+      const savedItem = await getSetting(db.value, "selected_item_id");
+      if (savedRepo && repos.value.some((r) => r.id === savedRepo)) {
+        selectedRepoId.value = savedRepo;
+        await loadItems(savedRepo);
+        if (savedItem && items.value.some((i) => i.id === savedItem)) {
+          selectedItemId.value = savedItem;
+        }
       }
     }
 
