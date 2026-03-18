@@ -3,6 +3,7 @@ mod pty;
 mod session;
 mod socket;
 
+use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,6 +11,12 @@ use std::sync::Arc;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, Mutex};
+
+/// Max bytes to buffer per session for scrollback replay on reattach.
+const SCROLLBACK_CAPACITY: usize = 256 * 1024; // 256KB, same as Swift version
+
+/// Per-session output ring buffer.
+type OutputBuffers = Arc<Mutex<HashMap<String, VecDeque<u8>>>>;
 
 use protocol::{Command, Event};
 use session::SessionManager;
@@ -39,6 +46,7 @@ async fn main() {
     eprintln!("kanna-daemon starting, pid={}, socket={:?}", pid, socket_path);
 
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
+    let output_buffers: OutputBuffers = Arc::new(Mutex::new(HashMap::new()));
 
     // Broadcast channel for hook events — any connection can send, all connections receive
     let (hook_tx, _) = broadcast::channel::<String>(256);
@@ -61,8 +69,9 @@ async fn main() {
             Ok((stream, _addr)) => {
                 let sessions_clone = sessions.clone();
                 let hook_tx_clone = hook_tx.clone();
+                let buffers_clone = output_buffers.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, sessions_clone, hook_tx_clone).await;
+                    handle_connection(stream, sessions_clone, hook_tx_clone, buffers_clone).await;
                 });
             }
             Err(e) => {
@@ -76,6 +85,7 @@ async fn handle_connection(
     stream: UnixStream,
     sessions: Arc<Mutex<SessionManager>>,
     hook_tx: broadcast::Sender<String>,
+    output_buffers: OutputBuffers,
 ) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
@@ -108,7 +118,7 @@ async fn handle_connection(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(command) => {
-                handle_command(command, sessions.clone(), writer.clone(), &hook_tx).await;
+                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, output_buffers.clone()).await;
             }
         }
     }
@@ -119,6 +129,7 @@ async fn handle_command(
     sessions: Arc<Mutex<SessionManager>>,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     hook_tx: &broadcast::Sender<String>,
+    output_buffers: OutputBuffers,
 ) {
     match command {
         Command::Spawn {
@@ -191,11 +202,27 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &evt).await;
             }
 
+            // Replay buffered scrollback before streaming live output
+            {
+                let buffers = output_buffers.lock().await;
+                if let Some(buf) = buffers.get(&session_id) {
+                    if !buf.is_empty() {
+                        let data: Vec<u8> = buf.iter().copied().collect();
+                        let evt = Event::Output {
+                            session_id: session_id.clone(),
+                            data,
+                        };
+                        let _ = write_event(&mut *writer.lock().await, &evt).await;
+                    }
+                }
+            }
+
             let sid = session_id.clone();
             let writer_out = writer.clone();
             let sessions_exit = sessions.clone();
+            let buffers_clone = output_buffers.clone();
             tokio::task::spawn_blocking(move || {
-                stream_output(sid, reader, writer_out, sessions_exit, pid);
+                stream_output(sid, reader, writer_out, sessions_exit, pid, buffers_clone);
             });
         }
 
@@ -352,6 +379,7 @@ fn stream_output(
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     sessions: Arc<Mutex<SessionManager>>,
     _pid: u32,
+    output_buffers: OutputBuffers,
 ) {
     let rt = tokio::runtime::Handle::current();
     let mut buf = [0u8; 4096];
@@ -359,11 +387,24 @@ fn stream_output(
     loop {
         match reader.read(&mut buf) {
             Ok(0) => {
-                // EOF — process has exited
                 break;
             }
             Ok(n) => {
                 let data = buf[..n].to_vec();
+
+                // Append to scrollback ring buffer
+                rt.block_on(async {
+                    let mut buffers = output_buffers.lock().await;
+                    let sb = buffers
+                        .entry(session_id.clone())
+                        .or_insert_with(VecDeque::new);
+                    sb.extend(&data);
+                    // Trim from front if over capacity
+                    while sb.len() > SCROLLBACK_CAPACITY {
+                        sb.pop_front();
+                    }
+                });
+
                 let evt = Event::Output {
                     session_id: session_id.clone(),
                     data,

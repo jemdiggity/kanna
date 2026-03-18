@@ -93,18 +93,13 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
     // Try to attach first — session may already exist in daemon (e.g. after app restart)
     try {
       await invoke("attach_session", { sessionId })
-      // Attach succeeded — session was alive in daemon
+      // Attach succeeded — session was alive in daemon.
+      // Daemon replays scrollback buffer, so clear local cache to avoid double-render.
       scrollbackCache.delete(sessionId)
       if (terminal.value) {
         terminal.value.reset()
-        terminal.value.write("\x1b[2J") // clear screen
         const { cols, rows } = terminal.value
-        // Send a resize to force Claude to redraw its TUI
-        await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
-        // Also nudge with a slightly different size then back, to trigger a full redraw
-        await invoke("resize_session", { sessionId, cols: cols - 1, rows }).catch(() => {})
-        await new Promise(r => setTimeout(r, 50))
-        await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
+        invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
       }
       return
     } catch {
