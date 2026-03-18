@@ -50,20 +50,28 @@ async fn ensure_daemon_running() {
 
     // Look for the daemon binary in common locations
     let daemon_candidates = [
-        // Dev: built by cargo in the workspace
+        // Dev: daemon crate's own target directory
         std::env::current_exe()
             .ok()
             .and_then(|p| {
-                p.parent()
-                    .map(|d| d.join("kanna-daemon"))
+                // current exe is at apps/desktop/src-tauri/target/debug/kanna-desktop
+                // daemon is at crates/daemon/target/debug/kanna-daemon
+                p.parent() // target/debug/
+                    .and_then(|d| d.parent()) // target/
+                    .and_then(|d| d.parent()) // src-tauri/
+                    .and_then(|d| d.parent()) // desktop/
+                    .and_then(|d| d.parent()) // apps/
+                    .and_then(|d| d.parent()) // kanna-tauri/
+                    .map(|root| root.join("crates/daemon/target/debug/kanna-daemon"))
             }),
-        // Installed alongside the app
+        // Same directory as the app binary
         std::env::current_exe()
             .ok()
-            .and_then(|p| {
-                p.parent()
-                    .map(|d| d.join("../Resources/kanna-daemon"))
-            }),
+            .and_then(|p| p.parent().map(|d| d.join("kanna-daemon"))),
+        // macOS bundle Resources
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("../Resources/kanna-daemon"))),
     ];
 
     let daemon_bin = daemon_candidates
