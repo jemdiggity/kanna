@@ -61,17 +61,21 @@ Match the Swift version's font-based activity states:
 - **Regular** — idle and read (user has seen the task since last busy→idle transition)
 
 ### Data Model
-Add to pipeline item tracking (in-memory, not DB):
-```typescript
-activityState: Map<string, "working" | "unread" | "idle">
-activityChangedAt: Map<string, number>
+Persisted in DB so activity state survives restarts. Add columns to `pipeline_item`:
+```sql
+ALTER TABLE pipeline_item ADD COLUMN activity TEXT NOT NULL DEFAULT 'idle';
+ALTER TABLE pipeline_item ADD COLUMN activity_changed_at TEXT;
 ```
+
+Values: `"working"`, `"unread"`, `"idle"`
+
+On app startup, any task that was `"working"` at shutdown but whose daemon session is no longer alive should transition to `"unread"` (Claude finished while the app was closed).
 
 ### Sidebar Sorting
 Within each repo, sort tasks by activity:
-1. Working (italic) — most recent first
+1. Idle/read (regular) — most recent first
 2. Unread (bold) — most recent first
-3. Idle (regular) — most recent first
+3. Working (italic) — most recent first
 
 ### Changes
 - `usePipeline.ts` or new `useActivity.ts` composable: activity state map
@@ -132,6 +136,11 @@ Match the Swift version exactly:
 | Cmd+W | Close Terminal Tab |
 | Option+Cmd+Right | Next Tab |
 | Option+Cmd+Left | Previous Tab |
+
+**Window:**
+| Shortcut | Action |
+|---|---|
+| Cmd+N | New Window |
 
 **Help:**
 | Shortcut | Action |
