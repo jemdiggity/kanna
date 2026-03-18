@@ -138,7 +138,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     });
 
     // Build Claude CLI command
-    const claudeCmd = `claude --dangerously-skip-permissions --settings '${hookSettings}' -p '${prompt.replace(/'/g, "'\\''")}'`;
+    const claudeCmd = `claude --dangerously-skip-permissions --settings '${hookSettings}' '${prompt.replace(/'/g, "'\\''")}'`;
 
     await invoke("spawn_session", {
       sessionId,

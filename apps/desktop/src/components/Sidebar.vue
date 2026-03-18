@@ -29,7 +29,17 @@ function toggleRepo(repoId: string) {
 }
 
 function itemsForRepo(repoId: string): PipelineItem[] {
-  return props.pipelineItems.filter((item) => item.repo_id === repoId);
+  const order: Record<string, number> = { idle: 0, unread: 1, working: 2 };
+  return props.pipelineItems
+    .filter((item) => item.repo_id === repoId)
+    .sort((a, b) => {
+      const ao = order[(a as any).activity || "idle"] ?? 0;
+      const bo = order[(b as any).activity || "idle"] ?? 0;
+      if (ao !== bo) return ao - bo;
+      const aTime = (a as any).activity_changed_at || a.created_at;
+      const bTime = (b as any).activity_changed_at || b.created_at;
+      return bTime.localeCompare(aTime);
+    });
 }
 
 function itemTitle(item: PipelineItem): string {
@@ -84,7 +94,13 @@ function handleSelectItem(item: PipelineItem) {
             @click="handleSelectItem(item)"
           >
             <StageBadge :stage="item.stage" />
-            <span class="item-title">{{ itemTitle(item) }}</span>
+            <span
+              class="item-title"
+              :style="{
+                fontWeight: (item as any).activity === 'unread' ? 'bold' : 'normal',
+                fontStyle: (item as any).activity === 'working' ? 'italic' : 'normal',
+              }"
+            >{{ itemTitle(item) }}</span>
           </div>
           <div v-if="itemsForRepo(repo.id).length === 0" class="no-items">
             No tasks

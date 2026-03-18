@@ -48,7 +48,7 @@ export async function listPipelineItems(
 
 export async function insertPipelineItem(
   db: DbHandle,
-  item: Omit<PipelineItem, "created_at" | "updated_at">
+  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity" | "activity_changed_at">
 ): Promise<void> {
   await db.execute(
     `INSERT INTO pipeline_item
@@ -89,6 +89,17 @@ export async function updatePipelineItemPR(
   await db.execute(
     "UPDATE pipeline_item SET pr_number = ?, pr_url = ?, updated_at = datetime('now') WHERE id = ?",
     [prNumber, prUrl, id]
+  );
+}
+
+export async function updatePipelineItemActivity(
+  db: DbHandle,
+  id: string,
+  activity: "working" | "unread" | "idle"
+): Promise<void> {
+  await db.execute(
+    "UPDATE pipeline_item SET activity = ?, activity_changed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+    [activity, id]
   );
 }
 

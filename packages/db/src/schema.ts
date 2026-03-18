@@ -18,6 +18,8 @@ export interface PipelineItem {
   pr_url: string | null;
   branch: string | null;
   agent_type: string | null;
+  activity: "working" | "unread" | "idle";
+  activity_changed_at: string | null;
   created_at: string;
   updated_at: string;
 }

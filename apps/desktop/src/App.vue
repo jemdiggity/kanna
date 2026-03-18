@@ -2,8 +2,9 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { isTauri, getMockDatabase } from "./tauri-mock";
 import { invoke } from "./invoke";
+import { listen } from "./listen";
 import type { DbHandle, PipelineItem } from "@kanna/db";
-import { listPipelineItems } from "@kanna/db";
+import { listPipelineItems, updatePipelineItemActivity } from "@kanna/db";
 import type { Stage } from "@kanna/core";
 import Sidebar from "./components/Sidebar.vue";
 import MainPanel from "./components/MainPanel.vue";
@@ -153,6 +154,12 @@ async function handleSelectRepo(repoId: string) {
 
 function handleSelectItem(itemId: string) {
   selectedItemId.value = itemId;
+  // Mark as read if unread
+  const item = allItems.value.find((i) => i.id === itemId);
+  if (item && item.activity === "unread" && db.value) {
+    updatePipelineItemActivity(db.value, itemId, "idle");
+    item.activity = "idle";
+  }
 }
 
 async function handleNewTaskSubmit(prompt: string) {
@@ -246,6 +253,14 @@ async function runMigrations(database: DbHandle) {
   await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('kill_after_minutes', '30')`);
   await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('appearance_mode', 'system')`);
   await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('ide_command', 'code')`);
+
+  // Activity columns (added in feature-parity update)
+  try {
+    await database.execute(`ALTER TABLE pipeline_item ADD COLUMN activity TEXT NOT NULL DEFAULT 'idle'`);
+  } catch { /* column already exists */ }
+  try {
+    await database.execute(`ALTER TABLE pipeline_item ADD COLUMN activity_changed_at TEXT`);
+  } catch { /* column already exists */ }
 }
 
 // Initialize
@@ -268,6 +283,51 @@ onMounted(async () => {
     await refreshRepos();
     await loadPreferences();
     await reconcileSessions();
+
+    // Transition stale "working" items to "unread" (Claude finished while app was closed)
+    if (db.value) {
+      const workingItems = await db.value.select<PipelineItem>(
+        "SELECT * FROM pipeline_item WHERE activity = 'working'"
+      );
+      for (const item of workingItems) {
+        await updatePipelineItemActivity(db.value, item.id, "unread");
+      }
+    }
+
+    // Listen for hook events from Claude (via daemon broadcast)
+    listen("hook_event", (event: any) => {
+      const payload = event.payload || event;
+      const sessionId = payload.session_id;
+      const hookEvent = payload.event;
+      if (!sessionId || !db.value) return;
+
+      const item = allItems.value.find((i) => i.id === sessionId);
+      if (!item) return;
+
+      if (hookEvent === "Stop" || hookEvent === "StopFailure") {
+        const activity = selectedItemId.value === sessionId ? "idle" : "unread";
+        updatePipelineItemActivity(db.value!, item.id, activity);
+        item.activity = activity;
+        refreshAllItems();
+      } else if (hookEvent === "PostToolUse") {
+        updatePipelineItemActivity(db.value!, item.id, "working");
+        item.activity = "working";
+      }
+    });
+
+    // Listen for process exit (backup for when hooks don't fire)
+    listen("session_exit", (event: any) => {
+      const payload = event.payload || event;
+      const sessionId = payload.session_id;
+      if (!sessionId || !db.value) return;
+
+      const item = allItems.value.find((i) => i.id === sessionId);
+      if (!item) return;
+      const activity = selectedItemId.value === sessionId ? "idle" : "unread";
+      updatePipelineItemActivity(db.value!, item.id, activity);
+      item.activity = activity;
+      refreshAllItems();
+    });
   } catch (e) {
     console.error("Failed to initialize database:", e);
   }
