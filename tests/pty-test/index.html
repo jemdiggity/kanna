@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>PTY Test</title>
+  <style>
+    body { margin: 0; background: #1a1a1a; }
+    #terminal { width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="terminal"></div>
+  <script type="module">
+    import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm'
+    import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm'
+
+    const term = new Terminal({
+      fontFamily: '"SF Mono", Menlo, monospace',
+      fontSize: 13,
+      theme: { background: '#1a1a1a', foreground: '#e0e0e0' },
+      scrollback: 10000,
+      cursorBlink: true,
+    })
+    const fitAddon = new FitAddon()
+    term.loadAddon(fitAddon)
+    term.open(document.getElementById('terminal'))
+    fitAddon.fit()
+    window.addEventListener('resize', () => fitAddon.fit())
+
+    term.writeln('Connecting to daemon...')
+
+    // Connect via WebSocket proxy — but we don't have one.
+    // Instead, poll a simple HTTP endpoint that the test server provides.
+    // For now, just show that xterm.js works with raw bytes.
+
+    term.writeln('xterm.js loaded. Testing ANSI:')
+    term.write('\x1b[31mRED\x1b[0m \x1b[32mGREEN\x1b[0m \x1b[34mBLUE\x1b[0m\r\n')
+    term.writeln('')
+    term.writeln('Testing carriage return spinner:')
+
+    let i = 0
+    const spinner = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏']
+    const interval = setInterval(() => {
+      term.write(`\r${spinner[i % spinner.length]} Working...`)
+      i++
+      if (i > 20) {
+        clearInterval(interval)
+        term.write('\r\x1b[K✓ Done\r\n')
+        term.writeln('')
+        term.writeln('If you saw a spinner animation above, xterm.js handles \\r correctly.')
+        term.writeln('')
+        term.writeln('Now testing daemon connection...')
+        connectToDaemon()
+      }
+    }, 100)
+
+    async function connectToDaemon() {
+      // Spawn claude via the daemon and stream output
+      const SOCK_PROXY = 'http://localhost:9876'
+
+      try {
+        // Create session
+        let res = await fetch(`${SOCK_PROXY}/spawn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: 'pty-test-' + Date.now(),
+            executable: '/bin/zsh',
+            args: ['--login', '-c', 'claude --dangerously-skip-permissions "say hello world briefly"'],
+            cwd: '/tmp',
+            env: { TERM: 'xterm-256color' },
+            cols: term.cols,
+            rows: term.rows,
+          })
+        })
+        let data = await res.json()
+        term.writeln('Spawn: ' + JSON.stringify(data))
+
+        // Attach and stream
+        res = await fetch(`${SOCK_PROXY}/attach`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: data.session_id })
+        })
+
+        // Stream output
+        const reader = res.body.getReader()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          term.write(value)
+        }
+        term.writeln('\r\n[Session ended]')
+      } catch (e) {
+        term.writeln('No daemon proxy at :9876 — run the proxy server.')
+        term.writeln('For now, testing with raw Rust binary...')
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+</body>
+</html>
