@@ -230,7 +230,22 @@ pub async fn attach_session(
                     };
                     match event.get("type").and_then(|t| t.as_str()) {
                         Some("Output") => {
-                            let _ = app.emit("terminal_output", &event);
+                            // Convert data array to base64 string for efficient transfer
+                            // The raw number array can be large and slow to serialize
+                            if let Some(data) = event.get("data").and_then(|d| d.as_array()) {
+                                let bytes: Vec<u8> = data.iter()
+                                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                    .collect();
+                                use base64::Engine;
+                                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                                let payload = serde_json::json!({
+                                    "session_id": event.get("session_id"),
+                                    "data_b64": b64,
+                                });
+                                let _ = app.emit("terminal_output", &payload);
+                            } else {
+                                let _ = app.emit("terminal_output", &event);
+                            }
                         }
                         Some("Exit") => {
                             let _ = app.emit("session_exit", &event);

@@ -23,7 +23,12 @@ export function useTerminal(sessionId: string) {
     term.loadAddon(fitAddon)
     term.loadAddon(new WebLinksAddon())
     term.open(container)
-    fitAddon.fit()
+    // Only fit if the container is visible (has non-zero dimensions)
+    // v-show hidden containers report 0 size — fit() will be called
+    // by the ResizeObserver when the tab becomes visible
+    if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+      fitAddon.fit()
+    }
 
     // Send keystrokes to daemon
     term.onData((data) => {
@@ -43,20 +48,20 @@ export function useTerminal(sessionId: string) {
 
   async function startListening() {
     // Listen for terminal output from daemon
-    unlistenOutput = await listen<{ session_id: string; data: number[] }>(
+    unlistenOutput = await listen<{ session_id: string; data_b64?: string; data?: number[] }>(
       "terminal_output",
       (event) => {
         if (event.payload.session_id === sessionId && terminal.value) {
-          const data = event.payload.data
-          // Debug: log first chunk to verify data format
-          if (data && !logged) {
-            console.log("[terminal] data type:", typeof data, "isArray:", Array.isArray(data), "len:", data?.length, "first5:", data?.slice?.(0, 5))
-            logged = true
-          }
-          if (Array.isArray(data)) {
-            terminal.value.write(new Uint8Array(data))
-          } else if (typeof data === "string") {
-            terminal.value.write(data)
+          if (event.payload.data_b64) {
+            // Base64 encoded binary data
+            const binary = atob(event.payload.data_b64)
+            const bytes = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i++) {
+              bytes[i] = binary.charCodeAt(i)
+            }
+            terminal.value.write(bytes)
+          } else if (Array.isArray(event.payload.data)) {
+            terminal.value.write(new Uint8Array(event.payload.data))
           }
         }
       }
