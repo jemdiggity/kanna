@@ -299,22 +299,14 @@ onMounted(async () => {
     await loadPreferences();
     // await reconcileSessions(); // disabled — corrupts daemon connection
 
-    // Transition stale "working" items to "unread" (Claude finished while app was closed)
+    // Transition stale "working" items to "unread"
     if (db.value) {
       const workingItems = await db.value.select<PipelineItem>(
         "SELECT * FROM pipeline_item WHERE activity = 'working'"
       );
       for (const item of workingItems) {
-        // Try to reattach — if session is still alive in daemon, keep "working"
-        if (item.agent_type === "pty") {
-          try {
-            await invoke("attach_session", { sessionId: item.id });
-            // Session alive — keep working
-            continue;
-          } catch {
-            // Session dead — mark unread
-          }
-        }
+        // Don't try to reattach on startup — it creates daemon connections
+        // that interfere with future PTY sessions. Just mark as unread.
         await updatePipelineItemActivity(db.value, item.id, "unread");
       }
     }
