@@ -7,7 +7,7 @@ use daemon_client::DaemonClient;
 use dashmap::DashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
 fn daemon_socket_path() -> PathBuf {
@@ -179,8 +179,11 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(None)) as DaemonState)
         .setup(|app| {
             let handle = app.handle().clone();
+            let daemon_state: DaemonState = app.handle().state::<DaemonState>().inner().clone();
             tauri::async_runtime::spawn(async move {
                 ensure_daemon_running().await;
+                // Clear stale connection so commands reconnect to the new daemon
+                *daemon_state.lock().await = None;
                 spawn_event_bridge(handle);
             });
             Ok(())
