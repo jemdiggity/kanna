@@ -28,7 +28,7 @@ async fn try_connect_daemon() -> Option<DaemonClient> {
 /// Always spawn a new daemon. If an old one is running, the new daemon
 /// performs a handoff (transfers sessions via SCM_RIGHTS) automatically.
 async fn ensure_daemon_running() {
-    eprintln!("[daemon] spawning daemon (handoff from old if running)...");
+    eprintln!("[daemon] spawning daemon...");
 
     // Look for the daemon binary in common locations
     let daemon_candidates = [
