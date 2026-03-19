@@ -61,20 +61,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       path: worktreePath,
     });
 
-    // 4. Run setup scripts if defined
-    if (repoConfig.setup?.length) {
-      try {
-        await invoke("run_script", {
-          script: repoConfig.setup.join(" && "),
-          cwd: worktreePath,
-          env: {},
-        });
-      } catch {
-        // Non-fatal
-      }
-    }
-
-    // 6. Insert pipeline item to DB
+    // 4. Insert pipeline item to DB (setup runs in PTY before agent starts)
     await insertPipelineItem(db.value, {
       id,
       repo_id: repoId,
@@ -168,14 +155,35 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     // Let the worktree know it's a worktree — daemon auto-uses {cwd}/.kanna-daemon
     env.KANNA_WORKTREE = "1";
 
-    // Build Claude CLI command
+    // Read setup scripts from .kanna/config.json
+    let setupCmds: string[] = [];
+    const item = items.value.find((i) => i.id === sessionId);
+    if (item) {
+      try {
+        const repo = await getRepo(db.value!, item.repo_id);
+        if (repo) {
+          const configContent = await invoke<string>("read_text_file", {
+            path: `${repo.path}/.kanna/config.json`,
+          });
+          if (configContent) {
+            const repoConfig = parseRepoConfig(configContent);
+            if (repoConfig.setup?.length) setupCmds = repoConfig.setup;
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // Build shell command: setup scripts first, then Claude CLI
     const claudeCmd = `claude --dangerously-skip-permissions --settings '${hookSettings}' '${prompt.replace(/'/g, "'\\''")}'`;
+    const fullCmd = [...setupCmds, claudeCmd].join(" && ");
 
     await invoke("spawn_session", {
       sessionId,
       cwd,
       executable: "/bin/zsh",
-      args: ["--login", "-c", claudeCmd],
+      args: ["--login", "-c", fullCmd],
       env,
       cols,
       rows,
