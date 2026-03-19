@@ -181,7 +181,10 @@ pub fn run() {
 
     #[cfg(debug_assertions)]
     {
-        builder = builder.plugin(tauri_plugin_webdriver::init());
+        // Skip webdriver in worktree instances — port 4445 conflicts with main app
+        if std::env::var("KANNA_WORKTREE").is_err() {
+            builder = builder.plugin(tauri_plugin_webdriver::init());
+        }
     }
 
     builder
