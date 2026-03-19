@@ -29,8 +29,6 @@ interface ShortcutDef {
   meta?: boolean;
   shift?: boolean;
   alt?: boolean;
-  /** When true, requires shift to NOT be pressed */
-  noShift?: boolean;
   /** Display string for the shortcuts modal (e.g. "Cmd+Delete") */
   display: string;
 }
@@ -41,10 +39,10 @@ interface ShortcutDef {
  */
 export const shortcuts: ShortcutDef[] = [
   // Pipeline
-  { action: "newTask",    label: "New Task",          group: "Pipeline",   key: "n",                            meta: true, noShift: true, display: "Cmd+N" },
+  { action: "newTask",    label: "New Task",          group: "Pipeline",   key: "n",                            meta: true, display: "Cmd+N" },
   { action: "openFile",   label: "File Picker",        group: "Pipeline",   key: "p",                            meta: true,               display: "Cmd+P" },
   { action: "openInIDE",  label: "Open in IDE",        group: "Pipeline",   key: "o",                            meta: true,               display: "Cmd+O" },
-  { action: "makePR",     label: "Make PR",           group: "Pipeline",   key: "s",                            meta: true, noShift: true, display: "Cmd+S" },
+  { action: "makePR",     label: "Make PR",           group: "Pipeline",   key: "s",                            meta: true, display: "Cmd+S" },
   { action: "merge",      label: "Merge PR",          group: "Pipeline",   key: "m",                            meta: true,               display: "Cmd+M" },
   { action: "closeTask",  label: "Close / Reject",    group: "Pipeline",   key: ["Backspace", "Delete"],        meta: true,               display: "Cmd+Delete" },
   // Navigation
@@ -54,7 +52,7 @@ export const shortcuts: ShortcutDef[] = [
   // Terminal
   { action: "openShell",  label: "Shell Terminal",    group: "Terminal",   key: "j",                            meta: true,               display: "Cmd+J" },
   // Views / Help
-  { action: "showDiff",       label: "View Diff",           group: "Help", key: "d",                            meta: true, noShift: true, display: "Cmd+D" },
+  { action: "showDiff",       label: "View Diff",           group: "Help", key: "d",                            meta: true, display: "Cmd+D" },
   { action: "showShortcuts",  label: "Keyboard Shortcuts",  group: "Help", key: "/",                            meta: true,               display: "Cmd+/" },
   { action: "openPreferences", label: "Preferences",        group: "Help", key: ",",                            meta: true,               display: "Cmd+," },
   // Escape is special — no meta required
@@ -62,11 +60,10 @@ export const shortcuts: ShortcutDef[] = [
 ];
 
 function matches(def: ShortcutDef, e: KeyboardEvent): boolean {
-  const meta = e.metaKey;
-  if (def.meta && !meta) return false;
-  if (def.shift && !e.shiftKey) return false;
-  if (def.noShift && e.shiftKey) return false;
-  if (def.alt && !e.altKey) return false;
+  // Exact modifier match — no extra modifiers allowed
+  if (e.metaKey !== (def.meta ?? false)) return false;
+  if (e.shiftKey !== (def.shift ?? false)) return false;
+  if (e.altKey !== (def.alt ?? false)) return false;
   const keys = Array.isArray(def.key) ? def.key : [def.key];
   return keys.includes(e.key);
 }
