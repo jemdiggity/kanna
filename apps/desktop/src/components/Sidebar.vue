@@ -99,19 +99,20 @@ function handleDragOverUnpinned(e: DragEvent) {
   dropTarget.value = { zone: "unpinned", index: 0 };
 }
 
-function handleDragOverDivider(e: DragEvent) {
+function handleDragOverDivider(e: DragEvent, repoId: string) {
   e.preventDefault();
   if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-  const repoId = props.selectedRepoId;
-  if (repoId) {
-    dropTarget.value = { zone: "pinned", index: pinnedItemsForRepo(repoId).length };
-  }
+  dropTarget.value = { zone: "pinned", index: pinnedItemsForRepo(repoId).length };
 }
 
 function handleDropPinned(e: DragEvent, repoId: string, index: number) {
   e.preventDefault();
   const itemId = draggingItemId.value;
   if (!itemId) return;
+
+  // Guard against cross-repo drag
+  const draggedItem = props.pipelineItems.find((i) => i.id === itemId);
+  if (!draggedItem || draggedItem.repo_id !== repoId) { handleDragEnd(); return; }
 
   const pinned = pinnedItemsForRepo(repoId);
   const wasPinned = pinned.some((i) => i.id === itemId);
@@ -226,7 +227,7 @@ function handleDropUnpinned(e: DragEvent, itemId?: string) {
           <div
             v-if="pinnedItemsForRepo(repo.id).length > 0 || draggingItemId"
             class="pin-divider"
-            @dragover.prevent="handleDragOverDivider($event)"
+            @dragover.prevent="handleDragOverDivider($event, repo.id)"
             @drop="handleDropPinned($event, repo.id, pinnedItemsForRepo(repo.id).length)"
           >
             <div class="pin-divider-line"></div>
