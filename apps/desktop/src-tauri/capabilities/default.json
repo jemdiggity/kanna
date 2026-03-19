@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-create",
+    "core:webview:allow-create-webview-window",
     "opener:default",
     "shell:allow-open",
     "shell:allow-execute",
