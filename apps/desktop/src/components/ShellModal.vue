@@ -7,6 +7,7 @@ const props = defineProps<{
   sessionId: string;
   cwd: string;
   maximized?: boolean;
+  env?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -23,7 +24,7 @@ async function spawnShell(sessionId: string, cwd: string, _prompt: string, cols:
     cwd,
     executable: "/bin/zsh",
     args: ["--login"],
-    env: { TERM: "xterm-256color" },
+    env: { TERM: "xterm-256color", KANNA_WORKTREE: "1", ...props.env },
     cols,
     rows,
   });
