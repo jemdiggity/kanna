@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "turbo build",
-    "dev": "turbo dev",
+    "dev": "cd apps/desktop && bun tauri dev",
     "test": "turbo test",
     "lint": "turbo lint"
   },
