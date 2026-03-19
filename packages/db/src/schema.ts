@@ -21,6 +21,7 @@ export interface PipelineItem {
   activity: "working" | "unread" | "idle";
   activity_changed_at: string | null;
   port_offset: number | null;
+  port_env: string | null;  // JSON: {"KANNA_DEV_PORT": "1421", ...}
   created_at: string;
   updated_at: string;
 }

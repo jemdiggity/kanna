@@ -52,8 +52,8 @@ export async function insertPipelineItem(
 ): Promise<void> {
   await db.execute(
     `INSERT INTO pipeline_item
-       (id, repo_id, issue_number, issue_title, prompt, stage, pr_number, pr_url, branch, agent_type, port_offset, activity, activity_changed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+       (id, repo_id, issue_number, issue_title, prompt, stage, pr_number, pr_url, branch, agent_type, port_offset, port_env, activity, activity_changed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     [
       item.id,
       item.repo_id,
@@ -66,6 +66,7 @@ export async function insertPipelineItem(
       item.branch,
       item.agent_type,
       item.port_offset ?? null,
+      item.port_env ?? null,
       item.activity ?? "idle",
     ]
   );

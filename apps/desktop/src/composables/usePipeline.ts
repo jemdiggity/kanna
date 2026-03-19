@@ -61,7 +61,15 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       path: worktreePath,
     });
 
-    // 4. Insert pipeline item to DB (setup runs in PTY before agent starts)
+    // 4. Compute port env vars from config + offset
+    const portEnv: Record<string, string> = {};
+    if (repoConfig.ports) {
+      for (const [name, base] of Object.entries(repoConfig.ports)) {
+        portEnv[name] = String(base + portOffset);
+      }
+    }
+
+    // 5. Insert pipeline item to DB (setup runs in PTY before agent starts)
     await insertPipelineItem(db.value, {
       id,
       repo_id: repoId,
@@ -74,6 +82,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       branch,
       agent_type: agentType,
       port_offset: portOffset,
+      port_env: Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null,
       activity: "working",
     });
 
@@ -128,11 +137,18 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       },
     });
 
-    // Read .kanna/config.json for ports and setup scripts
+    // Build env from item's stored port_env + setup from config
     const env: Record<string, string> = { TERM: "xterm-256color", TERM_PROGRAM: "vscode" };
     let setupCmds: string[] = [];
     const item = items.value.find((i) => i.id === sessionId);
     if (item) {
+      // Port env vars (computed at task creation, stored in DB)
+      if (item.port_env) {
+        try {
+          Object.assign(env, JSON.parse(item.port_env));
+        } catch {}
+      }
+      // Setup scripts (read from config — only needed at spawn time)
       try {
         const repo = await getRepo(db.value!, item.repo_id);
         if (repo) {
@@ -141,17 +157,10 @@ export function usePipeline(db: Ref<DbHandle | null>) {
           });
           if (configContent) {
             const repoConfig = parseRepoConfig(configContent);
-            if (repoConfig.ports && item.port_offset) {
-              for (const [name, base] of Object.entries(repoConfig.ports)) {
-                env[name] = String(base + item.port_offset);
-              }
-            }
             if (repoConfig.setup?.length) setupCmds = repoConfig.setup;
           }
         }
-      } catch {
-        // Non-fatal
-      }
+      } catch {}
     }
 
     // Let the worktree know it's a worktree — daemon auto-uses {cwd}/.kanna-daemon

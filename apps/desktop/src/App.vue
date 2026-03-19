@@ -355,6 +355,9 @@ async function runMigrations(database: DbHandle) {
   try {
     await database.execute(`ALTER TABLE pipeline_item ADD COLUMN port_offset INTEGER`);
   } catch { /* column already exists */ }
+  try {
+    await database.execute(`ALTER TABLE pipeline_item ADD COLUMN port_env TEXT`);
+  } catch { /* column already exists */ }
 }
 
 // Initialize
@@ -535,8 +538,7 @@ onMounted(async () => {
       v-if="showShellModal && currentItem"
       :session-id="`shell-${currentItem.id}`"
       :cwd="currentItem.branch ? `${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}` : selectedRepo?.path || '/tmp'"
-      :repo-path="selectedRepo?.path"
-      :port-offset="currentItem.port_offset"
+      :port-env="currentItem.port_env"
       :maximized="maximized"
       @close="showShellModal = false; maximized = false; focusAgentTerminal()"
     />
