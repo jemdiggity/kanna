@@ -8,8 +8,10 @@
 #   ./scripts/dev.sh log      # print recent output
 set -e
 ROOT="$(git rev-parse --show-toplevel)"
-if [ -n "$KANNA_WORKTREE" ]; then
-  # Derive a short name from the worktree path (e.g., task-abc123)
+
+# Auto-detect worktree by checking if we're inside .kanna-worktrees/
+if [ -n "$KANNA_WORKTREE" ] || echo "$ROOT" | grep -q '\.kanna-worktrees/'; then
+  export KANNA_WORKTREE=1
   WORKTREE_NAME="$(basename "$ROOT")"
   SESSION="kanna-${WORKTREE_NAME}"
 else
@@ -22,7 +24,11 @@ start() {
     exit 1
   fi
   tmux new-session -d -s "$SESSION" -c "$ROOT"
-  tmux send-keys -t "$SESSION" "bun dev" Enter
+  if [ -n "$KANNA_WORKTREE" ]; then
+    tmux send-keys -t "$SESSION" "export KANNA_WORKTREE=1 && bun dev" Enter
+  else
+    tmux send-keys -t "$SESSION" "bun dev" Enter
+  fi
   echo "Started tmux session '$SESSION'. Attach with: tmux attach -t $SESSION"
 }
 
