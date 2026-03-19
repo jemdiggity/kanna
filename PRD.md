@@ -60,6 +60,17 @@ Software developers who use Claude Code and want to run multiple agent tasks in 
 
 GitHub labels applied automatically: `kn:wip` (in progress), `kn:pr-ready` (needs review).
 
+### Closing a task (Cmd+Delete)
+
+1. Kills the agent PTY session and shell session in the daemon
+2. Marks the task as `closed` in the DB
+3. Selects the next task in the sidebar
+4. Closed tasks are hidden from the sidebar immediately
+
+### Garbage collection
+
+Closed tasks are cleaned up on app startup. Tasks closed longer than `gcAfterDays` (default: 3, configurable in preferences) are permanently deleted — worktree removed, DB row deleted.
+
 ## Task Activity
 
 | State | Meaning | Sidebar display |

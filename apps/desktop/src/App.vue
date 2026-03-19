@@ -33,6 +33,7 @@ const {
   killAfterMinutes,
 
   ideCommand,
+  gcAfterDays,
   load: loadPreferences,
   save: savePreference,
 } = usePreferences(db);
@@ -150,9 +151,20 @@ async function handleMerge() {
 
 async function handleCloseTask() {
   const item = selectedItem();
-  if (!item || !selectedRepo.value || !prWorkflow.value) return;
+  if (!item || !selectedRepo.value) return;
   try {
-    await prWorkflow.value.closeTask(item, selectedRepo.value.path);
+    // Kill the agent PTY session
+    await invoke("kill_session", { sessionId: item.id }).catch(() => {});
+    // Kill the shell session if one exists
+    await invoke("kill_session", { sessionId: `shell-${item.id}` }).catch(() => {});
+    // Mark as closed in DB
+    await updatePipelineItemStage(db.value!, item.id, "closed");
+    // Select next task or clear selection
+    const currentItems = sortedItemsForCurrentRepo();
+    const idx = currentItems.findIndex((i) => i.id === item.id);
+    const next = currentItems[idx + 1] || currentItems[idx - 1];
+    selectedItemId.value = next?.id || null;
+    // Refresh sidebar
     await loadItems(selectedRepo.value.id);
     await refreshAllItems();
   } catch (e) {
@@ -343,6 +355,29 @@ onMounted(async () => {
         // Don't try to reattach on startup — it creates daemon connections
         // that interfere with future PTY sessions. Just mark as unread.
         await updatePipelineItemActivity(db.value, item.id, "unread");
+      }
+    }
+
+    // GC: remove closed tasks older than gcAfterDays
+    if (db.value) {
+      const cutoff = new Date(Date.now() - gcAfterDays.value * 86400000).toISOString();
+      const stale = await db.value.select<PipelineItem>(
+        "SELECT * FROM pipeline_item WHERE stage = 'closed' AND updated_at < ?",
+        [cutoff]
+      );
+      for (const item of stale) {
+        // Remove worktree
+        if (item.branch) {
+          for (const repo of repos.value) {
+            const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+            await invoke("git_worktree_remove", { repoPath: repo.path, path: worktreePath }).catch(() => {});
+          }
+        }
+        // Delete from DB
+        await db.value.execute("DELETE FROM pipeline_item WHERE id = ?", [item.id]);
+      }
+      if (stale.length > 0) {
+        console.log(`[gc] cleaned up ${stale.length} closed task(s)`);
       }
     }
 

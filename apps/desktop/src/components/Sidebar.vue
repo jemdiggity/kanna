@@ -30,7 +30,7 @@ function toggleRepo(repoId: string) {
 function itemsForRepo(repoId: string): PipelineItem[] {
   const order: Record<string, number> = { idle: 0, unread: 1, working: 2 };
   return props.pipelineItems
-    .filter((item) => item.repo_id === repoId)
+    .filter((item) => item.repo_id === repoId && item.stage !== "closed")
     .sort((a, b) => {
       const ao = order[(a as any).activity || "idle"] ?? 0;
       const bo = order[(b as any).activity || "idle"] ?? 0;

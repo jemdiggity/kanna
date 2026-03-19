@@ -9,6 +9,7 @@ export function usePreferences(db: Ref<DbHandle | null>) {
   const killAfterMinutes = ref(60);
 
   const ideCommand = ref("code");
+  const gcAfterDays = ref(3);
 
   async function load() {
     if (!db.value) return;
@@ -20,9 +21,10 @@ export function usePreferences(db: Ref<DbHandle | null>) {
     if (sa) suspendAfterMinutes.value = parseInt(sa, 10) || 30;
     const ka = await getSetting(db.value, "killAfterMinutes");
     if (ka) killAfterMinutes.value = parseInt(ka, 10) || 60;
-
     const ide = await getSetting(db.value, "ideCommand");
     if (ide) ideCommand.value = ide;
+    const gc = await getSetting(db.value, "gcAfterDays");
+    if (gc) gcAfterDays.value = parseInt(gc, 10) || 3;
   }
 
   async function save(key: string, value: string) {
@@ -38,6 +40,7 @@ export function usePreferences(db: Ref<DbHandle | null>) {
     killAfterMinutes,
 
     ideCommand,
+    gcAfterDays,
     load,
     save,
   };
