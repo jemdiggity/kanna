@@ -78,16 +78,25 @@ async fn ensure_daemon_running() {
             .spawn()
     }
     {
-        Ok(_child) => {
-            // Wait for socket to appear with exponential backoff
+        Ok(child) => {
+            let expected_pid = child.id().to_string();
+            let pid_path = daemon_socket_path().parent().unwrap().join("daemon.pid");
+
+            // Wait for the NEW daemon to be ready:
+            // PID file must match our child AND socket must be connectable.
+            // This ensures we don't connect to the old daemon during handoff.
             let mut delay = std::time::Duration::from_millis(50);
-            for _ in 0..10 {
+            for _ in 0..20 {
                 tokio::time::sleep(delay).await;
-                if try_connect_daemon().await.is_some() {
-                    eprintln!("[daemon] spawned and connected");
-                    return;
+                if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+                    if pid_str.trim() == expected_pid {
+                        if try_connect_daemon().await.is_some() {
+                            eprintln!("[daemon] spawned and connected (pid={})", expected_pid);
+                            return;
+                        }
+                    }
                 }
-                delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(2));
+                delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(1));
             }
             eprintln!("[daemon] spawned but could not connect after retries");
         }
