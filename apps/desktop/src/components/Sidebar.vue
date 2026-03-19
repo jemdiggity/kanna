@@ -60,7 +60,7 @@ function handleSelectItem(item: PipelineItem) {
 <template>
   <aside class="sidebar">
     <div class="sidebar-header">
-      <span class="app-title">Kanna</span>
+      <span class="app-title">Ka<span class="flipped">n</span><span class="flipped">n</span>a</span>
       <button class="btn-icon" title="New Task (Cmd+N)" @click="emit('new-task')">+</button>
     </div>
 
@@ -146,6 +146,11 @@ function handleSelectItem(item: PipelineItem) {
   font-weight: 600;
   color: #f0f0f0;
   letter-spacing: 0.5px;
+}
+
+.flipped {
+  display: inline-block;
+  transform: scaleX(-1);
 }
 
 .btn-icon {
