@@ -368,6 +368,16 @@ onMounted(async () => {
         const envDb = await invoke<string>("read_env_var", { name: "KANNA_DB_NAME" });
         if (envDb) dbName = envDb;
       } catch {}
+      // Worktree instances use a separate DB to avoid conflicts
+      try {
+        const wt = await invoke<string>("read_env_var", { name: "KANNA_WORKTREE" });
+        if (wt) {
+          // Hash the cwd to get a short unique suffix
+          const cwd = await invoke<string>("read_env_var", { name: "PWD" });
+          const suffix = cwd ? cwd.split("/").pop() : Date.now().toString();
+          dbName = `kanna-wt-${suffix}.db`;
+        }
+      } catch {}
       database = (await Database.load(`sqlite:${dbName}`)) as unknown as DbHandle;
     } else {
       database = getMockDatabase() as unknown as DbHandle;
