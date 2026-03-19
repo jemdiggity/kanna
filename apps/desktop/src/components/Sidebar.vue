@@ -15,9 +15,15 @@ const emit = defineEmits<{
   (e: "import-repo"): void;
   (e: "new-task", repoId: string): void;
   (e: "open-preferences"): void;
+  (e: "pin-item", itemId: string, position: number): void;
+  (e: "unpin-item", itemId: string): void;
+  (e: "reorder-pinned", repoId: string, orderedIds: string[]): void;
 }>();
 
 const collapsedRepos = ref<Set<string>>(new Set());
+
+const draggingItemId = ref<string | null>(null);
+const dropTarget = ref<{ zone: "pinned" | "unpinned"; index: number } | null>(null);
 
 function toggleRepo(repoId: string) {
   if (collapsedRepos.value.has(repoId)) {
@@ -67,6 +73,75 @@ function handleSelectItem(item: PipelineItem) {
   emit("select-repo", item.repo_id);
   emit("select-item", item.id);
 }
+
+function handleDragStart(e: DragEvent, item: PipelineItem) {
+  draggingItemId.value = item.id;
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", item.id);
+  }
+}
+
+function handleDragEnd() {
+  draggingItemId.value = null;
+  dropTarget.value = null;
+}
+
+function handleDragOverPinned(e: DragEvent, repoId: string, index: number) {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  dropTarget.value = { zone: "pinned", index };
+}
+
+function handleDragOverUnpinned(e: DragEvent) {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  dropTarget.value = { zone: "unpinned", index: 0 };
+}
+
+function handleDragOverDivider(e: DragEvent) {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  const repoId = props.selectedRepoId;
+  if (repoId) {
+    dropTarget.value = { zone: "pinned", index: pinnedItemsForRepo(repoId).length };
+  }
+}
+
+function handleDropPinned(e: DragEvent, repoId: string, index: number) {
+  e.preventDefault();
+  const itemId = draggingItemId.value;
+  if (!itemId) return;
+
+  const pinned = pinnedItemsForRepo(repoId);
+  const wasPinned = pinned.some((i) => i.id === itemId);
+
+  if (wasPinned) {
+    const currentIds = pinned.map((i) => i.id).filter((id) => id !== itemId);
+    currentIds.splice(index, 0, itemId);
+    emit("reorder-pinned", repoId, currentIds);
+  } else {
+    const currentIds = pinned.map((i) => i.id);
+    currentIds.splice(index, 0, itemId);
+    emit("pin-item", itemId, index);
+    emit("reorder-pinned", repoId, currentIds);
+  }
+
+  handleDragEnd();
+}
+
+function handleDropUnpinned(e: DragEvent, itemId?: string) {
+  e.preventDefault();
+  const draggedId = itemId || draggingItemId.value;
+  if (!draggedId) return;
+
+  const item = props.pipelineItems.find((i) => i.id === draggedId);
+  if (item?.pinned) {
+    emit("unpin-item", draggedId);
+  }
+
+  handleDragEnd();
+}
 </script>
 
 <template>
@@ -98,21 +173,94 @@ function handleSelectItem(item: PipelineItem) {
         </div>
 
         <div v-if="!collapsedRepos.has(repo.id)" class="pipeline-list">
+          <!-- Pinned tasks -->
+          <template v-if="pinnedItemsForRepo(repo.id).length > 0 || draggingItemId">
+            <div
+              v-if="pinnedItemsForRepo(repo.id).length === 0"
+              class="pin-drop-zone"
+              @dragover.prevent="handleDragOverPinned($event, repo.id, 0)"
+              @drop="handleDropPinned($event, repo.id, 0)"
+            >
+              <div
+                class="drop-indicator"
+                :class="{ active: dropTarget?.zone === 'pinned' && dropTarget?.index === 0 }"
+              ></div>
+            </div>
+            <template v-for="(item, idx) in pinnedItemsForRepo(repo.id)" :key="item.id">
+              <div
+                class="drop-indicator"
+                :class="{ active: dropTarget?.zone === 'pinned' && dropTarget?.index === idx }"
+                @dragover.prevent="handleDragOverPinned($event, repo.id, idx)"
+                @drop="handleDropPinned($event, repo.id, idx)"
+              ></div>
+              <div
+                class="pipeline-item"
+                :class="{
+                  selected: selectedItemId === item.id,
+                  dragging: draggingItemId === item.id,
+                }"
+                draggable="true"
+                @dragstart="handleDragStart($event, item)"
+                @dragend="handleDragEnd"
+                @click="handleSelectItem(item)"
+              >
+                <span
+                  class="item-title"
+                  :style="{
+                    fontWeight: item.activity === 'unread' ? 'bold' : 'normal',
+                    fontStyle: item.activity === 'working' ? 'italic' : 'normal',
+                  }"
+                >{{ itemTitle(item) }}</span>
+              </div>
+            </template>
+            <!-- Drop indicator after last pinned item -->
+            <div
+              class="drop-indicator"
+              :class="{ active: dropTarget?.zone === 'pinned' && dropTarget?.index === pinnedItemsForRepo(repo.id).length }"
+              @dragover.prevent="handleDragOverPinned($event, repo.id, pinnedItemsForRepo(repo.id).length)"
+              @drop="handleDropPinned($event, repo.id, pinnedItemsForRepo(repo.id).length)"
+            ></div>
+          </template>
+
+          <!-- Divider -->
           <div
-            v-for="item in itemsForRepo(repo.id)"
-            :key="item.id"
-            class="pipeline-item"
-            :class="{ selected: selectedItemId === item.id }"
-            @click="handleSelectItem(item)"
+            v-if="pinnedItemsForRepo(repo.id).length > 0 || draggingItemId"
+            class="pin-divider"
+            @dragover.prevent="handleDragOverDivider($event)"
+            @drop="handleDropPinned($event, repo.id, pinnedItemsForRepo(repo.id).length)"
           >
-            <span
-              class="item-title"
-              :style="{
-                fontWeight: (item as any).activity === 'unread' ? 'bold' : 'normal',
-                fontStyle: (item as any).activity === 'working' ? 'italic' : 'normal',
-              }"
-            >{{ itemTitle(item) }}</span>
+            <div class="pin-divider-line"></div>
           </div>
+
+          <!-- Unpinned tasks -->
+          <div
+            class="unpinned-zone"
+            @dragover.prevent="handleDragOverUnpinned($event)"
+            @drop="handleDropUnpinned($event)"
+          >
+            <div
+              v-for="item in unpinnedItemsForRepo(repo.id)"
+              :key="item.id"
+              class="pipeline-item"
+              :class="{
+                selected: selectedItemId === item.id,
+                dragging: draggingItemId === item.id,
+              }"
+              draggable="true"
+              @dragstart="handleDragStart($event, item)"
+              @dragend="handleDragEnd"
+              @click="handleSelectItem(item)"
+            >
+              <span
+                class="item-title"
+                :style="{
+                  fontWeight: item.activity === 'unread' ? 'bold' : 'normal',
+                  fontStyle: item.activity === 'working' ? 'italic' : 'normal',
+                }"
+              >{{ itemTitle(item) }}</span>
+            </div>
+          </div>
+
           <div v-if="itemsForRepo(repo.id).length === 0" class="no-items">
             No tasks
           </div>
@@ -320,5 +468,38 @@ function handleSelectItem(item: PipelineItem) {
 .btn-prefs {
   flex-shrink: 0;
   font-size: 14px;
+}
+
+.pin-divider {
+  padding: 4px 6px;
+}
+
+.pin-divider-line {
+  height: 1px;
+  background: #333;
+}
+
+.drop-indicator {
+  height: 0;
+  margin: 0 6px;
+  transition: height 0.1s;
+}
+
+.drop-indicator.active {
+  height: 2px;
+  background: #0066cc;
+  border-radius: 1px;
+}
+
+.pin-drop-zone {
+  min-height: 8px;
+}
+
+.pipeline-item.dragging {
+  opacity: 0.3;
+}
+
+.unpinned-zone {
+  min-height: 4px;
 }
 </style>
