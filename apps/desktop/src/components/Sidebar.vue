@@ -213,7 +213,7 @@ function handleSelectItem(item: PipelineItem) {
   color: #666;
   cursor: pointer;
   font-size: 10px;
-  font-family: "SF Mono", Menlo, monospace;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   width: 14px;
   padding: 0;
   text-align: center;

@@ -200,7 +200,7 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   background: #1a1a1a;
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", Menlo, monospace;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   font-size: 13px;
   line-height: 1.5;
   padding: 12px 16px;

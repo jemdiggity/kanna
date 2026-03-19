@@ -16,12 +16,9 @@ export async function resetDatabase(client: WebDriverClient): Promise<void> {
 
   // Re-insert default settings
   const defaults = [
-    ["terminal_font_family", "SF Mono"],
-    ["terminal_font_size", "13"],
-    ["suspend_after_minutes", "5"],
-    ["kill_after_minutes", "30"],
-    ["appearance_mode", "system"],
-    ["ide_command", "code"],
+    ["suspendAfterMinutes", "5"],
+    ["killAfterMinutes", "30"],
+    ["ideCommand", "code"],
   ];
   for (const [key, value] of defaults) {
     await execDb(client, "INSERT INTO settings (key, value) VALUES (?, ?)", [key, value]);

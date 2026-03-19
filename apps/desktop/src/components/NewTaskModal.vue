@@ -101,7 +101,7 @@ function handleKeydown(e: KeyboardEvent) {
   border: 1px solid #444;
   border-radius: 4px;
   color: #e0e0e0;
-  font-family: "SF Mono", Menlo, monospace;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   font-size: 13px;
   padding: 10px;
   resize: vertical;

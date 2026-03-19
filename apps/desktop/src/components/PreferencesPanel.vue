@@ -1,8 +1,6 @@
 <script setup lang="ts">
 const props = defineProps<{
   preferences: {
-    fontFamily: string
-    fontSize: number
     suspendAfterMinutes: number
     killAfterMinutes: number
 
@@ -31,30 +29,6 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
 
       <div class="prefs-body">
-        <div class="pref-row">
-          <label>Font Family</label>
-          <select
-            :value="preferences.fontFamily"
-            @change="emit('update', 'fontFamily', ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="SF Mono">SF Mono</option>
-            <option value="Menlo">Menlo</option>
-            <option value="Courier New">Courier New</option>
-            <option value="Fira Code">Fira Code</option>
-          </select>
-        </div>
-
-        <div class="pref-row">
-          <label>Font Size</label>
-          <input
-            type="number"
-            :value="preferences.fontSize"
-            min="10"
-            max="24"
-            @change="emit('update', 'fontSize', ($event.target as HTMLInputElement).value)"
-          />
-        </div>
-
         <div class="pref-row">
           <label>Suspend After (min)</label>
           <input
@@ -147,7 +121,6 @@ function handleKeydown(e: KeyboardEvent) {
   white-space: nowrap;
 }
 
-.pref-row select,
 .pref-row input[type="number"],
 .pref-row input[type="text"] {
   background: #1a1a1a;
@@ -165,14 +138,8 @@ function handleKeydown(e: KeyboardEvent) {
   width: 80px;
 }
 
-.pref-row select:focus,
 .pref-row input:focus {
   border-color: #0066cc;
-}
-
-.pref-row select option {
-  background: #2a2a2a;
-  color: #e0e0e0;
 }
 
 .prefs-footer {

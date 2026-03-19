@@ -57,9 +57,6 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
-INSERT OR IGNORE INTO settings (key, value) VALUES ('terminal_font_family', 'SF Mono');
-INSERT OR IGNORE INTO settings (key, value) VALUES ('terminal_font_size', '13');
-INSERT OR IGNORE INTO settings (key, value) VALUES ('suspend_after_minutes', '5');
-INSERT OR IGNORE INTO settings (key, value) VALUES ('kill_after_minutes', '30');
-INSERT OR IGNORE INTO settings (key, value) VALUES ('appearance_mode', 'system');
-INSERT OR IGNORE INTO settings (key, value) VALUES ('ide_command', 'code');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('suspendAfterMinutes', '5');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('killAfterMinutes', '30');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ideCommand', 'code');

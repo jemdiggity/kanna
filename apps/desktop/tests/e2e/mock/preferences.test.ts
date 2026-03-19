@@ -36,8 +36,8 @@ describe("preferences", () => {
       `return document.querySelector(".prefs-panel")?.textContent || ""`
     );
     // Should contain labels for common settings
-    expect(panelText.toLowerCase()).toContain("font");
-    expect(panelText.toLowerCase()).toContain("appearance");
+    expect(panelText.toLowerCase()).toContain("suspend");
+    expect(panelText.toLowerCase()).toContain("ide");
   });
 
   it("closes preferences panel", async () => {
@@ -65,8 +65,7 @@ describe("preferences", () => {
     )) as Array<{ key: string; value: string }>;
 
     const keys = rows.map((r) => r.key);
-    expect(keys).toContain("terminal_font_family");
-    expect(keys).toContain("terminal_font_size");
-    expect(keys).toContain("appearance_mode");
+    expect(keys).toContain("suspendAfterMinutes");
+    expect(keys).toContain("killAfterMinutes");
   });
 });
