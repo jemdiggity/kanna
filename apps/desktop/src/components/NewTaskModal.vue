@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 
 const emit = defineEmits<{
   (e: "submit", prompt: string): void;
@@ -7,6 +7,11 @@ const emit = defineEmits<{
 }>();
 
 const prompt = ref("");
+const textareaRef = ref<HTMLTextAreaElement>();
+
+onMounted(() => {
+  textareaRef.value?.focus();
+});
 
 function handleSubmit() {
   const text = prompt.value.trim();
@@ -35,11 +40,11 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
       <div class="modal-body">
         <textarea
+          ref="textareaRef"
           v-model="prompt"
           class="prompt-input"
           placeholder="Describe the task..."
           rows="6"
-          autofocus
           @keydown="handleKeydown"
         />
       </div>
