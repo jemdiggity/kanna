@@ -32,6 +32,11 @@ function itemsForRepo(repoId: string): PipelineItem[] {
   return props.pipelineItems
     .filter((item) => item.repo_id === repoId && item.stage !== "closed")
     .sort((a, b) => {
+      // Pinned tasks always come first
+      if (a.pinned !== b.pinned) return b.pinned - a.pinned;
+      // Among pinned tasks, sort by pin_order
+      if (a.pinned && b.pinned) return (a.pin_order ?? 0) - (b.pin_order ?? 0);
+      // Among unpinned tasks, sort by activity then time
       const ao = order[(a as any).activity || "idle"] ?? 0;
       const bo = order[(b as any).activity || "idle"] ?? 0;
       if (ao !== bo) return ao - bo;
@@ -39,6 +44,14 @@ function itemsForRepo(repoId: string): PipelineItem[] {
       const bTime = (b as any).activity_changed_at || b.created_at;
       return bTime.localeCompare(aTime);
     });
+}
+
+function pinnedItemsForRepo(repoId: string): PipelineItem[] {
+  return itemsForRepo(repoId).filter((item) => item.pinned);
+}
+
+function unpinnedItemsForRepo(repoId: string): PipelineItem[] {
+  return itemsForRepo(repoId).filter((item) => !item.pinned);
 }
 
 function itemTitle(item: PipelineItem): string {

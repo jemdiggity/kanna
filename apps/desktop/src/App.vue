@@ -102,13 +102,15 @@ watch([repos, selectedRepoId], refreshAllItems, { immediate: true });
 function sortedItemsForCurrentRepo(): PipelineItem[] {
   const activityOrder: Record<string, number> = { idle: 0, unread: 1, working: 2 };
   return allItems.value
-    .filter((item) => item.repo_id === selectedRepoId.value)
+    .filter((item) => item.repo_id === selectedRepoId.value && item.stage !== "closed")
     .sort((a, b) => {
-      const ao = activityOrder[(a as any).activity || "idle"] ?? 0;
-      const bo = activityOrder[(b as any).activity || "idle"] ?? 0;
+      if (a.pinned !== b.pinned) return b.pinned - a.pinned;
+      if (a.pinned && b.pinned) return (a.pin_order ?? 0) - (b.pin_order ?? 0);
+      const ao = activityOrder[a.activity || "idle"] ?? 0;
+      const bo = activityOrder[b.activity || "idle"] ?? 0;
       if (ao !== bo) return ao - bo;
-      const aTime = (a as any).activity_changed_at || a.created_at;
-      const bTime = (b as any).activity_changed_at || b.created_at;
+      const aTime = a.activity_changed_at || a.created_at;
+      const bTime = b.activity_changed_at || b.created_at;
       return bTime.localeCompare(aTime);
     });
 }
