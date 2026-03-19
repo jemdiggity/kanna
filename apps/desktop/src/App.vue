@@ -180,7 +180,6 @@ useKeyboardShortcuts({
     if (zenMode.value) { zenMode.value = false; }
   },
   openShell: () => { showShellModal.value = !showShellModal.value; },
-  newWindow: () => { /* TODO: Tauri window API */ },
   showDiff: () => { showDiffModal.value = !showDiffModal.value; },
   showShortcuts: () => { showShortcutsModal.value = !showShortcutsModal.value; },
   openPreferences: () => { showPreferencesPanel.value = true; },

@@ -20,7 +20,7 @@ Software developers who use Claude Code and want to run multiple agent tasks in 
 
 ### Create a task
 
-1. Cmd+Shift+N → enter prompt
+1. Cmd+N → enter prompt
 2. App creates git worktree (`{repo}/.kanna-worktrees/task-{uuid}`)
 3. Runs `.kanna.toml` setup script if present (e.g., `npm install`)
 4. Spawns Claude CLI in the worktree via daemon
@@ -74,7 +74,7 @@ Sorted in sidebar: working > unread > idle, then by most recent.
 
 | Shortcut | Action |
 |----------|--------|
-| Cmd+Shift+N | New task |
+| Cmd+N | New task |
 | Cmd+D | Diff modal |
 | Cmd+J | Shell modal |
 | Cmd+P | Open in IDE |

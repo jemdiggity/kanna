@@ -11,7 +11,6 @@ export type ActionName =
   | "toggleZen"
   | "dismiss"
   | "openShell"
-  | "newWindow"
   | "showDiff"
   | "showShortcuts"
   | "openPreferences";
@@ -41,7 +40,7 @@ interface ShortcutDef {
  */
 export const shortcuts: ShortcutDef[] = [
   // Pipeline
-  { action: "newTask",    label: "New Task",          group: "Pipeline",   key: ["N", "n"],                     meta: true, shift: true,  display: "Shift+Cmd+N" },
+  { action: "newTask",    label: "New Task",          group: "Pipeline",   key: "n",                            meta: true, noShift: true, display: "Cmd+N" },
   { action: "openFile",   label: "Open File",         group: "Pipeline",   key: "p",                            meta: true,               display: "Cmd+P" },
   { action: "makePR",     label: "Make PR",           group: "Pipeline",   key: "s",                            meta: true, noShift: true, display: "Cmd+S" },
   { action: "merge",      label: "Merge PR",          group: "Pipeline",   key: "m",                            meta: true,               display: "Cmd+M" },
@@ -52,8 +51,6 @@ export const shortcuts: ShortcutDef[] = [
   { action: "toggleZen",    label: "Zen Mode",        group: "Navigation", key: ["Z", "z"],                     meta: true, shift: true,  display: "Shift+Cmd+Z" },
   // Terminal
   { action: "openShell",  label: "Shell Terminal",    group: "Terminal",   key: "j",                            meta: true,               display: "Cmd+J" },
-  // Window
-  { action: "newWindow",  label: "New Window",        group: "Window",     key: "n",                            meta: true, noShift: true, display: "Cmd+N" },
   // Views / Help
   { action: "showDiff",       label: "View Diff",           group: "Help", key: "d",                            meta: true, noShift: true, display: "Cmd+D" },
   { action: "showShortcuts",  label: "Keyboard Shortcuts",  group: "Help", key: "/",                            meta: true,               display: "Cmd+/" },
