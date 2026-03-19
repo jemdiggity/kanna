@@ -64,7 +64,14 @@ async fn main() {
 
     let listener = bind_socket(&socket_path).expect("Failed to bind Unix socket");
 
-    log::info!("kanna-daemon starting, pid={}, socket={:?}", pid, socket_path);
+    log::info!(
+        "kanna-daemon v{} ({} @ {}) starting, pid={}, socket={:?}",
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_BRANCH"),
+        env!("GIT_COMMIT"),
+        pid,
+        socket_path
+    );
 
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
     let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
