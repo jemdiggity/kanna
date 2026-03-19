@@ -132,6 +132,12 @@ export function usePipeline(db: Ref<DbHandle | null>) {
         PostToolUse: [
           { matcher: "*", hooks: [{ type: "command", command: `${kannaHookPath} PostToolUse ${sessionId}` }] },
         ],
+        PreToolUse: [
+          { matcher: "AskUserQuestion", hooks: [{ type: "command", command: `${kannaHookPath} WaitingForInput ${sessionId}` }] },
+        ],
+        Notification: [
+          { hooks: [{ type: "command", command: `${kannaHookPath} WaitingForInput ${sessionId}` }] },
+        ],
       },
     });
 

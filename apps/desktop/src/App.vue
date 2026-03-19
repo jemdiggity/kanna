@@ -375,6 +375,10 @@ onMounted(async () => {
         updatePipelineItemActivity(db.value!, item.id, activity);
         item.activity = activity;
         refreshAllItems();
+      } else if (hookEvent === "WaitingForInput") {
+        updatePipelineItemActivity(db.value!, item.id, "unread");
+        item.activity = "unread";
+        refreshAllItems();
       } else if (hookEvent === "PostToolUse") {
         updatePipelineItemActivity(db.value!, item.id, "working");
         item.activity = "working";
