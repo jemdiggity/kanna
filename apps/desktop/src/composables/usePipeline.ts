@@ -135,7 +135,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     });
 
     // Build port env vars from .kanna.toml [ports] config + item's port_offset
-    const env: Record<string, string> = { TERM: "xterm-256color" };
+    const env: Record<string, string> = { TERM: "xterm-256color", TERM_PROGRAM: "vscode" };
     const item = items.value.find((i) => i.id === sessionId);
     if (item?.port_offset) {
       try {
