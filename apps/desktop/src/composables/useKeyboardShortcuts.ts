@@ -40,21 +40,21 @@ interface ShortcutDef {
  */
 export const shortcuts: ShortcutDef[] = [
   // Pipeline
-  { action: "newTask",    label: "New Task",          group: "Pipeline",   key: "n",                            meta: true, noShift: true, display: "Cmd+N" },
-  { action: "openFile",   label: "Open File",         group: "Pipeline",   key: "p",                            meta: true,               display: "Cmd+P" },
-  { action: "makePR",     label: "Make PR",           group: "Pipeline",   key: "s",                            meta: true, noShift: true, display: "Cmd+S" },
-  { action: "merge",      label: "Merge PR",          group: "Pipeline",   key: "m",                            meta: true,               display: "Cmd+M" },
-  { action: "closeTask",  label: "Close / Reject",    group: "Pipeline",   key: ["Backspace", "Delete"],        meta: true,               display: "Cmd+Delete" },
+  { action: "newTask",    label: "New Task",          group: "Pipeline",   key: "n",                            meta: true, noShift: true, display: "⌘N" },
+  { action: "openFile",   label: "Open File",         group: "Pipeline",   key: "p",                            meta: true,               display: "⌘P" },
+  { action: "makePR",     label: "Make PR",           group: "Pipeline",   key: "s",                            meta: true, noShift: true, display: "⌘S" },
+  { action: "merge",      label: "Merge PR",          group: "Pipeline",   key: "m",                            meta: true,               display: "⌘M" },
+  { action: "closeTask",  label: "Close / Reject",    group: "Pipeline",   key: ["Backspace", "Delete"],        meta: true,               display: "⌘⌫" },
   // Navigation
-  { action: "navigateDown", label: "Next Task",       group: "Navigation", key: "ArrowDown",                    meta: true, alt: true,    display: "Option+Cmd+Down" },
-  { action: "navigateUp",   label: "Previous Task",   group: "Navigation", key: "ArrowUp",                      meta: true, alt: true,    display: "Option+Cmd+Up" },
-  { action: "toggleZen",    label: "Zen Mode",        group: "Navigation", key: ["Z", "z"],                     meta: true, shift: true,  display: "Shift+Cmd+Z" },
+  { action: "navigateDown", label: "Next Task",       group: "Navigation", key: "ArrowDown",                    meta: true, alt: true,    display: "⌥⌘↓" },
+  { action: "navigateUp",   label: "Previous Task",   group: "Navigation", key: "ArrowUp",                      meta: true, alt: true,    display: "⌥⌘↑" },
+  { action: "toggleZen",    label: "Zen Mode",        group: "Navigation", key: ["Z", "z"],                     meta: true, shift: true,  display: "⇧⌘Z" },
   // Terminal
-  { action: "openShell",  label: "Shell Terminal",    group: "Terminal",   key: "j",                            meta: true,               display: "Cmd+J" },
+  { action: "openShell",  label: "Shell Terminal",    group: "Terminal",   key: "j",                            meta: true,               display: "⌘J" },
   // Views / Help
-  { action: "showDiff",       label: "View Diff",           group: "Help", key: "d",                            meta: true, noShift: true, display: "Cmd+D" },
-  { action: "showShortcuts",  label: "Keyboard Shortcuts",  group: "Help", key: "/",                            meta: true,               display: "Cmd+/" },
-  { action: "openPreferences", label: "Preferences",        group: "Help", key: ",",                            meta: true,               display: "Cmd+," },
+  { action: "showDiff",       label: "View Diff",           group: "Help", key: "d",                            meta: true, noShift: true, display: "⌘D" },
+  { action: "showShortcuts",  label: "Keyboard Shortcuts",  group: "Help", key: "/",                            meta: true,               display: "⌘/" },
+  { action: "openPreferences", label: "Preferences",        group: "Help", key: ",",                            meta: true,               display: "⌘," },
   // Escape is special — no meta required
   { action: "dismiss",    label: "Dismiss",           group: "Navigation", key: "Escape",                                                 display: "Escape" },
 ];
