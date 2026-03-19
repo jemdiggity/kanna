@@ -26,7 +26,8 @@ const termRefs = ref<Record<string, ComponentPublicInstance | null>>({});
 
 watch(
   () => [props.sessionId, props.agentType] as const,
-  ([newId, agentType], [oldId]) => {
+  ([newId, agentType], oldVal) => {
+    const oldId = oldVal?.[0];
     if (!newId || agentType !== "pty") return;
 
     // Register new sessions; existing ones keep their original config
