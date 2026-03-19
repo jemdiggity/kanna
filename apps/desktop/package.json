@@ -1,10 +1,10 @@
 {
   "name": "@kanna/desktop",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun run build:daemon && vite",
+    "dev": "../../scripts/sync-version.sh && bun run build:daemon && vite",
     "build:daemon": "cd ../../crates/daemon && cargo build && cd ../../crates/kanna-hook && cargo build",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",

@@ -66,7 +66,7 @@ async fn main() {
 
     log::info!(
         "kanna-daemon v{} ({} @ {}) starting, pid={}, socket={:?}",
-        env!("CARGO_PKG_VERSION"),
+        env!("KANNA_VERSION"),
         env!("GIT_BRANCH"),
         env!("GIT_COMMIT"),
         pid,
