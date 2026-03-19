@@ -25,28 +25,10 @@ async fn try_connect_daemon() -> Option<DaemonClient> {
     DaemonClient::connect(&socket_path).await.ok()
 }
 
-/// Check if the daemon is running (PID file + socket probe).
-/// If not, try to spawn it.
+/// Always spawn a new daemon. If an old one is running, the new daemon
+/// performs a handoff (transfers sessions via SCM_RIGHTS) automatically.
 async fn ensure_daemon_running() {
-    let dir = daemon_socket_path().parent().unwrap().to_path_buf();
-    let pid_path = dir.join("daemon.pid");
-
-    // Check if already running
-    if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-        if let Ok(pid) = pid_str.trim().parse::<i32>() {
-            // Check if process is alive
-            if unsafe { libc::kill(pid, 0) } == 0 {
-                // Process alive — check socket
-                if try_connect_daemon().await.is_some() {
-                    eprintln!("[daemon] already running (pid={})", pid);
-                    return;
-                }
-            }
-        }
-    }
-
-    // Not running — try to spawn
-    eprintln!("[daemon] not running, attempting to spawn...");
+    eprintln!("[daemon] spawning daemon (handoff from old if running)...");
 
     // Look for the daemon binary in common locations
     let daemon_candidates = [
