@@ -6,13 +6,15 @@ import fs from "fs";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
-// Read port from .env.local (written by worktree setup) or env var or default
+// Read port from .env.local at repo root (written by Kanna worktree setup)
 let port = 1420;
-try {
-  const envLocal = fs.readFileSync(path.resolve(__dirname, ".env.local"), "utf-8");
-  const match = envLocal.match(/KANNA_DEV_PORT=(\d+)/);
-  if (match) port = parseInt(match[1], 10);
-} catch {}
+for (const dir of [__dirname, path.resolve(__dirname, "../..") ]) {
+  try {
+    const envLocal = fs.readFileSync(path.join(dir, ".env.local"), "utf-8");
+    const match = envLocal.match(/KANNA_DEV_PORT=(\d+)/);
+    if (match) { port = parseInt(match[1], 10); break; }
+  } catch {}
+}
 // @ts-expect-error process is a nodejs global
 if (process.env.KANNA_DEV_PORT) port = parseInt(process.env.KANNA_DEV_PORT, 10);
 

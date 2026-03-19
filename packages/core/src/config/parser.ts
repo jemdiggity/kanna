@@ -1,5 +1,5 @@
 import { parse } from "smol-toml";
-import type { KannaConfig, TasksConfig, TeamConfig, AgentConfig } from "./types.js";
+import type { KannaConfig, TasksConfig, TeamConfig, AgentConfig, PortsConfig } from "./types.js";
 
 export function parseKannaConfig(toml: string): KannaConfig {
   const raw = parse(toml) as Record<string, unknown>;
@@ -39,6 +39,15 @@ export function parseKannaConfig(toml: string): KannaConfig {
       }
     }
     config.agents = agents;
+  }
+
+  if (raw.ports && typeof raw.ports === "object") {
+    const p = raw.ports as Record<string, unknown>;
+    const ports: PortsConfig = {};
+    for (const [name, value] of Object.entries(p)) {
+      if (typeof value === "number") ports[name] = value;
+    }
+    if (Object.keys(ports).length > 0) config.ports = ports;
   }
 
   return config;

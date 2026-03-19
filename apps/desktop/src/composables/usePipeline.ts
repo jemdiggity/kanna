@@ -36,41 +36,60 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     const branch = `task-${id}`;
     const worktreePath = `${repoPath}/.kanna-worktrees/${branch}`;
 
-    // 1. Create git worktree with a unique port offset (1–100)
-    // Find the lowest unused offset across all items (not just this repo).
+    // 1. Read .kanna.toml config (need ports info before creating worktree)
+    let config: ReturnType<typeof parseKannaConfig> | null = null;
+    try {
+      const configContent = await invoke<string>("read_text_file", {
+        path: `${repoPath}/.kanna.toml`,
+      });
+      if (configContent) config = parseKannaConfig(configContent);
+    } catch {
+      // No .kanna.toml or parse error — continue without config
+    }
+
+    // 2. Assign port offset (lowest unused across all items)
     const usedOffsets = new Set(
       items.value.map((i) => i.port_offset).filter((o): o is number => o != null)
     );
     let portOffset = 1;
     while (usedOffsets.has(portOffset)) portOffset++;
 
+    // 3. Create git worktree
     await invoke("git_worktree_add", {
       repoPath,
       branch,
       path: worktreePath,
-      portOffset,
     });
 
-    // 2. Read .kanna.toml config and run setup script if defined
-    try {
-      const configContent = await invoke<string>("read_text_file", {
-        path: `${repoPath}/.kanna.toml`,
-      });
-      if (configContent) {
-        const config = parseKannaConfig(configContent);
-        if (config.tasks?.setup) {
-          await invoke("run_script", {
-            script: config.tasks.setup,
-            cwd: worktreePath,
-            env: {},
-          });
-        }
+    // 4. Write .env.local with offset ports (from [ports] config)
+    if (config?.ports) {
+      const envLines = Object.entries(config.ports)
+        .map(([name, base]) => `${name}=${base + portOffset}`)
+        .join("\n");
+      try {
+        await invoke("write_text_file", {
+          path: `${worktreePath}/.env.local`,
+          content: envLines + "\n",
+        });
+      } catch {
+        // Non-fatal — agent can still work without port assignments
       }
-    } catch {
-      // No .kanna.toml or parse error — continue without setup
     }
 
-    // 3. Insert pipeline item to DB
+    // 5. Run setup script if defined
+    if (config?.tasks?.setup) {
+      try {
+        await invoke("run_script", {
+          script: config.tasks.setup,
+          cwd: worktreePath,
+          env: {},
+        });
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // 6. Insert pipeline item to DB
     await insertPipelineItem(db.value, {
       id,
       repo_id: repoId,

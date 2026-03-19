@@ -73,6 +73,14 @@ pub fn list_files(path: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), String> {
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, &content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn append_log(message: String) -> Result<(), String> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)

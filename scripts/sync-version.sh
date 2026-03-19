@@ -44,4 +44,13 @@ if [ -f "$TAURI_CONF" ]; then
   if [ "$CURRENT" != "$VERSION" ]; then
     sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$TAURI_CONF"
   fi
+
+  # Sync devUrl port from .env.local (if present)
+  ENV_LOCAL="$ROOT/.env.local"
+  if [ -f "$ENV_LOCAL" ]; then
+    PORT="$(grep KANNA_DEV_PORT "$ENV_LOCAL" | cut -d= -f2 | tr -d '[:space:]')"
+    if [ -n "$PORT" ]; then
+      sed -i '' "s|http://localhost:[0-9]*|http://localhost:$PORT|" "$TAURI_CONF"
+    fi
+  fi
 fi

@@ -214,7 +214,6 @@ pub fn git_worktree_add(
     repo_path: String,
     branch: String,
     path: String,
-    port_offset: Option<u16>,
 ) -> Result<String, String> {
     let output = Command::new("git")
         .args(["worktree", "add", "-b", &branch, &path])
@@ -227,37 +226,12 @@ pub fn git_worktree_add(
     }
 
     // Create .cargo/config.toml so Cargo builds in the worktree's own target dir.
-    // Without this, all worktrees share the main repo's target/ and cargo build
-    // in one worktree can overwrite the running daemon binary.
     let cargo_dir = std::path::Path::new(&path).join(".cargo");
     let _ = std::fs::create_dir_all(&cargo_dir);
     let _ = std::fs::write(
         cargo_dir.join("config.toml"),
         "[build]\ntarget-dir = \".build\"\n",
     );
-
-    // Assign a unique dev server port offset (1–100).
-    // Main app uses port 1420, worktrees use 1420 + offset.
-    if let Some(offset) = port_offset {
-        let port = 1420 + offset;
-
-        // Write .env.local for vite to read
-        let env_dir = std::path::Path::new(&path).join("apps/desktop");
-        let _ = std::fs::write(
-            env_dir.join(".env.local"),
-            format!("KANNA_DEV_PORT={}\n", port),
-        );
-
-        // Update tauri.conf.json devUrl to match
-        let tauri_conf_path = env_dir.join("src-tauri/tauri.conf.json");
-        if let Ok(content) = std::fs::read_to_string(&tauri_conf_path) {
-            let updated = content.replace(
-                "http://localhost:1420",
-                &format!("http://localhost:{}", port),
-            );
-            let _ = std::fs::write(&tauri_conf_path, updated);
-        }
-    }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
