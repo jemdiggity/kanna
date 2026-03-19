@@ -43,10 +43,10 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") {
     e.preventDefault();
     emit("close");
-  } else if (e.key === "ArrowDown") {
+  } else if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
     e.preventDefault();
     selectedIndex.value = Math.min(selectedIndex.value + 1, filtered.value.length - 1);
-  } else if (e.key === "ArrowUp") {
+  } else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
     e.preventDefault();
     selectedIndex.value = Math.max(selectedIndex.value - 1, 0);
   } else if (e.key === "Enter") {
