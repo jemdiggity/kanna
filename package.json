@@ -1,6 +1,7 @@
 {
   "name": "kanna",
   "private": true,
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "build": "turbo build",
     "dev": "cd apps/desktop && bun tauri dev",
