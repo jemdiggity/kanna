@@ -10,6 +10,8 @@ export type AgentType = "pty" | "sdk";
 export function usePipeline(db: Ref<DbHandle | null>) {
   const items = ref<PipelineItem[]>([]);
   const selectedItemId = ref<string | null>(null);
+  // Cached env vars per session (computed during spawnPtySession)
+  const sessionEnvCache = new Map<string, Record<string, string>>();
 
   async function loadItems(repoId: string) {
     if (!db.value) return;
@@ -157,6 +159,9 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     // Let the worktree know it's a worktree — daemon auto-uses {cwd}/.kanna-daemon
     env.KANNA_WORKTREE = "1";
 
+    // Cache env for shell modal to reuse
+    sessionEnvCache.set(sessionId, { ...env });
+
     // Build shell command: setup scripts first, then Claude CLI
     const claudeCmd = `claude --dangerously-skip-permissions --settings '${hookSettings}' '${prompt.replace(/'/g, "'\\''")}'`;
     const fullCmd = [...setupCmds, claudeCmd].join(" && ");
@@ -177,6 +182,10 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     return items.value.find((i) => i.id === selectedItemId.value) ?? null;
   }
 
+  function getSessionEnv(sessionId: string): Record<string, string> {
+    return sessionEnvCache.get(sessionId) || {};
+  }
+
   return {
     items,
     selectedItemId,
@@ -184,6 +193,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     transition,
     createItem,
     spawnPtySession,
+    getSessionEnv,
     selectedItem,
   };
 }

@@ -26,7 +26,7 @@ import { usePRWorkflow } from "./composables/usePRWorkflow";
 const db = ref<DbHandle | null>(null);
 
 const { repos, selectedRepoId, refresh: refreshRepos, importRepo } = useRepo(db);
-const { items, selectedItemId, loadItems, transition, createItem, spawnPtySession, selectedItem } = usePipeline(db);
+const { items, selectedItemId, loadItems, transition, createItem, spawnPtySession, getSessionEnv, selectedItem } = usePipeline(db);
 const {
   suspendAfterMinutes,
   killAfterMinutes,
@@ -378,6 +378,7 @@ onMounted(async () => {
           dbName = `kanna-wt-${suffix}.db`;
         }
       } catch {}
+      console.log("[db] using database:", dbName);
       database = (await Database.load(`sqlite:${dbName}`)) as unknown as DbHandle;
     } else {
       database = getMockDatabase() as unknown as DbHandle;
@@ -534,6 +535,7 @@ onMounted(async () => {
       v-if="showShellModal && currentItem"
       :session-id="`shell-${currentItem.id}`"
       :cwd="currentItem.branch ? `${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}` : selectedRepo?.path || '/tmp'"
+      :env="getSessionEnv(currentItem.id)"
       :maximized="maximized"
       @close="showShellModal = false; maximized = false; focusAgentTerminal()"
     />
