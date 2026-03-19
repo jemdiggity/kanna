@@ -67,11 +67,16 @@ async fn ensure_daemon_running() {
     };
 
     eprintln!("[daemon] spawning {:?}", daemon_bin);
-    match std::process::Command::new(&daemon_bin)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
+    use std::os::unix::process::CommandExt;
+    // setsid() detaches daemon from our process group so Ctrl+C doesn't kill it
+    match unsafe {
+        std::process::Command::new(&daemon_bin)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .pre_exec(|| { libc::setsid(); Ok(()) })
+            .spawn()
+    }
     {
         Ok(_child) => {
             // Wait for socket to appear with exponential backoff
