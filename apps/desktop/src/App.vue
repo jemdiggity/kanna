@@ -358,6 +358,12 @@ async function runMigrations(database: DbHandle) {
   try {
     await database.execute(`ALTER TABLE pipeline_item ADD COLUMN port_env TEXT`);
   } catch { /* column already exists */ }
+  try {
+    await database.execute(`ALTER TABLE pipeline_item ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+  } catch { /* column already exists */ }
+  try {
+    await database.execute(`ALTER TABLE pipeline_item ADD COLUMN pin_order INTEGER`);
+  } catch { /* column already exists */ }
 }
 
 // Initialize
