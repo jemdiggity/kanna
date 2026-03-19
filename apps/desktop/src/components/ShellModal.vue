@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from "vue";
 import { invoke } from "../invoke";
+import { parseRepoConfig } from "@kanna/core";
 import TerminalView from "./TerminalView.vue";
 
 const props = defineProps<{
   sessionId: string;
   cwd: string;
+  repoPath?: string;
+  portOffset?: number | null;
   maximized?: boolean;
-  env?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -19,12 +21,33 @@ onMounted(async () => {
 });
 
 async function spawnShell(sessionId: string, cwd: string, _prompt: string, cols: number, rows: number) {
+  const env: Record<string, string> = { TERM: "xterm-256color", KANNA_WORKTREE: "1" };
+
+  // Read port env vars from .kanna/config.json
+  if (props.repoPath && props.portOffset) {
+    try {
+      const configContent = await invoke<string>("read_text_file", {
+        path: `${props.repoPath}/.kanna/config.json`,
+      });
+      if (configContent) {
+        const repoConfig = parseRepoConfig(configContent);
+        if (repoConfig.ports) {
+          for (const [name, base] of Object.entries(repoConfig.ports)) {
+            env[name] = String(base + props.portOffset);
+          }
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
   await invoke("spawn_session", {
     sessionId,
     cwd,
     executable: "/bin/zsh",
     args: ["--login"],
-    env: { TERM: "xterm-256color", KANNA_WORKTREE: "1", ...props.env },
+    env,
     cols,
     rows,
   });
