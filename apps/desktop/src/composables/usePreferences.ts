@@ -3,8 +3,6 @@ import type { DbHandle } from "@kanna/db";
 import { getSetting, setSetting } from "@kanna/db";
 
 export function usePreferences(db: Ref<DbHandle | null>) {
-  const fontFamily = ref("SF Mono, Fira Code, Cascadia Code, Menlo, monospace");
-  const fontSize = ref(13);
   const suspendAfterMinutes = ref(30);
   const killAfterMinutes = ref(60);
 
@@ -13,10 +11,6 @@ export function usePreferences(db: Ref<DbHandle | null>) {
 
   async function load() {
     if (!db.value) return;
-    const ff = await getSetting(db.value, "fontFamily");
-    if (ff) fontFamily.value = ff;
-    const fs = await getSetting(db.value, "fontSize");
-    if (fs) fontSize.value = parseInt(fs, 10) || 13;
     const sa = await getSetting(db.value, "suspendAfterMinutes");
     if (sa) suspendAfterMinutes.value = parseInt(sa, 10) || 30;
     const ka = await getSetting(db.value, "killAfterMinutes");
@@ -34,8 +28,6 @@ export function usePreferences(db: Ref<DbHandle | null>) {
   }
 
   return {
-    fontFamily,
-    fontSize,
     suspendAfterMinutes,
     killAfterMinutes,
 

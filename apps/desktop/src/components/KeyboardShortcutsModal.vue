@@ -4,25 +4,10 @@ import { getShortcutGroups } from "../composables/useKeyboardShortcuts";
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const groups = getShortcutGroups();
-
-function splitKeys(display: string): string[] {
-  // Split symbols (⌘⇧⌥) from the final key name (N, /, Enter, ⌫, ↑, ↓)
-  const symbols = ["⌘", "⇧", "⌥"];
-  const parts: string[] = [];
-  let rest = display;
-  for (const sym of symbols) {
-    if (rest.startsWith(sym)) {
-      parts.push(sym);
-      rest = rest.slice(sym.length);
-    }
-  }
-  if (rest) parts.push(rest);
-  return parts;
-}
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="emit('close')">
+  <div class="modal-overlay" @click.self="emit('close')" @keydown.escape="emit('close')">
     <div class="modal shortcuts-modal">
       <h3>Keyboard Shortcuts</h3>
       <div class="shortcuts-grid">
@@ -30,11 +15,12 @@ function splitKeys(display: string): string[] {
           <h4>{{ group.title }}</h4>
           <div v-for="s in group.shortcuts" :key="s.keys" class="shortcut-row">
             <span class="shortcut-action">{{ s.action }}</span>
-            <span class="shortcut-keys">
-              <kbd v-for="(k, i) in splitKeys(s.keys)" :key="i">{{ k }}</kbd>
-            </span>
+            <kbd>{{ s.keys }}</kbd>
           </div>
         </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" @click="emit('close')">Close</button>
       </div>
     </div>
   </div>
@@ -65,17 +51,7 @@ h3 { margin: 0 0 16px; font-size: 15px; font-weight: 600; }
 h4 { color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px; }
 .shortcut-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; font-size: 13px; }
 .shortcut-action { color: #ccc; }
-.shortcut-keys { display: flex; gap: 3px; }
-kbd {
-  background: #333;
-  border: 1px solid #555;
-  border-radius: 4px;
-  padding: 2px 7px;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: 12px;
-  color: #aaa;
-  min-width: 20px;
-  text-align: center;
-  line-height: 1.4;
-}
+kbd { background: #333; border: 1px solid #555; border-radius: 3px; padding: 1px 6px; font-family: "JetBrains Mono", "SF Mono", monospace; font-size: 11px; color: #aaa; }
+.modal-footer { display: flex; justify-content: flex-end; margin-top: 12px; }
+.btn { padding: 5px 14px; background: #333; border: 1px solid #444; border-radius: 4px; color: #ccc; cursor: pointer; font-size: 12px; }
 </style>

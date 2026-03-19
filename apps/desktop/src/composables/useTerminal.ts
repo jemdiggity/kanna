@@ -20,7 +20,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
 
   function init(container: HTMLElement) {
     const term = new Terminal({
-      fontFamily: '"SF Mono", Menlo, monospace',
+      fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
       fontSize: 13,
       theme: { background: "#1a1a1a", foreground: "#e0e0e0", cursor: "#e0e0e0" },
       scrollback: 10000,

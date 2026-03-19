@@ -132,7 +132,7 @@ onMounted(async () => {
 .file-item {
   padding: 6px 14px;
   font-size: 13px;
-  font-family: "SF Mono", Menlo, monospace;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   color: #ccc;
   cursor: pointer;
 }

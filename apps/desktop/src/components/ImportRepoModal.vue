@@ -178,7 +178,7 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .path {
-  font-family: "SF Mono", Menlo, monospace;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -186,7 +186,7 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .branch {
-  font-family: "SF Mono", Menlo, monospace;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   font-size: 11px;
   background: #2a2a2a;
   padding: 1px 6px;

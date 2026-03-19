@@ -258,13 +258,13 @@ describe("settings queries", () => {
   });
 
   it("setSetting and getSetting round-trip", async () => {
-    await setSetting(db, "terminal_font_size", "16");
-    expect(await getSetting(db, "terminal_font_size")).toBe("16");
+    await setSetting(db, "suspendAfterMinutes", "10");
+    expect(await getSetting(db, "suspendAfterMinutes")).toBe("10");
   });
 
   it("setSetting overwrites an existing value", async () => {
-    await setSetting(db, "appearance_mode", "light");
-    await setSetting(db, "appearance_mode", "dark");
-    expect(await getSetting(db, "appearance_mode")).toBe("dark");
+    await setSetting(db, "ideCommand", "cursor");
+    await setSetting(db, "ideCommand", "code");
+    expect(await getSetting(db, "ideCommand")).toBe("code");
   });
 });

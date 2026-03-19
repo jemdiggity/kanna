@@ -81,7 +81,7 @@ function title(item: PipelineItem): string {
 }
 
 .branch {
-  font-family: "SF Mono", Menlo, monospace;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   font-size: 11px;
   background: #2a2a2a;
   padding: 1px 6px;

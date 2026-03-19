@@ -28,8 +28,6 @@ const db = ref<DbHandle | null>(null);
 const { repos, selectedRepoId, refresh: refreshRepos, importRepo } = useRepo(db);
 const { items, selectedItemId, loadItems, transition, createItem, spawnPtySession, selectedItem } = usePipeline(db);
 const {
-  fontFamily,
-  fontSize,
   suspendAfterMinutes,
   killAfterMinutes,
 
@@ -341,12 +339,9 @@ async function runMigrations(database: DbHandle) {
     finished_at TEXT, error TEXT
   )`);
   await database.execute(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('terminal_font_family', 'SF Mono')`);
-  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('terminal_font_size', '13')`);
-  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('suspend_after_minutes', '5')`);
-  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('kill_after_minutes', '30')`);
-  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('appearance_mode', 'system')`);
-  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('ide_command', 'code')`);
+  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('suspendAfterMinutes', '5')`);
+  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('killAfterMinutes', '30')`);
+  await database.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('ideCommand', 'code')`);
 
   // Activity columns (added in feature-parity update)
   try {
@@ -510,8 +505,6 @@ onMounted(async () => {
     <PreferencesPanel
       v-if="showPreferencesPanel"
       :preferences="{
-        fontFamily: fontFamily,
-        fontSize: fontSize,
         suspendAfterMinutes: suspendAfterMinutes,
         killAfterMinutes: killAfterMinutes,
 
