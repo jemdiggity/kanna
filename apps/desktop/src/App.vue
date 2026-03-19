@@ -309,6 +309,9 @@ async function runMigrations(database: DbHandle) {
   try {
     await database.execute(`ALTER TABLE pipeline_item ADD COLUMN activity_changed_at TEXT`);
   } catch { /* column already exists */ }
+  try {
+    await database.execute(`ALTER TABLE pipeline_item ADD COLUMN port_offset INTEGER`);
+  } catch { /* column already exists */ }
 }
 
 // Initialize

@@ -37,9 +37,12 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     const worktreePath = `${repoPath}/.kanna-worktrees/${branch}`;
 
     // 1. Create git worktree with a unique port offset (1–100)
-    // Each worktree gets port 1420 + offset for its dev server.
-    const existingCount = items.value.filter((i) => i.branch).length;
-    const portOffset = existingCount + 1;
+    // Find the lowest unused offset across all items (not just this repo).
+    const usedOffsets = new Set(
+      items.value.map((i) => i.port_offset).filter((o): o is number => o != null)
+    );
+    let portOffset = 1;
+    while (usedOffsets.has(portOffset)) portOffset++;
 
     await invoke("git_worktree_add", {
       repoPath,
@@ -79,6 +82,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       pr_url: null,
       branch,
       agent_type: agentType,
+      port_offset: portOffset,
     });
 
     // 4. Spawn agent based on type

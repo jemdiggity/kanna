@@ -20,6 +20,7 @@ export interface PipelineItem {
   agent_type: string | null;
   activity: "working" | "unread" | "idle";
   activity_changed_at: string | null;
+  port_offset: number | null;
   created_at: string;
   updated_at: string;
 }
