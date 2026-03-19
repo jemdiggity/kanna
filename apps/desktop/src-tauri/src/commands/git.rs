@@ -232,7 +232,7 @@ pub fn git_worktree_add(
     let _ = std::fs::create_dir_all(&cargo_dir);
     let _ = std::fs::write(
         cargo_dir.join("config.toml"),
-        "[build]\ntarget-dir = \"target\"\n",
+        "[build]\ntarget-dir = \".build\"\n",
     );
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())

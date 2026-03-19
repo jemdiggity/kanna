@@ -1,6 +1,7 @@
 node_modules/
 dist/
 target/
+.build/
 *.sqlite
 *.sqlite-journal
 .DS_Store
