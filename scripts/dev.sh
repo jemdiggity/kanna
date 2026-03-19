@@ -24,8 +24,10 @@ start() {
     exit 1
   fi
   tmux new-session -d -s "$SESSION" -c "$ROOT"
-  if [ -n "$KANNA_WORKTREE" ]; then
-    tmux send-keys -t "$SESSION" "export KANNA_WORKTREE=1 && bun dev" Enter
+  # Forward all KANNA_* env vars into the tmux session
+  EXPORTS="$(env | grep '^KANNA_' | sed 's/^/export /' | tr '\n' ' ')"
+  if [ -n "$EXPORTS" ]; then
+    tmux send-keys -t "$SESSION" "$EXPORTS&& bun dev" Enter
   else
     tmux send-keys -t "$SESSION" "bun dev" Enter
   fi
