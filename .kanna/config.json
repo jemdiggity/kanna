@@ -1,5 +1,5 @@
 {
-  "setup": ["bun install"],
+  "setup": ["bun install", "cd apps/desktop && bun install"],
   "ports": {
     "KANNA_DEV_PORT": 1420
   }
