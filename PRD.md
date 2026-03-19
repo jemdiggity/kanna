@@ -112,9 +112,22 @@ The daemon is a standalone process that manages PTY sessions over a Unix socket.
 1. **One daemon at a time.** New daemon always replaces the old one.
 2. **Always handoff.** New daemon transfers sessions from old daemon via SCM_RIGHTS.
 3. **Always spawn.** App always starts a fresh daemon. Never reuses existing.
-4. **Sessions survive upgrades.** Child processes are unaware of daemon restarts.
-5. **One reader per session.** Single `stream_output` task, started on first Attach.
-6. **One client per session.** Attach swaps the output target atomically.
+4. **Always wait.** App waits for the new daemon's PID before connecting. Prevents connecting to the old daemon during handoff.
+5. **Sessions survive upgrades.** Child processes are unaware of daemon restarts.
+6. **One reader per session.** Single `stream_output` task, started on first Attach.
+7. **One client per session.** Attach swaps the output target atomically.
+
+### App Startup Sequence
+
+1. App spawns new daemon binary (detached via `setsid`)
+2. New daemon detects old daemon, performs handoff (fd transfer), old daemon exits
+3. New daemon writes PID file and binds socket
+4. App polls PID file until it matches the spawned child
+5. App clears stale command connection (`DaemonState`)
+6. App connects to new daemon (event bridge + on-demand command connection)
+7. Frontend mounts terminals, calls Attach → Resize → Claude redraws
+
+The app does **not** attempt to reconnect mid-session. Daemon restarts only happen on app startup. All connections are established fresh after the new daemon is confirmed ready.
 
 ### Reconnection
 
