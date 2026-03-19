@@ -39,10 +39,16 @@ log() {
   fi
 }
 
-case "${1:-start}" in
-  start)   start ;;
+ATTACH=false
+for arg in "$@"; do
+  case "$arg" in --attach|-a) ATTACH=true ;; esac
+done
+
+CMD="${1:-start}"
+case "$CMD" in
+  start)   start; $ATTACH && tmux attach -t "$SESSION" ;;
   stop)    stop ;;
-  restart) stop; sleep 1; start ;;
+  restart) stop; sleep 1; start; $ATTACH && tmux attach -t "$SESSION" ;;
   log)     log ;;
-  *)       echo "Usage: $0 {start|stop|restart|log}" ;;
+  *)       echo "Usage: $0 {start|stop|restart|log} [--attach]" ;;
 esac
