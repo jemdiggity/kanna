@@ -1,30 +1,103 @@
 import { onMounted, onUnmounted } from "vue";
 
-export interface KeyboardActions {
+export type ActionName =
+  | "newTask"
+  | "openFile"
+  | "makePR"
+  | "merge"
+  | "closeTask"
+  | "navigateUp"
+  | "navigateDown"
+  | "toggleZen"
+  | "dismiss"
+  | "openShell"
+  | "newWindow"
+  | "showDiff"
+  | "showShortcuts"
+  | "openPreferences";
+
+export type KeyboardActions = Record<ActionName, () => void>;
+
+interface ShortcutDef {
+  action: ActionName;
+  /** Display label for the shortcuts modal */
+  label: string;
+  /** Group for the shortcuts modal */
+  group: string;
+  /** Key(s) that trigger this shortcut (matched against KeyboardEvent.key). Array = any match. */
+  key: string | string[];
+  meta?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  /** When true, requires shift to NOT be pressed (distinguishes Cmd+N from Shift+Cmd+N) */
+  noShift?: boolean;
+  /** Display string for the shortcuts modal (e.g. "Cmd+Delete") */
+  display: string;
+}
+
+/**
+ * Single source of truth for all app-level keyboard shortcuts.
+ * Used by: keydown handler, terminal passthrough, shortcuts modal.
+ */
+export const shortcuts: ShortcutDef[] = [
   // Pipeline
-  newTask: () => void;
-  openFile: () => void;
-  makePR: () => void;
-  merge: () => void;
-  closeTask: () => void;
+  { action: "newTask",    label: "New Task",          group: "Pipeline",   key: ["N", "n"],                     meta: true, shift: true,  display: "Shift+Cmd+N" },
+  { action: "openFile",   label: "Open File",         group: "Pipeline",   key: "p",                            meta: true,               display: "Cmd+P" },
+  { action: "makePR",     label: "Make PR",           group: "Pipeline",   key: "s",                            meta: true, noShift: true, display: "Cmd+S" },
+  { action: "merge",      label: "Merge PR",          group: "Pipeline",   key: "m",                            meta: true,               display: "Cmd+M" },
+  { action: "closeTask",  label: "Close / Reject",    group: "Pipeline",   key: ["Backspace", "Delete"],        meta: true,               display: "Cmd+Delete" },
   // Navigation
-  navigateUp: () => void;
-  navigateDown: () => void;
-  toggleZen: () => void;
-  dismiss: () => void;
+  { action: "navigateDown", label: "Next Task",       group: "Navigation", key: "ArrowDown",                    meta: true, alt: true,    display: "Option+Cmd+Down" },
+  { action: "navigateUp",   label: "Previous Task",   group: "Navigation", key: "ArrowUp",                      meta: true, alt: true,    display: "Option+Cmd+Up" },
+  { action: "toggleZen",    label: "Zen Mode",        group: "Navigation", key: ["Z", "z"],                     meta: true, shift: true,  display: "Shift+Cmd+Z" },
   // Terminal
-  openShell: () => void;
+  { action: "openShell",  label: "Shell Terminal",    group: "Terminal",   key: "j",                            meta: true,               display: "Cmd+J" },
   // Window
-  newWindow: () => void;
-  // Views
-  showDiff: () => void;
-  // Help
-  showShortcuts: () => void;
-  openPreferences: () => void;
+  { action: "newWindow",  label: "New Window",        group: "Window",     key: "n",                            meta: true, noShift: true, display: "Cmd+N" },
+  // Views / Help
+  { action: "showDiff",       label: "View Diff",           group: "Help", key: "d",                            meta: true, noShift: true, display: "Cmd+D" },
+  { action: "showShortcuts",  label: "Keyboard Shortcuts",  group: "Help", key: "/",                            meta: true,               display: "Cmd+/" },
+  { action: "openPreferences", label: "Preferences",        group: "Help", key: ",",                            meta: true,               display: "Cmd+," },
+  // Escape is special — no meta required
+  { action: "dismiss",    label: "Dismiss",           group: "Navigation", key: "Escape",                                                 display: "Escape" },
+];
+
+function matches(def: ShortcutDef, e: KeyboardEvent): boolean {
+  const meta = e.metaKey || e.ctrlKey;
+  if (def.meta && !meta) return false;
+  if (def.shift && !e.shiftKey) return false;
+  if (def.noShift && e.shiftKey) return false;
+  if (def.alt && !e.altKey) return false;
+  const keys = Array.isArray(def.key) ? def.key : [def.key];
+  return keys.includes(e.key);
+}
+
+/**
+ * Returns true if the event matches any app-level shortcut.
+ * Used by terminal to decide which keys to let bubble up.
+ */
+export function isAppShortcut(e: KeyboardEvent): boolean {
+  return shortcuts.some((def) => matches(def, e));
+}
+
+/**
+ * Returns shortcut definitions grouped for display in the shortcuts modal.
+ */
+export function getShortcutGroups(): { title: string; shortcuts: { keys: string; action: string }[] }[] {
+  const groupOrder = ["Pipeline", "Navigation", "Terminal", "Window", "Help"];
+  const map = new Map<string, { keys: string; action: string }[]>();
+  for (const def of shortcuts) {
+    // Don't show Escape in the modal
+    if (def.action === "dismiss") continue;
+    if (!map.has(def.group)) map.set(def.group, []);
+    map.get(def.group)!.push({ keys: def.display, action: def.label });
+  }
+  return groupOrder.filter((g) => map.has(g)).map((g) => ({ title: g, shortcuts: map.get(g)! }));
 }
 
 export function useKeyboardShortcuts(actions: KeyboardActions) {
   function handler(e: KeyboardEvent) {
+<<<<<<< HEAD
     const meta = e.metaKey || e.ctrlKey;
 
     // Escape — dismiss whatever's open
@@ -122,6 +195,112 @@ export function useKeyboardShortcuts(actions: KeyboardActions) {
       e.preventDefault();
       actions.openPreferences();
       return;
+||||||| parent of 8a38916 (refactor: single source of truth for keyboard shortcuts)
+    const meta = e.metaKey || e.ctrlKey;
+
+    // Escape — dismiss whatever's open
+    if (e.key === "Escape") {
+      actions.dismiss();
+      return;
+    }
+
+    // Shift+Cmd+N → New Task
+    if (meta && e.shiftKey && e.key === "N") {
+      e.preventDefault();
+      actions.newTask();
+      return;
+    }
+
+    // Cmd+N → New Window
+    if (meta && !e.shiftKey && e.key === "n") {
+      e.preventDefault();
+      actions.newWindow();
+      return;
+    }
+
+    // Cmd+P → Open File
+    if (meta && e.key === "p") {
+      e.preventDefault();
+      actions.openFile();
+      return;
+    }
+
+    // Cmd+S → Make PR
+    if (meta && !e.shiftKey && e.key === "s") {
+      e.preventDefault();
+      actions.makePR();
+      return;
+    }
+
+    // Cmd+M → Merge PR
+    if (meta && e.key === "m") {
+      e.preventDefault();
+      actions.merge();
+      return;
+    }
+
+    // Cmd+Delete → Close/Reject
+    if (meta && (e.key === "Backspace" || e.key === "Delete")) {
+      e.preventDefault();
+      actions.closeTask();
+      return;
+    }
+
+    // Option+Cmd+Down → Next Task
+    if (meta && e.altKey && e.key === "ArrowDown") {
+      e.preventDefault();
+      actions.navigateDown();
+      return;
+    }
+
+    // Option+Cmd+Up → Previous Task
+    if (meta && e.altKey && e.key === "ArrowUp") {
+      e.preventDefault();
+      actions.navigateUp();
+      return;
+    }
+
+    // Shift+Cmd+Z → Zen Mode
+    if (meta && e.shiftKey && e.key === "Z") {
+      e.preventDefault();
+      actions.toggleZen();
+      return;
+    }
+
+    // Cmd+J → Open Shell
+    if (meta && e.key === "j") {
+      e.preventDefault();
+      actions.openShell();
+      return;
+    }
+
+    // Cmd+D → Show Diff
+    if (meta && !e.shiftKey && e.key === "d") {
+      e.preventDefault();
+      actions.showDiff();
+      return;
+    }
+
+    // Cmd+/ → Show Shortcuts
+    if (meta && e.key === "/") {
+      e.preventDefault();
+      actions.showShortcuts();
+      return;
+    }
+
+    // Cmd+, → Preferences
+    if (meta && e.key === ",") {
+      e.preventDefault();
+      actions.openPreferences();
+      return;
+=======
+    for (const def of shortcuts) {
+      if (matches(def, e)) {
+        if (def.action !== "dismiss") e.preventDefault();
+        actions[def.action]();
+        return;
+      }
+>>>>>>> 8a38916 (refactor: single source of truth for keyboard shortcuts)
     }
   }
 

@@ -1,46 +1,9 @@
 <script setup lang="ts">
+import { getShortcutGroups } from "../composables/useKeyboardShortcuts";
+
 const emit = defineEmits<{ (e: "close"): void }>();
 
-const groups = [
-  {
-    title: "Pipeline",
-    shortcuts: [
-      { keys: "Shift+Cmd+N", action: "New Task" },
-      { keys: "Cmd+P", action: "Open File" },
-      { keys: "Cmd+S", action: "Make PR" },
-      { keys: "Cmd+M", action: "Merge PR" },
-      { keys: "Cmd+Delete", action: "Close / Reject" },
-    ],
-  },
-  {
-    title: "Navigation",
-    shortcuts: [
-      { keys: "Option+Cmd+Down", action: "Next Task" },
-      { keys: "Option+Cmd+Up", action: "Previous Task" },
-      { keys: "Shift+Cmd+Z", action: "Zen Mode" },
-    ],
-  },
-  {
-    title: "Terminal",
-    shortcuts: [
-      { keys: "Cmd+J", action: "Shell Terminal" },
-    ],
-  },
-  {
-    title: "Window",
-    shortcuts: [
-      { keys: "Cmd+N", action: "New Window" },
-    ],
-  },
-  {
-    title: "Help",
-    shortcuts: [
-      { keys: "Cmd+D", action: "View Diff" },
-      { keys: "Cmd+/", action: "Keyboard Shortcuts" },
-      { keys: "Cmd+,", action: "Preferences" },
-    ],
-  },
-];
+const groups = getShortcutGroups();
 </script>
 
 <template>

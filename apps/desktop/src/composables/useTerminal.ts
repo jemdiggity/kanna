@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import { invoke } from "../invoke"
 import { listen } from "../listen"
+import { isAppShortcut } from "./useKeyboardShortcuts"
 
 export interface SpawnOptions {
   cwd: string
@@ -35,19 +36,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
 
     // Let app-level shortcuts pass through even when terminal has focus
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      if (e.key === "Escape") return false
-      const meta = e.metaKey || e.ctrlKey
-      if (meta && e.shiftKey && (e.key === "N" || e.key === "n")) return false
-      if (meta && e.key === "/") return false
-      if (meta && e.key === "p") return false
-      if (meta && e.key === "s") return false
-      if (meta && e.key === "m") return false
-      if (meta && e.key === "d") return false
-      if (meta && e.key === "j") return false
-      if (meta && !e.shiftKey && e.key === "n") return false
-      if (meta && e.shiftKey && (e.key === "Z" || e.key === "z")) return false
-      if (meta && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return false
-      if (meta && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) return false
+      if (isAppShortcut(e)) return false
       return true
     })
 
