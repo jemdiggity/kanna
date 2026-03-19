@@ -62,7 +62,7 @@ export const shortcuts: ShortcutDef[] = [
 ];
 
 function matches(def: ShortcutDef, e: KeyboardEvent): boolean {
-  const meta = e.metaKey || e.ctrlKey;
+  const meta = e.metaKey;
   if (def.meta && !meta) return false;
   if (def.shift && !e.shiftKey) return false;
   if (def.noShift && e.shiftKey) return false;
