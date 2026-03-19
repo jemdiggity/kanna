@@ -7,7 +7,10 @@ const props = defineProps<{
   ideCommand?: string;
 }>();
 
-const emit = defineEmits<{ (e: "close"): void }>();
+const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "select", filePath: string): void;
+}>();
 
 const query = ref("");
 const files = ref<string[]>([]);
@@ -32,15 +35,8 @@ async function loadFiles() {
   }
 }
 
-function openFile(filePath: string) {
-  const cmd = props.ideCommand || "code";
-  const fullPath = `${props.worktreePath}/${filePath}`;
-  invoke("run_script", {
-    script: `${cmd} "${fullPath}"`,
-    cwd: props.worktreePath,
-    env: {},
-  }).catch((e: any) => console.error("Failed to open file:", e));
-  emit("close");
+function selectFile(filePath: string) {
+  emit("select", filePath);
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -56,7 +52,7 @@ function handleKeydown(e: KeyboardEvent) {
   } else if (e.key === "Enter") {
     e.preventDefault();
     const file = filtered.value[selectedIndex.value];
-    if (file) openFile(file);
+    if (file) selectFile(file);
   }
 }
 
@@ -87,7 +83,7 @@ onMounted(async () => {
           :key="file"
           class="file-item"
           :class="{ selected: i === selectedIndex }"
-          @click="openFile(file)"
+          @click="selectFile(file)"
           @mouseenter="selectedIndex = i"
         >
           {{ file }}

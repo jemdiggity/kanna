@@ -13,6 +13,7 @@ import ImportRepoModal from "./components/ImportRepoModal.vue";
 import PreferencesPanel from "./components/PreferencesPanel.vue";
 import KeyboardShortcutsModal from "./components/KeyboardShortcutsModal.vue";
 import FilePickerModal from "./components/FilePickerModal.vue";
+import FilePreviewModal from "./components/FilePreviewModal.vue";
 import DiffModal from "./components/DiffModal.vue";
 import ShellModal from "./components/ShellModal.vue";
 import { useRepo } from "./composables/useRepo";
@@ -61,6 +62,8 @@ const showImportRepoModal = ref(false);
 const showPreferencesPanel = ref(false);
 const showShortcutsModal = ref(false);
 const showFilePickerModal = ref(false);
+const showFilePreviewModal = ref(false);
+const previewFilePath = ref("");
 const showDiffModal = ref(false);
 const showShellModal = ref(false);
 const diffScopes = new Map<string, "branch" | "commit" | "working">();
@@ -177,7 +180,14 @@ async function handleCloseTask() {
 
 useKeyboardShortcuts({
   newTask: () => { showNewTaskModal.value = true; },
-  openFile: () => { showFilePickerModal.value = true; },
+  openFile: () => {
+    if (showFilePreviewModal.value) {
+      showFilePreviewModal.value = false;
+      showFilePickerModal.value = true;
+    } else {
+      showFilePickerModal.value = !showFilePickerModal.value;
+    }
+  },
   openInIDE: async () => {
     const item = currentItem.value;
     if (!item?.branch || !selectedRepo.value) return;
@@ -192,6 +202,7 @@ useKeyboardShortcuts({
   toggleZen: () => { zenMode.value = !zenMode.value; },
   dismiss: () => {
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return; }
+    if (showFilePreviewModal.value) { showFilePreviewModal.value = false; return; }
     if (showFilePickerModal.value) { showFilePickerModal.value = false; return; }
     if (showDiffModal.value) { showDiffModal.value = false; return; }
     if (showShellModal.value) { showShellModal.value = false; focusAgentTerminal(); return; }
@@ -515,8 +526,15 @@ onMounted(async () => {
     <FilePickerModal
       v-if="showFilePickerModal && currentItem?.branch"
       :worktree-path="`${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}`"
-      :ide-command="ideCommand"
       @close="showFilePickerModal = false"
+      @select="(f: string) => { showFilePickerModal = false; previewFilePath = f; showFilePreviewModal = true; }"
+    />
+    <FilePreviewModal
+      v-if="showFilePreviewModal && currentItem?.branch"
+      :file-path="previewFilePath"
+      :worktree-path="`${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}`"
+      :ide-command="ideCommand"
+      @close="showFilePreviewModal = false"
     />
   </div>
 </template>
