@@ -235,6 +235,34 @@ pub fn git_worktree_add(
         "[build]\ntarget-dir = \".build\"\n",
     );
 
+    // Assign a unique dev server port based on the branch name hash.
+    // This prevents worktree dev servers from conflicting with each other
+    // or the main app on port 1420.
+    let port = {
+        let mut hash: u32 = 5381;
+        for b in branch.bytes() {
+            hash = hash.wrapping_mul(33).wrapping_add(b as u32);
+        }
+        // Range 1500–9999, avoid 1420 (main app)
+        1500 + (hash % 8500)
+    };
+
+    // Write .env for vite to read
+    let _ = std::fs::write(
+        std::path::Path::new(&path).join("apps/desktop/.env.local"),
+        format!("KANNA_DEV_PORT={}\n", port),
+    );
+
+    // Update tauri.conf.json devUrl to match
+    let tauri_conf_path = std::path::Path::new(&path).join("apps/desktop/src-tauri/tauri.conf.json");
+    if let Ok(content) = std::fs::read_to_string(&tauri_conf_path) {
+        let updated = content.replace(
+            "http://localhost:1420",
+            &format!("http://localhost:{}", port),
+        );
+        let _ = std::fs::write(&tauri_conf_path, updated);
+    }
+
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 

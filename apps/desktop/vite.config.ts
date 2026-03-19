@@ -1,9 +1,20 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import path from "path";
+import fs from "fs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+
+// Read port from .env.local (written by worktree setup) or env var or default
+let port = 1420;
+try {
+  const envLocal = fs.readFileSync(path.resolve(__dirname, ".env.local"), "utf-8");
+  const match = envLocal.match(/KANNA_DEV_PORT=(\d+)/);
+  if (match) port = parseInt(match[1], 10);
+} catch {}
+// @ts-expect-error process is a nodejs global
+if (process.env.KANNA_DEV_PORT) port = parseInt(process.env.KANNA_DEV_PORT, 10);
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -26,14 +37,14 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port,
     strictPort: true,
     host: host || false,
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 1421,
+          port: port + 1,
         }
       : undefined,
     watch: {

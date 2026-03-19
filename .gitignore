@@ -10,3 +10,4 @@ target/
 .kanna-worktrees/
 .playwright-mcp/
 VERSION
+.env.local
