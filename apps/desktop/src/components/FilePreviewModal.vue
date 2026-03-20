@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch, onUnmounted } from "vue";
 import { invoke } from "../invoke";
 
 const props = defineProps<{
@@ -15,6 +15,12 @@ const highlighted = ref("");
 const loading = ref(true);
 const error = ref<string | null>(null);
 
+const renderMarkdown = ref(false);
+
+const isMarkdownFile = computed(() =>
+  props.filePath.toLowerCase().endsWith(".md")
+);
+
 // Lazy-load shiki to avoid blocking startup
 let highlighter: any = null;
 
@@ -27,6 +33,59 @@ async function getHighlighter() {
   });
   return highlighter;
 }
+
+// Lazy-load markdown-it to avoid blocking startup
+let md: any = null;
+
+async function getMarkdownIt() {
+  if (md) return md;
+  const [{ default: MarkdownIt }, { default: taskLists }, { default: strikethrough }] =
+    await Promise.all([
+      import("markdown-it"),
+      import("markdown-it-task-lists"),
+      import("markdown-it-strikethrough-alt"),
+    ]);
+
+  const hl = await getHighlighter();
+
+  md = new MarkdownIt({
+    html: false,
+    linkify: true,
+    typographer: false,
+    highlight(str: string, lang: string) {
+      if (!lang) return "";
+      // Languages are pre-loaded in the watcher before md.render() is called,
+      // so getLoadedLanguages() is reliable here (no async needed).
+      const loaded = hl.getLoadedLanguages();
+      const useLang = loaded.includes(lang) ? lang : "text";
+      return hl.codeToHtml(str, { lang: useLang, theme: "github-dark" });
+    },
+  });
+  md.use(taskLists, { enabled: false });
+  md.use(strikethrough);
+  return md;
+}
+
+const renderedMarkdown = ref("");
+
+watch([renderMarkdown, content], async ([shouldRender, raw]) => {
+  if (!shouldRender || !raw) {
+    renderedMarkdown.value = "";
+    return;
+  }
+  const parser = await getMarkdownIt();
+  const hl = await getHighlighter();
+
+  // Pre-load all fenced code block languages before rendering,
+  // because markdown-it's highlight callback is synchronous.
+  const langMatches = raw.matchAll(/^```(\w+)/gm);
+  const langs = [...new Set([...langMatches].map((m) => m[1]))];
+  await Promise.all(
+    langs.map((lang) => hl.loadLanguage(lang).catch(() => {}))
+  );
+
+  renderedMarkdown.value = parser.render(raw);
+});
 
 function langFromPath(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() || "";
@@ -46,6 +105,7 @@ function langFromPath(path: string): string {
 async function loadFile() {
   loading.value = true;
   error.value = null;
+  renderMarkdown.value = false;
   try {
     const fullPath = `${props.worktreePath}/${props.filePath}`;
     content.value = await invoke<string>("read_text_file", { path: fullPath });
@@ -89,6 +149,18 @@ function handleKeydown(e: KeyboardEvent) {
   if (meta && e.key === "o") {
     e.preventDefault();
     openInIDE();
+    return;
+  }
+  if (
+    e.key === " " &&
+    isMarkdownFile.value &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
+    e.preventDefault();
+    renderMarkdown.value = !renderMarkdown.value;
   }
 }
 
@@ -97,7 +169,6 @@ onMounted(() => {
   window.addEventListener("keydown", handleKeydown);
 });
 
-import { onUnmounted } from "vue";
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown);
 });
