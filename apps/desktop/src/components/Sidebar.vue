@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Repo, PipelineItem } from "@kanna/db";
-import { ref } from "vue";
+import { ref, watch, onMounted, nextTick } from "vue";
+import Sortable from "sortablejs";
 
 const props = defineProps<{
   repos: Repo[];
@@ -22,27 +23,21 @@ const emit = defineEmits<{
 
 const collapsedRepos = ref<Set<string>>(new Set());
 
-const draggingItemId = ref<string | null>(null);
-const dropTarget = ref<{ zone: "pinned" | "unpinned"; index: number } | null>(null);
+// Track Sortable instances for cleanup
+const sortableInstances = new Map<string, Sortable[]>();
+const isDragging = ref(false);
 
-function toggleRepo(repoId: string) {
-  if (collapsedRepos.value.has(repoId)) {
-    collapsedRepos.value.delete(repoId);
-  } else {
-    collapsedRepos.value.add(repoId);
-  }
+function sortedPinned(repoId: string): PipelineItem[] {
+  return props.pipelineItems
+    .filter((i) => i.repo_id === repoId && i.stage !== "closed" && i.pinned)
+    .sort((a, b) => (a.pin_order ?? 0) - (b.pin_order ?? 0));
 }
 
-function itemsForRepo(repoId: string): PipelineItem[] {
+function sortedUnpinned(repoId: string): PipelineItem[] {
   const order: Record<string, number> = { idle: 0, unread: 1, working: 2 };
   return props.pipelineItems
-    .filter((item) => item.repo_id === repoId && item.stage !== "closed")
+    .filter((i) => i.repo_id === repoId && i.stage !== "closed" && !i.pinned)
     .sort((a, b) => {
-      // Pinned tasks always come first
-      if (a.pinned !== b.pinned) return b.pinned - a.pinned;
-      // Among pinned tasks, sort by pin_order
-      if (a.pinned && b.pinned) return (a.pin_order ?? 0) - (b.pin_order ?? 0);
-      // Among unpinned tasks, sort by activity then time
       const ao = order[a.activity || "idle"] ?? 0;
       const bo = order[b.activity || "idle"] ?? 0;
       if (ao !== bo) return ao - bo;
@@ -52,12 +47,8 @@ function itemsForRepo(repoId: string): PipelineItem[] {
     });
 }
 
-function pinnedItemsForRepo(repoId: string): PipelineItem[] {
-  return itemsForRepo(repoId).filter((item) => item.pinned);
-}
-
-function unpinnedItemsForRepo(repoId: string): PipelineItem[] {
-  return itemsForRepo(repoId).filter((item) => !item.pinned);
+function itemsForRepo(repoId: string): PipelineItem[] {
+  return [...sortedPinned(repoId), ...sortedUnpinned(repoId)];
 }
 
 function itemTitle(item: PipelineItem): string {
@@ -74,75 +65,103 @@ function handleSelectItem(item: PipelineItem) {
   emit("select-item", item.id);
 }
 
-function handleDragStart(e: DragEvent, item: PipelineItem) {
-  draggingItemId.value = item.id;
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", item.id);
-  }
-}
-
-function handleDragEnd() {
-  draggingItemId.value = null;
-  dropTarget.value = null;
-}
-
-function handleDragOverPinned(e: DragEvent, repoId: string, index: number) {
-  e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-  dropTarget.value = { zone: "pinned", index };
-}
-
-function handleDragOverUnpinned(e: DragEvent) {
-  e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-  dropTarget.value = { zone: "unpinned", index: 0 };
-}
-
-function handleDragOverDivider(e: DragEvent, repoId: string) {
-  e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-  dropTarget.value = { zone: "pinned", index: pinnedItemsForRepo(repoId).length };
-}
-
-function handleDropPinned(e: DragEvent, repoId: string, index: number) {
-  e.preventDefault();
-  const itemId = draggingItemId.value;
-  if (!itemId) return;
-
-  // Guard against cross-repo drag
-  const draggedItem = props.pipelineItems.find((i) => i.id === itemId);
-  if (!draggedItem || draggedItem.repo_id !== repoId) { handleDragEnd(); return; }
-
-  const pinned = pinnedItemsForRepo(repoId);
-  const wasPinned = pinned.some((i) => i.id === itemId);
-
-  if (wasPinned) {
-    const currentIds = pinned.map((i) => i.id).filter((id) => id !== itemId);
-    currentIds.splice(index, 0, itemId);
-    emit("reorder-pinned", repoId, currentIds);
+function toggleRepo(repoId: string) {
+  if (collapsedRepos.value.has(repoId)) {
+    collapsedRepos.value.delete(repoId);
+    nextTick(() => initSortables(repoId));
   } else {
-    const currentIds = pinned.map((i) => i.id);
-    currentIds.splice(index, 0, itemId);
-    emit("pin-item", itemId, index);
-    emit("reorder-pinned", repoId, currentIds);
+    collapsedRepos.value.add(repoId);
+    destroySortables(repoId);
   }
-
-  handleDragEnd();
 }
 
-function handleDropUnpinned(e: DragEvent, itemId?: string) {
-  e.preventDefault();
-  const draggedId = itemId || draggingItemId.value;
-  if (!draggedId) return;
-
-  const item = props.pipelineItems.find((i) => i.id === draggedId);
-  if (item?.pinned) {
-    emit("unpin-item", draggedId);
+function destroySortables(repoId: string) {
+  const instances = sortableInstances.get(repoId);
+  if (instances) {
+    instances.forEach((s) => s.destroy());
+    sortableInstances.delete(repoId);
   }
-
-  handleDragEnd();
 }
+
+/** Read item IDs from DOM order (source of truth after Sortable reorders) */
+function getIdsFromEl(el: HTMLElement): string[] {
+  return Array.from(el.children)
+    .map((child) => (child as HTMLElement).dataset.itemId)
+    .filter(Boolean) as string[];
+}
+
+function initSortables(repoId: string) {
+  destroySortables(repoId);
+
+  const pinnedEl = document.querySelector(`[data-pinned="${repoId}"]`) as HTMLElement | null;
+  const unpinnedEl = document.querySelector(`[data-unpinned="${repoId}"]`) as HTMLElement | null;
+  if (!pinnedEl || !unpinnedEl) return;
+
+  const instances: Sortable[] = [];
+
+  instances.push(Sortable.create(pinnedEl, {
+    group: `repo-${repoId}`,
+    animation: 150,
+    forceFallback: true,
+    fallbackClass: "sortable-fallback",
+    ghostClass: "sortable-ghost",
+    chosenClass: "sortable-chosen",
+    onStart() { isDragging.value = true; },
+    onEnd() {
+      isDragging.value = false;
+      const ids = getIdsFromEl(pinnedEl);
+      // Pin any newly arrived items
+      for (let i = 0; i < ids.length; i++) {
+        const item = props.pipelineItems.find((it) => it.id === ids[i]);
+        if (item && !item.pinned) {
+          emit("pin-item", ids[i], i);
+        }
+      }
+      // Reorder all pinned
+      if (ids.length > 0) {
+        emit("reorder-pinned", repoId, ids);
+      }
+    },
+  }));
+
+  instances.push(Sortable.create(unpinnedEl, {
+    group: `repo-${repoId}`,
+    animation: 150,
+    forceFallback: true,
+    fallbackClass: "sortable-fallback",
+    ghostClass: "sortable-ghost",
+    chosenClass: "sortable-chosen",
+    sort: false,
+    onStart() { isDragging.value = true; },
+    onEnd() { isDragging.value = false; },
+    onAdd(evt) {
+      const itemId = (evt.item as HTMLElement).dataset.itemId;
+      if (itemId) {
+        const item = props.pipelineItems.find((i) => i.id === itemId);
+        if (item?.pinned) {
+          emit("unpin-item", itemId);
+        }
+      }
+    },
+  }));
+
+  sortableInstances.set(repoId, instances);
+}
+
+// Init sortables when repos/items change
+watch(
+  () => [props.repos, props.pipelineItems],
+  () => {
+    nextTick(() => {
+      for (const repo of props.repos) {
+        if (!collapsedRepos.value.has(repo.id)) {
+          initSortables(repo.id);
+        }
+      }
+    });
+  },
+  { immediate: true, deep: true }
+);
 </script>
 
 <template>
@@ -175,81 +194,38 @@ function handleDropUnpinned(e: DragEvent, itemId?: string) {
 
         <div v-if="!collapsedRepos.has(repo.id)" class="pipeline-list">
           <!-- Pinned tasks -->
-          <template v-if="pinnedItemsForRepo(repo.id).length > 0 || draggingItemId">
+          <div :data-pinned="repo.id" class="pinned-zone">
             <div
-              v-if="pinnedItemsForRepo(repo.id).length === 0"
-              class="pin-drop-zone"
-              @dragover.prevent="handleDragOverPinned($event, repo.id, 0)"
-              @drop="handleDropPinned($event, repo.id, 0)"
+              v-for="item in sortedPinned(repo.id)"
+              :key="item.id"
+              :data-item-id="item.id"
+              class="pipeline-item"
+              :class="{ selected: selectedItemId === item.id }"
+              @click="handleSelectItem(item)"
             >
-              <div
-                class="drop-indicator"
-                :class="{ active: dropTarget?.zone === 'pinned' && dropTarget?.index === 0 }"
-              ></div>
-            </div>
-            <template v-for="(item, idx) in pinnedItemsForRepo(repo.id)" :key="item.id">
-              <div
-                class="drop-indicator"
-                :class="{ active: dropTarget?.zone === 'pinned' && dropTarget?.index === idx }"
-                @dragover.prevent="handleDragOverPinned($event, repo.id, idx)"
-                @drop="handleDropPinned($event, repo.id, idx)"
-              ></div>
-              <div
-                class="pipeline-item"
-                :class="{
-                  selected: selectedItemId === item.id,
-                  dragging: draggingItemId === item.id,
+              <span
+                class="item-title"
+                :style="{
+                  fontWeight: item.activity === 'unread' ? 'bold' : 'normal',
+                  fontStyle: item.activity === 'working' ? 'italic' : 'normal',
                 }"
-                draggable="true"
-                @dragstart="handleDragStart($event, item)"
-                @dragend="handleDragEnd"
-                @click="handleSelectItem(item)"
-              >
-                <span
-                  class="item-title"
-                  :style="{
-                    fontWeight: item.activity === 'unread' ? 'bold' : 'normal',
-                    fontStyle: item.activity === 'working' ? 'italic' : 'normal',
-                  }"
-                >{{ itemTitle(item) }}</span>
-              </div>
-            </template>
-            <!-- Drop indicator after last pinned item -->
-            <div
-              class="drop-indicator"
-              :class="{ active: dropTarget?.zone === 'pinned' && dropTarget?.index === pinnedItemsForRepo(repo.id).length }"
-              @dragover.prevent="handleDragOverPinned($event, repo.id, pinnedItemsForRepo(repo.id).length)"
-              @drop="handleDropPinned($event, repo.id, pinnedItemsForRepo(repo.id).length)"
-            ></div>
-          </template>
+              >{{ itemTitle(item) }}</span>
+            </div>
+          </div>
 
           <!-- Divider -->
-          <div
-            v-if="pinnedItemsForRepo(repo.id).length > 0 || draggingItemId"
-            class="pin-divider"
-            @dragover.prevent="handleDragOverDivider($event, repo.id)"
-            @drop="handleDropPinned($event, repo.id, pinnedItemsForRepo(repo.id).length)"
-          >
+          <div v-show="itemsForRepo(repo.id).length > 0" class="pin-divider">
             <div class="pin-divider-line"></div>
           </div>
 
           <!-- Unpinned tasks -->
-          <div
-            class="unpinned-zone"
-            @dragover.prevent="handleDragOverUnpinned($event)"
-            @drop="handleDropUnpinned($event)"
-          >
+          <div :data-unpinned="repo.id" class="unpinned-zone">
             <div
-              v-for="item in unpinnedItemsForRepo(repo.id)"
+              v-for="item in sortedUnpinned(repo.id)"
               :key="item.id"
+              :data-item-id="item.id"
               class="pipeline-item"
-              :class="{
-                selected: selectedItemId === item.id,
-                dragging: draggingItemId === item.id,
-              }"
-              draggable="true"
-              @dragstart="handleDragStart($event, item)"
-              @dragend="handleDragEnd"
+              :class="{ selected: selectedItemId === item.id }"
               @click="handleSelectItem(item)"
             >
               <span
@@ -290,48 +266,6 @@ function handleDropUnpinned(e: DragEvent, itemId?: string) {
   flex-direction: column;
   height: 100%;
   user-select: none;
-}
-
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid #333;
-  -webkit-app-region: drag;
-}
-
-.app-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #f0f0f0;
-  letter-spacing: 0.5px;
-}
-
-.flipped {
-  display: inline-block;
-  transform: scaleX(-1);
-}
-
-.btn-icon {
-  -webkit-app-region: no-drag;
-  background: none;
-  border: 1px solid #444;
-  color: #aaa;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.btn-icon:hover {
-  background: #333;
-  color: #e0e0e0;
 }
 
 .sidebar-content {
@@ -393,6 +327,27 @@ function handleDropUnpinned(e: DragEvent, itemId?: string) {
   font-size: 11px;
 }
 
+.btn-icon {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: 1px solid #444;
+  color: #aaa;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon:hover {
+  background: #333;
+  color: #e0e0e0;
+}
+
 .btn-add-task {
   margin-left: auto;
   font-size: 14px;
@@ -413,9 +368,11 @@ function handleDropUnpinned(e: DragEvent, itemId?: string) {
   align-items: center;
   gap: 8px;
   padding: 4px 14px;
-  cursor: pointer;
+  cursor: grab;
   border-radius: 4px;
   margin: 1px 6px;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .pipeline-item:hover {
@@ -434,6 +391,7 @@ function handleDropUnpinned(e: DragEvent, itemId?: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  pointer-events: none;
 }
 
 .no-items {
@@ -471,36 +429,42 @@ function handleDropUnpinned(e: DragEvent, itemId?: string) {
   font-size: 14px;
 }
 
+.pinned-zone {
+  min-height: 0;
+}
+
+.pinned-zone:not(:empty) {
+  min-height: 28px;
+}
+
 .pin-divider {
-  padding: 4px 6px;
+  padding: 6px 6px;
 }
 
 .pin-divider-line {
   height: 1px;
-  background: #333;
-}
-
-.drop-indicator {
-  height: 0;
-  margin: 0 6px;
-  transition: height 0.1s;
-}
-
-.drop-indicator.active {
-  height: 2px;
-  background: #0066cc;
-  border-radius: 1px;
-}
-
-.pin-drop-zone {
-  min-height: 8px;
-}
-
-.pipeline-item.dragging {
-  opacity: 0.3;
+  background: #555;
 }
 
 .unpinned-zone {
-  min-height: 4px;
+  min-height: 8px;
+}
+
+/* Sortable.js classes */
+.sortable-ghost {
+  opacity: 0.4;
+  background: #0066cc22;
+  border-radius: 4px;
+}
+
+.sortable-chosen {
+  cursor: grabbing;
+}
+
+.sortable-fallback {
+  opacity: 0.9;
+  background: #1e1e1e;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 </style>
