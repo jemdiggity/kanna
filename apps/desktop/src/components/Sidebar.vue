@@ -30,14 +30,14 @@ const isDragging = ref(false);
 
 function sortedPinned(repoId: string): PipelineItem[] {
   return props.pipelineItems
-    .filter((i) => i.repo_id === repoId && i.stage !== "closed" && i.pinned)
+    .filter((i) => i.repo_id === repoId && i.stage !== "done" && i.pinned)
     .sort((a, b) => (a.pin_order ?? 0) - (b.pin_order ?? 0));
 }
 
 function sortedUnpinned(repoId: string): PipelineItem[] {
   const order: Record<string, number> = { idle: 0, unread: 1, working: 2 };
   return props.pipelineItems
-    .filter((i) => i.repo_id === repoId && i.stage !== "closed" && !i.pinned)
+    .filter((i) => i.repo_id === repoId && i.stage !== "done" && !i.pinned)
     .sort((a, b) => {
       const ao = order[a.activity || "idle"] ?? 0;
       const bo = order[b.activity || "idle"] ?? 0;
