@@ -46,8 +46,8 @@ if [ -f "$TAURI_CONF" ]; then
     sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$SEMVER\"/" "$TAURI_CONF"
   fi
 
-  # Sync devUrl port from env var (set by Kanna when spawning worktree agents)
-  if [ -n "$KANNA_DEV_PORT" ]; then
+  # Sync devUrl port from env var — only in worktrees (main app uses 1420)
+  if [ -n "$KANNA_DEV_PORT" ] && [ -n "$KANNA_WORKTREE" ]; then
     sed -i '' "s|http://localhost:[0-9]*|http://localhost:$KANNA_DEV_PORT|" "$TAURI_CONF"
   fi
 fi
