@@ -31,6 +31,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
     term.loadAddon(new WebLinksAddon())
     term.open(container)
 
+    // Push kitty keyboard mode so Shift+Enter sends CSI 13;2 u
+    term.write("\x1b[>1u")
+
     if (container.offsetWidth > 0 && container.offsetHeight > 0) {
       fitAddon.fit()
     }
