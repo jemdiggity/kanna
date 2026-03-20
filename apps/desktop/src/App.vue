@@ -612,15 +612,15 @@ onMounted(async () => {
       @close="showDiffModal = false; maximized = false"
     />
     <FilePickerModal
-      v-if="showFilePickerModal && currentItem?.branch"
-      :worktree-path="`${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}`"
+      v-if="showFilePickerModal && selectedRepo?.path"
+      :worktree-path="currentItem?.branch ? `${selectedRepo.path}/.kanna-worktrees/${currentItem.branch}` : selectedRepo.path"
       @close="showFilePickerModal = false"
       @select="(f: string) => { showFilePickerModal = false; previewFilePath = f; showFilePreviewModal = true; }"
     />
     <FilePreviewModal
-      v-if="showFilePreviewModal && currentItem?.branch"
+      v-if="showFilePreviewModal && selectedRepo?.path"
       :file-path="previewFilePath"
-      :worktree-path="`${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}`"
+      :worktree-path="currentItem?.branch ? `${selectedRepo.path}/.kanna-worktrees/${currentItem.branch}` : selectedRepo.path"
       :ide-command="ideCommand"
       @close="showFilePreviewModal = false"
     />
