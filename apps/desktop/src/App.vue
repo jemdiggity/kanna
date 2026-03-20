@@ -21,7 +21,6 @@ import { usePipeline } from "./composables/usePipeline";
 import { usePreferences } from "./composables/usePreferences";
 import { useKeyboardShortcuts } from "./composables/useKeyboardShortcuts";
 import { useResourceSweeper } from "./composables/useResourceSweeper";
-import { usePRWorkflow } from "./composables/usePRWorkflow";
 
 const db = ref<DbHandle | null>(null);
 
@@ -50,11 +49,6 @@ const selectedRepo = computed(() =>
   repos.value.find((r) => r.id === selectedRepoId.value) ?? null
 );
 
-// PR workflow — only instantiate when db is available
-const prWorkflow = computed(() =>
-  db.value ? usePRWorkflow(db.value) : null
-);
-
 const showNewTaskModal = ref(false);
 const showImportRepoModal = ref(false);
 const showPreferencesPanel = ref(false);
@@ -70,7 +64,7 @@ const maximized = ref(false);
 
 const currentItem = computed(() => {
   const item = selectedItem();
-  return item && item.stage !== "closed" ? item : null;
+  return item && item.stage !== "done" ? item : null;
 });
 
 // Load pipeline items when selected repo changes
@@ -102,7 +96,7 @@ watch([repos, selectedRepoId], refreshAllItems, { immediate: true });
 function sortedItemsForCurrentRepo(): PipelineItem[] {
   const activityOrder: Record<string, number> = { idle: 0, unread: 1, working: 2 };
   return allItems.value
-    .filter((item) => item.repo_id === selectedRepoId.value && item.stage !== "closed")
+    .filter((item) => item.repo_id === selectedRepoId.value && item.stage !== "done")
     .sort((a, b) => {
       if (a.pinned !== b.pinned) return b.pinned - a.pinned;
       if (a.pinned && b.pinned) return (a.pin_order ?? 0) - (b.pin_order ?? 0);
@@ -132,30 +126,6 @@ function navigateItems(direction: -1 | 1) {
   selectedItemId.value = currentItems[nextIndex].id;
 }
 
-async function handleMakePR() {
-  const item = selectedItem();
-  if (!item || !selectedRepo.value || !prWorkflow.value) return;
-  try {
-    await prWorkflow.value.createPR(item, selectedRepo.value.path);
-    await loadItems(selectedRepo.value.id);
-    await refreshAllItems();
-  } catch (e) {
-    console.error("PR creation failed:", e);
-  }
-}
-
-async function handleMerge() {
-  const item = selectedItem();
-  if (!item || !selectedRepo.value || !prWorkflow.value) return;
-  try {
-    await prWorkflow.value.mergePR(item, selectedRepo.value.path);
-    await loadItems(selectedRepo.value.id);
-    await refreshAllItems();
-  } catch (e) {
-    console.error("Merge failed:", e);
-  }
-}
-
 async function handleCloseTask() {
   const item = selectedItem();
   if (!item || !selectedRepo.value) return;
@@ -164,8 +134,8 @@ async function handleCloseTask() {
     await invoke("kill_session", { sessionId: item.id }).catch(() => {});
     // Kill the shell session if one exists
     await invoke("kill_session", { sessionId: `shell-${item.id}` }).catch(() => {});
-    // Mark as closed in DB
-    await updatePipelineItemStage(db.value!, item.id, "closed");
+    // Mark as done in DB
+    await updatePipelineItemStage(db.value!, item.id, "done");
     // Select the first read (idle) task in the list, or first available
     const currentItems = sortedItemsForCurrentRepo();
     const remaining = currentItems.filter((i) => i.id !== item.id);
@@ -210,8 +180,8 @@ useKeyboardShortcuts({
     const worktreePath = `${selectedRepo.value.path}/.kanna-worktrees/${item.branch}`;
     await invoke("run_script", { script: `${ideCommand.value} "${worktreePath}"`, cwd: worktreePath, env: {} }).catch(() => {});
   },
-  makePR: handleMakePR,
-  merge: handleMerge,
+  makePR: () => {},
+  merge: () => {},
   closeTask: handleCloseTask,
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
@@ -341,7 +311,7 @@ async function runMigrations(database: DbHandle) {
   await database.execute(`CREATE TABLE IF NOT EXISTS pipeline_item (
     id TEXT PRIMARY KEY, repo_id TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
     issue_number INTEGER, issue_title TEXT, prompt TEXT,
-    stage TEXT NOT NULL DEFAULT 'queued', pr_number INTEGER, pr_url TEXT,
+    stage TEXT NOT NULL DEFAULT 'in_progress', pr_number INTEGER, pr_url TEXT,
     branch TEXT, agent_type TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -389,6 +359,12 @@ async function runMigrations(database: DbHandle) {
   try {
     await database.execute(`ALTER TABLE pipeline_item ADD COLUMN display_name TEXT`);
   } catch { /* column already exists */ }
+
+  // Pipeline simplification: map old stages to new
+  try {
+    await database.execute(`UPDATE pipeline_item SET stage = 'in_progress' WHERE stage = 'queued'`);
+    await database.execute(`UPDATE pipeline_item SET stage = 'done' WHERE stage IN ('needs_review', 'merged', 'closed')`);
+  } catch { /* migration already applied or no rows to update */ }
 }
 
 // Initialize
@@ -441,11 +417,11 @@ onMounted(async () => {
       }
     }
 
-    // GC: remove closed tasks older than gcAfterDays
+    // GC: remove done tasks older than gcAfterDays
     if (db.value) {
       const cutoff = new Date(Date.now() - gcAfterDays.value * 86400000).toISOString();
       const stale = await db.value.select<PipelineItem>(
-        "SELECT * FROM pipeline_item WHERE stage = 'closed' AND updated_at < ?",
+        "SELECT * FROM pipeline_item WHERE stage = 'done' AND updated_at < ?",
         [cutoff]
       );
       for (const item of stale) {
@@ -460,7 +436,7 @@ onMounted(async () => {
         await db.value.execute("DELETE FROM pipeline_item WHERE id = ?", [item.id]);
       }
       if (stale.length > 0) {
-        console.log(`[gc] cleaned up ${stale.length} closed task(s)`);
+        console.log(`[gc] cleaned up ${stale.length} done task(s)`);
       }
     }
 
@@ -489,7 +465,7 @@ onMounted(async () => {
     }
 
     // Listen for hook events from Claude (via daemon broadcast)
-    listen("hook_event", (event: any) => {
+    listen("hook_event", async (event: any) => {
       const payload = event.payload || event;
       const sessionId = payload.session_id;
       const hookEvent = payload.event;
@@ -499,6 +475,11 @@ onMounted(async () => {
       if (!item) return;
 
       if (hookEvent === "Stop" || hookEvent === "StopFailure") {
+        // Auto-transition pr → done
+        if (item.stage === "pr") {
+          await updatePipelineItemStage(db.value!, item.id, "done");
+          item.stage = "done";
+        }
         const activity = selectedItemId.value === sessionId ? "idle" : "unread";
         updatePipelineItemActivity(db.value!, item.id, activity);
         item.activity = activity;
@@ -514,13 +495,18 @@ onMounted(async () => {
     });
 
     // Listen for process exit (backup for when hooks don't fire)
-    listen("session_exit", (event: any) => {
+    listen("session_exit", async (event: any) => {
       const payload = event.payload || event;
       const sessionId = payload.session_id;
       if (!sessionId || !db.value) return;
 
       const item = allItems.value.find((i) => i.id === sessionId);
       if (!item) return;
+      // Auto-transition pr → done on exit too
+      if (item.stage === "pr") {
+        await updatePipelineItemStage(db.value!, item.id, "done");
+        item.stage = "done";
+      }
       const activity = selectedItemId.value === sessionId ? "idle" : "unread";
       updatePipelineItemActivity(db.value!, item.id, activity);
       item.activity = activity;
@@ -555,8 +541,6 @@ onMounted(async () => {
       :repo-path="selectedRepo?.path"
       :spawn-pty-session="spawnPtySession"
       :maximized="maximized"
-      @make-pr="handleMakePR"
-      @merge="handleMerge"
       @close-task="handleCloseTask"
       @agent-completed="refreshAllItems"
     />
