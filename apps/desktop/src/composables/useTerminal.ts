@@ -24,7 +24,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
       fontSize: 13,
       theme: { background: "#1a1a1a", foreground: "#e0e0e0", cursor: "#e0e0e0" },
       scrollback: 10000,
-      cursorBlink: true,
+      cursorBlink: false,
       vtExtensions: { kittyKeyboard: true },
     })
     term.loadAddon(fitAddon)
@@ -98,6 +98,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
       // (SIGWINCH is needed because ioctl(TIOCSWINSZ) won't fire it if size is unchanged.)
       if (terminal.value) {
         terminal.value.reset()
+        terminal.value.write("\x1b[?25l") // hide cursor until TUI redraws
         const { cols, rows } = terminal.value
         // Force a size change then restore — guarantees SIGWINCH fires
         await invoke("resize_session", { sessionId, cols: cols - 1, rows }).catch(() => {})
