@@ -152,9 +152,18 @@ git commit -m "chore: remove PR workflow, GitHub client (replaced by PR agent)"
 **Files:**
 - Modify: `apps/desktop/src/App.vue`
 
-- [ ] **Step 1: Add stage migration in runMigrations()**
+- [ ] **Step 1: Change default stage in CREATE TABLE DDL and add data migration**
 
-After the existing `ALTER TABLE` migrations (after `pin_order` block around line 383), add:
+In `runMigrations()`, change the `CREATE TABLE pipeline_item` statement (line ~336-343). Change:
+```typescript
+stage TEXT NOT NULL DEFAULT 'queued',
+```
+To:
+```typescript
+stage TEXT NOT NULL DEFAULT 'in_progress',
+```
+
+Then, after the existing `ALTER TABLE` migrations (after `pin_order` block around line 383), add:
 
 ```typescript
   // Pipeline simplification: map old stages to new
@@ -392,23 +401,29 @@ async function handleMakePR() {
 
 - [ ] **Step 5: Remove merge shortcut and handler**
 
-In `useKeyboardShortcuts.ts`, remove the merge shortcut definition (line ~48):
+Three changes:
+
+1. In `useKeyboardShortcuts.ts`, remove `"merge"` from the `ActionName` type union.
+
+2. In `useKeyboardShortcuts.ts`, remove the merge shortcut from the `shortcuts` array (line ~48):
 ```typescript
   { action: "merge",      label: "Merge PR",          group: "Pipeline",   key: "m",                            meta: true,               display: "⌘M" },
 ```
 
-Remove `"merge"` from the `ActionName` type.
-
-In `App.vue`, remove the `handleMerge` function entirely and update the keyboard actions:
-```typescript
-merge: () => {}, // no-op (shortcut removed but type still requires it during transition)
-```
-
-Actually, remove `"merge"` from `ActionName` type and remove the `merge` entry from both `shortcuts` array and the `useKeyboardShortcuts` call.
+3. In `App.vue`, remove the `handleMerge` function entirely (lines ~147-157) and remove the `merge: handleMerge` entry from the `useKeyboardShortcuts` call (line ~214).
 
 - [ ] **Step 6: Update handleCloseTask to run teardown**
 
-In `App.vue`, update `handleCloseTask`:
+First, add `parseRepoConfig` to the existing `@kanna/core` import in App.vue (line ~8):
+```typescript
+import type { Stage } from "@kanna/core";
+```
+becomes:
+```typescript
+import { parseRepoConfig, type Stage } from "@kanna/core";
+```
+
+Then in `App.vue`, update `handleCloseTask`:
 
 ```typescript
 async function handleCloseTask() {
@@ -427,7 +442,6 @@ async function handleCloseTask() {
           path: `${selectedRepo.value.path}/.kanna/config.json`,
         });
         if (configContent) {
-          const { parseRepoConfig } = await import("@kanna/core");
           const repoConfig = parseRepoConfig(configContent);
           if (repoConfig.teardown?.length) {
             for (const cmd of repoConfig.teardown) {
@@ -472,7 +486,6 @@ git commit -m "feat(pipeline): add PR agent stage with haiku model PTY session"
 - Modify: `apps/desktop/src/components/ActionBar.vue`
 - Modify: `apps/desktop/src/components/MainPanel.vue`
 - Modify: `apps/desktop/src/components/Sidebar.vue`
-- Modify: `apps/desktop/src/components/TaskHeader.vue`
 
 - [ ] **Step 1: Update StageBadge.vue**
 
@@ -556,7 +569,7 @@ Change both `i.stage !== "closed"` to `i.stage !== "done"`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/desktop/src/components/StageBadge.vue apps/desktop/src/components/ActionBar.vue apps/desktop/src/components/MainPanel.vue apps/desktop/src/components/Sidebar.vue apps/desktop/src/components/TaskHeader.vue
+git add apps/desktop/src/components/StageBadge.vue apps/desktop/src/components/ActionBar.vue apps/desktop/src/components/MainPanel.vue apps/desktop/src/components/Sidebar.vue
 git commit -m "refactor(ui): update components for 3-stage pipeline"
 ```
 
