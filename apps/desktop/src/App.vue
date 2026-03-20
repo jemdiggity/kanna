@@ -54,6 +54,7 @@ const showNewTaskModal = ref(false);
 const showImportRepoModal = ref(false);
 const showPreferencesPanel = ref(false);
 const showShortcutsModal = ref(false);
+const hideShortcutsOnStartup = ref(false);
 const showFilePickerModal = ref(false);
 const showFilePreviewModal = ref(false);
 const previewFilePath = ref("");
@@ -493,6 +494,13 @@ onMounted(async () => {
       } catch {}
     }
 
+    // Show keyboard shortcuts on startup unless user opted out
+    const hideShortcuts = await getSetting(db.value, "hideShortcutsOnStartup");
+    hideShortcutsOnStartup.value = hideShortcuts === "true";
+    if (!hideShortcutsOnStartup.value) {
+      showShortcutsModal.value = true;
+    }
+
     // Listen for hook events from Claude (via daemon broadcast)
     listen("hook_event", async (event: any) => {
       const payload = event.payload || event;
@@ -602,7 +610,9 @@ onMounted(async () => {
     />
     <KeyboardShortcutsModal
       v-if="showShortcutsModal"
+      :hide-on-startup="hideShortcutsOnStartup"
       @close="showShortcutsModal = false"
+      @update:hide-on-startup="(val: boolean) => { hideShortcutsOnStartup = val; if (db) setSetting(db, 'hideShortcutsOnStartup', String(val)); }"
     />
     <ShellModal
       v-if="showShellModal && currentItem"

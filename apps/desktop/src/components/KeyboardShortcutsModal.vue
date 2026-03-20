@@ -1,7 +1,15 @@
 <script setup lang="ts">
+import { ref, watch } from "vue";
 import { getShortcutGroups } from "../composables/useKeyboardShortcuts";
 
-const emit = defineEmits<{ (e: "close"): void }>();
+const props = defineProps<{ hideOnStartup?: boolean }>();
+const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "update:hide-on-startup", value: boolean): void;
+}>();
+
+const hideOnStartup = ref(props.hideOnStartup ?? false);
+watch(hideOnStartup, (val) => emit("update:hide-on-startup", val));
 
 const groups = getShortcutGroups();
 
@@ -35,6 +43,10 @@ function splitKeys(display: string): string[] {
           </div>
         </div>
       </div>
+      <label class="startup-checkbox">
+        <input type="checkbox" v-model="hideOnStartup" />
+        Don't show on startup
+      </label>
     </div>
   </div>
 </template>
@@ -77,4 +89,16 @@ kbd {
   text-align: center;
   line-height: 1.4;
 }
+.startup-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #333;
+  font-size: 12px;
+  color: #888;
+  cursor: pointer;
+}
+.startup-checkbox input { cursor: pointer; }
 </style>
