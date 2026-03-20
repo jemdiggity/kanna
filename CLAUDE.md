@@ -38,7 +38,7 @@ This means the main Kanna app and a dev worktree can run simultaneously without 
 
 ### Launching the dev server
 
-Always use `dev.sh` inside the worktree — it auto-detects the worktree context, sets `KANNA_WORKTREE=1`, forwards all `KANNA_*` env vars, and runs in a background tmux session.
+Always use `./scripts/dev.sh` to start the dev server — never run `bun tauri dev` or `cargo tauri dev` directly. It auto-detects the worktree context, sets `KANNA_WORKTREE=1`, forwards all `KANNA_*` env vars, and runs in a background tmux session.
 
 ```bash
 # Development (from repo root or worktree root)
