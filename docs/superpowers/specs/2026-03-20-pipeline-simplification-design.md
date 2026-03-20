@@ -26,13 +26,14 @@ pr → done             (automatic, Stop hook fires)
 
 **Behavior**:
 1. Kill the existing coding agent PTY session (session ID = item ID).
-2. Transition task stage to `pr` in DB.
-3. Spawn a new PTY session in the same worktree via the daemon, reusing the same session ID.
-4. Claude CLI with `--model haiku`, `--dangerously-skip-permissions`, and hardcoded prompt:
+2. Run teardown scripts from `.kanna/config.json` (if any) in the worktree.
+3. Transition task stage to `pr` in DB.
+4. Spawn a new PTY session in the same worktree via the daemon, reusing the same session ID.
+5. Claude CLI with `--model haiku`, `--dangerously-skip-permissions`, and hardcoded prompt:
    `Rename the branch to something reasonable based on the work done, push it, and create a GitHub PR using gh.`
-5. Same hook infrastructure as the coding agent (Stop, StopFailure, PostToolUse, etc.).
-6. Terminal is live and interactive — user can type into it if needed.
-7. On Stop hook → auto-transition to `done`.
+6. Same hook infrastructure as the coding agent (Stop, StopFailure, PostToolUse, etc.).
+7. Terminal is live and interactive — user can type into it if needed.
+8. On Stop hook → auto-transition to `done`.
 
 **Session ID**: The PR agent reuses the same session ID as the coding agent (the pipeline item ID). The coding agent's session must be killed first. The terminal UI naturally shows the new session since it's attached to the same ID.
 
@@ -78,6 +79,10 @@ Map existing rows:
 - `closed` → `done`
 
 Change the default value for the `stage` column from `'queued'` to `'in_progress'`.
+
+## Teardown Scripts
+
+When a task leaves `in_progress` (via Cmd+S or Cmd+Delete), run the `teardown` scripts from `.kanna/config.json` in the task's worktree before proceeding. Teardown is already parsed by `parseRepoConfig()` but never executed. Run via `invoke("run_shell_command", ...)` or similar Tauri command in the worktree directory.
 
 ## Hook Changes
 
