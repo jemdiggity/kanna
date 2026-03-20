@@ -6,7 +6,7 @@ mod socket;
 
 use std::io::Read;
 use std::collections::HashMap;
-use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -345,9 +345,7 @@ async fn handle_command(
 
             match pty::PtySession::spawn(&executable, &args, &cwd, &env, cols, rows) {
                 Ok(pty_session) => {
-                    // Clone reader + writer before inserting into manager
                     let pty_reader = pty_session.try_clone_reader();
-                    let pty_writer_fd = pty_session.try_clone_writer().ok();
                     mgr.insert(session_id.clone(), pty_session);
                     drop(mgr);
 
@@ -361,7 +359,7 @@ async fn handle_command(
                         let sessions_exit = sessions.clone();
                         let writers_cleanup = session_writers.clone();
                         tokio::task::spawn_blocking(move || {
-                            stream_output(sid, reader, pty_writer_fd, active_writer, sessions_exit, writers_cleanup);
+                            stream_output(sid, reader, active_writer, sessions_exit, writers_cleanup);
                         });
                     }
 
@@ -426,7 +424,7 @@ async fn handle_command(
                 let sessions_exit = sessions.clone();
                 let writers_cleanup = session_writers.clone();
                 tokio::task::spawn_blocking(move || {
-                    stream_output(sid, pty_reader, None, active_writer, sessions_exit, writers_cleanup);
+                    stream_output(sid, pty_reader, active_writer, sessions_exit, writers_cleanup);
                 });
             }
         }
@@ -645,22 +643,14 @@ async fn handle_handoff(
 /// buffered so kitty keyboard mode pushes reach xterm.js on first attach.
 const MAX_PRE_ATTACH_BUFFER: usize = 64 * 1024;
 
-/// Kitty keyboard protocol query (CSI ? u) — sent by the application to check support.
-const KITTY_QUERY: &[u8] = b"\x1b[?u";
-/// Immediate response: protocol supported, no flags active yet.
-const KITTY_RESPONSE: &[u8] = b"\x1b[?0u";
-
 /// Runs in a blocking thread for the entire lifetime of a session.
 /// ONE reader per session — never duplicated. Output is sent to whatever
 /// client is currently attached via the swappable ActiveWriter.
-///
-/// When `pty_writer_fd` is provided, intercepts kitty keyboard protocol queries
-/// in the output and responds immediately via the PTY, avoiding the full
-/// round-trip through xterm.js that would otherwise time out.
+/// Buffers output before first Attach so startup sequences (like kitty
+/// keyboard mode push) are replayed to xterm.js on connect.
 fn stream_output(
     session_id: String,
     mut reader: Box<dyn Read + Send>,
-    pty_writer_fd: Option<OwnedFd>,
     active_writer: ActiveWriter,
     sessions: Arc<Mutex<SessionManager>>,
     session_writers: SessionWriters,
@@ -682,13 +672,10 @@ fn stream_output(
                 });
 
                 if !has_client && !pre_attach_done {
-                    // No client yet — intercept kitty keyboard queries and buffer output
-                    let data = if let Some(ref fd) = pty_writer_fd {
-                        intercept_kitty_query(&session_id, &data, fd.as_raw_fd())
-                    } else {
-                        data
-                    };
-                    if !data.is_empty() && pre_attach_buffer.len() + data.len() <= MAX_PRE_ATTACH_BUFFER {
+                    // No client yet — buffer output for replay on first attach.
+                    // This captures kitty keyboard mode pushes from the CLI so
+                    // xterm.js receives them when the client connects.
+                    if pre_attach_buffer.len() + data.len() <= MAX_PRE_ATTACH_BUFFER {
                         pre_attach_buffer.extend_from_slice(&data);
                     }
                     continue;
@@ -754,38 +741,3 @@ fn stream_output(
     });
 }
 
-/// Scan for kitty keyboard query (`CSI ? u`) in PTY output and respond
-/// immediately by writing `CSI ? 0 u` to the PTY master fd. The query is
-/// stripped from the returned data to prevent xterm.js from generating a
-/// duplicate response.
-fn intercept_kitty_query(session_id: &str, data: &[u8], writer_fd: RawFd) -> Vec<u8> {
-    // Fast path: no ESC byte means no escape sequences at all
-    if !data.contains(&0x1b) {
-        return data.to_vec();
-    }
-
-    let mut result = Vec::with_capacity(data.len());
-    let mut i = 0;
-    let mut found = false;
-
-    while i < data.len() {
-        if i + KITTY_QUERY.len() <= data.len() && &data[i..i + KITTY_QUERY.len()] == KITTY_QUERY {
-            // Respond immediately via the PTY — no round-trip through xterm.js
-            unsafe {
-                libc::write(
-                    writer_fd,
-                    KITTY_RESPONSE.as_ptr() as *const libc::c_void,
-                    KITTY_RESPONSE.len(),
-                );
-            }
-            log::info!("[stream_output:{}] intercepted kitty keyboard query, responded immediately", session_id);
-            i += KITTY_QUERY.len();
-            found = true;
-        } else {
-            result.push(data[i]);
-            i += 1;
-        }
-    }
-
-    if found { result } else { data.to_vec() }
-}
