@@ -10,6 +10,7 @@ const emit = defineEmits<{
 const query = ref("");
 const selectedIndex = ref(0);
 const inputRef = ref<HTMLInputElement | null>(null);
+const mouseMoved = ref(false);
 
 interface Command {
   action: ActionName;
@@ -23,6 +24,24 @@ const commands = computed<Command[]>(() =>
     .filter((s) => s.action !== "dismiss" && s.action !== "commandPalette")
     .map((s) => ({ action: s.action, label: s.label, group: s.group, shortcut: s.display }))
 );
+
+/** Split a shortcut display string like "⇧⌘P" into individual keys ["⇧", "⌘", "P"] */
+function splitKeys(display: string): string[] {
+  const modifiers = ["⇧", "⌘", "⌥", "⌃"];
+  const keys: string[] = [];
+  let rest = display;
+  while (rest.length) {
+    const mod = modifiers.find((m) => rest.startsWith(m));
+    if (mod) {
+      keys.push(mod);
+      rest = rest.slice(mod.length);
+    } else {
+      keys.push(rest);
+      break;
+    }
+  }
+  return keys;
+}
 
 const filtered = computed(() => {
   const q = query.value.toLowerCase();
@@ -63,7 +82,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="emit('close')" @keydown="handleKeydown">
+  <div class="modal-overlay" @click.self="emit('close')" @keydown="handleKeydown" @mousemove.once="mouseMoved = true">
     <div class="palette-modal">
       <input
         ref="inputRef"
@@ -79,12 +98,13 @@ onMounted(async () => {
           class="command-item"
           :class="{ selected: i === selectedIndex }"
           @click="emit('close'); emit('execute', cmd.action)"
-          @mouseenter="selectedIndex = i"
+          @mouseenter="mouseMoved && (selectedIndex = i)"
         >
           <span class="command-label">{{ cmd.label }}</span>
           <span class="command-meta">
-            <span class="command-group">{{ cmd.group }}</span>
-            <kbd class="command-shortcut">{{ cmd.shortcut }}</kbd>
+            <span class="command-keys">
+              <kbd v-for="key in splitKeys(cmd.shortcut)" :key="key" class="command-key">{{ key }}</kbd>
+            </span>
           </span>
         </div>
         <div v-if="filtered.length === 0" class="empty">No commands found</div>
@@ -153,23 +173,22 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
 }
-.command-group {
-  font-size: 11px;
-  color: #888;
+.command-keys {
+  display: flex;
+  gap: 3px;
 }
-.command-item.selected .command-group {
-  color: rgba(255, 255, 255, 0.6);
-}
-.command-shortcut {
-  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+.command-key {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   font-size: 11px;
+  min-width: 20px;
+  text-align: center;
   color: #aaa;
   background: #333;
-  padding: 2px 6px;
+  padding: 2px 5px;
   border-radius: 4px;
   border: 1px solid #444;
 }
-.command-item.selected .command-shortcut {
+.command-item.selected .command-key {
   color: #fff;
   background: rgba(255, 255, 255, 0.15);
   border-color: rgba(255, 255, 255, 0.25);
