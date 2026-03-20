@@ -102,7 +102,10 @@ async fn ensure_daemon_running() {
         cmd.env("KANNA_WORKTREE", "1");
         if let Some(root) = worktree_root() {
             let daemon_dir = root.join(".kanna-daemon");
-            cmd.env("KANNA_DAEMON_DIR", daemon_dir.to_str().unwrap_or("/tmp"));
+            let daemon_dir_str = daemon_dir.to_str().unwrap_or("/tmp");
+            cmd.env("KANNA_DAEMON_DIR", daemon_dir_str);
+            // Set on our own process too so daemon_socket_path() and DB naming work
+            std::env::set_var("KANNA_DAEMON_DIR", daemon_dir_str);
         }
     }
     match unsafe {

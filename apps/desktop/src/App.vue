@@ -398,9 +398,15 @@ onMounted(async () => {
       try {
         const wt = await invoke<string>("read_env_var", { name: "KANNA_WORKTREE" });
         if (wt) {
-          // Hash the cwd to get a short unique suffix
-          const cwd = await invoke<string>("read_env_var", { name: "PWD" });
-          const suffix = cwd ? cwd.split("/").pop() : Date.now().toString();
+          // Get worktree name from KANNA_DAEMON_DIR (set by ensure_daemon_running)
+          // e.g., /path/to/.kanna-worktrees/task-abc123/.kanna-daemon → task-abc123
+          const daemonDir = await invoke<string>("read_env_var", { name: "KANNA_DAEMON_DIR" }).catch(() => "");
+          let suffix = Date.now().toString();
+          if (daemonDir) {
+            const parts = daemonDir.split("/");
+            const idx = parts.indexOf(".kanna-daemon");
+            if (idx > 0) suffix = parts[idx - 1];
+          }
           dbName = `kanna-wt-${suffix}.db`;
         }
       } catch {}
