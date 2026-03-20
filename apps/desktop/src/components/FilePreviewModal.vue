@@ -53,7 +53,7 @@ async function getMarkdownIt() {
     linkify: true,
     typographer: false,
     highlight(str: string, lang: string) {
-      if (!lang) return "";
+      if (!lang) return hl.codeToHtml(str, { lang: "text", theme: "github-dark" });
       // Languages are pre-loaded in the watcher before md.render() is called,
       // so getLoadedLanguages() is reliable here (no async needed).
       const loaded = hl.getLoadedLanguages();
