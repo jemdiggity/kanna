@@ -130,7 +130,7 @@ async function handleCloseTask() {
   const item = selectedItem();
   if (!item || !selectedRepo.value) return;
   try {
-    // Kill sessions
+    // Kill sessions (agent + shell)
     await invoke("kill_session", { sessionId: item.id }).catch(() => {});
     await invoke("kill_session", { sessionId: `shell-${item.id}` }).catch(() => {});
 
@@ -198,9 +198,9 @@ useKeyboardShortcuts({
   },
   makePR: async () => {
     const item = selectedItem();
-    if (!item) return;
+    if (!item || !selectedRepo.value) return;
     try {
-      await startPrAgent(item.id);
+      await startPrAgent(item.id, selectedRepo.value.id, selectedRepo.value.path);
       await refreshAllItems();
     } catch (e) {
       console.error("PR agent failed to start:", e);
@@ -499,11 +499,6 @@ onMounted(async () => {
       if (!item) return;
 
       if (hookEvent === "Stop" || hookEvent === "StopFailure") {
-        // Auto-transition pr → done
-        if (item.stage === "pr") {
-          await updatePipelineItemStage(db.value!, item.id, "done");
-          item.stage = "done";
-        }
         const activity = selectedItemId.value === sessionId ? "idle" : "unread";
         updatePipelineItemActivity(db.value!, item.id, activity);
         item.activity = activity;
@@ -526,11 +521,6 @@ onMounted(async () => {
 
       const item = allItems.value.find((i) => i.id === sessionId);
       if (!item) return;
-      // Auto-transition pr → done on exit too
-      if (item.stage === "pr") {
-        await updatePipelineItemStage(db.value!, item.id, "done");
-        item.stage = "done";
-      }
       const activity = selectedItemId.value === sessionId ? "idle" : "unread";
       updatePipelineItemActivity(db.value!, item.id, activity);
       item.activity = activity;

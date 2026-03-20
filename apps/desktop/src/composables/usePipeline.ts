@@ -29,7 +29,8 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     repoId: string,
     repoPath: string,
     prompt: string,
-    agentType: AgentType = "pty"
+    agentType: AgentType = "pty",
+    opts?: { baseBranch?: string; stage?: Stage },
   ) {
     if (!db.value) return;
     const id = crypto.randomUUID();
@@ -54,11 +55,12 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     let portOffset = 1;
     while (usedOffsets.has(portOffset)) portOffset++;
 
-    // 3. Create git worktree
+    // 3. Create git worktree (optionally branched from a specific start point)
     await invoke("git_worktree_add", {
       repoPath,
       branch,
       path: worktreePath,
+      startPoint: opts?.baseBranch || null,
     });
 
     // 4. Compute port env vars from config + offset
@@ -76,7 +78,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       issue_number: null,
       issue_title: null,
       prompt,
-      stage: "in_progress",
+      stage: opts?.stage || "in_progress",
       pr_number: null,
       pr_url: null,
       branch,
@@ -182,43 +184,20 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     });
   }
 
-  const PR_AGENT_PROMPT = "Rename the branch to something reasonable based on the work done, push it, and create a GitHub PR using gh.";
-
-  async function startPrAgent(itemId: string) {
+  async function startPrAgent(itemId: string, repoId: string, repoPath: string) {
     if (!db.value) return;
     const item = items.value.find((i) => i.id === itemId);
-    if (!item || item.stage !== "in_progress") return;
+    if (!item?.branch) return;
 
-    const repo = await getRepo(db.value, item.repo_id);
-    if (!repo) return;
-    const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+    const prompt = [
+      `You are in a worktree branched from "${item.branch}".`,
+      `Your job is to create a GitHub pull request for that work.`,
+      `1. Rename this branch to something meaningful based on the commits (use "git branch -m <new-name>").`,
+      `2. Push the branch (git push -u origin HEAD).`,
+      `3. Create a PR with "gh pr create" — write a clear title and description summarizing the changes.`,
+    ].join("\n");
 
-    // 1. Kill existing coding agent session
-    await invoke("kill_session", { sessionId: itemId }).catch(() => {});
-
-    // 2. Run teardown scripts if configured
-    try {
-      const configContent = await invoke<string>("read_text_file", {
-        path: `${repo.path}/.kanna/config.json`,
-      });
-      if (configContent) {
-        const repoConfig = parseRepoConfig(configContent);
-        if (repoConfig.teardown?.length) {
-          for (const cmd of repoConfig.teardown) {
-            await invoke("run_script", { script: cmd, cwd: worktreePath, env: {} });
-          }
-        }
-      }
-    } catch { /* no config or teardown failed — continue */ }
-
-    // 3. Transition to pr stage
-    await updatePipelineItemStage(db.value, itemId, "pr");
-    item.stage = "pr";
-
-    // 4. Spawn PR agent PTY session (reuses same session ID)
-    // Small delay to ensure daemon has cleaned up old session
-    await new Promise((r) => setTimeout(r, 500));
-    await spawnPtySession(itemId, worktreePath, PR_AGENT_PROMPT, 80, 24, "haiku");
+    await createItem(repoId, repoPath, prompt, "pty", { baseBranch: item.branch, stage: "pr" });
   }
 
   async function pinItem(itemId: string, position: number) {
