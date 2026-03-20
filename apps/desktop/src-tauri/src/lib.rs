@@ -11,16 +11,20 @@ use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
 fn worktree_root() -> Option<PathBuf> {
-    // Exe is at {worktree}/apps/desktop/src-tauri/.build/debug/kanna-desktop
-    // or {worktree}/apps/desktop/src-tauri/target/debug/kanna-desktop
-    std::env::current_exe().ok().and_then(|p| {
-        p.parent()        // debug/
-            .and_then(|d| d.parent()) // .build or target/
-            .and_then(|d| d.parent()) // src-tauri/
-            .and_then(|d| d.parent()) // desktop/
-            .and_then(|d| d.parent()) // apps/
-            .and_then(|d| d.parent()) // worktree root
-            .map(|d| d.to_path_buf())
+    // Walk up from exe path to find directory containing .kanna-worktrees
+    // (that's the main repo root — our worktree is a child of it)
+    // OR find a directory whose parent contains .kanna-worktrees (we ARE the worktree)
+    std::env::current_exe().ok().and_then(|exe| {
+        let mut dir = exe.parent()?;
+        loop {
+            // Check if this directory's name starts with "task-" and parent is .kanna-worktrees
+            if let Some(parent) = dir.parent() {
+                if parent.file_name().and_then(|n| n.to_str()) == Some(".kanna-worktrees") {
+                    return Some(dir.to_path_buf());
+                }
+            }
+            dir = dir.parent()?;
+        }
     })
 }
 
