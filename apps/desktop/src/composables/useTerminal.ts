@@ -133,12 +133,24 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
     dispose()
   })
 
-  /** Re-fit the terminal and send SIGWINCH to force TUI apps to redraw. */
-  function redraw() {
+  /** Re-fit the terminal and send SIGWINCH to force TUI apps to redraw.
+   *  If the session is dead, re-attach or re-spawn. */
+  async function redraw() {
     if (!terminal.value) return
     fitAddon.fit()
-    // Explicit SIGWINCH in case ioctl(TIOCSWINSZ) didn't fire one (same dimensions)
-    invoke("signal_session", { sessionId, signal: "SIGWINCH" }).catch(() => {})
+    // Try resize — if it fails, the session is dead → re-run startListening
+    try {
+      const { cols, rows } = terminal.value
+      await invoke("resize_session", { sessionId, cols, rows })
+    } catch {
+      // Session dead — re-spawn
+      await startListening()
+      return
+    }
+    // Session alive — just send SIGWINCH
+    const { cols, rows } = terminal.value
+    await invoke("resize_session", { sessionId, cols: cols - 1, rows }).catch(() => {})
+    await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
   }
 
   return { terminal, init, startListening, fit, redraw, dispose }
