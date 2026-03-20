@@ -201,13 +201,22 @@ const keyboardActions = {
   },
   makePR: async () => {
     const item = selectedItem();
-    if (!item) return;
+    if (!item || !selectedRepo.value) return;
+    const originalId = item.id;
+    const repoId = selectedRepo.value.id;
+    const repoPath = selectedRepo.value.path;
     try {
-      await startPrAgent(item.id);
-      await refreshAllItems();
+      await startPrAgent(originalId, repoId, repoPath);
     } catch (e) {
       console.error("PR agent failed to start:", e);
     }
+    // Close the original task (not the newly selected PR task)
+    // Kill sessions, run teardown, mark done
+    await invoke("kill_session", { sessionId: originalId }).catch(() => {});
+    await invoke("kill_session", { sessionId: `shell-${originalId}` }).catch(() => {});
+    await updatePipelineItemStage(db.value!, originalId, "done");
+    await loadItems(repoId);
+    await refreshAllItems();
   },
   closeTask: handleCloseTask,
   navigateUp: () => navigateItems(-1),
