@@ -201,6 +201,8 @@ useKeyboardShortcuts({
     if (!item || !selectedRepo.value) return;
     try {
       await startPrAgent(item.id, selectedRepo.value.id, selectedRepo.value.path);
+      // Close the original task (kill sessions, teardown, mark done)
+      await handleCloseTask();
       await refreshAllItems();
     } catch (e) {
       console.error("PR agent failed to start:", e);
