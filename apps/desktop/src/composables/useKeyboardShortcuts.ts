@@ -5,6 +5,7 @@ export type ActionName =
   | "newWindow"
   | "openFile"
   | "makePR"
+  | "mergeQueue"
   | "closeTask"
   | "undoClose"
   | "navigateUp"
@@ -46,6 +47,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "openFile",   label: "File Picker",        group: "Pipeline",   key: "p",                            meta: true,               display: "⌘P" },
   { action: "openInIDE",  label: "Open in IDE",        group: "Pipeline",   key: "o",                            meta: true,               display: "⌘O" },
   { action: "makePR",     label: "Make PR",           group: "Pipeline",   key: "s",                            meta: true, display: "⌘S" },
+  { action: "mergeQueue", label: "Merge Queue",       group: "Pipeline",   key: ["M", "m"],                     meta: true, shift: true,  display: "⇧⌘M" },
   { action: "closeTask",  label: "Close / Reject",    group: "Pipeline",   key: ["Backspace", "Delete"],        meta: true,               display: "⌘⌫" },
   { action: "undoClose",  label: "Undo Close",        group: "Pipeline",   key: ["Z", "z"],                     meta: true,               display: "⌘Z" },
   // Window — disabled until #24 (new window state sharing)

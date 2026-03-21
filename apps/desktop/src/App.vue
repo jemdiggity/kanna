@@ -26,7 +26,7 @@ import { useResourceSweeper } from "./composables/useResourceSweeper";
 const db = ref<DbHandle | null>(null);
 
 const { repos, selectedRepoId, refresh: refreshRepos, importRepo } = useRepo(db);
-const { allItems, selectedItemId, loadAllItems, transition, createItem, spawnPtySession, startPrAgent, selectedItem, pinItem, unpinItem, reorderPinned, renameItem } = usePipeline(db);
+const { allItems, selectedItemId, loadAllItems, transition, createItem, spawnPtySession, startPrAgent, startMergeAgent, selectedItem, pinItem, unpinItem, reorderPinned, renameItem } = usePipeline(db);
 const {
   suspendAfterMinutes,
   killAfterMinutes,
@@ -207,6 +207,24 @@ const keyboardActions = {
     await invoke("kill_session", { sessionId: `shell-${originalId}` }).catch(() => {});
     await updatePipelineItemStage(db.value!, originalId, "done");
     await refreshItems();
+  },
+  mergeQueue: async () => {
+    if (!selectedRepoId.value) {
+      if (repos.value.length === 1) {
+        selectedRepoId.value = repos.value[0].id;
+      } else {
+        alert("Select a repository first");
+        return;
+      }
+    }
+    const repo = repos.value.find((r) => r.id === selectedRepoId.value);
+    if (!repo) return;
+    try {
+      await startMergeAgent(repo.id, repo.path);
+      await refreshItems();
+    } catch (e) {
+      console.error("Merge agent failed to start:", e);
+    }
   },
   closeTask: handleCloseTask,
   undoClose: async () => {
@@ -516,7 +534,7 @@ onMounted(async () => {
 
       if (hookEvent === "Stop" || hookEvent === "StopFailure") {
         // Auto-transition pr → done
-        const becameDone = item.stage === "pr";
+        const becameDone = item.stage === "pr" || item.stage === "merge";
         if (becameDone) {
           await updatePipelineItemStage(db.value!, item.id, "done");
           item.stage = "done";
@@ -549,7 +567,7 @@ onMounted(async () => {
       const item = allItems.value.find((i) => i.id === sessionId);
       if (!item) return;
       // Auto-transition pr → done on exit too
-      const becameDone = item.stage === "pr";
+      const becameDone = item.stage === "pr" || item.stage === "merge";
       if (becameDone) {
         await updatePipelineItemStage(db.value!, item.id, "done");
         item.stage = "done";
