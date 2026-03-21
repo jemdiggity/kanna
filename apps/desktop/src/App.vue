@@ -616,14 +616,17 @@ onMounted(async () => {
       @close="showShortcutsModal = false"
       @update:hide-on-startup="(val: boolean) => { hideShortcutsOnStartup = val; if (db) setSetting(db, 'hideShortcutsOnStartup', String(val)); }"
     />
-    <ShellModal
-      v-if="showShellModal && currentItem"
-      :session-id="`shell-${currentItem.id}`"
-      :cwd="currentItem.branch ? `${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}` : selectedRepo?.path || '/tmp'"
-      :port-env="currentItem.port_env"
-      :maximized="maximized"
-      @close="showShellModal = false; maximized = false; focusAgentTerminal()"
-    />
+    <KeepAlive :max="10">
+      <ShellModal
+        v-if="showShellModal && currentItem"
+        :key="`shell-${currentItem.id}`"
+        :session-id="`shell-${currentItem.id}`"
+        :cwd="currentItem.branch ? `${selectedRepo?.path}/.kanna-worktrees/${currentItem.branch}` : selectedRepo?.path || '/tmp'"
+        :port-env="currentItem.port_env"
+        :maximized="maximized"
+        @close="showShellModal = false; maximized = false; focusAgentTerminal()"
+      />
+    </KeepAlive>
     <DiffModal
       v-if="showDiffModal && selectedRepo?.path"
       :repo-path="selectedRepo.path"
