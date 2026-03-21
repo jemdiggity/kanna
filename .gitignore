@@ -12,3 +12,5 @@ target/
 .playwright-mcp/
 VERSION
 tauri.conf.local.json
+.claude/settings.local.json
+VERSION
