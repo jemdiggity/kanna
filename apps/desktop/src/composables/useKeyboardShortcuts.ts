@@ -21,7 +21,9 @@ export type ActionName =
   | "commandPalette"
   | "showAnalytics"
   | "goBack"
-  | "goForward";
+  | "goForward"
+  | "blockTask"
+  | "editBlockedTask";
 
 export type KeyboardActions = Record<ActionName, () => void>;
 

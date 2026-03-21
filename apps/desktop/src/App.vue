@@ -40,6 +40,8 @@ const showDiffModal = ref(false);
 const showShellModal = ref(false);
 const showCommandPalette = ref(false);
 const showAnalyticsModal = ref(false);
+const showBlockerSelect = ref(false);
+const blockerSelectMode = ref<"block" | "edit">("block");
 const diffScopes = new Map<string, "branch" | "commit" | "working">();
 const zenMode = ref(false);
 const sidebarHidden = ref(false);
@@ -64,6 +66,28 @@ function navigateItems(direction: -1 | 1) {
     store.selectedItemId = nextId;
   }
 }
+
+function handleBlockTask() {
+  blockerSelectMode.value = "block";
+  showBlockerSelect.value = true;
+}
+
+function handleEditBlockedTask() {
+  blockerSelectMode.value = "edit";
+  showBlockerSelect.value = true;
+}
+
+const paletteExtraCommands = computed(() => {
+  const cmds: Array<{ action: ActionName; label: string; group: string; shortcut: string }> = [];
+  const item = store.currentItem;
+  if (item?.stage === "in_progress") {
+    cmds.push({ action: "blockTask", label: "Block Task", group: "Pipeline", shortcut: "" });
+  }
+  if (item?.stage === "blocked") {
+    cmds.push({ action: "editBlockedTask", label: "Edit Blocked Task", group: "Pipeline", shortcut: "" });
+  }
+  return cmds;
+});
 
 // Keyboard shortcuts
 const keyboardActions = {
@@ -130,6 +154,8 @@ const keyboardActions = {
     const taskId = goForward(store.selectedItemId, validIds);
     if (taskId) store.selectItem(taskId);
   },
+  blockTask: () => { handleBlockTask(); },
+  editBlockedTask: () => { handleEditBlockedTask(); },
 };
 useKeyboardShortcuts(keyboardActions);
 
@@ -229,6 +255,7 @@ onMounted(async () => {
     />
     <CommandPaletteModal
       v-if="showCommandPalette"
+      :extra-commands="paletteExtraCommands"
       @close="showCommandPalette = false"
       @execute="(action: ActionName) => keyboardActions[action]()"
     />
