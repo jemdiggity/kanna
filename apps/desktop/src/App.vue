@@ -20,6 +20,7 @@ import { useRepo } from "./composables/useRepo";
 import { usePipeline } from "./composables/usePipeline";
 import { usePreferences } from "./composables/usePreferences";
 import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboardShortcuts";
+import { backupOnStartup, startPeriodicBackup } from "./composables/useBackup";
 
 const db = ref<DbHandle | null>(null);
 const dbName = ref("");
@@ -413,6 +414,7 @@ async function runMigrations(database: DbHandle) {
 
 // Initialize
 onMounted(async () => {
+  let resolvedDbName = "kanna-v2.db";
   try {
     let database: DbHandle;
     if (isTauri) {
@@ -440,6 +442,7 @@ onMounted(async () => {
       } catch {}
       console.log("[db] using database:", resolvedDbName);
       dbName.value = resolvedDbName;
+      await backupOnStartup(resolvedDbName);
       database = (await Database.load(`sqlite:${resolvedDbName}`)) as unknown as DbHandle;
     } else {
       dbName.value = "mock";
@@ -484,6 +487,9 @@ onMounted(async () => {
         console.log(`[gc] cleaned up ${stale.length} done task(s)`);
       }
     }
+
+    // Start periodic database backup (every 4 hours)
+    startPeriodicBackup(resolvedDbName, db);
 
     // Load all items now that repos are loaded
     await refreshItems();
