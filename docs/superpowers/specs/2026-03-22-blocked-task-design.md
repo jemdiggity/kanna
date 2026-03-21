@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS task_blocker (
 - `listBlockersForItem(db, blockedItemId)` → blocker PipelineItems
 - `listBlockedByItem(db, blockerItemId)` → items blocked by this one
 - `getUnblockedItems(db)` → items in `blocked` stage where ALL blockers are no longer `in_progress`
+- `hasCircularDependency(db, blockedItemId, proposedBlockerIds)` → boolean (DFS cycle detection)
 
 ### TypeScript types (`packages/db`)
 
@@ -83,10 +84,21 @@ Triggered from command palette when selected task is `blocked`.
 1. User opens command palette, selects "Edit Blocked Task"
 2. Fuzzy search of `in_progress` tasks, with current blockers pre-selected
 3. User adds/removes blockers, confirms
-4. Diff selection against existing `task_blocker` rows — insert new, delete removed
-5. Run `checkUnblocked()` on the task — if all blockers are now clear (including zero blockers), auto-start immediately
+4. Validate no circular dependencies (see below), reject if detected
+5. Diff selection against existing `task_blocker` rows — insert new, delete removed
+6. Run `checkUnblocked()` on the task — if all blockers are now clear (including zero blockers), auto-start immediately
 
 Removing all blockers is the manual unblock path — no separate "unblock" command needed.
+
+### Circular dependency prevention
+
+Before inserting blocker rows (in both "Block Task" and "Edit Blocked Task"), validate that the new edges would not create a cycle. A cycle exists if any proposed blocker is itself (transitively) blocked by the task being blocked.
+
+**Algorithm:** For each proposed blocker, walk the `task_blocker` graph from the blocker's own blockers, recursively. If the walk reaches the task being blocked, reject the operation. Given the small number of tasks (dozens, not thousands), a simple DFS is sufficient.
+
+**Implementation:** `hasCircularDependency(db, blockedItemId, proposedBlockerIds)` → boolean. Added to `packages/db/src/queries.ts`.
+
+**UX:** If a cycle is detected, show an error in the command palette (e.g., "Cannot add {task name} as a blocker — it would create a circular dependency").
 
 ## Auto-Unblock Logic
 
@@ -174,6 +186,7 @@ All changes target the post-refactor branch (`task-8a29c9c0`).
 
 - **Blocker abandoned (Cmd+Delete):** Still counts as unblocked. The agent prompt mentions the dependency so it can adapt.
 - **All blockers removed via edit:** Zero dependencies = immediately unblocked → task auto-starts.
+- **Circular dependencies:** Prevented at insert time via DFS. "Block Task" only offers `in_progress` tasks (which can't be blocked by anything), so cycles are impossible there. "Edit Blocked Task" can select any `in_progress` task, but the cycle check catches cases where a chain of blocked tasks would loop back.
 - **Multiple blocked tasks share a blocker:** Each is checked independently when the blocker transitions.
 - **Blocked task during GC:** Blocked tasks should NOT be garbage collected (they're not `done`). No changes needed — GC only targets `stage = 'done'`.
 - **Abandoning a blocked task (Cmd+Delete):** Transitions `blocked → done`. Deletes associated `task_blocker` rows. No worktree to clean up.
