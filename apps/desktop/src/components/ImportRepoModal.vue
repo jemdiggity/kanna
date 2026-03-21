@@ -24,7 +24,8 @@ async function chooseDirectory() {
 
   if (!result) return;
 
-  const dirPath = typeof result === "string" ? result : result;
+  const dirPath = Array.isArray(result) ? result[0] : result;
+  if (!dirPath) return;
   selectedPath.value = dirPath;
 
   // Extract repo name from path

@@ -93,7 +93,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
   }
 
   async function startListening() {
-    unlistenOutput = await listen<{ session_id: string; data_b64?: string; data?: number[] }>(
+    unlistenOutput = await listen(
       "terminal_output",
       (event) => {
         if (event.payload.session_id === sessionId && terminal.value) {
@@ -111,7 +111,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions) {
       }
     )
 
-    unlistenExit = await listen<{ session_id: string; code: number }>(
+    unlistenExit = await listen(
       "session_exit",
       (event) => {
         if (event.payload.session_id === sessionId && terminal.value) {
