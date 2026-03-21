@@ -106,6 +106,7 @@ if [[ -z "$DEVELOPER_ID" ]]; then
     fi
 else
     echo "    Signing identity: $DEVELOPER_ID"
+    export APPLE_SIGNING_IDENTITY="$DEVELOPER_ID"
 fi
 
 # Notarization credentials (skip check in dry-run mode)
