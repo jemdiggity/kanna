@@ -138,7 +138,7 @@ async function handleCloseTask() {
           const repoConfig = parseRepoConfig(configContent);
           if (repoConfig.teardown?.length) {
             for (const cmd of repoConfig.teardown) {
-              await invoke("run_script", { script: cmd, cwd: worktreePath, env: {} });
+              await invoke("run_script", { script: cmd, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
             }
           }
         }
