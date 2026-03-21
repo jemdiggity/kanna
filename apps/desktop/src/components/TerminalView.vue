@@ -13,6 +13,7 @@ const { terminal, init, startListening, fit, redraw, dispose } = useTerminal(pro
 
 defineExpose({
   focus: () => terminal.value?.focus(),
+  fit,
   redraw,
 })
 
