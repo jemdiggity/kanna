@@ -18,8 +18,6 @@ trap cleanup ERR
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT/.build"
-ARCHS=(aarch64-apple-darwin x86_64-apple-darwin)
-ARCH_LABELS=(arm64 x86_64)
 
 usage() {
     cat <<EOF
@@ -31,6 +29,9 @@ Options:
   --major    Bump major version (X.0.0)
   --minor    Bump minor version (0.X.0)
   --patch    Bump patch version (0.0.X) [default]
+  --arm64    Build only arm64 (Apple Silicon)
+  --x86_64   Build only x86_64 (Intel)
+               (default: build both architectures)
   --release  Tag, push, and create GitHub release after building
   --dry-run  Build and sign but skip notarization and release
   --help     Show this help message
@@ -40,10 +41,12 @@ Prerequisites:
   - Developer ID Application certificate installed
   - APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID env vars (for notarization)
   - gh CLI authenticated
-  - Both Rust targets installed: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+  - Rust targets installed: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
 Examples:
-  ./scripts/ship.sh                   # Build, sign, and notarize
+  ./scripts/ship.sh                   # Build both architectures, sign, and notarize
+  ./scripts/ship.sh --arm64           # Build arm64 only
+  ./scripts/ship.sh --x86_64          # Build x86_64 only
   ./scripts/ship.sh --release         # Also tag, push, and create GitHub release
   ./scripts/ship.sh --minor --release # Minor version release
   ./scripts/ship.sh --dry-run         # Build and sign only (skip notarization)
@@ -55,17 +58,39 @@ EOF
 DRY_RUN=false
 RELEASE=false
 BUMP="patch"
+BUILD_ARM64=false
+BUILD_X86_64=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h) usage ;;
         --major) BUMP="major"; shift ;;
         --minor) BUMP="minor"; shift ;;
         --patch) BUMP="patch"; shift ;;
+        --arm64) BUILD_ARM64=true; shift ;;
+        --x86_64) BUILD_X86_64=true; shift ;;
         --release) RELEASE=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+
+# Default: build both architectures
+if [[ "$BUILD_ARM64" = false && "$BUILD_X86_64" = false ]]; then
+    BUILD_ARM64=true
+    BUILD_X86_64=true
+fi
+
+# Build arch arrays based on flags
+ARCHS=()
+ARCH_LABELS=()
+if [[ "$BUILD_ARM64" = true ]]; then
+    ARCHS+=(aarch64-apple-darwin)
+    ARCH_LABELS+=(arm64)
+fi
+if [[ "$BUILD_X86_64" = true ]]; then
+    ARCHS+=(x86_64-apple-darwin)
+    ARCH_LABELS+=(x86_64)
+fi
 
 # --- Validate prerequisites ---
 

@@ -88,6 +88,16 @@ else
   warn "Claude CLI not found — needed for integration tests and agent tasks"
 fi
 
+# x86_64 OpenSSL (needed for cross-compiling x86_64 builds on arm64 Macs)
+if [[ "$(uname -m)" = "arm64" ]]; then
+  if [[ -d "/usr/local/opt/openssl@3" ]]; then
+    pass "x86_64 OpenSSL (for cross-compile)"
+  else
+    warn "x86_64 OpenSSL not found — needed for x86_64 cross-compile in ship.sh"
+    warn "  Install with: arch -x86_64 /usr/local/bin/brew install openssl@3"
+  fi
+fi
+
 # ── Dependencies ────────────────────────────────────────────────────
 
 section "Dependencies"
