@@ -7,6 +7,7 @@ export type ActionName =
   | "makePR"
   | "merge"
   | "closeTask"
+  | "undoClose"
   | "navigateUp"
   | "navigateDown"
   | "toggleZen"
@@ -47,6 +48,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "makePR",     label: "Make PR",           group: "Pipeline",   key: "s",                            meta: true, display: "⌘S" },
   { action: "merge",      label: "Merge PR",          group: "Pipeline",   key: "m",                            meta: true,               display: "⌘M" },
   { action: "closeTask",  label: "Close / Reject",    group: "Pipeline",   key: ["Backspace", "Delete"],        meta: true,               display: "⌘⌫" },
+  { action: "undoClose",  label: "Undo Close",        group: "Pipeline",   key: ["Z", "z"],                     meta: true,               display: "⌘Z" },
   // Window — disabled until #24 (new window state sharing)
   // { action: "newWindow",  label: "New Window",     group: "Window",     key: ["N", "n"],                     meta: true, shift: true,  display: "⇧⌘N" },
   // Navigation
