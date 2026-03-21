@@ -48,6 +48,12 @@ function sortedPR(repoId: string): PipelineItem[] {
   );
 }
 
+function sortedMerge(repoId: string): PipelineItem[] {
+  return sortByActivity(
+    props.pipelineItems.filter((i) => i.repo_id === repoId && i.stage === "merge" && !i.pinned)
+  );
+}
+
 function sortedInProgress(repoId: string): PipelineItem[] {
   return sortByActivity(
     props.pipelineItems.filter((i) => i.repo_id === repoId && i.stage === "in_progress" && !i.pinned)
@@ -55,7 +61,7 @@ function sortedInProgress(repoId: string): PipelineItem[] {
 }
 
 function itemsForRepo(repoId: string): PipelineItem[] {
-  return [...sortedPinned(repoId), ...sortedPR(repoId), ...sortedInProgress(repoId)];
+  return [...sortedPinned(repoId), ...sortedPR(repoId), ...sortedMerge(repoId), ...sortedInProgress(repoId)];
 }
 
 function itemTitle(item: PipelineItem): string {
@@ -222,6 +228,49 @@ function onUnpinnedChange(repoId: string, evt: any) {
           <div v-if="sortedPR(repo.id).length > 0" class="section-label">Pull Requests</div>
           <draggable
             :model-value="sortedPR(repo.id)"
+            :group="{ name: `repo-${repo.id}` }"
+            item-key="id"
+            :animation="150"
+            :sort="false"
+            :force-fallback="true"
+            ghost-class="sortable-ghost"
+            chosen-class="sortable-chosen"
+            fallback-class="sortable-fallback"
+            class="type-zone"
+            @change="(evt: any) => onUnpinnedChange(repo.id, evt)"
+          >
+            <template #item="{ element }">
+              <div
+                class="pipeline-item"
+                :class="{ selected: selectedItemId === element.id }"
+                @click="handleSelectItem(element)"
+                @dblclick.stop="startRename(element)"
+              >
+                <input
+                  v-if="editingItemId === element.id"
+                  class="rename-input"
+                  v-model="editingValue"
+                  @keydown.enter="commitRename(element.id)"
+                  @keydown.escape="cancelRename()"
+                  @blur="commitRename(element.id)"
+                  @click.stop
+                />
+                <span
+                  v-else
+                  class="item-title"
+                  :style="{
+                    fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
+                    fontStyle: element.activity === 'working' ? 'italic' : 'normal',
+                  }"
+                >{{ itemTitle(element) }}</span>
+              </div>
+            </template>
+          </draggable>
+
+          <!-- Merge Queue tasks -->
+          <div v-if="sortedMerge(repo.id).length > 0" class="section-label">Merge Queue</div>
+          <draggable
+            :model-value="sortedMerge(repo.id)"
             :group="{ name: `repo-${repo.id}` }"
             item-key="id"
             :animation="150"
