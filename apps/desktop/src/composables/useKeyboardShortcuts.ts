@@ -17,7 +17,9 @@ export type ActionName =
   | "showDiff"
   | "toggleMaximize"
   | "showShortcuts"
-  | "commandPalette";
+  | "commandPalette"
+  | "blockTask"
+  | "editBlockedTask";
 
 export type KeyboardActions = Record<ActionName, () => void>;
 

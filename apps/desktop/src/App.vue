@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, onMounted, nextTick, type Ref } from "vue";
+import { ref, computed, inject, onMounted, nextTick, type Ref } from "vue";
 import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
@@ -32,6 +32,8 @@ const previewFilePath = ref("");
 const showDiffModal = ref(false);
 const showShellModal = ref(false);
 const showCommandPalette = ref(false);
+const showBlockerSelect = ref(false);
+const blockerSelectMode = ref<"block" | "edit">("block");
 const diffScopes = new Map<string, "branch" | "commit" | "working">();
 const zenMode = ref(false);
 const maximized = ref(false);
@@ -51,6 +53,28 @@ function navigateItems(direction: -1 | 1) {
   }
   store.selectedItemId = currentItems[nextIndex].id;
 }
+
+function handleBlockTask() {
+  blockerSelectMode.value = "block";
+  showBlockerSelect.value = true;
+}
+
+function handleEditBlockedTask() {
+  blockerSelectMode.value = "edit";
+  showBlockerSelect.value = true;
+}
+
+const paletteExtraCommands = computed(() => {
+  const cmds: Array<{ action: ActionName; label: string; group: string; shortcut: string }> = [];
+  const item = store.currentItem;
+  if (item?.stage === "in_progress") {
+    cmds.push({ action: "blockTask", label: "Block Task", group: "Pipeline", shortcut: "" });
+  }
+  if (item?.stage === "blocked") {
+    cmds.push({ action: "editBlockedTask", label: "Edit Blocked Task", group: "Pipeline", shortcut: "" });
+  }
+  return cmds;
+});
 
 // Keyboard shortcuts
 const keyboardActions = {
@@ -102,6 +126,8 @@ const keyboardActions = {
   showDiff: () => { showDiffModal.value = !showDiffModal.value; },
   showShortcuts: () => { showShortcutsModal.value = !showShortcutsModal.value; },
   commandPalette: () => { showCommandPalette.value = !showCommandPalette.value; },
+  blockTask: () => { handleBlockTask(); },
+  editBlockedTask: () => { handleEditBlockedTask(); },
 };
 useKeyboardShortcuts(keyboardActions);
 
@@ -194,6 +220,7 @@ onMounted(async () => {
     />
     <CommandPaletteModal
       v-if="showCommandPalette"
+      :extra-commands="paletteExtraCommands"
       @close="showCommandPalette = false"
       @execute="(action: ActionName) => keyboardActions[action]()"
     />

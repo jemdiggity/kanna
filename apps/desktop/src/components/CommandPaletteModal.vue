@@ -2,6 +2,10 @@
 import { ref, computed, onMounted, nextTick, watch } from "vue";
 import { shortcuts, type ActionName } from "../composables/useKeyboardShortcuts";
 
+const props = defineProps<{
+  extraCommands?: Command[];
+}>();
+
 const emit = defineEmits<{
   (e: "close"): void;
   (e: "execute", action: ActionName): void;
@@ -19,11 +23,12 @@ interface Command {
   shortcut: string;
 }
 
-const commands = computed<Command[]>(() =>
-  shortcuts
+const commands = computed<Command[]>(() => {
+  const shortcutCommands = shortcuts
     .filter((s) => s.action !== "dismiss" && s.action !== "commandPalette")
-    .map((s) => ({ action: s.action, label: s.label, group: s.group, shortcut: s.display }))
-);
+    .map((s) => ({ action: s.action, label: s.label, group: s.group, shortcut: s.display }));
+  return [...shortcutCommands, ...(props.extraCommands || [])];
+});
 
 /** Split a shortcut display string like "⇧⌘P" into individual keys ["⇧", "⌘", "P"] */
 function splitKeys(display: string): string[] {
