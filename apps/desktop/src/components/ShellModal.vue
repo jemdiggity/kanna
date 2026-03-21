@@ -23,6 +23,11 @@ async function spawnShell(sessionId: string, cwd: string, _prompt: string, cols:
   if (props.portEnv) {
     try { Object.assign(env, JSON.parse(props.portEnv)); } catch {}
   }
+  // Use Kanna's zsh init dir so we can set defaults (e.g. emacs keybindings)
+  // before the user's .zshrc, which can override them.
+  try {
+    env.ZDOTDIR = await invoke<string>("ensure_term_init");
+  } catch (e) { console.error("[shell] failed to set up term init:", e); }
   await invoke("spawn_session", {
     sessionId,
     cwd,

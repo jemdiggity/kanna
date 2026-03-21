@@ -279,6 +279,7 @@ pub fn run() {
             commands::fs::append_log,
             // Shell commands
             commands::shell::run_script,
+            commands::shell::ensure_term_init,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
