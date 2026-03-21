@@ -59,7 +59,7 @@ Always run tests before pushing.
 
 ### Storage rules
 
-- Directory name is the slug: lowercase, hyphens allowed (e.g. `ship`, `code-review`)
+- Directory name is the slug — any directory containing a valid `agent.md` is accepted (no name validation). Convention is lowercase with hyphens (e.g. `ship`, `code-review`)
 - `name` in frontmatter is the display name shown in the command palette
 - If `name` is missing, derive from directory name (`code-review` → "Code Review")
 - All frontmatter fields are optional — missing fields fall back to Kanna defaults
@@ -82,7 +82,7 @@ Always run tests before pushing.
 | `max_budget_usd` | number\|null | null (unlimited) | Maximum dollar spend |
 | `setup` | string[] | `[]` | Commands run before the agent (after repo-level setup) |
 | `teardown` | string[] | `[]` | Commands run on task close (before repo-level teardown) |
-| `stage` | string | `in_progress` | Initial pipeline stage |
+| `stage` | Stage | `in_progress` | Initial pipeline stage (`in_progress`, `pr`, `merge`, `done`). Invalid values fall back to `in_progress` |
 
 ## Discovery & Scanning
 
@@ -136,11 +136,20 @@ New module: `packages/core/src/config/custom-tasks.ts`
 2. Prompt pre-filled from the `agent.md` markdown body
 3. Config options (model, permission_mode, allowed_tools, etc.) passed to agent spawn
 4. No user prompt dialog — task launches immediately
-5. `display_name` set to the custom task's `name`
+5. `display_name` set to the custom task's `name` — `createItem` is modified to accept and pass `displayName` to `insertPipelineItem`
+
+### Command palette changes
+
+The existing `CommandPaletteModal.vue` uses a static `shortcuts` array from `useKeyboardShortcuts.ts` with a closed `ActionName` union type. To support dynamic custom task entries:
+
+- Add a `dynamicCommands` prop (or inject from composable) that accepts an array of `{ label: string; description?: string; action: () => void }` entries
+- Render dynamic commands alongside static shortcuts, searchable/filterable the same way
+- Dynamic entries carry their own action callback (closing over the `CustomTaskConfig`), bypassing the `ActionName` type — no changes to the existing action system needed
+- Show `description` as subtitle text beneath the command label
 
 ### Selecting "New Custom Task"
 
-Launches a standard PTY task with the meta-prompt (see next section). The task creates a `.kanna/tasks/<name>/agent.md` file as its deliverable.
+Launches a standard PTY task with the meta-prompt (see next section). The task runs in a worktree like all tasks. The agent writes `.kanna/tasks/<name>/agent.md` in the worktree. The custom task definition becomes available in the command palette after the worktree changes are merged to the main branch (or after the user manually copies the file).
 
 ## Meta-Prompt for "New Custom Task"
 
@@ -183,11 +192,11 @@ This prompt is stored as a constant in the codebase (e.g. `packages/core/src/con
 
 Accept an optional `CustomTaskConfig` parameter. When present, overlay its values onto the defaults:
 
-- `model` → `--model <model>` CLI flag
-- `permission_mode` → replaces `--dangerously-skip-permissions` with the appropriate flag
-- `allowed_tools` / `disallowed_tools` → `--allowedTools` / `--disallowedTools` CLI flags
-- `max_turns` → `--max-turns` CLI flag
-- `max_budget_usd` → passed to SDK session options
+- `model` → `--model <model>` CLI flag (both PTY and SDK)
+- `permission_mode` → replaces `--dangerously-skip-permissions` with `--permission-mode <value>`. Note: `spawnPtySession` currently hardcodes `--dangerously-skip-permissions` in the shell command string — this must be changed to use `--permission-mode` to support configurable permission modes.
+- `allowed_tools` / `disallowed_tools` → `--allowedTools` / `--disallowedTools` CLI flags (both PTY and SDK)
+- `max_turns` → `--max-turns` CLI flag (both PTY and SDK)
+- `max_budget_usd` → `--max-budget-usd` CLI flag (both PTY and SDK)
 - `setup` → appended after repo-level setup commands (custom runs second)
 - `teardown` → prepended before repo-level teardown commands (custom runs first)
 - `execution_mode` → routes to PTY or SDK spawn path
@@ -195,7 +204,7 @@ Accept an optional `CustomTaskConfig` parameter. When present, overlay its value
 
 ### SDK mode path
 
-If `execution_mode` is `sdk`, route through the `agent.rs` headless path. Pass `system_prompt`, `model`, `allowed_tools`, `max_turns`, etc. via `SessionOptions`.
+If `execution_mode` is `sdk`, route through the `agent.rs` headless path. Pass `system_prompt`, `model`, `allowed_tools`, `max_turns`, etc. via `SessionOptions`. Note: the existing `createItem` SDK invoke call currently omits `model`, `allowed_tools`, and `max_turns` — these must be added to the `invoke("create_agent_session", {...})` call.
 
 ### What doesn't change
 
@@ -223,7 +232,7 @@ interface CustomTaskConfig {
   maxBudgetUsd?: number;
   setup?: string[];
   teardown?: string[];
-  stage?: string;
+  stage?: 'in_progress' | 'pr' | 'merge' | 'done';
   prompt: string;
 }
 
