@@ -5,7 +5,7 @@ import { invoke } from "./invoke";
 import { listen } from "./listen";
 import type { DbHandle, PipelineItem } from "@kanna/db";
 import { updatePipelineItemStage, updatePipelineItemActivity, getSetting, setSetting } from "@kanna/db";
-import { parseRepoConfig, type Stage } from "@kanna/core";
+import { parseRepoConfig } from "@kanna/core";
 import Sidebar from "./components/Sidebar.vue";
 import MainPanel from "./components/MainPanel.vue";
 import NewTaskModal from "./components/NewTaskModal.vue";
@@ -21,12 +21,12 @@ import { useRepo } from "./composables/useRepo";
 import { usePipeline } from "./composables/usePipeline";
 import { usePreferences } from "./composables/usePreferences";
 import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboardShortcuts";
-import { useResourceSweeper } from "./composables/useResourceSweeper";
+// import { useResourceSweeper } from "./composables/useResourceSweeper";
 
 const db = ref<DbHandle | null>(null);
 
 const { repos, selectedRepoId, refresh: refreshRepos, importRepo } = useRepo(db);
-const { allItems, selectedItemId, loadAllItems, transition, createItem, spawnPtySession, startPrAgent, selectedItem, pinItem, unpinItem, reorderPinned, renameItem } = usePipeline(db);
+const { allItems, selectedItemId, loadAllItems, createItem, spawnPtySession, startPrAgent, selectedItem, pinItem, unpinItem, reorderPinned, renameItem } = usePipeline(db);
 const {
   suspendAfterMinutes,
   killAfterMinutes,
@@ -210,7 +210,7 @@ const keyboardActions = {
   undoClose: async () => {
     if (!db.value) return;
     try {
-      const rows = await db.value.select<PipelineItem[]>(
+      const rows = await db.value.select<PipelineItem>(
         "SELECT * FROM pipeline_item WHERE stage = 'done' ORDER BY updated_at DESC LIMIT 1"
       );
       const item = rows[0];
@@ -320,27 +320,6 @@ async function handleImportRepo(path: string, name: string, defaultBranch: strin
 
 async function handlePreferenceUpdate(key: string, value: string) {
   await savePreference(key, value);
-}
-
-// Reconcile DB terminal sessions against live daemon sessions on startup
-async function reconcileSessions() {
-  if (!db.value) return;
-  try {
-    const liveSessions = await invoke<{ session_id: string }[]>("list_sessions");
-    const liveIds = new Set(liveSessions.map((s) => s.session_id));
-
-    const dbSessions = await db.value.select<{ id: string; daemon_session_id: string }>(
-      "SELECT id, daemon_session_id FROM terminal_session WHERE daemon_session_id IS NOT NULL"
-    );
-
-    for (const s of dbSessions) {
-      if (!liveIds.has(s.daemon_session_id)) {
-        await db.value!.execute("DELETE FROM terminal_session WHERE id = ?", [s.id]);
-      }
-    }
-  } catch {
-    // Daemon may not be running yet
-  }
 }
 
 // Run migrations to ensure tables exist

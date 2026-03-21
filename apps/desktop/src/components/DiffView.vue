@@ -22,8 +22,6 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const noDiff = ref(false);
 const scope = ref<"branch" | "commit" | "working">(props.initialScope || "branch");
-const diffMode = ref<"unified" | "split">("unified");
-
 let fileDiffInstance: FileDiff | null = null;
 let workerPool: any = null;
 
