@@ -255,6 +255,6 @@ export function mockListen(_event: string, _handler: (event: any) => void): Prom
 }
 
 // Mock dialog open — prompts via browser prompt()
-export async function mockDialogOpen(opts?: any): Promise<string | null> {
+export async function mockDialogOpen(_opts?: any): Promise<string | null> {
   return window.prompt("Enter directory path (browser mock):", "/Users/jeremyhale/Documents/work/jemdiggity/kanna");
 }

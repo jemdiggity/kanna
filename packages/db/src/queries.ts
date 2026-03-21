@@ -144,7 +144,7 @@ export async function reorderPinnedItems(
   orderedIds: string[]
 ): Promise<void> {
   if (orderedIds.length === 0) return;
-  const cases = orderedIds.map((_, i) => `WHEN ? THEN ?`).join(" ");
+  const cases = orderedIds.map(() => `WHEN ? THEN ?`).join(" ");
   const placeholders = orderedIds.map(() => "?").join(", ");
   const bindValues: unknown[] = [];
   for (let i = 0; i < orderedIds.length; i++) {

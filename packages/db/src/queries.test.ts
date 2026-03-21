@@ -241,6 +241,9 @@ describe("pipeline_item queries", () => {
       pr_url: null,
       branch: null,
       agent_type: null,
+      activity: "idle",
+      port_offset: null,
+      port_env: null,
     });
     const items = await listPipelineItems(db, "r1");
     expect(items).toHaveLength(1);
@@ -259,6 +262,9 @@ describe("pipeline_item queries", () => {
       pr_url: null,
       branch: null,
       agent_type: null,
+      activity: "idle",
+      port_offset: null,
+      port_env: null,
     });
     await updatePipelineItemStage(db, "pi1", "in_progress");
     const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
@@ -277,6 +283,9 @@ describe("pipeline_item queries", () => {
       pr_url: null,
       branch: "feature/x",
       agent_type: null,
+      activity: "idle",
+      port_offset: null,
+      port_env: null,
     });
     await updatePipelineItemPR(db, "pi1", 99, "https://github.com/o/r/pull/99");
     const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
@@ -316,17 +325,17 @@ describe("pin queries", () => {
     await insertPipelineItem(db, {
       id: "pi1", repo_id: "r1", issue_number: null, issue_title: null,
       prompt: "task 1", stage: "in_progress", pr_number: null, pr_url: null,
-      branch: null, agent_type: null,
+      branch: null, agent_type: null, activity: "idle", port_offset: null, port_env: null,
     });
     await insertPipelineItem(db, {
       id: "pi2", repo_id: "r1", issue_number: null, issue_title: null,
       prompt: "task 2", stage: "in_progress", pr_number: null, pr_url: null,
-      branch: null, agent_type: null,
+      branch: null, agent_type: null, activity: "idle", port_offset: null, port_env: null,
     });
     await insertPipelineItem(db, {
       id: "pi3", repo_id: "r1", issue_number: null, issue_title: null,
       prompt: "task 3", stage: "in_progress", pr_number: null, pr_url: null,
-      branch: null, agent_type: null,
+      branch: null, agent_type: null, activity: "idle", port_offset: null, port_env: null,
     });
   });
 
