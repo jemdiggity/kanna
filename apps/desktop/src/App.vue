@@ -26,7 +26,7 @@ import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboard
 const db = ref<DbHandle | null>(null);
 
 const { repos, selectedRepoId, refresh: refreshRepos, importRepo } = useRepo(db);
-const { allItems, selectedItemId, loadAllItems, createItem, spawnPtySession, startPrAgent, selectedItem, pinItem, unpinItem, reorderPinned, renameItem } = usePipeline(db);
+const { allItems, selectedItemId, loadAllItems, createItem, spawnPtySession, startPrAgent, startMergeAgent, selectedItem, pinItem, unpinItem, reorderPinned, renameItem } = usePipeline(db);
 const {
   suspendAfterMinutes,
   killAfterMinutes,
@@ -205,6 +205,24 @@ const keyboardActions = {
     await invoke("kill_session", { sessionId: `shell-${originalId}` }).catch(() => {});
     await updatePipelineItemStage(db.value!, originalId, "done");
     await refreshItems();
+  },
+  mergeQueue: async () => {
+    if (!selectedRepoId.value) {
+      if (repos.value.length === 1) {
+        selectedRepoId.value = repos.value[0].id;
+      } else {
+        alert("Select a repository first");
+        return;
+      }
+    }
+    const repo = repos.value.find((r) => r.id === selectedRepoId.value);
+    if (!repo) return;
+    try {
+      await startMergeAgent(repo.id, repo.path);
+      await refreshItems();
+    } catch (e) {
+      console.error("Merge agent failed to start:", e);
+    }
   },
   closeTask: handleCloseTask,
   undoClose: async () => {
@@ -506,7 +524,7 @@ onMounted(async () => {
       if (!item) return;
 
       if (hookEvent === "Stop" || hookEvent === "StopFailure") {
-        // Auto-transition pr → done
+        // Auto-transition pr → done (merge transitions on session_exit only — it's interactive)
         const becameDone = item.stage === "pr";
         if (becameDone) {
           await updatePipelineItemStage(db.value!, item.id, "done");
