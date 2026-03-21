@@ -8,17 +8,23 @@ import { canTransition, parseRepoConfig, type RepoConfig, type Stage } from "@ka
 export type AgentType = "pty" | "sdk";
 
 export function usePipeline(db: Ref<DbHandle | null>) {
-  const items = ref<PipelineItem[]>([]);
+  const allItems = ref<PipelineItem[]>([]);
   const selectedItemId = ref<string | null>(null);
 
-  async function loadItems(repoId: string) {
+  /** Load items for all repos into the single allItems list. */
+  async function loadAllItems(repoIds: string[]) {
     if (!db.value) return;
-    items.value = await listPipelineItems(db.value, repoId);
+    const loaded: PipelineItem[] = [];
+    for (const repoId of repoIds) {
+      const repoItems = await listPipelineItems(db.value, repoId);
+      loaded.push(...repoItems);
+    }
+    allItems.value = loaded;
   }
 
   async function transition(itemId: string, toStage: Stage) {
     if (!db.value) return;
-    const item = items.value.find((i) => i.id === itemId);
+    const item = allItems.value.find((i) => i.id === itemId);
     if (!item) return;
     if (!canTransition(item.stage as Stage, toStage)) return;
     await updatePipelineItemStage(db.value, itemId, toStage);
@@ -50,7 +56,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
 
     // 2. Assign port offset (lowest unused across all items)
     const usedOffsets = new Set(
-      items.value.map((i) => i.port_offset).filter((o): o is number => o != null)
+      allItems.value.map((i) => i.port_offset).filter((o): o is number => o != null)
     );
     let portOffset = 1;
     while (usedOffsets.has(portOffset)) portOffset++;
@@ -101,10 +107,10 @@ export function usePipeline(db: Ref<DbHandle | null>) {
       throw e;
     }
 
-    // 6. Spawn agent based on type
-    // PTY mode: don't spawn here — TerminalView will spawn on mount
-    // with the correct terminal dimensions from xterm.js.
-    // SDK mode: spawn immediately since no terminal sizing needed.
+    // 6. Spawn agent
+    // Refresh items first — spawnPtySession reads port_env from items list
+    await loadItems(repoId);
+
     if (agentType !== "pty") {
       await invoke("create_agent_session", {
         sessionId: id,
@@ -113,10 +119,17 @@ export function usePipeline(db: Ref<DbHandle | null>) {
         systemPrompt: null,
         permissionMode: "dontAsk",
       });
+    } else {
+      // Pre-spawn PTY so connection is instant when the terminal mounts.
+      // Default 80x24 — TerminalView will resize to actual dimensions on attach.
+      try {
+        await spawnPtySession(id, worktreePath, prompt);
+      } catch (e) {
+        console.warn("[pipeline] PTY pre-spawn failed, will retry on mount:", e);
+      }
     }
 
-    // 7. Refresh pipeline items and select the new one
-    await loadItems(repoId);
+    // 7. Select the new item
     selectedItemId.value = id;
   }
 
@@ -134,6 +147,12 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     // Build the --settings JSON with hooks that call kanna-hook
     const hookSettings = JSON.stringify({
       hooks: {
+        SessionStart: [
+          { hooks: [{ type: "command", command: `${kannaHookPath} SessionStart ${sessionId}` }] },
+        ],
+        UserPromptSubmit: [
+          { hooks: [{ type: "command", command: `${kannaHookPath} UserPromptSubmit ${sessionId}` }] },
+        ],
         Stop: [
           { hooks: [{ type: "command", command: `${kannaHookPath} Stop ${sessionId}` }] },
         ],
@@ -155,7 +174,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     // Build env from item's stored port_env + setup from config
     const env: Record<string, string> = { TERM: "xterm-256color", TERM_PROGRAM: "vscode" };
     let setupCmds: string[] = [];
-    const item = items.value.find((i) => i.id === sessionId);
+    const item = allItems.value.find((i) => i.id === sessionId);
     if (item) {
       // Port env vars (computed at task creation, stored in DB)
       if (item.port_env) {
@@ -199,12 +218,16 @@ export function usePipeline(db: Ref<DbHandle | null>) {
 
   async function startPrAgent(itemId: string, repoId: string, repoPath: string) {
     if (!db.value) return;
-    const item = items.value.find((i) => i.id === itemId);
+    const item = allItems.value.find((i) => i.id === itemId);
     if (!item?.branch) return;
 
+    const sourceWorktree = `${repoPath}/.kanna-worktrees/${item.branch}`;
     const prompt = [
       `You are in a worktree branched from "${item.branch}".`,
       `Your job is to create a GitHub pull request for that work.`,
+      `IMPORTANT: First, check for uncommitted changes in the source worktree at "${sourceWorktree}" by running "git -C ${sourceWorktree} status".`,
+      `If there are uncommitted changes there, commit them from that worktree: "git -C ${sourceWorktree} add -A && git -C ${sourceWorktree} commit -m '<appropriate message>'", then pull those commits into your branch: "git pull --rebase".`,
+      `Then:`,
       `1. Rename this branch to something meaningful based on the commits (use "git branch -m <new-name>").`,
       `2. Push the branch (git push -u origin HEAD).`,
       `3. Create a PR with "gh pr create" — write a clear title and description summarizing the changes.`,
@@ -216,7 +239,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
   async function pinItem(itemId: string, position: number) {
     if (!db.value) return;
     await pinPipelineItem(db.value, itemId, position);
-    const item = items.value.find((i) => i.id === itemId);
+    const item = allItems.value.find((i) => i.id === itemId);
     if (item) {
       item.pinned = 1;
       item.pin_order = position;
@@ -226,7 +249,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
   async function unpinItem(itemId: string) {
     if (!db.value) return;
     await unpinPipelineItem(db.value, itemId);
-    const item = items.value.find((i) => i.id === itemId);
+    const item = allItems.value.find((i) => i.id === itemId);
     if (item) {
       item.pinned = 0;
       item.pin_order = null;
@@ -236,7 +259,7 @@ export function usePipeline(db: Ref<DbHandle | null>) {
   async function renameItem(itemId: string, displayName: string | null) {
     if (!db.value) return;
     await updatePipelineItemDisplayName(db.value, itemId, displayName);
-    const item = items.value.find((i) => i.id === itemId);
+    const item = allItems.value.find((i) => i.id === itemId);
     if (item) item.display_name = displayName;
   }
 
@@ -244,20 +267,20 @@ export function usePipeline(db: Ref<DbHandle | null>) {
     if (!db.value) return;
     await reorderPinnedItems(db.value, repoId, orderedIds);
     orderedIds.forEach((id, index) => {
-      const item = items.value.find((i) => i.id === id);
+      const item = allItems.value.find((i) => i.id === id);
       if (item) item.pin_order = index;
     });
   }
 
   function selectedItem(): PipelineItem | null {
     if (!selectedItemId.value) return null;
-    return items.value.find((i) => i.id === selectedItemId.value) ?? null;
+    return allItems.value.find((i) => i.id === selectedItemId.value) ?? null;
   }
 
   return {
-    items,
+    allItems,
     selectedItemId,
-    loadItems,
+    loadAllItems,
     transition,
     createItem,
     spawnPtySession,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Repo, PipelineItem } from "@kanna/db";
-import { ref, watch, onMounted, nextTick } from "vue";
-import Sortable from "sortablejs";
+import { ref, nextTick } from "vue";
+import draggable from "vuedraggable";
 
 const props = defineProps<{
   repos: Repo[];
@@ -24,32 +24,38 @@ const emit = defineEmits<{
 
 const collapsedRepos = ref<Set<string>>(new Set());
 
-// Track Sortable instances for cleanup
-const sortableInstances = new Map<string, Sortable[]>();
-const isDragging = ref(false);
-
 function sortedPinned(repoId: string): PipelineItem[] {
   return props.pipelineItems
     .filter((i) => i.repo_id === repoId && i.stage !== "done" && i.pinned)
     .sort((a, b) => (a.pin_order ?? 0) - (b.pin_order ?? 0));
 }
 
-function sortedUnpinned(repoId: string): PipelineItem[] {
+function sortByActivity(items: PipelineItem[]): PipelineItem[] {
   const order: Record<string, number> = { idle: 0, unread: 1, working: 2 };
-  return props.pipelineItems
-    .filter((i) => i.repo_id === repoId && i.stage !== "done" && !i.pinned)
-    .sort((a, b) => {
-      const ao = order[a.activity || "idle"] ?? 0;
-      const bo = order[b.activity || "idle"] ?? 0;
-      if (ao !== bo) return ao - bo;
-      const aTime = a.activity_changed_at || a.created_at;
-      const bTime = b.activity_changed_at || b.created_at;
-      return bTime.localeCompare(aTime);
-    });
+  return items.sort((a, b) => {
+    const ao = order[a.activity || "idle"] ?? 0;
+    const bo = order[b.activity || "idle"] ?? 0;
+    if (ao !== bo) return ao - bo;
+    const aTime = a.activity_changed_at || a.created_at;
+    const bTime = b.activity_changed_at || b.created_at;
+    return bTime.localeCompare(aTime);
+  });
+}
+
+function sortedPR(repoId: string): PipelineItem[] {
+  return sortByActivity(
+    props.pipelineItems.filter((i) => i.repo_id === repoId && i.stage === "pr" && !i.pinned)
+  );
+}
+
+function sortedInProgress(repoId: string): PipelineItem[] {
+  return sortByActivity(
+    props.pipelineItems.filter((i) => i.repo_id === repoId && i.stage === "in_progress" && !i.pinned)
+  );
 }
 
 function itemsForRepo(repoId: string): PipelineItem[] {
-  return [...sortedPinned(repoId), ...sortedUnpinned(repoId)];
+  return [...sortedPinned(repoId), ...sortedPR(repoId), ...sortedInProgress(repoId)];
 }
 
 function itemTitle(item: PipelineItem): string {
@@ -98,100 +104,43 @@ function handleSelectItem(item: PipelineItem) {
 function toggleRepo(repoId: string) {
   if (collapsedRepos.value.has(repoId)) {
     collapsedRepos.value.delete(repoId);
-    nextTick(() => initSortables(repoId));
   } else {
     collapsedRepos.value.add(repoId);
-    destroySortables(repoId);
   }
 }
 
-function destroySortables(repoId: string) {
-  const instances = sortableInstances.get(repoId);
-  if (instances) {
-    instances.forEach((s) => s.destroy());
-    sortableInstances.delete(repoId);
+// Drag handlers — vuedraggable's @change provides { added, removed, moved }
+function onPinnedChange(repoId: string, evt: any) {
+  if (evt.added) {
+    // Item dragged from unpinned to pinned zone
+    emit("pin-item", evt.added.element.id, evt.added.newIndex);
+    // Reorder all pinned items with the new arrival
+    const ids = sortedPinned(repoId).map((i) => i.id);
+    ids.splice(evt.added.newIndex, 0, evt.added.element.id);
+    emit("reorder-pinned", repoId, ids);
+  }
+  if (evt.moved) {
+    // Item reordered within pinned zone
+    const ids = sortedPinned(repoId).map((i) => i.id);
+    const [moved] = ids.splice(evt.moved.oldIndex, 1);
+    ids.splice(evt.moved.newIndex, 0, moved);
+    emit("reorder-pinned", repoId, ids);
   }
 }
 
-/** Read item IDs from DOM order (source of truth after Sortable reorders) */
-function getIdsFromEl(el: HTMLElement): string[] {
-  return Array.from(el.children)
-    .map((child) => (child as HTMLElement).dataset.itemId)
-    .filter(Boolean) as string[];
+function onUnpinnedChange(repoId: string, evt: any) {
+  if (evt.added) {
+    // Item dragged from pinned to unpinned zone — unpin it
+    emit("unpin-item", evt.added.element.id);
+    // Reorder remaining pinned items
+    const remainingIds = sortedPinned(repoId)
+      .filter((i) => i.id !== evt.added.element.id)
+      .map((i) => i.id);
+    if (remainingIds.length > 0) {
+      emit("reorder-pinned", repoId, remainingIds);
+    }
+  }
 }
-
-function initSortables(repoId: string) {
-  destroySortables(repoId);
-
-  const pinnedEl = document.querySelector(`[data-pinned="${repoId}"]`) as HTMLElement | null;
-  const unpinnedEl = document.querySelector(`[data-unpinned="${repoId}"]`) as HTMLElement | null;
-  if (!pinnedEl || !unpinnedEl) return;
-
-  const instances: Sortable[] = [];
-
-  instances.push(Sortable.create(pinnedEl, {
-    group: `repo-${repoId}`,
-    animation: 150,
-    forceFallback: true,
-    fallbackClass: "sortable-fallback",
-    ghostClass: "sortable-ghost",
-    chosenClass: "sortable-chosen",
-    onStart() { isDragging.value = true; },
-    onEnd() {
-      isDragging.value = false;
-      const ids = getIdsFromEl(pinnedEl);
-      // Pin any newly arrived items
-      for (let i = 0; i < ids.length; i++) {
-        const item = props.pipelineItems.find((it) => it.id === ids[i]);
-        if (item && !item.pinned) {
-          emit("pin-item", ids[i], i);
-        }
-      }
-      // Reorder all pinned
-      if (ids.length > 0) {
-        emit("reorder-pinned", repoId, ids);
-      }
-    },
-  }));
-
-  instances.push(Sortable.create(unpinnedEl, {
-    group: `repo-${repoId}`,
-    animation: 150,
-    forceFallback: true,
-    fallbackClass: "sortable-fallback",
-    ghostClass: "sortable-ghost",
-    chosenClass: "sortable-chosen",
-    sort: false,
-    onStart() { isDragging.value = true; },
-    onEnd() { isDragging.value = false; },
-    onAdd(evt) {
-      const itemId = (evt.item as HTMLElement).dataset.itemId;
-      if (itemId) {
-        const item = props.pipelineItems.find((i) => i.id === itemId);
-        if (item?.pinned) {
-          emit("unpin-item", itemId);
-        }
-      }
-    },
-  }));
-
-  sortableInstances.set(repoId, instances);
-}
-
-// Init sortables when repos/items change
-watch(
-  () => [props.repos, props.pipelineItems],
-  () => {
-    nextTick(() => {
-      for (const repo of props.repos) {
-        if (!collapsedRepos.value.has(repo.id)) {
-          initSortables(repo.id);
-        }
-      }
-    });
-  },
-  { immediate: true, deep: true }
-);
 </script>
 
 <template>
@@ -223,72 +172,137 @@ watch(
         </div>
 
         <div v-if="!collapsedRepos.has(repo.id)" class="pipeline-list">
-          <!-- Pinned tasks -->
-          <div :data-pinned="repo.id" class="pinned-zone">
-            <div
-              v-for="item in sortedPinned(repo.id)"
-              :key="item.id"
-              :data-item-id="item.id"
-              class="pipeline-item"
-              :class="{ selected: selectedItemId === item.id }"
-              @click="handleSelectItem(item)"
-              @dblclick.stop="startRename(item)"
-            >
-              <input
-                v-if="editingItemId === item.id"
-                class="rename-input"
-                v-model="editingValue"
-                @keydown.enter="commitRename(item.id)"
-                @keydown.escape="cancelRename()"
-                @blur="commitRename(item.id)"
-                @click.stop
-              />
-              <span
-                v-else
-                class="item-title"
-                :style="{
-                  fontWeight: item.activity === 'unread' ? 'bold' : 'normal',
-                  fontStyle: item.activity === 'working' ? 'italic' : 'normal',
-                }"
-              >{{ itemTitle(item) }}</span>
-            </div>
-          </div>
+          <!-- Pinned tasks (draggable, sortable) -->
+          <draggable
+            :model-value="sortedPinned(repo.id)"
+            :group="{ name: `repo-${repo.id}` }"
+            item-key="id"
+            :animation="150"
+            :force-fallback="true"
+            ghost-class="sortable-ghost"
+            chosen-class="sortable-chosen"
+            fallback-class="sortable-fallback"
+            class="pinned-zone"
+            @change="(evt: any) => onPinnedChange(repo.id, evt)"
+          >
+            <template #item="{ element }">
+              <div
+                class="pipeline-item"
+                :class="{ selected: selectedItemId === element.id }"
+                @click="handleSelectItem(element)"
+                @dblclick.stop="startRename(element)"
+              >
+                <input
+                  v-if="editingItemId === element.id"
+                  class="rename-input"
+                  v-model="editingValue"
+                  @keydown.enter="commitRename(element.id)"
+                  @keydown.escape="cancelRename()"
+                  @blur="commitRename(element.id)"
+                  @click.stop
+                />
+                <span
+                  v-else
+                  class="item-title"
+                  :style="{
+                    fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
+                    fontStyle: element.activity === 'working' ? 'italic' : 'normal',
+                  }"
+                >{{ itemTitle(element) }}</span>
+              </div>
+            </template>
+          </draggable>
 
           <!-- Divider -->
-          <div v-show="itemsForRepo(repo.id).length > 0" class="pin-divider">
+          <div v-show="sortedPinned(repo.id).length > 0" class="pin-divider">
             <div class="pin-divider-line"></div>
           </div>
 
-          <!-- Unpinned tasks -->
-          <div :data-unpinned="repo.id" class="unpinned-zone">
-            <div
-              v-for="item in sortedUnpinned(repo.id)"
-              :key="item.id"
-              :data-item-id="item.id"
-              class="pipeline-item"
-              :class="{ selected: selectedItemId === item.id }"
-              @click="handleSelectItem(item)"
-              @dblclick.stop="startRename(item)"
-            >
-              <input
-                v-if="editingItemId === item.id"
-                class="rename-input"
-                v-model="editingValue"
-                @keydown.enter="commitRename(item.id)"
-                @keydown.escape="cancelRename()"
-                @blur="commitRename(item.id)"
-                @click.stop
-              />
-              <span
-                v-else
-                class="item-title"
-                :style="{
-                  fontWeight: item.activity === 'unread' ? 'bold' : 'normal',
-                  fontStyle: item.activity === 'working' ? 'italic' : 'normal',
-                }"
-              >{{ itemTitle(item) }}</span>
-            </div>
-          </div>
+          <!-- PR tasks -->
+          <div v-if="sortedPR(repo.id).length > 0" class="section-label">Pull Requests</div>
+          <draggable
+            :model-value="sortedPR(repo.id)"
+            :group="{ name: `repo-${repo.id}` }"
+            item-key="id"
+            :animation="150"
+            :sort="false"
+            :force-fallback="true"
+            ghost-class="sortable-ghost"
+            chosen-class="sortable-chosen"
+            fallback-class="sortable-fallback"
+            class="type-zone"
+            @change="(evt: any) => onUnpinnedChange(repo.id, evt)"
+          >
+            <template #item="{ element }">
+              <div
+                class="pipeline-item"
+                :class="{ selected: selectedItemId === element.id }"
+                @click="handleSelectItem(element)"
+                @dblclick.stop="startRename(element)"
+              >
+                <input
+                  v-if="editingItemId === element.id"
+                  class="rename-input"
+                  v-model="editingValue"
+                  @keydown.enter="commitRename(element.id)"
+                  @keydown.escape="cancelRename()"
+                  @blur="commitRename(element.id)"
+                  @click.stop
+                />
+                <span
+                  v-else
+                  class="item-title"
+                  :style="{
+                    fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
+                    fontStyle: element.activity === 'working' ? 'italic' : 'normal',
+                  }"
+                >{{ itemTitle(element) }}</span>
+              </div>
+            </template>
+          </draggable>
+
+          <!-- In Progress tasks -->
+          <div v-if="sortedInProgress(repo.id).length > 0" class="section-label">In Progress</div>
+          <draggable
+            :model-value="sortedInProgress(repo.id)"
+            :group="{ name: `repo-${repo.id}` }"
+            item-key="id"
+            :animation="150"
+            :sort="false"
+            :force-fallback="true"
+            ghost-class="sortable-ghost"
+            chosen-class="sortable-chosen"
+            fallback-class="sortable-fallback"
+            class="type-zone"
+            @change="(evt: any) => onUnpinnedChange(repo.id, evt)"
+          >
+            <template #item="{ element }">
+              <div
+                class="pipeline-item"
+                :class="{ selected: selectedItemId === element.id }"
+                @click="handleSelectItem(element)"
+                @dblclick.stop="startRename(element)"
+              >
+                <input
+                  v-if="editingItemId === element.id"
+                  class="rename-input"
+                  v-model="editingValue"
+                  @keydown.enter="commitRename(element.id)"
+                  @keydown.escape="cancelRename()"
+                  @blur="commitRename(element.id)"
+                  @click.stop
+                />
+                <span
+                  v-else
+                  class="item-title"
+                  :style="{
+                    fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
+                    fontStyle: element.activity === 'working' ? 'italic' : 'normal',
+                  }"
+                >{{ itemTitle(element) }}</span>
+              </div>
+            </template>
+          </draggable>
 
           <div v-if="itemsForRepo(repo.id).length === 0" class="no-items">
             No tasks
@@ -511,11 +525,19 @@ watch(
   background: #555;
 }
 
-.unpinned-zone {
-  min-height: 8px;
+.section-label {
+  color: #666;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 14px 2px;
 }
 
-/* Sortable.js classes */
+.type-zone {
+  min-height: 0;
+}
+
+/* Drag classes */
 .sortable-ghost {
   opacity: 0.4;
   background: #0066cc22;
