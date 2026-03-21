@@ -64,7 +64,7 @@ const showCommandPalette = ref(false);
 const diffScopes = new Map<string, "branch" | "commit" | "working">();
 const zenMode = ref(false);
 const maximized = ref(false);
-const lastKilledPrompt = ref<string | null>(null);
+
 
 const currentItem = computed(() => {
   const item = selectedItem();
@@ -123,8 +123,6 @@ async function handleCloseTask() {
   const item = selectedItem();
   if (!item || !selectedRepo.value) return;
   try {
-    // Save prompt for undo
-    lastKilledPrompt.value = item.prompt || null;
     // Kill sessions
     await invoke("kill_session", { sessionId: item.id }).catch(() => {});
     await invoke("kill_session", { sessionId: `shell-${item.id}` }).catch(() => {});
@@ -210,10 +208,24 @@ const keyboardActions = {
   },
   closeTask: handleCloseTask,
   undoClose: async () => {
-    if (!lastKilledPrompt.value) return;
-    const prompt = lastKilledPrompt.value;
-    lastKilledPrompt.value = null;
-    await handleNewTaskSubmit(prompt);
+    if (!db.value) return;
+    try {
+      const rows = await db.value.select<PipelineItem[]>(
+        "SELECT * FROM pipeline_item WHERE stage = 'done' ORDER BY updated_at DESC LIMIT 1"
+      );
+      const item = rows[0];
+      if (!item?.branch) return;
+      const repo = repos.value.find((r) => r.id === item.repo_id);
+      if (!repo) return;
+      await updatePipelineItemStage(db.value, item.id, "in_progress");
+      await updatePipelineItemActivity(db.value, item.id, "working");
+      const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+      await spawnPtySession(item.id, worktreePath, item.prompt || "");
+      selectedItemId.value = item.id;
+      await refreshItems();
+    } catch (e) {
+      console.error("Undo close failed:", e);
+    }
   },
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
