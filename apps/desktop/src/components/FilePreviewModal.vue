@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { invoke } from "../invoke";
 import { useLessScroll } from "../composables/useLessScroll";
+import { useShortcutContext, registerContextShortcuts } from "../composables/useShortcutContext";
 
 const props = defineProps<{
   filePath: string;
@@ -12,6 +13,14 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const contentRef = ref<HTMLElement | null>(null);
+
+useShortcutContext("file");
+registerContextShortcuts("file", [
+  { label: "Open in IDE", display: "⌘O" },
+  ...(props.filePath.toLowerCase().endsWith(".md")
+    ? [{ label: "Toggle Markdown", display: "Space" }]
+    : []),
+]);
 const content = ref("");
 const highlighted = ref("");
 const loading = ref(true);
