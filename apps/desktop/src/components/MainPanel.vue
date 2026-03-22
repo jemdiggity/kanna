@@ -23,7 +23,6 @@ const emit = defineEmits<{
       <template v-if="item.stage === 'blocked'">
         <div class="blocked-placeholder">
           <p class="blocked-title">Task Blocked</p>
-          <p class="blocked-prompt">{{ item.prompt }}</p>
           <p class="blocked-hint">This task will start automatically when all blockers leave "In Progress".</p>
           <div v-if="blockers && blockers.length > 0" class="blocked-by">
             <p class="blocked-by-label">Waiting on:</p>
