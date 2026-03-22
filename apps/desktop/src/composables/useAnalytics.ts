@@ -1,4 +1,5 @@
 import { ref, computed, watch, type Ref } from "vue";
+import { hasTag } from "@kanna/core";
 import type { DbHandle, PipelineItem, ActivityLog } from "@kanna/db";
 
 interface ThroughputBucket {
@@ -111,7 +112,7 @@ export function useAnalytics(db: Ref<DbHandle | null>, repoId: Ref<string | null
         bucketMap.set(key, entry);
       }
       for (const item of items) {
-        if (item.stage === "done") {
+        if (hasTag(item, "done")) {
           const key = bucketKey(item.updated_at, size);
           const entry = bucketMap.get(key) || { created: 0, completed: 0 };
           entry.completed++;
@@ -159,7 +160,7 @@ export function useAnalytics(db: Ref<DbHandle | null>, repoId: Ref<string | null
         for (let i = 0; i < itemLogs.length; i++) {
           const endTime = i + 1 < itemLogs.length
             ? itemLogs[i + 1].started_at
-            : (item.stage === "done" ? item.updated_at : nowIso);
+            : (hasTag(item, "done") ? item.updated_at : nowIso);
           const start = new Date(itemLogs[i].started_at + "Z").getTime();
           const end = new Date(endTime + "Z").getTime();
           const seconds = Math.max(0, (end - start) / 1000);

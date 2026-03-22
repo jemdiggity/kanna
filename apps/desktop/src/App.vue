@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
+import { hasTag } from "@kanna/core";
 import type { DbHandle } from "@kanna/db";
 import Sidebar from "./components/Sidebar.vue";
 import MainPanel from "./components/MainPanel.vue";
@@ -85,7 +86,7 @@ const blockerCandidates = computed(() => {
   if (!item) return [];
   return store.items.filter((i) =>
     i.id !== item.id &&
-    (i.stage === "in_progress" || i.stage === "blocked") &&
+    !hasTag(i, "done") && !hasTag(i, "pr") && !hasTag(i, "merge") &&
     i.repo_id === store.selectedRepoId
   );
 });
@@ -94,12 +95,7 @@ const blockerCandidates = computed(() => {
 const disabledBlockerIds = computedAsync(async () => {
   const item = store.currentItem;
   if (!item) return [];
-  if (item.stage === "in_progress") {
-    const dependents = await collectDependents(item.id);
-    return [...dependents];
-  }
-  if (item.stage === "blocked") {
-    // For edit mode, any task transitively blocked by this item would create a cycle
+  if (!hasTag(item, "done")) {
     const dependents = await collectDependents(item.id);
     return [...dependents];
   }
@@ -125,14 +121,14 @@ async function collectDependents(itemId: string): Promise<Set<string>> {
 
 const preselectedBlockerIds = computedAsync(async () => {
   const item = store.currentItem;
-  if (!item || item.stage !== "blocked") return [];
+  if (!item || !hasTag(item, "blocked")) return [];
   const blockers = await store.listBlockersForItem(item.id);
   return blockers.map((b: any) => b.id);
 }, []);
 
 // Build a map of blocked item ID → blocker names for the sidebar
 const sidebarBlockerNames = computedAsync(async () => {
-  const blockedItems = store.items.filter((i) => i.stage === "blocked");
+  const blockedItems = store.items.filter((i) => hasTag(i, "blocked"));
   if (blockedItems.length === 0) return {};
   const map: Record<string, string> = {};
   for (const item of blockedItems) {
@@ -163,11 +159,11 @@ async function onBlockerConfirm(selectedIds: string[]) {
 const paletteExtraCommands = computed(() => {
   const cmds: Array<{ action: ActionName; label: string; group: string; shortcut: string }> = [];
   const item = store.currentItem;
-  if (item?.stage === "in_progress") {
-    cmds.push({ action: "blockTask", label: "Block Task", group: "Pipeline", shortcut: "" });
+  if (item && !hasTag(item, "done") && !hasTag(item, "blocked")) {
+    cmds.push({ action: "blockTask", label: "Block Task", group: "Tasks", shortcut: "" });
   }
-  if (item?.stage === "blocked") {
-    cmds.push({ action: "editBlockedTask", label: "Edit Blocked Task", group: "Pipeline", shortcut: "" });
+  if (item && hasTag(item, "blocked")) {
+    cmds.push({ action: "editBlockedTask", label: "Edit Blocked Task", group: "Tasks", shortcut: "" });
   }
   return cmds;
 });
@@ -238,13 +234,13 @@ const keyboardActions = {
   showAnalytics: () => { showAnalyticsModal.value = !showAnalyticsModal.value; },
   goBack: () => {
     if (!store.selectedItemId) return;
-    const validIds = new Set(store.items.filter((i) => i.stage !== "done").map((i) => i.id));
+    const validIds = new Set(store.items.filter((i) => !hasTag(i, "done")).map((i) => i.id));
     const taskId = goBack(store.selectedItemId, validIds);
     if (taskId) store.selectItem(taskId);
   },
   goForward: () => {
     if (!store.selectedItemId) return;
-    const validIds = new Set(store.items.filter((i) => i.stage !== "done").map((i) => i.id));
+    const validIds = new Set(store.items.filter((i) => !hasTag(i, "done")).map((i) => i.id));
     const taskId = goForward(store.selectedItemId, validIds);
     if (taskId) store.selectItem(taskId);
   },
@@ -295,7 +291,7 @@ async function handleImportRepo(path: string, name: string, defaultBranch: strin
 
 const currentBlockers = computedAsync(async () => {
   const item = store.currentItem;
-  if (!item || item.stage !== "blocked") return [];
+  if (!item || !hasTag(item, "blocked")) return [];
   return store.listBlockersForItem(item.id);
 }, []);
 
