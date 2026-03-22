@@ -69,17 +69,13 @@ export function clearContextShortcuts(ctx?: ShortcutContext) {
  * Returns shortcuts relevant to the given context:
  * - Global shortcuts tagged with this context (or untagged = all contexts)
  * - Supplementary shortcuts registered by components for this context
- *
- * NOTE: Until Task 1 adds `context` fields to the shortcuts array, this will
- * return all global shortcuts for every context (since !def.context is true for all).
  */
 export function getContextShortcuts(ctx: ShortcutContext): { keys: string; action: string }[] {
   const result: { keys: string; action: string }[] = [];
 
   // Global shortcuts: include if tagged for this context, or untagged (all contexts)
   for (const def of shortcuts) {
-    const defWithContext = def as typeof def & { context?: ShortcutContext[] };
-    if (!defWithContext.context || defWithContext.context.includes(ctx)) {
+    if (!def.context || def.context.includes(ctx)) {
       result.push({ keys: def.display, action: def.label });
     }
   }

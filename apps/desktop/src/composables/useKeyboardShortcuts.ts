@@ -1,4 +1,5 @@
 import { onMounted, onUnmounted } from "vue";
+import type { ShortcutContext } from "./useShortcutContext";
 
 export type ActionName =
   | "newTask"
@@ -41,6 +42,8 @@ interface ShortcutDef {
   ctrl?: boolean;
   /** Display string for the shortcuts modal (e.g. "Cmd+Delete") */
   display: string;
+  /** Which contexts this shortcut appears in. Undefined = all contexts. */
+  context?: ShortcutContext[];
 }
 
 /**
@@ -49,28 +52,28 @@ interface ShortcutDef {
  */
 export const shortcuts: ShortcutDef[] = [
   // Tasks — lifecycle operations
-  { action: "newTask",    label: "New Task",          group: "Tasks",      key: ["N", "n"],                     meta: true, shift: true,  display: "⇧⌘N" },
-  { action: "makePR",     label: "Make PR",           group: "Tasks",      key: "s",                            meta: true, display: "⌘S" },
-  { action: "mergeQueue", label: "Merge Queue",       group: "Tasks",      key: ["M", "m"],                     meta: true, shift: true,  display: "⇧⌘M" },
-  { action: "closeTask",  label: "Close / Reject",    group: "Tasks",      key: ["Backspace", "Delete"],        meta: true,               display: "⌘⌫" },
-  { action: "undoClose",  label: "Undo Close",        group: "Tasks",      key: ["Z", "z"],                     meta: true,               display: "⌘Z" },
+  { action: "newTask",    label: "New Task",          group: "Tasks",      key: ["N", "n"],                     meta: true, shift: true,  display: "⇧⌘N",     context: ["main"] },
+  { action: "makePR",     label: "Make PR",           group: "Tasks",      key: "s",                            meta: true, display: "⌘S",                       context: ["main"] },
+  { action: "mergeQueue", label: "Merge Queue",       group: "Tasks",      key: ["M", "m"],                     meta: true, shift: true,  display: "⇧⌘M",     context: ["main"] },
+  { action: "closeTask",  label: "Close / Reject",    group: "Tasks",      key: ["Backspace", "Delete"],        meta: true,               display: "⌘⌫",       context: ["main"] },
+  { action: "undoClose",  label: "Undo Close",        group: "Tasks",      key: ["Z", "z"],                     meta: true,               display: "⌘Z",       context: ["main"] },
   // Navigation — moving between tasks and finding things
-  { action: "navigateUp",     label: "Previous Task",    group: "Navigation", key: "ArrowUp",                   meta: true, alt: true,    display: "⌥⌘↑" },
-  { action: "navigateDown",   label: "Next Task",        group: "Navigation", key: "ArrowDown",                 meta: true, alt: true,    display: "⌥⌘↓" },
-  { action: "openFile",       label: "File Picker",      group: "Navigation", key: "p",                         meta: true,               display: "⌘P" },
+  { action: "navigateUp",     label: "Previous Task",    group: "Navigation", key: "ArrowUp",                   meta: true, alt: true,    display: "⌥⌘↑",     context: ["main"] },
+  { action: "navigateDown",   label: "Next Task",        group: "Navigation", key: "ArrowDown",                 meta: true, alt: true,    display: "⌥⌘↓",     context: ["main"] },
+  { action: "openFile",       label: "File Picker",      group: "Navigation", key: "p",                         meta: true,               display: "⌘P",       context: ["main"] },
   { action: "commandPalette", label: "Command Palette",  group: "Navigation", key: ["P", "p"],                  meta: true, shift: true,  display: "⇧⌘P" },
   // Views — panels, modes, and display
-  { action: "showDiff",       label: "View Diff",        group: "Views",      key: "d",                         meta: true, display: "⌘D" },
-  { action: "openShell",      label: "Shell Terminal",   group: "Views",      key: "j",                         meta: true,               display: "⌘J" },
-  { action: "openInIDE",      label: "Open in IDE",      group: "Views",      key: "o",                         meta: true,               display: "⌘O" },
-  { action: "toggleZen",      label: "Zen Mode",         group: "Views",      key: ["Z", "z"],                  meta: true, shift: true,  display: "⇧⌘Z" },
-  { action: "toggleMaximize", label: "Maximize",         group: "Views",      key: "Enter",                     meta: true, shift: true,  display: "⇧⌘Enter" },
+  { action: "showDiff",       label: "View Diff",        group: "Views",      key: "d",                         meta: true, display: "⌘D",                       context: ["main"] },
+  { action: "openShell",      label: "Shell Terminal",   group: "Views",      key: "j",                         meta: true,               display: "⌘J",       context: ["main"] },
+  { action: "openInIDE",      label: "Open in IDE",      group: "Views",      key: "o",                         meta: true,               display: "⌘O",       context: ["main"] },
+  { action: "toggleZen",      label: "Zen Mode",         group: "Views",      key: ["Z", "z"],                  meta: true, shift: true,  display: "⇧⌘Z",     context: ["main"] },
+  { action: "toggleMaximize", label: "Maximize",         group: "Views",      key: "Enter",                     meta: true, shift: true,  display: "⇧⌘Enter", context: ["diff"] },
   // Window — disabled until #24 (new window state sharing)
   // { action: "newWindow",  label: "New Window",     group: "Window",     key: ["N", "n"],                     meta: true, shift: true,  display: "⇧⌘N" },
-  { action: "toggleSidebar", label: "Toggle Sidebar",  group: "Views",      key: "b",                            meta: true,               display: "⌘B" },
-  { action: "showAnalytics", label: "Analytics",        group: "Views",      key: ["A", "a"],                     meta: true, shift: true,  display: "⇧⌘A" },
-  { action: "goBack",       label: "Go Back",          group: "Navigation", key: "-",                            ctrl: true,               display: "⌃-" },
-  { action: "goForward",    label: "Go Forward",       group: "Navigation", key: "-",                            ctrl: true, shift: true,  display: "⌃⇧-" },
+  { action: "toggleSidebar", label: "Toggle Sidebar",  group: "Views",      key: "b",                            meta: true,               display: "⌘B",       context: ["main"] },
+  { action: "showAnalytics", label: "Analytics",        group: "Views",      key: ["A", "a"],                     meta: true, shift: true,  display: "⇧⌘A",     context: ["main"] },
+  { action: "goBack",       label: "Go Back",          group: "Navigation", key: "-",                            ctrl: true,               display: "⌃-",       context: ["main"] },
+  { action: "goForward",    label: "Go Forward",       group: "Navigation", key: "-",                            ctrl: true, shift: true,  display: "⌃⇧-",     context: ["main"] },
   // Help
   { action: "showShortcuts",  label: "Keyboard Shortcuts", group: "Help",   key: "/",                           meta: true,               display: "⌘/" },
   // Escape is special — no meta required
@@ -102,8 +105,6 @@ export function getShortcutGroups(): { title: string; shortcuts: { keys: string;
   const groupOrder = ["Tasks", "Navigation", "Views", "Help"];
   const map = new Map<string, { keys: string; action: string }[]>();
   for (const def of shortcuts) {
-    // Don't show Escape in the modal
-    if (def.action === "dismiss") continue;
     if (!map.has(def.group)) map.set(def.group, []);
     map.get(def.group)!.push({ keys: def.display, action: def.label });
   }
