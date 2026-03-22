@@ -586,7 +586,7 @@ onMounted(async () => {
     />
     <KeepAlive :max="10">
       <ShellModal
-        v-if="showShellModal && store.currentItem"
+        v-if="showShellModal && store.currentItem && !__KANNA_MOBILE__"
         :key="`shell-${store.currentItem.id}`"
         :session-id="`shell-${store.currentItem.id}`"
         :cwd="store.currentItem.branch ? `${store.selectedRepo?.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo?.path || '/tmp'"
@@ -596,7 +596,7 @@ onMounted(async () => {
       />
     </KeepAlive>
     <DiffModal
-      v-if="showDiffModal && store.selectedRepo?.path"
+      v-if="showDiffModal && store.selectedRepo?.path && !__KANNA_MOBILE__"
       :repo-path="store.selectedRepo.path"
       :worktree-path="store.currentItem?.branch ? `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}` : undefined"
       :initial-scope="store.currentItem ? diffScopes.get(store.currentItem.id) : undefined"
@@ -605,7 +605,7 @@ onMounted(async () => {
       @close="showDiffModal = false; maximized = false; focusAgentTerminal()"
     />
     <FilePickerModal
-      v-if="showFilePickerModal && store.selectedRepo?.path"
+      v-if="showFilePickerModal && store.selectedRepo?.path && !__KANNA_MOBILE__"
       :worktree-path="store.currentItem?.branch ? `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo.path"
       @close="showFilePickerModal = false; focusAgentTerminal()"
       @select="(f: string) => { showFilePickerModal = false; previewFilePath = f; showFilePreviewModal = true; }"
@@ -619,7 +619,7 @@ onMounted(async () => {
       @open-file="(f: string) => { previewFilePath = f; showFilePreviewModal = true; }"
     />
     <FilePreviewModal
-      v-if="showFilePreviewModal && store.selectedRepo?.path"
+      v-if="showFilePreviewModal && store.selectedRepo?.path && !__KANNA_MOBILE__"
       :file-path="previewFilePath"
       :worktree-path="store.currentItem?.branch ? `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo.path"
       :ide-command="store.ideCommand"
@@ -683,5 +683,11 @@ html, body, #app {
   display: flex;
   height: 100%;
   width: 100%;
+}
+
+@media (max-width: 768px) {
+  .app {
+    flex-direction: column;
+  }
 }
 </style>
