@@ -4,8 +4,10 @@ import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import { ImageAddon } from "@xterm/addon-image"
 import { WebglAddon } from "@xterm/addon-webgl"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import { invoke } from "../invoke"
 import { listen } from "../listen"
+import { isTauri } from "../tauri-mock"
 import { isAppShortcut } from "./useKeyboardShortcuts"
 
 export interface SpawnOptions {
@@ -56,7 +58,13 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       ...(options?.kittyKeyboard ? { vtExtensions: { kittyKeyboard: true } } : {}),
     })
     term.loadAddon(fitAddon)
-    term.loadAddon(new WebLinksAddon())
+    term.loadAddon(new WebLinksAddon((_event, uri) => {
+      if (isTauri) {
+        openUrl(uri).catch((e) => console.error("[terminal] Failed to open URL:", e))
+      } else {
+        window.open(uri, "_blank")
+      }
+    }))
     try {
       term.loadAddon(new WebglAddon())
     } catch (e) {
