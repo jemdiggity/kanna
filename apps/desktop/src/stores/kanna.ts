@@ -19,6 +19,16 @@ import {
   hasCircularDependency,
 } from "@kanna/db";
 
+export interface PtySpawnOptions {
+  model?: string;
+  permissionMode?: string;
+  allowedTools?: string[];
+  disallowedTools?: string[];
+  maxTurns?: number;
+  maxBudgetUsd?: number;
+  setupCmdsOverride?: string[];
+}
+
 // Module-level DB handle — set once by init(), never null after that.
 let _db: DbHandle;
 
@@ -233,7 +243,7 @@ export const useKannaStore = defineStore("kanna", () => {
     selectedItemId.value = id;
   }
 
-  async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, model?: string) {
+  async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, options?: PtySpawnOptions) {
     let kannaHookPath: string;
     try {
       kannaHookPath = await invoke<string>("which_binary", { name: "kanna-hook" });
@@ -292,9 +302,23 @@ export const useKannaStore = defineStore("kanna", () => {
 
     env.KANNA_WORKTREE = "1";
 
-    const modelFlag = model ? ` --model ${model}` : "";
-    const claudeCmd = `claude --dangerously-skip-permissions${modelFlag} --settings '${hookSettings}' '${prompt.replace(/'/g, "'\\''")}'`;
-    const fullCmd = [...setupCmds, claudeCmd].join(" && ");
+    const flags: string[] = [];
+    const permMode = options?.permissionMode ?? "dontAsk";
+    flags.push(`--permission-mode ${permMode}`);
+    if (options?.model) flags.push(`--model ${options.model}`);
+    if (options?.maxTurns != null) flags.push(`--max-turns ${options.maxTurns}`);
+    if (options?.maxBudgetUsd != null) flags.push(`--max-budget-usd ${options.maxBudgetUsd}`);
+    if (options?.allowedTools?.length) {
+      flags.push(`--allowedTools ${options.allowedTools.join(",")}`);
+    }
+    if (options?.disallowedTools?.length) {
+      flags.push(`--disallowedTools ${options.disallowedTools.join(",")}`);
+    }
+
+    const escapedPrompt = prompt.replace(/'/g, "'\\''");
+    const claudeCmd = `claude ${flags.join(" ")} --settings '${hookSettings}' '${escapedPrompt}'`;
+    const allSetupCmds = [...setupCmds, ...(options?.setupCmdsOverride || [])];
+    const fullCmd = [...allSetupCmds, claudeCmd].join(" && ");
 
     await invoke("spawn_session", {
       sessionId,
