@@ -24,15 +24,16 @@ function useMarkAsRead(
 ```
 
 **Behavior:**
-1. Watches `selectedItemId`
-2. On change, calls a `useDebounceFn`-wrapped function with the new item ID and `Date.now()` as `selectionTime`
+1. Watches `selectedItemId` (default `immediate: false`, so restoring a persisted selection on app startup does not trigger mark-as-read)
+2. On change, calls a `useDebounceFn`-wrapped function with the new item ID and `new Date().toISOString()` as `selectionTime`
 3. VueUse's `useDebounceFn` cancels any pending invocation on re-call (handles rapid navigation)
 4. When the debounced function fires (after 1000ms of no further navigation):
+   - If `itemId` is `null`, no-op (user deselected all items)
    - Finds the item in `allItems`
    - Checks `item.activity === "unread"`
-   - Checks `item.activity_changed_at < selectionTime` (guards against hook events that updated activity during the debounce window)
-   - If both pass: calls `updatePipelineItemActivity(db, id, "idle")` and sets `item.activity = "idle"` locally
-5. Auto-cleans up via VueUse's scope disposal
+   - Checks `activity_changed_at` guard: only proceed if `activity_changed_at` is `null` (never set) or `activity_changed_at <= selectionTime` (no hook updated activity since selection). Both values are ISO 8601 strings, so lexicographic comparison works correctly.
+   - If checks pass: calls `updatePipelineItemActivity(db, id, "idle")` and sets `item.activity = "idle"` locally
+5. Cleanup: the composable stores the return value of `useDebounceFn` and is safe if a stale timer fires after unmount (the `db` and `allItems` refs would be null/empty, so the function no-ops)
 
 **Dependencies:** `useDebounceFn` and `watch` from VueUse / Vue.
 
@@ -46,9 +47,13 @@ The `activity_changed_at` check prevents the debounce timer from overwriting act
 
 ### Integration with App.vue
 
-- Remove the inline mark-as-read logic from `handleSelectItem()` (currently lines 296-298)
+- Remove the inline mark-as-read logic from `handleSelectItem()` (lines 296-298: the `if (activity === "unread")` block). Keep the `selectedItemId.value` assignment and `setSetting` call intact.
 - Call `useMarkAsRead(db, selectedItemId, allItems)` once during setup
 - Both click and keyboard selection flow through `selectedItemId`, so the composable handles both uniformly
+
+### Interaction with hook event handlers
+
+The `Stop`/`StopFailure` hook handler (App.vue ~line 537) decides activity based on whether `selectedItemId.value === sessionId`. If a `Stop` hook fires during the debounce window and sets activity to `"idle"` (because the item is selected), the debounce timer will see `activity === "idle"` and skip — correct behavior. The composable does not interfere with hook-driven state transitions.
 
 ### What does NOT change
 
