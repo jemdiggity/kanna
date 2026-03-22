@@ -11,6 +11,11 @@ import {
 registerContextShortcuts("diff", [
   { label: "Scope →", display: "⇧⌘]" },
   { label: "Scope ←", display: "⇧⌘[" },
+  { label: "Line ↓/↑", display: "j / k" },
+  { label: "Page ↓/↑", display: "f / b" },
+  { label: "Half ↓/↑", display: "d / u" },
+  { label: "Top / Bottom", display: "g / G" },
+  { label: "Close", display: "q" },
 ]);
 
 const props = defineProps<{
