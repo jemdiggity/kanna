@@ -17,6 +17,7 @@ import ShellModal from "./components/ShellModal.vue";
 import CommandPaletteModal from "./components/CommandPaletteModal.vue";
 import AnalyticsModal from "./components/AnalyticsModal.vue";
 import BlockerSelectModal from "./components/BlockerSelectModal.vue";
+import ToastContainer from "./components/ToastContainer.vue";
 import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboardShortcuts";
 import { startPeriodicBackup } from "./composables/useBackup";
 import { createNavigationHistory } from "./composables/useNavigationHistory";
@@ -409,6 +410,7 @@ onMounted(async () => {
       @confirm="onBlockerConfirm"
       @cancel="showBlockerSelect = false"
     />
+    <ToastContainer />
   </div>
 </template>
 
