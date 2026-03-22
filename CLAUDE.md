@@ -4,6 +4,8 @@
 
 Kanna — Tauri v2 desktop app for managing Claude Code agent tasks. Vue 3 frontend, Rust backend, SQLite database. See [PRD.md](PRD.md) for product requirements.
 
+Kanna is a product distributed to end users as a signed macOS app. All dependencies must be vendored or statically linked — never depend on libraries installed on the build machine (e.g., Homebrew). Release builds must run on any Mac without developer tools installed.
+
 ## Package Manager
 
 Use `bun` for all package management and script execution. Not pnpm, not npm.
