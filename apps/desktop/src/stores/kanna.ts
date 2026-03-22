@@ -226,7 +226,6 @@ export const useKannaStore = defineStore("kanna", () => {
       throw e;
     }
 
-    // Refresh before spawn (spawnPtySession reads port_env from items)
     bump();
 
     // Spawn agent
@@ -240,7 +239,10 @@ export const useKannaStore = defineStore("kanna", () => {
       });
     } else {
       try {
-        await spawnPtySession(id, worktreePath, prompt);
+        await spawnPtySession(id, worktreePath, prompt, 80, 24, undefined, {
+          portEnv,
+          setupCmds: repoConfig.setup || [],
+        });
       } catch (e) {
         console.warn("[store] PTY pre-spawn failed, will retry on mount:", e);
       }
@@ -249,7 +251,10 @@ export const useKannaStore = defineStore("kanna", () => {
     selectedItemId.value = id;
   }
 
-  async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, model?: string) {
+  async function spawnPtySession(
+    sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, model?: string,
+    opts?: { portEnv?: Record<string, string>; setupCmds?: string[] },
+  ) {
     let kannaHookPath: string;
     try {
       kannaHookPath = await invoke<string>("which_binary", { name: "kanna-hook" });
@@ -284,26 +289,36 @@ export const useKannaStore = defineStore("kanna", () => {
     });
 
     const env: Record<string, string> = { TERM: "xterm-256color", TERM_PROGRAM: "vscode" };
-    let setupCmds: string[] = [];
-    const item = items.value.find((i) => i.id === sessionId);
-    if (item) {
-      if (item.port_env) {
-        try {
-          Object.assign(env, JSON.parse(item.port_env));
-        } catch (e) { console.error("[store] failed to parse port_env:", e); }
-      }
-      try {
-        const repo = await getRepo(_db, item.repo_id);
-        if (repo) {
-          const configContent = await invoke<string>("read_text_file", {
-            path: `${repo.path}/.kanna/config.json`,
-          });
-          if (configContent) {
-            const repoConfig = parseRepoConfig(configContent);
-            if (repoConfig.setup?.length) setupCmds = repoConfig.setup;
-          }
+    let setupCmds: string[] = opts?.setupCmds || [];
+
+    // When opts are provided (e.g. from createItem/startBlockedTask), use them directly
+    // to avoid a race with computedAsync not having refreshed items.value yet.
+    if (opts?.portEnv) {
+      Object.assign(env, opts.portEnv);
+    } else {
+      // Fallback: read from items.value (works for undoClose and terminal retry)
+      const item = items.value.find((i) => i.id === sessionId);
+      if (item) {
+        if (item.port_env) {
+          try {
+            Object.assign(env, JSON.parse(item.port_env));
+          } catch (e) { console.error("[store] failed to parse port_env:", e); }
         }
-      } catch (e) { console.error("[store] failed to read setup config:", e); }
+        if (setupCmds.length === 0) {
+          try {
+            const repo = await getRepo(_db, item.repo_id);
+            if (repo) {
+              const configContent = await invoke<string>("read_text_file", {
+                path: `${repo.path}/.kanna/config.json`,
+              });
+              if (configContent) {
+                const repoConfig = parseRepoConfig(configContent);
+                if (repoConfig.setup?.length) setupCmds = repoConfig.setup;
+              }
+            }
+          } catch (e) { console.error("[store] failed to read setup config:", e); }
+        }
+      }
     }
 
     env.KANNA_WORKTREE = "1";
@@ -643,7 +658,10 @@ export const useKannaStore = defineStore("kanna", () => {
     bump();
 
     try {
-      await spawnPtySession(id, worktreePath, augmentedPrompt);
+      await spawnPtySession(id, worktreePath, augmentedPrompt, 80, 24, undefined, {
+        portEnv,
+        setupCmds: repoConfig.setup || [],
+      });
     } catch (e) {
       console.warn("[store] startBlockedTask PTY pre-spawn failed, will retry on mount:", e);
     }
