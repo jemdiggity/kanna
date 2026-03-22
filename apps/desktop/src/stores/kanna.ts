@@ -271,7 +271,7 @@ export const useKannaStore = defineStore("kanna", () => {
         cwd: worktreePath,
         prompt: effectivePrompt,
         systemPrompt: null,
-        permissionMode: opts?.customTask?.permissionMode ?? "dontAsk",
+        permissionMode: opts?.customTask?.permissionMode ?? null,
         model: opts?.customTask?.model ?? null,
         allowedTools: opts?.customTask?.allowedTools ?? null,
         disallowedTools: opts?.customTask?.disallowedTools ?? null,
@@ -370,8 +370,11 @@ export const useKannaStore = defineStore("kanna", () => {
     env.KANNA_WORKTREE = "1";
 
     const flags: string[] = [];
-    const permMode = options?.permissionMode ?? "dontAsk";
-    flags.push(`--permission-mode ${permMode}`);
+    if (options?.permissionMode) {
+      flags.push(`--permission-mode ${options.permissionMode}`);
+    } else {
+      flags.push("--dangerously-skip-permissions");
+    }
     if (options?.model) flags.push(`--model ${options.model}`);
     if (options?.maxTurns != null) flags.push(`--max-turns ${options.maxTurns}`);
     if (options?.maxBudgetUsd != null) flags.push(`--max-budget-usd ${options.maxBudgetUsd}`);
