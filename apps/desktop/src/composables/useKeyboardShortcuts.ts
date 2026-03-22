@@ -17,15 +17,9 @@ export type ActionName =
   | "showDiff"
   | "toggleMaximize"
   | "showShortcuts"
-<<<<<<< HEAD
   | "toggleSidebar"
-  | "commandPalette";
-||||||| parent of 313620c (feat(analytics): register Cmd+Shift+A shortcut and wire AnalyticsModal into App.vue)
-  | "commandPalette";
-=======
   | "commandPalette"
   | "showAnalytics";
->>>>>>> 313620c (feat(analytics): register Cmd+Shift+A shortcut and wire AnalyticsModal into App.vue)
 
 export type KeyboardActions = Record<ActionName, () => void>;
 
