@@ -143,7 +143,6 @@ const sidebarBlockerNames = computedAsync(async () => {
 }, {});
 
 async function onBlockerConfirm(selectedIds: string[]) {
-  console.log("[app] onBlockerConfirm", blockerSelectMode.value, selectedIds);
   showBlockerSelect.value = false;
   if (blockerSelectMode.value === "block") {
     await store.blockTask(selectedIds);
