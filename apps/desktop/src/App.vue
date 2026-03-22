@@ -21,6 +21,7 @@ import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboard
 import { startPeriodicBackup } from "./composables/useBackup";
 import { createNavigationHistory } from "./composables/useNavigationHistory";
 import { useMarkAsRead } from "./composables/useMarkAsRead";
+import { activeContext } from "./composables/useShortcutContext";
 import { useKannaStore } from "./stores/kanna";
 
 const store = useKannaStore();
@@ -34,6 +35,7 @@ useMarkAsRead(computed(() => db) as unknown as Ref<DbHandle | null>, selectedIte
 const showNewTaskModal = ref(false);
 const showImportRepoModal = ref(false);
 const showShortcutsModal = ref(false);
+const shortcutsContext = ref<"main" | "diff" | "file">("main");
 const showFilePickerModal = ref(false);
 const showFilePreviewModal = ref(false);
 const previewFilePath = ref("");
@@ -220,7 +222,20 @@ const keyboardActions = {
   },
   openShell: () => { showShellModal.value = !showShellModal.value; },
   showDiff: () => { showDiffModal.value = !showDiffModal.value; },
-  showShortcuts: () => { showShortcutsModal.value = !showShortcutsModal.value; },
+  showShortcuts: () => {
+    if (showShortcutsModal.value) {
+      showShortcutsModal.value = false;
+      return;
+    }
+    // Close any other modal first (single-modal convention)
+    showCommandPalette.value = false;
+    showFilePreviewModal.value = false;
+    showFilePickerModal.value = false;
+    // Don't close diff/shell — those are the contexts we want to read
+    // Snapshot the active context at open time
+    shortcutsContext.value = activeContext.value;
+    showShortcutsModal.value = true;
+  },
   commandPalette: () => { showCommandPalette.value = !showCommandPalette.value; },
   showAnalytics: () => { showAnalyticsModal.value = !showAnalyticsModal.value; },
   goBack: () => {
@@ -343,6 +358,7 @@ onMounted(async () => {
     />
     <KeyboardShortcutsModal
       v-if="showShortcutsModal"
+      :context="shortcutsContext"
       :hide-on-startup="store.hideShortcutsOnStartup"
       @close="showShortcutsModal = false"
       @update:hide-on-startup="(val: boolean) => store.savePreference('hideShortcutsOnStartup', String(val))"
