@@ -56,10 +56,7 @@ describe("useShortcutContext", () => {
       expect(labels).toContain("Cycle Scope");
     });
 
-    // NOTE: These tests require Task 1 to add `context` tags to the shortcuts array.
-    // Until then, all shortcuts have no context field, so !def.context is true for all,
-    // meaning getContextShortcuts returns ALL shortcuts regardless of context.
-    it.skip("includes untagged global shortcuts (available in all contexts)", () => {
+    it("includes untagged global shortcuts (available in all contexts)", () => {
       const result = getContextShortcuts("diff");
       const labels = result.map((s) => s.action);
       expect(labels).toContain("Keyboard Shortcuts");
@@ -67,7 +64,7 @@ describe("useShortcutContext", () => {
       expect(labels).toContain("Dismiss");
     });
 
-    it.skip("excludes shortcuts tagged for other contexts", () => {
+    it("excludes shortcuts tagged for other contexts", () => {
       const result = getContextShortcuts("diff");
       const labels = result.map((s) => s.action);
       expect(labels).not.toContain("New Task");
