@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, inject, onMounted, nextTick, type Ref } from "vue";
+import { ref, computed, inject, onMounted, nextTick, type Ref } from "vue";
+import { storeToRefs } from "pinia";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
 import type { DbHandle } from "@kanna/db";
@@ -17,12 +18,15 @@ import AnalyticsModal from "./components/AnalyticsModal.vue";
 import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboardShortcuts";
 import { startPeriodicBackup } from "./composables/useBackup";
 import { createNavigationHistory } from "./composables/useNavigationHistory";
+import { useMarkAsRead } from "./composables/useMarkAsRead";
 import { useKannaStore } from "./stores/kanna";
 
 const store = useKannaStore();
 const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
 const { recordNavigation, goBack, goForward } = createNavigationHistory();
+const { selectedItemId: selectedItemIdRef, items: itemsRef } = storeToRefs(store);
+useMarkAsRead(computed(() => db) as unknown as Ref<DbHandle | null>, selectedItemIdRef, itemsRef);
 
 // UI state
 const showNewTaskModal = ref(false);
