@@ -79,6 +79,11 @@ const { toasts, dismiss } = useToast()
   color: #e0e0e0;
 }
 
+/* Suppress TransitionGroup move animation */
+.toast-move {
+  transition: none;
+}
+
 /* Transitions */
 .toast-enter-active {
   transition: all 0.3s ease;
