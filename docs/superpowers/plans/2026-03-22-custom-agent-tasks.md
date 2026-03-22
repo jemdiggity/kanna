@@ -717,13 +717,9 @@ With:
 ```typescript
 const flags: string[] = [];
 
-// Permission mode (default: dangerously-skip-permissions for backward compat)
-const permMode = options?.permissionMode;
-if (permMode && permMode !== "dontAsk") {
-  flags.push(`--permission-mode ${permMode}`);
-} else {
-  flags.push("--dangerously-skip-permissions");
-}
+// Permission mode (default: dontAsk)
+const permMode = options?.permissionMode ?? "dontAsk";
+flags.push(`--permission-mode ${permMode}`);
 
 if (options?.model) flags.push(`--model ${options.model}`);
 if (options?.maxTurns) flags.push(`--max-turns ${options.maxTurns}`);
