@@ -455,9 +455,7 @@ export const useKannaStore = defineStore("kanna", () => {
       }
 
       await addPipelineItemTag(_db, item.id, "done");
-      if (!hasTag(item, "blocked")) {
-        await checkUnblocked(item.id);
-      }
+      await checkUnblocked(item.id);
       bump();
 
       // Select next item in display order
