@@ -246,6 +246,7 @@ const keyboardActions = {
     const taskId = goForward(store.selectedItemId, validIds);
     if (taskId) store.selectItem(taskId);
   },
+  importRepo: () => { showImportRepoModal.value = true; },
   blockTask: () => { handleBlockTask(); },
   editBlockedTask: () => { handleEditBlockedTask(); },
 };
