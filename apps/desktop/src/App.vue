@@ -5,6 +5,7 @@ import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
 import type { DbHandle } from "@kanna/db";
+import { insertOperatorEvent } from "@kanna/db";
 import Sidebar from "./components/Sidebar.vue";
 import MainPanel from "./components/MainPanel.vue";
 import NewTaskModal from "./components/NewTaskModal.vue";
@@ -67,6 +68,10 @@ function navigateItems(direction: -1 | 1) {
   if (nextId !== store.selectedItemId) {
     if (store.selectedItemId) recordNavigation(store.selectedItemId);
     store.selectedItemId = nextId;
+    const item = currentItems[nextIndex];
+    insertOperatorEvent(db as any, "task_selected", nextId, item.repo_id).catch((e: unknown) =>
+      console.error("[app] operator event failed:", e)
+    );
   }
 }
 
