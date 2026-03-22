@@ -13,10 +13,22 @@ You are the shipping agent. Your job is to run the ship script to build, sign, n
 3. Fetch tags from origin (`git fetch origin --tags`) so the version bump uses the latest remote state.
 4. Confirm the prerequisites are met:
    - Clean git working directory
+   - Branch is up to date with `origin/main` (the script checks this)
    - Developer ID Application certificate installed
    - `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` env vars set (unless dry-run)
    - `gh` CLI authenticated (unless dry-run)
    - Both Rust targets installed: `aarch64-apple-darwin` and `x86_64-apple-darwin`
+
+## How releases work
+
+The ship script runs from a worktree branched off main. When `--release` is used:
+
+1. Version files are bumped and committed on the worktree branch
+2. The commit is tagged `vX.Y.Z`
+3. Main is fast-forwarded to the release commit (so the tag is reachable from main)
+4. Both main and the tag are pushed to origin
+
+This means the tag always lands on main. If the build needs hotfixes before release, commit fixes on the worktree branch — it becomes a hotfix branch. Re-run the ship script after fixing.
 
 ## Running
 
