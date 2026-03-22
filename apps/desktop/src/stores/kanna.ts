@@ -170,6 +170,35 @@ export const useKannaStore = defineStore("kanna", () => {
     selectedRepoId.value = id;
   }
 
+  async function createRepo(name: string, path: string) {
+    const existing = await findRepoByPath(_db, path);
+    if (existing) {
+      if (existing.hidden) {
+        await unhideRepoQuery(_db, existing.id);
+        bump();
+        selectedRepoId.value = existing.id;
+      }
+      return;
+    }
+    await invoke("ensure_directory", { path });
+    await invoke("git_init", { path });
+    const defaultBranch = await invoke<string>("git_default_branch", { repoPath: path }).catch(() => "main");
+    const id = generateId();
+    await insertRepo(_db, { id, path, name, default_branch: defaultBranch });
+    bump();
+    selectedRepoId.value = id;
+  }
+
+  async function cloneAndImportRepo(url: string, destination: string) {
+    await invoke("git_clone", { url, destination });
+    const name = destination.split("/").pop() || "repo";
+    const defaultBranch = await invoke<string>("git_default_branch", { repoPath: destination }).catch(() => "main");
+    const id = generateId();
+    await insertRepo(_db, { id, path: destination, name, default_branch: defaultBranch });
+    bump();
+    selectedRepoId.value = id;
+  }
+
   async function hideRepo(repoId: string) {
     await hideRepoQuery(_db, repoId);
     if (selectedRepoId.value === repoId) selectedRepoId.value = null;
@@ -1013,7 +1042,7 @@ export const useKannaStore = defineStore("kanna", () => {
     // Actions
     bump, init,
     selectRepo, selectItem,
-    importRepo, hideRepo,
+    importRepo, createRepo, cloneAndImportRepo, hideRepo,
     createItem, spawnPtySession, closeTask, undoClose,
     startPrAgent, startMergeAgent, makePR, mergeQueue,
     blockTask, editBlockedTask,
