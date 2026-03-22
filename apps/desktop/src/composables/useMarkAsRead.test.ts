@@ -34,6 +34,7 @@ function makeItem(
     agent_type: "pty",
     activity: "unread",
     activity_changed_at: "2026-03-21T00:00:00.000Z",
+    unread_at: null,
     port_offset: null,
     display_name: null,
     port_env: null,
