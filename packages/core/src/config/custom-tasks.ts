@@ -1,3 +1,5 @@
+import { readdir, readFile, stat } from "fs/promises";
+import { join } from "path";
 import { parse as parseYaml } from "yaml";
 import type { Stage } from "../pipeline/types.js";
 
@@ -163,4 +165,53 @@ export function parseAgentMd(content: string, dirName: string): CustomTaskConfig
   }
 
   return config;
+}
+
+export async function scanCustomTasks(
+  repoPath: string,
+  signal?: AbortSignal,
+): Promise<CustomTaskScanResult> {
+  const result: CustomTaskScanResult = { tasks: [], errors: [] };
+  const tasksDir = join(repoPath, ".kanna", "tasks");
+
+  if (signal?.aborted) return result;
+
+  let entries: string[];
+  try {
+    entries = await readdir(tasksDir);
+  } catch {
+    return result; // Directory doesn't exist
+  }
+
+  for (const entry of entries) {
+    if (signal?.aborted) return { tasks: [], errors: [] };
+
+    const entryPath = join(tasksDir, entry);
+    try {
+      const entryStat = await stat(entryPath);
+      if (!entryStat.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    const agentMdPath = join(entryPath, "agent.md");
+    let content: string;
+    try {
+      content = await readFile(agentMdPath, "utf-8");
+    } catch {
+      continue; // No agent.md in this directory
+    }
+
+    const config = parseAgentMd(content, entry);
+    if (config) {
+      result.tasks.push(config);
+    } else {
+      result.errors.push({
+        path: agentMdPath,
+        error: "Failed to parse agent.md (malformed YAML or empty prompt)",
+      });
+    }
+  }
+
+  return result;
 }

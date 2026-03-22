@@ -1,6 +1,9 @@
 // packages/core/src/config/custom-tasks.test.ts
-import { describe, it, expect } from "vitest";
-import { parseAgentMd } from "./custom-tasks.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdirSync, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { parseAgentMd, scanCustomTasks } from "./custom-tasks.js";
 
 describe("parseAgentMd", () => {
   it("parses a full agent.md with all fields", () => {
@@ -156,5 +159,143 @@ Some prompt.
 `;
     const result = parseAgentMd(content, "bad-yaml");
     expect(result).toBeNull();
+  });
+});
+
+describe("scanCustomTasks", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `kanna-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tmpDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("scans a directory with valid custom tasks", async () => {
+    const taskDir = join(tmpDir, ".kanna", "tasks", "ship");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(
+      join(taskDir, "agent.md"),
+      `---
+name: Ship It
+description: Ship the feature
+permission_mode: dontAsk
+---
+Ship the code to production.
+`,
+    );
+
+    const result = await scanCustomTasks(tmpDir);
+    expect(result.errors).toHaveLength(0);
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0].name).toBe("Ship It");
+    expect(result.tasks[0].description).toBe("Ship the feature");
+    expect(result.tasks[0].permissionMode).toBe("dontAsk");
+    expect(result.tasks[0].prompt).toBe("Ship the code to production.");
+  });
+
+  it("returns empty list when .kanna/tasks/ does not exist", async () => {
+    const result = await scanCustomTasks(tmpDir);
+    expect(result.tasks).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("returns empty list when .kanna/tasks/ is empty", async () => {
+    mkdirSync(join(tmpDir, ".kanna", "tasks"), { recursive: true });
+    const result = await scanCustomTasks(tmpDir);
+    expect(result.tasks).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("skips directories without agent.md", async () => {
+    const taskDir = join(tmpDir, ".kanna", "tasks", "no-agent");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, "README.md"), "Not an agent file");
+
+    const result = await scanCustomTasks(tmpDir);
+    expect(result.tasks).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("reports errors for malformed agent.md (bad YAML)", async () => {
+    const taskDir = join(tmpDir, ".kanna", "tasks", "bad-yaml");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(
+      join(taskDir, "agent.md"),
+      `---
+name: [unterminated
+  bad: yaml: here
+---
+Some prompt.
+`,
+    );
+
+    const result = await scanCustomTasks(tmpDir);
+    expect(result.tasks).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].path).toContain("bad-yaml");
+    expect(result.errors[0].path).toContain("agent.md");
+    expect(result.errors[0].error).toContain("Failed to parse");
+  });
+
+  it("handles mix of valid and invalid tasks", async () => {
+    // Valid task
+    const validDir = join(tmpDir, ".kanna", "tasks", "valid-task");
+    mkdirSync(validDir, { recursive: true });
+    writeFileSync(
+      join(validDir, "agent.md"),
+      `---
+name: Valid Task
+---
+Do the valid thing.
+`,
+    );
+
+    // Invalid task (bad YAML)
+    const invalidDir = join(tmpDir, ".kanna", "tasks", "invalid-task");
+    mkdirSync(invalidDir, { recursive: true });
+    writeFileSync(
+      join(invalidDir, "agent.md"),
+      `---
+name: [broken
+---
+Prompt.
+`,
+    );
+
+    // Directory without agent.md (should be silently skipped)
+    const noAgentDir = join(tmpDir, ".kanna", "tasks", "no-agent");
+    mkdirSync(noAgentDir, { recursive: true });
+    writeFileSync(join(noAgentDir, "notes.txt"), "just notes");
+
+    const result = await scanCustomTasks(tmpDir);
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0].name).toBe("Valid Task");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].path).toContain("invalid-task");
+  });
+
+  it("supports cancellation via AbortSignal (pre-aborted)", async () => {
+    // Create a valid task that would normally be found
+    const taskDir = join(tmpDir, ".kanna", "tasks", "should-skip");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(
+      join(taskDir, "agent.md"),
+      `---
+name: Should Skip
+---
+This should not appear.
+`,
+    );
+
+    const controller = new AbortController();
+    controller.abort(); // Pre-abort
+
+    const result = await scanCustomTasks(tmpDir, controller.signal);
+    expect(result.tasks).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
   });
 });
