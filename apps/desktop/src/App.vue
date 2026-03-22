@@ -510,11 +510,14 @@ onMounted(async () => {
     if (isTauri) {
       try {
         const info = await invoke<{ branch: string; commit_hash: string; version: string }>("git_app_info");
+        console.log("[title] git_app_info:", info);
         if (info.branch !== "main" && info.branch !== "master") {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
           await getCurrentWindow().setTitle(`Kanna — ${info.branch} (${info.version} @ ${info.commit_hash})`);
         }
-      } catch {}
+      } catch (e) {
+        console.error("[title] failed to set window title:", e);
+      }
     }
 
     // Show keyboard shortcuts on startup unless user opted out

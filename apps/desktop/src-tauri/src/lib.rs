@@ -8,6 +8,7 @@ use dashmap::DashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tauri::menu::{AboutMetadataBuilder, MenuBuilder, SubmenuBuilder};
 use tokio::sync::Mutex;
 
 fn worktree_root() -> Option<PathBuf> {
@@ -232,6 +233,39 @@ pub fn run() {
         .manage(Arc::new(DashMap::new()) as AgentState)
         .manage(Arc::new(Mutex::new(None)) as DaemonState)
         .setup(|app| {
+            // Build app menu with full version in About
+            let version = env!("KANNA_VERSION");
+            let about = AboutMetadataBuilder::new()
+                .version(Some(version))
+                .build();
+            let app_submenu = SubmenuBuilder::new(app, "Kanna")
+                .about(Some(about))
+                .separator()
+                .quit()
+                .build()?;
+            let edit_submenu = SubmenuBuilder::new(app, "Edit")
+                .undo()
+                .redo()
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .build()?;
+            let view_submenu = SubmenuBuilder::new(app, "View")
+                .fullscreen()
+                .build()?;
+            let window_submenu = SubmenuBuilder::new(app, "Window")
+                .minimize()
+                .build()?;
+            let menu = MenuBuilder::new(app)
+                .item(&app_submenu)
+                .item(&edit_submenu)
+                .item(&view_submenu)
+                .item(&window_submenu)
+                .build()?;
+            app.set_menu(menu)?;
+
             let handle = app.handle().clone();
             let daemon_state: DaemonState = app.handle().state::<DaemonState>().inner().clone();
             tauri::async_runtime::spawn(async move {
