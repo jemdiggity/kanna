@@ -272,11 +272,9 @@ const keyboardActions = {
       showShortcutsModal.value = false;
       return;
     }
-    // Close any other modal first (single-modal convention)
+    // Close non-context modals (command palette isn't a context)
     showCommandPalette.value = false;
-    showFilePreviewModal.value = false;
-    showFilePickerModal.value = false;
-    // Don't close diff/shell — those are the contexts we want to read
+    // Don't close diff/shell/file preview/file picker — those provide context
     // Snapshot the active context at open time
     shortcutsContext.value = activeContext.value;
     showShortcutsModal.value = true;
