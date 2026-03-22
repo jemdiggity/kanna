@@ -2,6 +2,7 @@ import { ref, computed } from "vue";
 import { defineStore } from "pinia";
 import { computedAsync, watchDebounced } from "@vueuse/core";
 import { invoke } from "../invoke";
+import { useToast } from '../composables/useToast';
 import { isTauri } from "../tauri-mock";
 import { listen } from "../listen";
 import { parseRepoConfig, parseAgentMd, hasTag } from "@kanna/core";
@@ -42,6 +43,8 @@ export interface PtySpawnOptions {
 let _db: DbHandle;
 
 export const useKannaStore = defineStore("kanna", () => {
+  const toast = useToast();
+
   // ── Refresh trigger ──────────────────────────────────────────────
   const refreshKey = ref(0);
   function bump() { refreshKey.value++; }
@@ -215,6 +218,7 @@ export const useKannaStore = defineStore("kanna", () => {
       });
     } catch (e) {
       console.error("[store] git_worktree_add failed:", e);
+      toast.error("Failed to create worktree");
       throw e;
     }
 
@@ -246,6 +250,7 @@ export const useKannaStore = defineStore("kanna", () => {
       });
     } catch (e) {
       console.error("[store] DB insert failed:", e);
+      toast.error("Failed to save task to database");
       throw e;
     }
 
@@ -452,6 +457,7 @@ export const useKannaStore = defineStore("kanna", () => {
       selectedItemId.value = remaining[nextIdx]?.id || null;
     } catch (e) {
       console.error("[store] close failed:", e);
+      toast.error("Failed to close task");
     }
   }
 
@@ -479,6 +485,7 @@ export const useKannaStore = defineStore("kanna", () => {
       bump();
     } catch (e) {
       console.error("[store] undo close failed:", e);
+      toast.error("Failed to undo close");
     }
   }
 
@@ -589,6 +596,7 @@ export const useKannaStore = defineStore("kanna", () => {
       await startPrAgent(originalId, repo.id, repo.path);
     } catch (e) {
       console.error("[store] PR agent failed to start:", e);
+      toast.error("Failed to start PR agent");
     }
     try {
       await invoke("kill_session", { sessionId: originalId }).catch((e: unknown) => console.error("[store] kill_session failed:", e));
@@ -598,6 +606,7 @@ export const useKannaStore = defineStore("kanna", () => {
       bump();
     } catch (e) {
       console.error("[store] failed to close source task:", e);
+      toast.error("Failed to close source task");
     }
   }
 
@@ -606,7 +615,7 @@ export const useKannaStore = defineStore("kanna", () => {
       if (repos.value.length === 1) {
         selectedRepoId.value = repos.value[0].id;
       } else {
-        alert("Select a repository first");
+        toast.warning("Select a repository first");
         return;
       }
     }
@@ -616,6 +625,7 @@ export const useKannaStore = defineStore("kanna", () => {
       await startMergeAgent(repo.id, repo.path);
     } catch (e) {
       console.error("[store] merge agent failed to start:", e);
+      toast.error("Failed to start merge agent");
     }
   }
 
@@ -683,6 +693,7 @@ export const useKannaStore = defineStore("kanna", () => {
       });
     } catch (e) {
       console.error("[store] startBlockedTask worktree_add failed:", e);
+      toast.error("Failed to create worktree for blocked task");
       return;
     }
 
@@ -820,6 +831,7 @@ export const useKannaStore = defineStore("kanna", () => {
       await checkUnblocked(originalId);
     } catch (e) {
       console.error("[store] blockTask close failed:", e);
+      toast.error("Failed to block task");
     }
 
     bump();

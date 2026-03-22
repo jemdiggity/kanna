@@ -18,17 +18,20 @@ import ShellModal from "./components/ShellModal.vue";
 import CommandPaletteModal from "./components/CommandPaletteModal.vue";
 import AnalyticsModal from "./components/AnalyticsModal.vue";
 import BlockerSelectModal from "./components/BlockerSelectModal.vue";
+import ToastContainer from "./components/ToastContainer.vue";
 import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboardShortcuts";
 import { startPeriodicBackup } from "./composables/useBackup";
 import { createNavigationHistory } from "./composables/useNavigationHistory";
 import { activeContext } from "./composables/useShortcutContext";
 import { useCustomTasks } from "./composables/useCustomTasks";
+import { useToast } from "./composables/useToast";
 import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
 
 const store = useKannaStore();
+const toast = useToast();
 const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
@@ -153,7 +156,7 @@ async function onBlockerConfirm(selectedIds: string[]) {
       try {
         await store.editBlockedTask(item.id, selectedIds);
       } catch (e: any) {
-        alert(e.message);
+        toast.error(e.message);
       }
     }
   }
@@ -345,7 +348,7 @@ async function handleNewTaskSubmit(prompt: string) {
     if (store.repos.length === 1) {
       store.selectedRepoId = store.repos[0].id;
     } else {
-      alert("Select a repository first");
+      toast.warning("Select a repository first");
       return;
     }
   }
@@ -356,7 +359,7 @@ async function handleNewTaskSubmit(prompt: string) {
     showNewTaskModal.value = false;
   } catch (e: any) {
     console.error("Task creation failed:", e);
-    alert(`Task creation failed: ${e?.message || e}`);
+    toast.error(`Task creation failed: ${e?.message || e}`);
   }
 }
 
@@ -483,6 +486,7 @@ onMounted(async () => {
       @confirm="onBlockerConfirm"
       @cancel="showBlockerSelect = false"
     />
+    <ToastContainer />
   </div>
 </template>
 
