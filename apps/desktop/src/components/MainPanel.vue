@@ -24,8 +24,9 @@ const emit = defineEmits<{
         <div class="blocked-placeholder">
           <p class="blocked-title">Task Blocked</p>
           <p class="blocked-prompt">{{ item.prompt }}</p>
+          <p class="blocked-hint">This task will start automatically when all blockers leave "In Progress".</p>
           <div v-if="blockers && blockers.length > 0" class="blocked-by">
-            <p class="blocked-by-label">Blocked by:</p>
+            <p class="blocked-by-label">Waiting on:</p>
             <div v-for="b in blockers" :key="b.id" class="blocker-item">
               <span
                 class="blocker-status"
@@ -34,7 +35,6 @@ const emit = defineEmits<{
               <span class="blocker-name">{{ b.display_name || (b.prompt ? b.prompt.slice(0, 60) : 'Untitled') }}</span>
             </div>
           </div>
-          <p class="blocked-hint">This task will start automatically when all blockers leave "In Progress".</p>
         </div>
       </template>
       <template v-else>
