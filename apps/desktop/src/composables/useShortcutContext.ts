@@ -71,9 +71,13 @@ export function clearContextShortcuts(ctx?: ShortcutContext) {
 export function getContextShortcuts(ctx: ShortcutContext): { keys: string; action: string }[] {
   const result: { keys: string; action: string }[] = [];
 
-  // Global shortcuts: include if tagged for this context, or untagged (all contexts)
+  // Global shortcuts: include if explicitly tagged for this context.
+  // Untagged shortcuts (⌘/, ⇧⌘P, Escape) only show in "main" context —
+  // they're always available but clutter the focused context views.
   for (const def of shortcuts) {
-    if (!def.context || def.context.includes(ctx)) {
+    if (def.context && def.context.includes(ctx)) {
+      result.push({ keys: def.display, action: def.label });
+    } else if (!def.context && ctx === "main") {
       result.push({ keys: def.display, action: def.label });
     }
   }
