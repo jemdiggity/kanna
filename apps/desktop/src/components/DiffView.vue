@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "../invoke";
+import { registerContextShortcuts } from "../composables/useShortcutContext";
+registerContextShortcuts("diff", [{ label: "Cycle Scope", display: "Space" }]);
 import { FileDiff, parsePatchFiles } from "@pierre/diffs";
 import {
   getOrCreateWorkerPoolSingleton,

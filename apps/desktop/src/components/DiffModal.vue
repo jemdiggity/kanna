@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import DiffView from "./DiffView.vue";
+import { useShortcutContext } from "../composables/useShortcutContext";
+useShortcutContext("diff");
 
 defineProps<{
   repoPath: string;
