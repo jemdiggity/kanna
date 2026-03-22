@@ -717,12 +717,8 @@ export const useKannaStore = defineStore("kanna", () => {
   }
 
   async function editBlockedTask(itemId: string, newBlockerIds: string[]) {
-    console.log("[store] editBlockedTask called", itemId, newBlockerIds);
     const item = items.value.find((i) => i.id === itemId);
-    if (!item || item.stage !== "blocked") {
-      console.error("[store] editBlockedTask: item not found or not blocked", itemId, item?.stage);
-      return;
-    }
+    if (!item || item.stage !== "blocked") return;
 
     if (newBlockerIds.length > 0) {
       const hasCycle = await hasCircularDependency(_db, itemId, newBlockerIds);
@@ -754,7 +750,6 @@ export const useKannaStore = defineStore("kanna", () => {
       (b) => b.stage === "pr" || b.stage === "merge" || b.stage === "done"
     );
     if (allClear) {
-      console.log("[store] editBlockedTask: all clear, starting blocked task", itemId);
       await startBlockedTask(item);
     }
   }
