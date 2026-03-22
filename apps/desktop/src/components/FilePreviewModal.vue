@@ -18,8 +18,13 @@ useShortcutContext("file");
 registerContextShortcuts("file", [
   { label: "Open in IDE", display: "⌘O" },
   ...(props.filePath.toLowerCase().endsWith(".md")
-    ? [{ label: "Toggle Markdown", display: "Space" }]
+    ? [{ label: "Toggle Markdown", display: "m" }]
     : []),
+  { label: "Line ↓/↑", display: "j / k" },
+  { label: "Page ↓/↑", display: "f / b" },
+  { label: "Half ↓/↑", display: "d / u" },
+  { label: "Top / Bottom", display: "g / G" },
+  { label: "Close", display: "q" },
 ]);
 const content = ref("");
 const highlighted = ref("");
