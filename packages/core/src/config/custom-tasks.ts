@@ -89,6 +89,27 @@ function parseFrontmatter(content: string): { frontmatter: Record<string, unknow
   return { frontmatter: parsed as Record<string, unknown>, body };
 }
 
+/**
+ * Returns true if the content has a non-whitespace prompt body.
+ * Used by scanCustomTasks to distinguish "empty/no-body" (silent skip)
+ * from "malformed YAML" (reported as error) when parseAgentMd returns null.
+ */
+function hasPromptBody(content: string): boolean {
+  if (!content || !content.trim()) {
+    return false;
+  }
+
+  // Check if content has frontmatter delimiters
+  const match = content.match(/^---[ \t]*\r?\n([\s\S]*?\r?\n)?---[ \t]*\r?\n?([\s\S]*)$/);
+  if (match) {
+    // Has frontmatter — check if body after closing delimiter has content
+    return !!(match[2] && match[2].trim());
+  }
+
+  // No frontmatter — the entire content is the body
+  return true;
+}
+
 export function parseAgentMd(content: string, dirName: string): CustomTaskConfig | null {
   if (!content || !content.trim()) {
     return null;
@@ -202,13 +223,20 @@ export async function scanCustomTasks(
       continue; // No agent.md in this directory
     }
 
+    // Skip files with no meaningful body content silently.
+    // An agent.md with valid frontmatter but no prompt is not an error —
+    // it's just an incomplete/placeholder file.
+    if (!hasPromptBody(content)) {
+      continue;
+    }
+
     const config = parseAgentMd(content, entry);
     if (config) {
       result.tasks.push(config);
     } else {
       result.errors.push({
         path: agentMdPath,
-        error: "Failed to parse agent.md (malformed YAML or empty prompt)",
+        error: "Failed to parse agent.md (malformed YAML)",
       });
     }
   }

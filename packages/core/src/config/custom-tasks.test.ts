@@ -278,6 +278,23 @@ Prompt.
     expect(result.errors[0].path).toContain("invalid-task");
   });
 
+  it("skips agent.md with no prompt body silently (no error)", async () => {
+    const taskDir = join(tmpDir, ".kanna", "tasks", "empty-body");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(
+      join(taskDir, "agent.md"),
+      `---
+name: No Body Task
+description: Has frontmatter but no prompt
+---
+`,
+    );
+
+    const result = await scanCustomTasks(tmpDir);
+    expect(result.tasks).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
   it("supports cancellation via AbortSignal (pre-aborted)", async () => {
     // Create a valid task that would normally be found
     const taskDir = join(tmpDir, ".kanna", "tasks", "should-skip");
