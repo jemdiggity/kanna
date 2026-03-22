@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, nextTick, watch } from "vue";
 import { invoke } from "../invoke";
 import { useLessScroll } from "../composables/useLessScroll";
 import { useShortcutContext, registerContextShortcuts } from "../composables/useShortcutContext";
@@ -13,6 +13,7 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const contentRef = ref<HTMLElement | null>(null);
+const modalRef = ref<HTMLElement | null>(null);
 
 useShortcutContext("file");
 registerContextShortcuts("file", [
@@ -187,12 +188,15 @@ useLessScroll(contentRef, {
   onClose: () => emit("close"),
 });
 
-onMounted(() => loadFile());
+onMounted(() => {
+  loadFile();
+  nextTick(() => modalRef.value?.focus());
+});
 </script>
 
 <template>
   <div class="modal-overlay" @click.self="emit('close')">
-    <div class="preview-modal">
+    <div ref="modalRef" class="preview-modal" tabindex="-1">
       <div class="preview-header">
         <span class="file-path">{{ filePath }}</span>
         <div class="header-actions">
@@ -235,6 +239,7 @@ onMounted(() => loadFile());
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  outline: none;
 }
 
 .preview-header {

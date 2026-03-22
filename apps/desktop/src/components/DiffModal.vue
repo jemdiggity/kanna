@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import DiffView from "./DiffView.vue";
 import { useShortcutContext } from "../composables/useShortcutContext";
 useShortcutContext("diff");
+
+const modalRef = ref<HTMLElement | null>(null);
 
 defineProps<{
   repoPath: string;
@@ -23,13 +25,16 @@ function onKeydown(e: KeyboardEvent) {
     emit("close");
   }
 }
-onMounted(() => window.addEventListener("keydown", onKeydown, true));
+onMounted(() => {
+  window.addEventListener("keydown", onKeydown, true);
+  nextTick(() => modalRef.value?.focus());
+});
 onUnmounted(() => window.removeEventListener("keydown", onKeydown, true));
 </script>
 
 <template>
   <div class="modal-overlay" :class="{ maximized }" @click.self="emit('close')">
-    <div class="diff-modal">
+    <div ref="modalRef" class="diff-modal" tabindex="-1">
       <DiffView :repo-path="repoPath" :worktree-path="worktreePath" :initial-scope="initialScope" @scope-change="emit('scope-change', $event)" @close="emit('close')" />
     </div>
   </div>
@@ -55,6 +60,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown, true));
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  outline: none;
 }
 
 .maximized { background: none; }
