@@ -91,7 +91,10 @@ export const useKannaStore = defineStore("kanna", () => {
     const pr = sortByActivity(repoItems.filter((i) => i.stage === "pr" && !i.pinned));
     const merge = sortByActivity(repoItems.filter((i) => i.stage === "merge" && !i.pinned));
     const inProgress = sortByActivity(repoItems.filter((i) => i.stage === "in_progress" && !i.pinned));
-    return [...pinned, ...pr, ...merge, ...inProgress];
+    const blocked = repoItems
+      .filter((i) => i.stage === "blocked" && !i.pinned)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    return [...pinned, ...pr, ...merge, ...inProgress, ...blocked];
   });
 
   // ── Actions: Selection ───────────────────────────────────────────
