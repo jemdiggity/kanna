@@ -15,7 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "select-repo", id: string): void;
   (e: "select-item", id: string): void;
-  (e: "import-repo"): void;
+  (e: "add-repo"): void;
   (e: "new-task", repoId: string): void;
   (e: "pin-item", itemId: string, position: number): void;
   (e: "unpin-item", itemId: string): void;
@@ -153,8 +153,8 @@ function onUnpinnedChange(repoId: string, evt: any) {
   <aside class="sidebar">
     <div class="sidebar-content">
       <div v-if="repos.length === 0" class="empty-state">
-        No repos imported yet.<br>
-        Press <kbd>⇧</kbd><kbd>⌘</kbd><kbd>I</kbd> to import one.
+        No repos yet.<br>
+        Press <kbd>⌘</kbd><kbd>I</kbd> to create one.
       </div>
 
       <div v-for="repo in repos" :key="repo.id" class="repo-section">
@@ -400,8 +400,8 @@ function onUnpinnedChange(repoId: string, evt: any) {
     </div>
 
     <div class="sidebar-footer">
-      <button class="btn-import" @click="emit('import-repo')" title="Import Repo (⇧⌘I)">
-        Import Repo
+      <button class="btn-import" @click="emit('add-repo')" title="Add Repo (⌘I)">
+        Add Repo
       </button>
     </div>
   </aside>

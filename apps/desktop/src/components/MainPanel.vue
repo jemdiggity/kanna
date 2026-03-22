@@ -52,8 +52,8 @@ const emit = defineEmits<{
     </template>
     <div v-else class="empty-state">
       <template v-if="!hasRepos">
-        <p class="empty-title">No repos imported</p>
-        <p class="empty-hint">Press <kbd>⇧</kbd><kbd>⌘</kbd><kbd>I</kbd> to import a repo and get started.</p>
+        <p class="empty-title">No repos yet</p>
+        <p class="empty-hint">Press <kbd>⌘</kbd><kbd>I</kbd> to create a repo and get started.</p>
       </template>
       <template v-else>
         <p class="empty-title">No task selected</p>
