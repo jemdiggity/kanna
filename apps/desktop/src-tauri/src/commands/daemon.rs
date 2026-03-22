@@ -246,6 +246,16 @@ pub async fn attach_session(
                                     });
                                     let _ = app.emit("hook_event", &hook);
                                 }
+                                // Detect sandbox/permission prompts waiting for user input.
+                                // These prompts bypass --dangerously-skip-permissions and no
+                                // Claude Code hook fires for them, so we scan PTY output.
+                                if bytes.windows(21).any(|w| w == b"Do you want to allow") {
+                                    let hook = serde_json::json!({
+                                        "session_id": event.get("session_id"),
+                                        "event": "WaitingForInput",
+                                    });
+                                    let _ = app.emit("hook_event", &hook);
+                                }
                             } else {
                                 let _ = app.emit("terminal_output", &event);
                             }
