@@ -240,7 +240,6 @@ function switchTab(tab: "create" | "import") {
           class="text-input"
           type="text"
           placeholder="my-awesome-project"
-          @keydown="handleKeydown"
         />
         <div class="path-hint">
           <span class="path-text">{{ displayCreatePath }}</span>
