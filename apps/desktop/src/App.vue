@@ -23,9 +23,11 @@ import { startPeriodicBackup } from "./composables/useBackup";
 import { createNavigationHistory } from "./composables/useNavigationHistory";
 import { useMarkAsRead } from "./composables/useMarkAsRead";
 import { activeContext } from "./composables/useShortcutContext";
+import { useToast } from "./composables/useToast";
 import { useKannaStore } from "./stores/kanna";
 
 const store = useKannaStore();
+const toast = useToast();
 const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
 const { recordNavigation, goBack, goForward } = createNavigationHistory();
@@ -155,7 +157,7 @@ async function onBlockerConfirm(selectedIds: string[]) {
       try {
         await store.editBlockedTask(item.id, selectedIds);
       } catch (e: any) {
-        alert(e.message);
+        toast.error(e.message);
       }
     }
   }
@@ -274,7 +276,7 @@ async function handleNewTaskSubmit(prompt: string) {
     if (store.repos.length === 1) {
       store.selectedRepoId = store.repos[0].id;
     } else {
-      alert("Select a repository first");
+      toast.warning("Select a repository first");
       return;
     }
   }
@@ -285,7 +287,7 @@ async function handleNewTaskSubmit(prompt: string) {
     showNewTaskModal.value = false;
   } catch (e: any) {
     console.error("Task creation failed:", e);
-    alert(`Task creation failed: ${e?.message || e}`);
+    toast.error(`Task creation failed: ${e?.message || e}`);
   }
 }
 
