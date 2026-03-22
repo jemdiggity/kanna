@@ -22,6 +22,7 @@ import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboard
 import { startPeriodicBackup } from "./composables/useBackup";
 import { createNavigationHistory } from "./composables/useNavigationHistory";
 import { useMarkAsRead } from "./composables/useMarkAsRead";
+import { useOperatorEvents } from "./composables/useOperatorEvents";
 import { activeContext } from "./composables/useShortcutContext";
 import { useKannaStore } from "./stores/kanna";
 
@@ -31,6 +32,7 @@ const dbName = inject<string>("dbName")!;
 const { recordNavigation, goBack, goForward } = createNavigationHistory();
 const { selectedItemId: selectedItemIdRef, items: itemsRef } = storeToRefs(store);
 useMarkAsRead(computed(() => db) as unknown as Ref<DbHandle | null>, selectedItemIdRef, itemsRef);
+useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 
 // UI state
 const showNewTaskModal = ref(false);
