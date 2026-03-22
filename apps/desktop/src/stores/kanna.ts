@@ -19,6 +19,13 @@ import {
   hasCircularDependency,
 } from "@kanna/db";
 
+/** Generate an 8-char hex ID (32 bits of randomness). */
+function generateId(): string {
+  const buf = new Uint8Array(4);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // Module-level DB handle — set once by init(), never null after that.
 let _db: DbHandle;
 
@@ -121,7 +128,7 @@ export const useKannaStore = defineStore("kanna", () => {
       }
       return;
     }
-    const id = crypto.randomUUID();
+    const id = generateId();
     await insertRepo(_db, { id, path, name, default_branch: defaultBranch });
     bump();
     selectedRepoId.value = id;
@@ -142,7 +149,7 @@ export const useKannaStore = defineStore("kanna", () => {
     agentType: "pty" | "sdk" = "pty",
     opts?: { baseBranch?: string; stage?: string },
   ) {
-    const id = crypto.randomUUID();
+    const id = generateId();
     const branch = `task-${id}`;
     const worktreePath = `${repoPath}/.kanna-worktrees/${branch}`;
 
@@ -644,7 +651,7 @@ export const useKannaStore = defineStore("kanna", () => {
     const originalDisplayName = item.display_name;
     const originalId = item.id;
 
-    const newId = crypto.randomUUID();
+    const newId = generateId();
     await insertPipelineItem(_db, {
       id: newId,
       repo_id: originalRepoId,
