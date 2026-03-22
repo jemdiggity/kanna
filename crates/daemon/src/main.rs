@@ -1,8 +1,9 @@
 mod fd_transfer;
-mod protocol;
 mod pty;
 mod session;
 mod socket;
+
+use kanna_daemon::protocol;
 
 use std::io::Read;
 use std::collections::HashMap;
