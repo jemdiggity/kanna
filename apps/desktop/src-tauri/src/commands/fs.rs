@@ -7,7 +7,7 @@ use tauri::Manager;
 fn webview_log_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
-        // Derive worktree suffix from KANNA_DAEMON_DIR
+        // Worktree: derive suffix from KANNA_DAEMON_DIR
         // e.g. /path/.kanna-worktrees/task-abc123/.kanna-daemon → task-abc123
         if let Ok(dir) = std::env::var("KANNA_DAEMON_DIR") {
             let parts: Vec<&str> = dir.split('/').collect();
@@ -16,6 +16,14 @@ fn webview_log_path() -> &'static str {
                     return format!("/tmp/kanna-webview-{}.log", parts[idx - 1]);
                 }
             }
+        }
+        // Main instance: use a short hash of cwd so different checkouts don't collide
+        if let Ok(cwd) = std::env::current_dir() {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            cwd.hash(&mut hasher);
+            let hash = hasher.finish();
+            return format!("/tmp/kanna-webview-{:08x}.log", hash as u32);
         }
         "/tmp/kanna-webview.log".to_string()
     })
