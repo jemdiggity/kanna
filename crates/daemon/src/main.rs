@@ -26,6 +26,10 @@ type SessionWriters = Arc<Mutex<HashMap<String, ActiveWriter>>>;
 type PreAttachBuffer = Arc<Mutex<Option<Vec<u8>>>>;
 type PreAttachBuffers = Arc<Mutex<HashMap<String, PreAttachBuffer>>>;
 
+/// Map of session_id → list of passive observer writers.
+/// Observers receive Output/Exit events but don't claim the Attach writer.
+type SessionObservers = Arc<Mutex<HashMap<String, Vec<Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>>>>>;
+
 use protocol::{Command, Event};
 use session::SessionManager;
 use socket::{bind_socket, read_command, write_event};
@@ -90,6 +94,7 @@ async fn main() {
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
     let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
     let pre_attach_buffers: PreAttachBuffers = Arc::new(Mutex::new(HashMap::new()));
+    let session_observers: SessionObservers = Arc::new(Mutex::new(HashMap::new()));
 
     // Adopt handed-off sessions
     if !adopted.is_empty() {
@@ -122,8 +127,9 @@ async fn main() {
                 let hook_tx_clone = hook_tx.clone();
                 let writers_clone = session_writers.clone();
                 let buffers_clone = pre_attach_buffers.clone();
+                let observers_clone = session_observers.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, sessions_clone, hook_tx_clone, writers_clone, buffers_clone).await;
+                    handle_connection(stream, sessions_clone, hook_tx_clone, writers_clone, buffers_clone, observers_clone).await;
                 });
             }
             Err(e) => {
@@ -284,6 +290,7 @@ async fn handle_connection(
     hook_tx: broadcast::Sender<String>,
     session_writers: SessionWriters,
     pre_attach_buffers: PreAttachBuffers,
+    session_observers: SessionObservers,
 ) {
     // Keep the raw fd for SCM_RIGHTS (used by Handoff)
     let raw_fd = stream.as_raw_fd();
@@ -318,8 +325,30 @@ async fn handle_connection(
                 }
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
+            Some(Command::Observe { session_id }) => {
+                let mgr = sessions.lock().await;
+                if !mgr.contains(&session_id) {
+                    let evt = Event::Error { message: format!("session not found: {}", session_id) };
+                    drop(mgr);
+                    let _ = write_event(&mut *writer.lock().await, &evt).await;
+                    continue;
+                }
+                drop(mgr);
+                let mut observers = session_observers.lock().await;
+                observers.entry(session_id.clone()).or_insert_with(Vec::new).push(writer.clone());
+                let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
+            }
+            Some(Command::Unobserve { session_id }) => {
+                let mut observers = session_observers.lock().await;
+                if let Some(list) = observers.get_mut(&session_id) {
+                    let writer_ptr = Arc::as_ptr(&writer);
+                    list.retain(|w| Arc::as_ptr(w) != writer_ptr);
+                    if list.is_empty() { observers.remove(&session_id); }
+                }
+                let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
+            }
             Some(command) => {
-                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, session_writers.clone(), pre_attach_buffers.clone()).await;
+                handle_command(command, sessions.clone(), writer.clone(), &hook_tx, session_writers.clone(), pre_attach_buffers.clone(), session_observers.clone()).await;
             }
         }
     }
@@ -332,6 +361,7 @@ async fn handle_command(
     hook_tx: &broadcast::Sender<String>,
     session_writers: SessionWriters,
     pre_attach_buffers: PreAttachBuffers,
+    session_observers: SessionObservers,
 ) {
     match command {
         Command::Spawn {
@@ -370,8 +400,9 @@ async fn handle_command(
                         let sid = session_id.clone();
                         let sessions_exit = sessions.clone();
                         let writers_cleanup = session_writers.clone();
+                        let observers_clone = session_observers.clone();
                         tokio::task::spawn_blocking(move || {
-                            stream_output(sid, reader, active_writer, buffer, sessions_exit, writers_cleanup);
+                            stream_output(sid, reader, active_writer, buffer, sessions_exit, writers_cleanup, observers_clone);
                         });
                     }
 
@@ -449,9 +480,10 @@ async fn handle_command(
                 let sid = session_id.clone();
                 let sessions_exit = sessions.clone();
                 let writers_cleanup = session_writers.clone();
+                let observers_clone = session_observers.clone();
                 let no_buffer: PreAttachBuffer = Arc::new(Mutex::new(None));
                 tokio::task::spawn_blocking(move || {
-                    stream_output(sid, pty_reader, active_writer, no_buffer, sessions_exit, writers_cleanup);
+                    stream_output(sid, pty_reader, active_writer, no_buffer, sessions_exit, writers_cleanup, observers_clone);
                 });
             }
         }
@@ -572,6 +604,11 @@ async fn handle_command(
             let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
         }
 
+        Command::Observe { .. } | Command::Unobserve { .. } => {
+            // Handled in handle_connection before dispatch
+            let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
+        }
+
         Command::HookEvent { session_id, event, data } => {
             let evt = Event::HookEvent { session_id, event, data };
             if let Ok(json) = serde_json::to_string(&evt) {
@@ -682,6 +719,7 @@ fn stream_output(
     pre_attach_buffer: PreAttachBuffer,
     sessions: Arc<Mutex<SessionManager>>,
     session_writers: SessionWriters,
+    session_observers: SessionObservers,
 ) {
     let rt = tokio::runtime::Handle::current();
     let mut buf = [0u8; 4096];
@@ -709,12 +747,23 @@ fn stream_output(
 
                 let evt = Event::Output {
                     session_id: session_id.clone(),
-                    data,
+                    data: data.clone(),
                 };
                 rt.block_on(async {
                     let maybe_writer = active_writer.lock().await.clone();
                     if let Some(w) = maybe_writer {
                         let _ = write_event(&mut *w.lock().await, &evt).await;
+                    }
+                });
+
+                // Tee output to passive observers
+                rt.block_on(async {
+                    let observers_guard = session_observers.lock().await;
+                    if let Some(observer_list) = observers_guard.get(&session_id) {
+                        let obs_evt = Event::Output { session_id: session_id.clone(), data };
+                        for obs in observer_list {
+                            let _ = write_event(&mut *obs.lock().await, &obs_evt).await;
+                        }
                     }
                 });
             }
@@ -744,6 +793,16 @@ fn stream_output(
         if let Some(w) = maybe_writer {
             let _ = write_event(&mut *w.lock().await, &evt).await;
         }
+
+        // Tee Exit event to passive observers, then clean up
+        let mut observers_guard = session_observers.lock().await;
+        if let Some(observer_list) = observers_guard.remove(&session_id) {
+            let obs_evt = Event::Exit { session_id: session_id.clone(), code: exit_code };
+            for obs in &observer_list {
+                let _ = write_event(&mut *obs.lock().await, &obs_evt).await;
+            }
+        }
+
         session_writers.lock().await.remove(&session_id);
     });
 }
