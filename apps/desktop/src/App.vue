@@ -23,7 +23,7 @@ import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboard
 import { startPeriodicBackup } from "./composables/useBackup";
 import { createNavigationHistory } from "./composables/useNavigationHistory";
 import { useOperatorEvents } from "./composables/useOperatorEvents";
-import { activeContext } from "./composables/useShortcutContext";
+import { activeContext, type ShortcutContext } from "./composables/useShortcutContext";
 import { useCustomTasks } from "./composables/useCustomTasks";
 import { useToast } from "./composables/useToast";
 import { useKannaStore } from "./stores/kanna";
@@ -44,7 +44,7 @@ const showNewTaskModal = ref(false);
 const showAddRepoModal = ref(false);
 const addRepoInitialTab = ref<"create" | "import">("create");
 const showShortcutsModal = ref(false);
-const shortcutsContext = ref<"main" | "diff" | "file">("main");
+const shortcutsContext = ref<ShortcutContext>("main");
 const showFilePickerModal = ref(false);
 const showFilePreviewModal = ref(false);
 const previewFilePath = ref("");
