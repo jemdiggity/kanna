@@ -27,6 +27,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let unlistenExit: (() => void) | null = null
   let container: HTMLElement | null = null
   let fitRafId = 0
+  let attached = false
 
   function handleLinkActivate(_event: MouseEvent, uri: string) {
     if (isTauri) {
@@ -128,12 +129,28 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       })
     })
 
-    // Handle resize
+    // Handle resize — only forward to daemon after session is attached,
+    // otherwise the invoke fails silently and the resize is lost.
     term.onResize(({ cols, rows }) => {
-      invoke("resize_session", { sessionId, cols, rows })
+      if (attached) {
+        invoke("resize_session", { sessionId, cols, rows })
+      }
     })
 
     terminal.value = term
+  }
+
+  /** Wait for the container to have non-zero dimensions, then fit the terminal. */
+  async function ensureFitted() {
+    if (container && container.offsetWidth > 0 && container.offsetHeight > 0) {
+      fitAddon.fit()
+      return
+    }
+    // Container not yet laid out — wait one animation frame for the browser to compute layout
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    if (container && container.offsetWidth > 0 && container.offsetHeight > 0) {
+      fitAddon.fit()
+    }
   }
 
   async function startListening() {
@@ -171,12 +188,14 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     // Try to attach first — session may already exist in daemon (e.g. after app restart)
     try {
       await invoke("attach_session", { sessionId })
+      attached = true
       // Attach succeeded — session was alive in daemon.
       // Clear display and force SIGWINCH so Claude TUI redraws from scratch.
       // Use CSI 2 J + CSI H instead of reset() to preserve internal state
       // (kitty keyboard mode, character attributes, etc.).
       if (terminal.value) {
         terminal.value.write("\x1b[?25l\x1b[2J\x1b[H") // hide cursor, clear display, cursor home
+        await ensureFitted()
         const { cols, rows } = terminal.value
         // Force a size change then restore — guarantees SIGWINCH fires
         await invoke("resize_session", { sessionId, cols: cols - 1, rows }).catch(() => {})
@@ -189,6 +208,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
     // No existing session — spawn a new one if we have spawn options
     if (spawnOptions && terminal.value) {
+      await ensureFitted()
       const { cols, rows } = terminal.value
       try {
         await spawnOptions.spawnFn(sessionId, spawnOptions.cwd, spawnOptions.prompt, cols, rows)
@@ -200,6 +220,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       }
       // Now attach to the newly spawned session
       await invoke("attach_session", { sessionId })
+      attached = true
     }
   }
 
@@ -218,6 +239,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   }
 
   function dispose() {
+    attached = false
     if (fitRafId) cancelAnimationFrame(fitRafId)
     if (unlistenOutput) unlistenOutput()
     if (unlistenExit) unlistenExit()
