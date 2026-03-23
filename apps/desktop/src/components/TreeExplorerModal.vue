@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
-import { useVirtualList } from "@vueuse/core";
+import { ref, onMounted, onUnmounted, nextTick, watch } from "vue";
 import { useTreeExplorer, type TreeNode } from "../composables/useTreeExplorer";
 import { useShortcutContext, registerContextShortcuts } from "../composables/useShortcutContext";
 
@@ -27,6 +26,7 @@ const emit = defineEmits<{
 }>();
 
 const modalRef = ref<HTMLElement | null>(null);
+const currentColRef = ref<HTMLElement | null>(null);
 
 const {
   state,
@@ -42,15 +42,6 @@ const {
   () => props.worktreePath,
   () => props.repoRoot
 );
-
-// Virtual lists for each column
-const parentSource = computed(() => state.value.columns[0] ?? []);
-const currentSource = computed(() => state.value.columns[1] ?? []);
-const previewSource = computed(() => state.value.columns[2] ?? []);
-
-const parentList = useVirtualList(parentSource, { itemHeight: 28 });
-const currentList = useVirtualList(currentSource, { itemHeight: 28 });
-const previewList = useVirtualList(previewSource, { itemHeight: 28 });
 
 async function onKeydown(e: KeyboardEvent) {
   // Stop propagation to prevent global shortcut handler from interfering
@@ -93,17 +84,15 @@ onUnmounted(() => {
 // Scroll active item into view when cursor changes
 watch(
   () => state.value.cursor[1],
-  () => {
-    currentList.scrollTo(state.value.cursor[1]);
+  (idx) => {
+    const el = currentColRef.value?.children[idx] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: "nearest" });
   }
 );
 
-function isInPath(entry: TreeNode, column: number): boolean {
-  if (column === 0) {
-    const bc = state.value.breadcrumb;
-    return bc.length > 0 && entry.name === bc[bc.length - 1];
-  }
-  return false;
+function isInPath(entry: TreeNode): boolean {
+  const bc = state.value.breadcrumb;
+  return bc.length > 0 && entry.name === bc[bc.length - 1];
 }
 
 function isDimmed(entry: TreeNode): boolean {
@@ -146,22 +135,15 @@ function isDimmed(entry: TreeNode): boolean {
       >
         <!-- Parent column -->
         <div class="miller-col col-parent">
-          <div
-            v-bind="parentList.containerProps"
-            class="col-scroll"
-          >
-            <div v-bind="parentList.wrapperProps">
-              <div
-                v-for="{ data: entry } in parentList.list.value"
-                :key="entry.path"
-                class="tree-item"
-                :class="{
-                  active: isInPath(entry, 0),
-                }"
-              >
-                <span v-if="entry.isDir" class="dir-arrow">{{ isInPath(entry, 0) ? '&#x25BE;' : '&#x25B8;' }}</span>
-                <span class="entry-name">{{ entry.name }}{{ entry.isDir ? '/' : '' }}</span>
-              </div>
+          <div class="col-scroll">
+            <div
+              v-for="entry in state.columns[0]"
+              :key="entry.path"
+              class="tree-item"
+              :class="{ active: isInPath(entry) }"
+            >
+              <span v-if="entry.isDir" class="dir-arrow">{{ isInPath(entry) ? '&#x25BE;' : '&#x25B8;' }}</span>
+              <span class="entry-name">{{ entry.name }}{{ entry.isDir ? '/' : '' }}</span>
             </div>
           </div>
           <div v-if="state.columns[0].length === 0" class="col-empty">(root)</div>
@@ -169,23 +151,18 @@ function isDimmed(entry: TreeNode): boolean {
 
         <!-- Current column (active) -->
         <div class="miller-col col-current">
-          <div
-            v-bind="currentList.containerProps"
-            class="col-scroll"
-          >
-            <div v-bind="currentList.wrapperProps">
-              <div
-                v-for="{ data: entry, index } in currentList.list.value"
-                :key="entry.path"
-                class="tree-item"
-                :class="{
-                  cursor: index === state.cursor[1],
-                  dimmed: isDimmed(entry),
-                }"
-              >
-                <span v-if="entry.isDir" class="dir-arrow">&#x25B8;</span>
-                <span class="entry-name">{{ entry.name }}{{ entry.isDir ? '/' : '' }}</span>
-              </div>
+          <div ref="currentColRef" class="col-scroll">
+            <div
+              v-for="(entry, index) in state.columns[1]"
+              :key="entry.path"
+              class="tree-item"
+              :class="{
+                cursor: index === state.cursor[1],
+                dimmed: isDimmed(entry),
+              }"
+            >
+              <span v-if="entry.isDir" class="dir-arrow">&#x25B8;</span>
+              <span class="entry-name">{{ entry.name }}{{ entry.isDir ? '/' : '' }}</span>
             </div>
           </div>
           <div v-if="loading" class="col-loading">&middot;&middot;&middot;</div>
@@ -194,22 +171,15 @@ function isDimmed(entry: TreeNode): boolean {
 
         <!-- Preview column -->
         <div class="miller-col col-preview">
-          <div
-            v-bind="previewList.containerProps"
-            class="col-scroll"
-          >
-            <div v-bind="previewList.wrapperProps">
-              <div
-                v-for="{ data: entry, index } in previewList.list.value"
-                :key="entry.path"
-                class="tree-item"
-                :class="{
-                  cursor: index === state.cursor[2],
-                }"
-              >
-                <span v-if="entry.isDir" class="dir-arrow">&#x25B8;</span>
-                <span class="entry-name">{{ entry.name }}{{ entry.isDir ? '/' : '' }}</span>
-              </div>
+          <div class="col-scroll">
+            <div
+              v-for="(entry, index) in state.columns[2]"
+              :key="entry.path"
+              class="tree-item"
+              :class="{ cursor: index === state.cursor[2] }"
+            >
+              <span v-if="entry.isDir" class="dir-arrow">&#x25B8;</span>
+              <span class="entry-name">{{ entry.name }}{{ entry.isDir ? '/' : '' }}</span>
             </div>
           </div>
           <div v-if="state.columns[2].length === 0 && !loading" class="col-empty">
