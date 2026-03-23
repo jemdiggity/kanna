@@ -30,10 +30,13 @@ fn default_db_path() -> String {
 
 impl Config {
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
-        let config_path = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("Kanna")
-            .join("server.toml");
+        let config_path = match std::env::var("KANNA_SERVER_CONFIG") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("Kanna")
+                .join("server.toml"),
+        };
         let content = std::fs::read_to_string(&config_path).map_err(|e| {
             format!(
                 "Failed to read {}: {}. Run 'kanna-server register' first.",
