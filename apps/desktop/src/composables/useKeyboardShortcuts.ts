@@ -77,7 +77,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "createRepo",   label: "Create Repo",      group: "Navigation", key: ["I", "i"],                     meta: true,               display: "⌘I",       context: ["main"] },
   { action: "importRepo",   label: "Import / Clone",   group: "Navigation", key: ["I", "i"],                     meta: true, shift: true,  display: "⇧⌘I",     context: ["main"] },
   { action: "goBack",       label: "Go Back",          group: "Navigation", key: "-",                            ctrl: true,               display: "⌃-",       context: ["main"] },
-  { action: "goForward",    label: "Go Forward",       group: "Navigation", key: "-",                            ctrl: true, shift: true,  display: "⌃⇧-",     context: ["main"] },
+  { action: "goForward",    label: "Go Forward",       group: "Navigation", key: ["_", "-"],                     ctrl: true, shift: true,  display: "⌃⇧-",     context: ["main"] },
   // Help
   { action: "showShortcuts",  label: "Keyboard Shortcuts", group: "Help",   key: "/",                           meta: true,               display: "⌘/",       context: ["main", "diff", "file", "shell"] },
   // Escape is special — no meta required
