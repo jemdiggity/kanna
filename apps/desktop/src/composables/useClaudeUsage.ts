@@ -69,6 +69,7 @@ async function fetchUsage(): Promise<void> {
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+    console.error("[usage] get_claude_usage failed:", error.value);
   } finally {
     loading.value = false;
   }

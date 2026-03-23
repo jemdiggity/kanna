@@ -190,35 +190,26 @@ fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
     }
 }
 
-/// Capture Claude CLI `/usage` output by running it in a PTY.
-///
-/// `/usage` is a TUI-only command, so we use macOS `script` to allocate a PTY,
-/// send `/usage` to stdin, wait for the data to render, then kill the process
-/// and return the ANSI-stripped text for frontend parsing.
+/// Capture Claude CLI `/usage` output by piping it to stdin.
 #[tauri::command]
 pub async fn get_claude_usage() -> Result<String, String> {
     tokio::task::spawn_blocking(|| {
-        let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
-        let out_path = format!("{}/kanna-usage-{}.txt", tmp, std::process::id());
-
-        let mut child = std::process::Command::new("script")
-            .args(["-q", &out_path, "bash", "-c", "printf '/usage\\n' | claude"])
+        let output = std::process::Command::new("bash")
+            .args(["-lc", "echo '/usage' | claude"])
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+            .output()
             .map_err(|e| format!("failed to spawn: {e}"))?;
 
-        // Wait for usage data to render, then kill
-        std::thread::sleep(std::time::Duration::from_secs(12));
-        let _ = child.kill();
-        let _ = child.wait();
-
-        let raw = std::fs::read_to_string(&out_path).unwrap_or_default();
-        let _ = std::fs::remove_file(&out_path);
+        let raw = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if raw.is_empty() || !raw.contains("used") {
-            return Err("failed to capture usage data".to_string());
+            return Err(format!(
+                "failed to capture usage data (exit={:?}, stdout_len={}, stderr={})",
+                output.status.code(),
+                raw.len(),
+                if stderr.is_empty() { "(empty)" } else { &stderr }
+            ));
         }
 
         Ok(strip_ansi_usage(&raw))
