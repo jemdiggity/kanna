@@ -354,6 +354,7 @@ pub fn run() {
             commands::agent::agent_send_message,
             commands::agent::agent_interrupt,
             commands::agent::agent_close_session,
+            commands::agent::get_claude_usage,
             // Daemon commands
             commands::daemon::spawn_session,
             commands::daemon::send_input,

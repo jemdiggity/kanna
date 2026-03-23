@@ -209,6 +209,7 @@ const invokeHandlers: Record<string, (...args: any[]) => any> = {
   file_exists: () => true,
   read_text_file: () => "",
   get_app_data_dir: () => "/tmp/kanna-mock-data",
+  get_claude_usage: () => "",
   copy_file: () => ({}),
   remove_file: () => ({}),
   list_dir: () => [],

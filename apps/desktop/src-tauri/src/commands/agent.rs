@@ -189,3 +189,136 @@ fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
         _ => PermissionMode::DontAsk,
     }
 }
+
+/// Capture Claude CLI `/usage` output by running it in a PTY.
+///
+/// `/usage` is a TUI-only command, so we use macOS `script` to allocate a PTY,
+/// send `/usage` to stdin, wait for the data to render, then kill the process
+/// and return the ANSI-stripped text for frontend parsing.
+#[tauri::command]
+pub async fn get_claude_usage() -> Result<String, String> {
+    tokio::task::spawn_blocking(|| {
+        let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+        let out_path = format!("{}/kanna-usage-{}.txt", tmp, std::process::id());
+
+        let mut child = std::process::Command::new("script")
+            .args(["-q", &out_path, "bash", "-c", "printf '/usage\\n' | claude"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("failed to spawn: {e}"))?;
+
+        // Wait for usage data to render, then kill
+        std::thread::sleep(std::time::Duration::from_secs(12));
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let raw = std::fs::read_to_string(&out_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&out_path);
+
+        if raw.is_empty() || !raw.contains("used") {
+            return Err("failed to capture usage data".to_string());
+        }
+
+        Ok(strip_ansi_usage(&raw))
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
+}
+
+/// Strip ANSI escape sequences from terminal output.
+///
+/// Converts CSI cursor-forward (`[<n>C`) to spaces and cursor-down (`[<n>B`)
+/// to newlines so the result is roughly readable. All other escape sequences
+/// (colors, cursor positioning, etc.) are discarded.
+fn strip_ansi_usage(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        match bytes[i] {
+            0x1b => {
+                i += 1;
+                if i >= len {
+                    break;
+                }
+                match bytes[i] {
+                    b'[' => {
+                        // CSI sequence: ESC [ <params> <letter>
+                        i += 1;
+                        let param_start = i;
+                        while i < len && !bytes[i].is_ascii_alphabetic() {
+                            i += 1;
+                        }
+                        if i < len {
+                            let cmd = bytes[i];
+                            let params = &input[param_start..i];
+                            i += 1;
+                            match cmd {
+                                b'C' => {
+                                    let n: usize = params.parse().unwrap_or(1);
+                                    for _ in 0..n {
+                                        result.push(' ');
+                                    }
+                                }
+                                b'B' => {
+                                    let n: usize = params.parse().unwrap_or(1);
+                                    for _ in 0..n {
+                                        result.push('\n');
+                                    }
+                                }
+                                _ => {} // discard colors, cursor up, etc.
+                            }
+                        }
+                    }
+                    b']' => {
+                        // OSC sequence: skip until BEL or ST
+                        i += 1;
+                        while i < len {
+                            if bytes[i] == 0x07 {
+                                i += 1;
+                                break;
+                            }
+                            if bytes[i] == 0x1b && i + 1 < len && bytes[i + 1] == b'\\' {
+                                i += 2;
+                                break;
+                            }
+                            i += 1;
+                        }
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            b'\r' => {
+                i += 1;
+            }
+            _ => {
+                let byte = bytes[i];
+                if byte >= 0x20 || byte == b'\n' || byte == b'\t' {
+                    if byte < 0x80 {
+                        result.push(byte as char);
+                        i += 1;
+                    } else {
+                        // UTF-8 multi-byte (e.g. █ progress bar chars)
+                        let remaining = &input[i..];
+                        if let Some(ch) = remaining.chars().next() {
+                            result.push(ch);
+                            i += ch.len_utf8();
+                        } else {
+                            i += 1;
+                        }
+                    }
+                } else {
+                    i += 1; // skip control chars
+                }
+            }
+        }
+    }
+
+    result
+}

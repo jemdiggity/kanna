@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { Repo, PipelineItem } from "@kanna/db";
 import { hasTag } from "@kanna/core";
-import { ref, nextTick } from "vue";
+import { ref, nextTick, onMounted } from "vue";
 import draggable from "vuedraggable";
+import { useClaudeUsage } from "../composables/useClaudeUsage";
 
 const props = defineProps<{
   repos: Repo[];
@@ -25,6 +26,9 @@ const emit = defineEmits<{
 }>();
 
 const collapsedRepos = ref<Set<string>>(new Set());
+
+const { usage, loading: usageLoading, fetchUsage } = useClaudeUsage();
+onMounted(() => { fetchUsage(); });
 
 function sortedPinned(repoId: string): PipelineItem[] {
   return props.pipelineItems
@@ -132,6 +136,12 @@ function onPinnedChange(repoId: string, evt: any) {
     ids.splice(evt.moved.newIndex, 0, moved);
     emit("reorder-pinned", repoId, ids);
   }
+}
+
+function usageLevel(pct: number): string {
+  if (pct >= 80) return "high";
+  if (pct >= 50) return "mid";
+  return "low";
 }
 
 function onUnpinnedChange(repoId: string, evt: any) {
@@ -408,6 +418,30 @@ function onUnpinnedChange(repoId: string, evt: any) {
     </div>
 
     <div class="sidebar-footer">
+      <div v-if="usage" class="usage-section" @click="fetchUsage" title="Click to refresh">
+        <div v-if="usage.session" class="usage-row">
+          <span class="usage-label">Session</span>
+          <div class="usage-bar">
+            <div class="usage-fill" :style="{ width: usage.session.percent + '%' }" :class="usageLevel(usage.session.percent)" />
+          </div>
+          <span class="usage-pct">{{ usage.session.percent }}%</span>
+        </div>
+        <div v-if="usage.weekAll" class="usage-row">
+          <span class="usage-label">Week</span>
+          <div class="usage-bar">
+            <div class="usage-fill" :style="{ width: usage.weekAll.percent + '%' }" :class="usageLevel(usage.weekAll.percent)" />
+          </div>
+          <span class="usage-pct">{{ usage.weekAll.percent }}%</span>
+        </div>
+        <div v-if="usage.extra" class="usage-row">
+          <span class="usage-label">Extra</span>
+          <div class="usage-bar">
+            <div class="usage-fill" :style="{ width: usage.extra.percent + '%' }" :class="usageLevel(usage.extra.percent)" />
+          </div>
+          <span class="usage-pct">{{ usage.extra.spent ?? usage.extra.percent + '%' }}</span>
+        </div>
+      </div>
+      <div v-else-if="usageLoading" class="usage-loading">Loading usage...</div>
       <button class="btn-import" @click="emit('add-repo')" title="Add Repo (⌘I)">
         Add Repo
       </button>
@@ -688,5 +722,64 @@ function onUnpinnedChange(repoId: string, evt: any) {
   background: #1e1e1e;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Usage bars */
+.usage-section {
+  padding: 8px 14px;
+  border-bottom: 1px solid #333;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usage-section:hover {
+  background: #252525;
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.usage-label {
+  font-size: 10px;
+  color: #888;
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.usage-bar {
+  flex: 1;
+  height: 4px;
+  background: #333;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.usage-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.usage-fill.low { background: #4a9; }
+.usage-fill.mid { background: #c93; }
+.usage-fill.high { background: #c44; }
+
+.usage-pct {
+  font-size: 10px;
+  color: #888;
+  min-width: 28px;
+  text-align: right;
+}
+
+.usage-loading {
+  padding: 6px 14px;
+  font-size: 10px;
+  color: #666;
+  border-bottom: 1px solid #333;
 }
 </style>
