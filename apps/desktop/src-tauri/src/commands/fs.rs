@@ -106,9 +106,10 @@ pub fn read_dir_entries(path: String, repo_root: String) -> Result<Vec<DirEntry>
     }
 
     // Add global gitignore if it exists
-    let global_path = ignore::gitignore::Gitignore::global().0.path().to_path_buf();
-    if global_path.exists() {
-        let _ = builder.add(global_path);
+    if let Some(global_path) = ignore::gitignore::gitconfig_excludes_path() {
+        if global_path.is_file() {
+            let _ = builder.add(global_path);
+        }
     }
 
     let gitignore = builder
@@ -120,7 +121,8 @@ pub fn read_dir_entries(path: String, repo_root: String) -> Result<Vec<DirEntry>
 
     let mut entries: Vec<DirEntry> = Vec::new();
 
-    for entry in read.flatten() {
+    for entry in read {
+        let entry = entry.map_err(|e| format!("failed to read entry in '{}': {}", path, e))?;
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Always skip .git directory
