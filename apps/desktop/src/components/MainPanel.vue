@@ -15,12 +15,17 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: "agent-completed"): void;
+  (e: "back"): void;
 }>();
 </script>
 
 <template>
   <main class="main-panel">
     <template v-if="item">
+      <div v-if="__KANNA_MOBILE__" class="mobile-back-bar" @click="emit('back')">
+        <span class="mobile-back-arrow">&larr;</span>
+        <span>Tasks</span>
+      </div>
       <TaskHeader v-if="!maximized" :item="item" />
       <template v-if="hasTag(item, 'blocked')">
         <div class="blocked-placeholder">
@@ -175,5 +180,22 @@ const emit = defineEmits<{
   font-size: 11px;
   color: #555;
   margin-top: 8px;
+}
+
+.mobile-back-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: #222;
+  border-bottom: 1px solid #333;
+  color: #4a9eff;
+  font-size: 14px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-back-arrow {
+  font-size: 18px;
 }
 </style>
