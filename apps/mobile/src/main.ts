@@ -42,6 +42,11 @@ async function boot() {
   app.provide("db", db);
   app.provide("dbName", "mobile");
   app.mount("#app");
+
+  // Poll for data updates every 5 seconds (mobile is read-only, no push events)
+  const { useKannaStore } = await import("@desktop/stores/kanna");
+  const store = useKannaStore();
+  setInterval(() => store.bump(), 5000);
 }
 
 boot();

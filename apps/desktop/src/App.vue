@@ -522,10 +522,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :class="{ mobile: __KANNA_MOBILE__ }">
     <Sidebar
       ref="sidebarRef"
-      v-if="!maximized && !sidebarHidden"
+      v-if="!maximized && !sidebarHidden && (!__KANNA_MOBILE__ || !store.selectedItemId)"
       :repos="store.repos"
       :pipeline-items="store.items"
       :selected-repo-id="store.selectedRepoId"
@@ -542,6 +542,7 @@ onMounted(async () => {
       @hide-repo="store.hideRepo"
     />
     <MainPanel
+      v-if="!__KANNA_MOBILE__ || store.selectedItemId"
       :item="store.currentItem"
       :repo-path="store.selectedRepo?.path"
       :spawn-pty-session="store.spawnPtySession"
@@ -550,6 +551,7 @@ onMounted(async () => {
       :has-repos="store.repos.length > 0"
       @close-task="store.closeTask"
       @agent-completed="store.bump"
+      @back="store.selectedItemId = null"
     />
 
     <NewTaskModal
@@ -689,5 +691,25 @@ html, body, #app {
   .app {
     flex-direction: column;
   }
+}
+
+.app.mobile {
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.app.mobile :deep(.sidebar) {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  border-right: none;
+}
+
+.app.mobile .main-panel {
+  width: 100%;
+  height: 100%;
 }
 </style>
