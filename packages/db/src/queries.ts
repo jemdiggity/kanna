@@ -291,7 +291,7 @@ export async function getUnblockedItems(
        SELECT 1 FROM task_blocker tb
        JOIN pipeline_item blocker ON blocker.id = tb.blocker_item_id
        WHERE tb.blocked_item_id = pi.id
-       AND (blocker.tags NOT LIKE '%"done"%' AND blocker.tags NOT LIKE '%"pr"%' AND blocker.tags NOT LIKE '%"merge"%')
+       AND blocker.tags NOT LIKE '%"done"%'
      )`,
   );
 }
