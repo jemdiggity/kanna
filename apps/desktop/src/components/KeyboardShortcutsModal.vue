@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from "vue";
+import { ref, watch, computed, onMounted, onUnmounted } from "vue";
 import { getShortcutGroups } from "../composables/useKeyboardShortcuts";
 import { getContextShortcuts, getContextTitle, type ShortcutContext } from "../composables/useShortcutContext";
 
@@ -21,6 +21,15 @@ const showFullMode = ref(false);
 const contextTitle = computed(() => getContextTitle(props.context));
 const contextItems = computed(() => getContextShortcuts(props.context));
 const groups = getShortcutGroups();
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.metaKey && e.shiftKey && e.key === "/") {
+    e.preventDefault();
+    showFullMode.value = !showFullMode.value;
+  }
+}
+onMounted(() => window.addEventListener("keydown", onKeydown));
+onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 function splitKeys(display: string): string[] {
   const symbols = ["⌘", "⇧", "⌥", "⌫"];
@@ -72,6 +81,7 @@ function splitKeys(display: string): string[] {
       <div class="shortcuts-footer">
         <a class="toggle-link" @click="showFullMode = !showFullMode">
           {{ showFullMode ? `Show ${contextTitle.toLowerCase()}` : 'Show all shortcuts' }}
+          <span class="toggle-hint"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>/</kbd></span>
         </a>
         <label v-if="showFullMode" class="startup-checkbox">
           <input type="checkbox" v-model="hideOnStartup" />
@@ -142,6 +152,15 @@ kbd {
 }
 .toggle-link:hover {
   text-decoration: underline;
+}
+.toggle-hint {
+  margin-left: 6px;
+  opacity: 0.5;
+}
+.toggle-hint kbd {
+  font-size: 10px;
+  padding: 1px 4px;
+  min-width: auto;
 }
 .startup-checkbox {
   display: flex;
