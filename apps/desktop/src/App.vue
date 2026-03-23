@@ -108,7 +108,7 @@ const blockerCandidates = computed(() => {
   if (!item) return [];
   return store.items.filter((i) =>
     i.id !== item.id &&
-    !hasTag(i, "done") && !hasTag(i, "pr") && !hasTag(i, "merge") &&
+    !hasTag(i, "done") &&
     i.repo_id === store.selectedRepoId
   );
 });
