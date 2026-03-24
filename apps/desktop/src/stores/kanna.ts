@@ -269,19 +269,25 @@ export const useKannaStore = defineStore("kanna", () => {
     agentType: "pty" | "sdk",
     opts?: { baseBranch?: string; tags?: string[]; customTask?: CustomTaskConfig },
   ) {
+    const repoConfig = await readRepoConfig(repoPath);
+    const portEnv = computePortEnv(repoConfig, portOffset);
+
+    if (Object.keys(portEnv).length > 0) {
+      await _db.execute(
+        "UPDATE pipeline_item SET port_env = ? WHERE id = ?",
+        [JSON.stringify(portEnv), id],
+      );
+    }
+
     try {
-      const repoConfig = await readRepoConfig(repoPath);
-      const portEnv = computePortEnv(repoConfig, portOffset);
-
-      if (Object.keys(portEnv).length > 0) {
-        await _db.execute(
-          "UPDATE pipeline_item SET port_env = ? WHERE id = ?",
-          [JSON.stringify(portEnv), id],
-        );
-      }
-
       await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
+    } catch (e) {
+      console.error("[store] git_worktree_add failed:", e);
+      toast.error(tt('toasts.worktreeFailed'));
+      return;
+    }
 
+    try {
       if (agentType !== "pty") {
         await invoke("create_agent_session", {
           sessionId: id,
@@ -308,13 +314,14 @@ export const useKannaStore = defineStore("kanna", () => {
           setupCmds: repoConfig.setup || [],
         });
       }
-      // Select after setup so the terminal mounts with the session already alive
-      selectedItemId.value = id;
-      emitTaskSelected(id);
     } catch (e) {
-      console.error("[store] task setup failed:", e);
+      console.error("[store] agent spawn failed:", e);
       toast.error(`${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`);
     }
+
+    // Select after setup so the terminal mounts with the session already alive
+    selectedItemId.value = id;
+    emitTaskSelected(id);
   }
 
   async function readRepoConfig(repoPath: string): Promise<RepoConfig> {
