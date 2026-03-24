@@ -1078,38 +1078,12 @@ export const useKannaStore = defineStore("kanna", () => {
       await updatePipelineItemActivity(_db, item.id, "unread");
     }
 
-    // Eager load repos + items for GC and selection restore
+    // Eager load repos + items for selection restore
     // (computedAsync hasn't fired yet — repos.value is still [])
     const eagerRepos = await listRepos(_db);
     const eagerItems: PipelineItem[] = [];
     for (const repo of eagerRepos) {
       eagerItems.push(...await listPipelineItems(_db, repo.id));
-    }
-
-    // GC: remove done tasks older than gcAfterDays
-    const cutoff = new Date(Date.now() - gcAfterDays.value * 86400000).toISOString();
-    const stale = eagerItems.filter(
-      (i) => hasTag(i, "done") && i.updated_at < cutoff
-    );
-    for (const item of stale) {
-      if (item.branch) {
-        const repo = eagerRepos.find((r) => r.id === item.repo_id);
-        if (repo) {
-          const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-          await invoke("git_worktree_remove", { repoPath: repo.path, path: worktreePath }).catch((e: unknown) =>
-            console.error("[store] worktree remove failed:", e)
-          );
-        }
-      }
-      await _db.execute("DELETE FROM pipeline_item WHERE id = ?", [item.id]);
-    }
-    if (stale.length > 0) {
-      console.log(`[gc] cleaned up ${stale.length} done task(s)`);
-      // Clean up orphaned task_blocker rows (for DBs created before foreign_keys pragma)
-      await _db.execute(
-        `DELETE FROM task_blocker WHERE blocker_item_id NOT IN (SELECT id FROM pipeline_item)
-         OR blocked_item_id NOT IN (SELECT id FROM pipeline_item)`,
-      );
     }
 
     // Check for blocked tasks that can now start

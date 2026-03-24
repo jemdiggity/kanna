@@ -231,7 +231,9 @@
     "newCustomTask": "New Custom Task",
     "newCustomTaskDesc": "Create a new reusable agent task definition",
     "selectBlockingTasks": "Select blocking tasks",
-    "editBlockingTasks": "Edit blocking tasks"
+    "editBlockingTasks": "Edit blocking tasks",
+    "runGc": "Clean Up Workspace",
+    "runGcDesc": "Remove done tasks older than the configured retention period"
   },
   "common": {
     "loading": "Loading..."
