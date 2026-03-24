@@ -77,7 +77,8 @@ const preferences = reactive({
 });
 const diffScopes = new Map<string, "branch" | "commit" | "working">();
 const sidebarHidden = ref(false);
-const maximized = ref(false);
+const maximizedModal = ref<ShortcutContext | null>(null);
+const maximized = computed(() => maximizedModal.value !== null);
 const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
 const shellModalRef = ref<InstanceType<typeof ShellModal> | null>(null);
 const diffModalRef = ref<InstanceType<typeof DiffModal> | null>(null);
@@ -290,9 +291,9 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
 // Derive shortcut context from visible modals (more reliable than the global singleton
 // which can be stale if a KeepAlive deactivation resets it after a modal sets it).
 const currentShortcutContext = computed<ShortcutContext>(() => {
+  if (showFilePreviewModal.value) return "file";
   if (showShellModal.value) return "shell";
   if (showDiffModal.value) return "diff";
-  if (showFilePreviewModal.value) return "file";
   return "main";
 });
 
@@ -334,15 +335,18 @@ const keyboardActions = {
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
   toggleSidebar: () => { sidebarHidden.value = !sidebarHidden.value; },
-  toggleMaximize: () => { maximized.value = !maximized.value; },
+  toggleMaximize: () => {
+    const ctx = currentShortcutContext.value;
+    maximizedModal.value = maximizedModal.value === ctx ? null : ctx;
+  },
   dismiss: () => {
     if (showCommandPalette.value) { showCommandPalette.value = false; return; }
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return; }
-    if (showFilePreviewModal.value) { showFilePreviewModal.value = false; return; }
+    if (showFilePreviewModal.value) { showFilePreviewModal.value = false; maximizedModal.value = null; return; }
     if (showFilePickerModal.value) { showFilePickerModal.value = false; return; }
     // Shell before diff: Escape closes the topmost modal first
     if (showShellModal.value) { return; }
-    if (showDiffModal.value) { showDiffModal.value = false; maximized.value = false; return; }
+    if (showDiffModal.value) { showDiffModal.value = false; maximizedModal.value = null; return; }
     if (showAnalyticsModal.value) { showAnalyticsModal.value = false; return; }
     if (showTreeExplorer.value) { showTreeExplorer.value = false; return; }
     if (showNewTaskModal.value) { showNewTaskModal.value = false; return; }
@@ -421,6 +425,7 @@ const keyboardActions = {
   openPreferences: () => { showPreferencesPanel.value = true; },
 };
 useKeyboardShortcuts(keyboardActions, {
+  context: () => currentShortcutContext.value,
   beforeAction: (action) => {
     if (action !== "showShortcuts" && action !== "showAllShortcuts" && action !== "dismiss" && showShortcutsModal.value) {
       showShortcutsModal.value = false;
@@ -634,8 +639,8 @@ onMounted(async () => {
         :session-id="`shell-${store.currentItem.id}`"
         :cwd="store.currentItem.branch ? `${store.selectedRepo?.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo?.path || '/tmp'"
         :port-env="store.currentItem.port_env"
-        :maximized="maximized"
-        @close="showShellModal = false; maximized = false"
+        :maximized="maximizedModal === 'shell'"
+        @close="showShellModal = false; maximizedModal = null"
       />
     </KeepAlive>
     <DiffModal
@@ -644,9 +649,9 @@ onMounted(async () => {
       :repo-path="store.selectedRepo.path"
       :worktree-path="store.currentItem?.branch ? activeWorktreePath : undefined"
       :initial-scope="store.currentItem ? diffScopes.get(store.currentItem.id) : undefined"
-      :maximized="maximized"
+      :maximized="maximizedModal === 'diff'"
       @scope-change="(s: any) => { if (store.currentItem) diffScopes.set(store.currentItem.id, s); }"
-      @close="showDiffModal = false; maximized = false"
+      @close="showDiffModal = false; maximizedModal = null"
     />
     <FilePickerModal
       v-if="showFilePickerModal && store.selectedRepo?.path"
@@ -667,7 +672,8 @@ onMounted(async () => {
       :file-path="previewFilePath"
       :worktree-path="activeWorktreePath"
       :ide-command="store.ideCommand"
-      @close="showFilePreviewModal = false"
+      :maximized="maximizedModal === 'file'"
+      @close="showFilePreviewModal = false; maximizedModal = null"
     />
     <AnalyticsModal
       v-if="showAnalyticsModal"
