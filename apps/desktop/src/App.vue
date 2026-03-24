@@ -321,7 +321,7 @@ const keyboardActions = {
   dismiss: () => {
     if (showCommandPalette.value) { showCommandPalette.value = false; return; }
     if (showShortcutsModal.value) { showShortcutsModal.value = false; focusAgentTerminal(); return; }
-    if (showFilePreviewModal.value) { showFilePreviewModal.value = false; focusAgentTerminal(); return; }
+    if (showFilePreviewModal.value) { showFilePreviewModal.value = false; if (!showTreeExplorer.value) focusAgentTerminal(); return; }
     if (showFilePickerModal.value) { showFilePickerModal.value = false; focusAgentTerminal(); return; }
     if (showDiffModal.value) { showDiffModal.value = false; maximized.value = false; focusAgentTerminal(); return; }
     if (showAnalyticsModal.value) { showAnalyticsModal.value = false; focusAgentTerminal(); return; }
@@ -610,19 +610,20 @@ onMounted(async () => {
       @close="showFilePickerModal = false; focusAgentTerminal()"
       @select="(f: string) => { showFilePickerModal = false; previewFilePath = f; showFilePreviewModal = true; }"
     />
+    <TreeExplorerModal
+      v-if="showTreeExplorer && store.selectedRepo?.path"
+      :worktree-path="store.currentItem?.branch ? `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo.path"
+      :repo-root="store.selectedRepo.path"
+      :suspended="showFilePreviewModal"
+      @close="showTreeExplorer = false; focusAgentTerminal()"
+      @open-file="(f: string) => { previewFilePath = f; showFilePreviewModal = true; }"
+    />
     <FilePreviewModal
       v-if="showFilePreviewModal && store.selectedRepo?.path"
       :file-path="previewFilePath"
       :worktree-path="store.currentItem?.branch ? `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo.path"
       :ide-command="store.ideCommand"
-      @close="showFilePreviewModal = false; focusAgentTerminal()"
-    />
-    <TreeExplorerModal
-      v-if="showTreeExplorer && store.selectedRepo?.path"
-      :worktree-path="store.currentItem?.branch ? `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo.path"
-      :repo-root="store.selectedRepo.path"
-      @close="showTreeExplorer = false; focusAgentTerminal()"
-      @open-file="(f: string) => { showTreeExplorer = false; previewFilePath = f; showFilePreviewModal = true; }"
+      @close="showFilePreviewModal = false; showTreeExplorer ? undefined : focusAgentTerminal()"
     />
     <AnalyticsModal
       v-if="showAnalyticsModal"
