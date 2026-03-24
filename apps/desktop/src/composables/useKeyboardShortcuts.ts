@@ -124,10 +124,12 @@ export function getShortcutGroups(t: (key: string) => string): { title: string; 
   return groupOrder.filter((g) => map.has(g)).map((g) => ({ title: t(g), shortcuts: map.get(g)! }));
 }
 
-export function useKeyboardShortcuts(actions: KeyboardActions, options?: { beforeAction?: (action: ActionName) => void }) {
+export function useKeyboardShortcuts(actions: KeyboardActions, options?: { beforeAction?: (action: ActionName) => void; context?: () => ShortcutContext }) {
   function handler(e: KeyboardEvent) {
+    const ctx = options?.context?.();
     for (const def of shortcuts) {
       if (matches(def, e)) {
+        if (ctx && def.context && !def.context.includes(ctx)) continue;
         if (def.action !== "dismiss") e.preventDefault();
         options?.beforeAction?.(def.action);
         actions[def.action]();

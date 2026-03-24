@@ -14,6 +14,7 @@ const props = defineProps<{
   filePath: string;
   worktreePath: string;
   ideCommand?: string;
+  maximized?: boolean;
 }>();
 
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -289,7 +290,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="modal-overlay" :style="{ zIndex }" @click.self="emit('close')">
+  <div class="modal-overlay" :class="{ maximized }" :style="{ zIndex }" @click.self="emit('close')">
     <div ref="modalRef" class="preview-modal" tabindex="-1">
       <div class="preview-header">
         <span class="file-path">{{ filePath }}</span>
@@ -694,5 +695,13 @@ onMounted(() => {
   background: rgba(255, 200, 0, 0.55);
   border-radius: 2px;
   outline: 1px solid rgba(255, 200, 0, 0.8);
+}
+
+.maximized { background: none; }
+.maximized .preview-modal {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  border: none;
 }
 </style>
