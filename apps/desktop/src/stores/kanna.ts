@@ -1130,6 +1130,8 @@ export const useKannaStore = defineStore("kanna", () => {
       if (savedItem && eagerItems.some((i) => i.id === savedItem)) {
         selectedItemId.value = savedItem;
       }
+    } else if (eagerRepos.length === 1) {
+      selectedRepoId.value = eagerRepos[0].id;
     }
 
     // Set window title for non-main branches

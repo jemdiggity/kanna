@@ -48,6 +48,8 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
     }
   }
 
+  const error = ref<string | null>(null);
+
   async function fetchDir(dirPath: string): Promise<TreeNode[]> {
     if (cache.has(dirPath)) return cache.get(dirPath)!;
 
@@ -96,6 +98,7 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
 
     state.value.breadcrumb = bc;
     loading.value = true;
+    error.value = null;
 
     try {
       const currentAbs = breadcrumbToAbsolute(bc);
@@ -132,6 +135,10 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
       for (const entry of currentEntries.slice(0, 20)) {
         prefetch(entry);
       }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      error.value = msg;
+      console.error("[tree-explorer] open failed:", msg);
     } finally {
       loading.value = false;
     }
@@ -151,28 +158,38 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
     // Enter directory
     slideDirection.value = "left";
     const newBc = [...state.value.breadcrumb, entry.name];
-    state.value.breadcrumb = newBc;
 
-    const newCurrentAbs = absolutePath(entry.path);
-    const newCurrentEntries = await fetchDir(newCurrentAbs);
+    try {
+      const newCurrentAbs = absolutePath(entry.path);
+      const newCurrentEntries = await fetchDir(newCurrentAbs);
 
-    // Current becomes parent, preview becomes current
-    const oldCurrent = state.value.columns[1];
-    const oldCursorIdx = state.value.cursor[1];
+      // Only update breadcrumb after successful fetch
+      state.value.breadcrumb = newBc;
 
-    let previewEntries: TreeNode[] = [];
-    const firstDir = newCurrentEntries.find((e) => e.isDir);
-    if (firstDir) {
-      previewEntries = await fetchDir(absolutePath(firstDir.path));
-    }
+      // Current becomes parent, preview becomes current
+      const oldCurrent = state.value.columns[1];
+      const oldCursorIdx = state.value.cursor[1];
 
-    state.value.columns = [oldCurrent, newCurrentEntries, previewEntries];
-    state.value.cursor = [oldCursorIdx, 0, 0];
-    filterText.value = "";
+      let previewEntries: TreeNode[] = [];
+      const firstDir = newCurrentEntries.find((e) => e.isDir);
+      if (firstDir) {
+        previewEntries = await fetchDir(absolutePath(firstDir.path));
+      }
 
-    // Prefetch
-    for (const e of newCurrentEntries.slice(0, 20)) {
-      prefetch(e);
+      state.value.columns = [oldCurrent, newCurrentEntries, previewEntries];
+      state.value.cursor = [oldCursorIdx, 0, 0];
+      filterText.value = "";
+
+      // Prefetch
+      for (const e of newCurrentEntries.slice(0, 20)) {
+        prefetch(e);
+      }
+    } catch (e) {
+      slideDirection.value = null;
+      const msg = e instanceof Error ? e.message : String(e);
+      error.value = msg;
+      console.error("[tree-explorer] navigateRight failed:", msg);
+      return null;
     }
 
     // Clear slide direction after animation
@@ -188,34 +205,44 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
     // Capture the dir name we're leaving BEFORE mutating breadcrumb
     const leavingDirName = state.value.breadcrumb[state.value.breadcrumb.length - 1];
     const newBc = state.value.breadcrumb.slice(0, -1);
-    state.value.breadcrumb = newBc;
 
-    // Parent becomes new current
-    const newCurrentAbs = breadcrumbToAbsolute(newBc);
-    const newCurrentEntries = await fetchDir(newCurrentAbs);
+    try {
+      // Parent becomes new current
+      const newCurrentAbs = breadcrumbToAbsolute(newBc);
+      const newCurrentEntries = await fetchDir(newCurrentAbs);
 
-    // Fetch new parent
-    let newParentEntries: TreeNode[] = [];
-    if (newBc.length > 0) {
-      const parentBc = newBc.slice(0, -1);
-      newParentEntries = await fetchDir(breadcrumbToAbsolute(parentBc));
+      // Fetch new parent
+      let newParentEntries: TreeNode[] = [];
+      if (newBc.length > 0) {
+        const parentBc = newBc.slice(0, -1);
+        newParentEntries = await fetchDir(breadcrumbToAbsolute(parentBc));
+      }
+
+      // Only update breadcrumb after successful fetch
+      state.value.breadcrumb = newBc;
+
+      // Old current becomes preview (the column we just left)
+      const oldCurrent = state.value.columns[1];
+
+      // Restore cursor to the directory we just navigated out of
+      const restoredIdx = newCurrentEntries.findIndex((e) => e.name === leavingDirName);
+
+      state.value.columns = [newParentEntries, newCurrentEntries, oldCurrent];
+      state.value.cursor = [
+        newBc.length > 0
+          ? newParentEntries.findIndex((e) => e.name === newBc[newBc.length - 1])
+          : 0,
+        restoredIdx >= 0 ? restoredIdx : 0,
+        0,
+      ];
+      filterText.value = "";
+    } catch (e) {
+      slideDirection.value = null;
+      const msg = e instanceof Error ? e.message : String(e);
+      error.value = msg;
+      console.error("[tree-explorer] navigateLeft failed:", msg);
+      return;
     }
-
-    // Old current becomes preview (the column we just left)
-    const oldCurrent = state.value.columns[1];
-
-    // Restore cursor to the directory we just navigated out of
-    const restoredIdx = newCurrentEntries.findIndex((e) => e.name === leavingDirName);
-
-    state.value.columns = [newParentEntries, newCurrentEntries, oldCurrent];
-    state.value.cursor = [
-      newBc.length > 0
-        ? newParentEntries.findIndex((e) => e.name === newBc[newBc.length - 1])
-        : 0,
-      restoredIdx >= 0 ? restoredIdx : 0,
-      0,
-    ];
-    filterText.value = "";
 
     clearSlideTimer();
     slideTimer = setTimeout(() => { slideDirection.value = null; }, 200);
@@ -454,6 +481,7 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
     filterText,
     filtering,
     loading,
+    error,
     slideDirection,
     open,
     handleKey,

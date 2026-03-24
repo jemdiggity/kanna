@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch } from "vue";
+import { ref, onMounted, onUnmounted, nextTick, watch, toRef } from "vue";
 import { useTreeExplorer, type TreeNode } from "../composables/useTreeExplorer";
 import { useShortcutContext, registerContextShortcuts } from "../composables/useShortcutContext";
 
@@ -18,6 +18,7 @@ registerContextShortcuts("tree", [
 const props = defineProps<{
   worktreePath: string;
   repoRoot: string;
+  suspended?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -33,6 +34,7 @@ const {
   filterText,
   filtering,
   loading,
+  error,
   slideDirection,
   open,
   handleKey,
@@ -82,6 +84,11 @@ onUnmounted(() => {
   reset();
 });
 
+// Re-focus when returning from file preview
+watch(toRef(props, "suspended"), (val) => {
+  if (!val) nextTick(() => modalRef.value?.focus());
+});
+
 // Scroll active item into view when cursor changes
 watch(
   () => state.value.cursor[1],
@@ -103,7 +110,7 @@ function isDimmed(entry: TreeNode): boolean {
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="emit('close')">
+  <div v-show="!suspended" class="modal-overlay" @click.self="emit('close')">
     <div
       ref="modalRef"
       class="tree-modal"
@@ -167,6 +174,7 @@ function isDimmed(entry: TreeNode): boolean {
             </div>
           </div>
           <div v-if="loading" class="col-loading">&middot;&middot;&middot;</div>
+          <div v-else-if="error" class="col-error">{{ error }}</div>
           <div v-else-if="state.columns[1].length === 0" class="col-empty">(empty)</div>
         </div>
 
@@ -219,7 +227,7 @@ function isDimmed(entry: TreeNode): boolean {
 
 .tree-modal {
   width: 780px;
-  max-height: 60vh;
+  height: 60vh;
   background: #1e1e1e;
   border-radius: 10px;
   border: 1px solid #333;
@@ -366,6 +374,20 @@ function isDimmed(entry: TreeNode): boolean {
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
   pointer-events: none;
+}
+
+.col-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e55;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 12px;
+  text-align: center;
+  word-break: break-word;
 }
 
 .col-loading {
