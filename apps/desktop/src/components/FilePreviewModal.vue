@@ -32,7 +32,6 @@ const {
   matchCount: searchMatchCount,
   currentMatch: searchCurrentMatch,
   decorations: searchDecorations,
-  openSearch,
   closeSearch,
   handleSearchKeys,
   handleInputKeys,
