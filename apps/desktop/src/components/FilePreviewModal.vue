@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { invoke } from "../invoke";
 import { useLessScroll } from "../composables/useLessScroll";
 import { useShortcutContext, registerContextShortcuts } from "../composables/useShortcutContext";
+import { useInlineSearch } from "../composables/useInlineSearch";
 
 const { t } = useI18n();
 
@@ -19,8 +20,28 @@ const contentRef = ref<HTMLElement | null>(null);
 const modalRef = ref<HTMLElement | null>(null);
 
 useShortcutContext("file");
+
+const content = ref("");
+
+const {
+  isSearching,
+  query: searchQuery,
+  matchCount: searchMatchCount,
+  currentMatch: searchCurrentMatch,
+  decorations: searchDecorations,
+  openSearch,
+  closeSearch,
+  handleSearchKeys,
+  handleInputKeys,
+} = useInlineSearch(content);
+
+const searchInputRef = ref<HTMLInputElement | null>(null);
+
 const showLineNumbers = ref(false);
 registerContextShortcuts("file", [
+  { label: t('filePreview.shortcutSearch'), display: "/" },
+  { label: t('filePreview.shortcutSearchAlt'), display: "⌘F" },
+  { label: t('filePreview.shortcutNextPrevMatch'), display: "n / N" },
   { label: t('filePreview.shortcutOpenIDE'), display: "⌘O" },
   { label: t('filePreview.shortcutToggleLineNumbers'), display: "l" },
   ...(props.filePath.toLowerCase().endsWith(".md")
@@ -32,7 +53,6 @@ registerContextShortcuts("file", [
   { label: t('filePreview.shortcutTopBottom'), display: "g / G" },
   { label: t('filePreview.shortcutClose'), display: "q" },
 ]);
-const content = ref("");
 const highlighted = ref("");
 const currentLang = ref("text");
 const loading = ref(true);
@@ -158,13 +178,14 @@ async function loadFile() {
   }
 }
 
-watch([content, currentLang], async ([raw, lang]) => {
+watch([content, currentLang, searchDecorations], async ([raw, lang, decos]) => {
   if (!raw) { highlighted.value = ""; return; }
   try {
     const hl = await getHighlighter();
     highlighted.value = hl.codeToHtml(raw, {
       lang,
       theme: "github-dark",
+      decorations: decos,
       transformers: [{
         pre(node: any) {
           node.properties.style = "white-space:pre-wrap;word-wrap:break-word;";
@@ -175,6 +196,24 @@ watch([content, currentLang], async ([raw, lang]) => {
     console.error("[FilePreview] highlight failed:", e);
   }
 }, { immediate: false });
+
+watch(() => props.filePath, () => {
+  closeSearch();
+});
+
+watch(highlighted, () => {
+  nextTick(() => {
+    contentRef.value
+      ?.querySelector(".search-hl-active")
+      ?.scrollIntoView({ block: "center" });
+  });
+});
+
+watch(isSearching, (searching) => {
+  if (searching) {
+    nextTick(() => searchInputRef.value?.focus());
+  }
+});
 
 function openInIDE() {
   const cmd = props.ideCommand || "code";
@@ -188,35 +227,32 @@ function openInIDE() {
 
 useLessScroll(contentRef, {
   extraHandler(e) {
+    // Search keys first (disabled in rendered markdown mode)
+    if (!(renderMarkdown.value && isMarkdownFile.value) && handleSearchKeys(e)) {
+      return true;
+    }
+
     const meta = e.metaKey || e.ctrlKey;
-    // Cmd+O — open in IDE
     if (meta && e.key === "o") {
       e.preventDefault();
       openInIDE();
       return true;
     }
-    // l — toggle line numbers
     if (
       e.key === "l" &&
-      !e.metaKey &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.shiftKey
+      !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
     ) {
       e.preventDefault();
       showLineNumbers.value = !showLineNumbers.value;
       return true;
     }
-    // m — toggle markdown rendering
     if (
       e.key === "m" &&
       isMarkdownFile.value &&
-      !e.metaKey &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.shiftKey
+      !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
     ) {
       e.preventDefault();
+      if (isSearching.value) closeSearch();
       renderMarkdown.value = !renderMarkdown.value;
       return true;
     }
