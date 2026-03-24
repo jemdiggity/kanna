@@ -30,6 +30,7 @@ import { useOperatorEvents } from "./composables/useOperatorEvents";
 import { type ShortcutContext } from "./composables/useShortcutContext";
 import { useCustomTasks } from "./composables/useCustomTasks";
 import { useToast } from "./composables/useToast";
+import { useGc } from "./composables/useGc";
 import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
@@ -41,6 +42,7 @@ const { t } = useI18n();
 const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
+const gcRef = ref<{ runGc: () => Promise<void> }>();
 const { recordNavigation, goBack, goForward } = createNavigationHistory();
 useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 
@@ -265,6 +267,15 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
       label: task.name,
       description: task.description,
       execute: () => handleLaunchCustomTask(task),
+    });
+  }
+  // Manual GC
+  if (gcRef.value) {
+    cmds.push({
+      id: "run-gc",
+      label: t('app.runGc'),
+      description: t('app.runGcDesc'),
+      execute: () => gcRef.value?.runGc(),
     });
   }
   return cmds;
@@ -495,6 +506,9 @@ async function handlePreferenceUpdate(key: string, value: string) {
 // Init
 onMounted(async () => {
   await store.init(db);
+
+  // GC: async cleanup of stale done tasks, repeats hourly
+  gcRef.value = useGc(db);
 
   // Load persisted locale
   const savedLocale = await getSetting(db, "locale");

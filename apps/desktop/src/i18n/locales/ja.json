@@ -231,7 +231,9 @@
     "newCustomTask": "新規カスタムタスク",
     "newCustomTaskDesc": "再利用可能なエージェントタスク定義を作成",
     "selectBlockingTasks": "ブロックタスクを選択",
-    "editBlockingTasks": "ブロックタスクを編集"
+    "editBlockingTasks": "ブロックタスクを編集",
+    "runGc": "ワークスペースをクリーンアップ",
+    "runGcDesc": "設定された保持期間を超えた完了タスクを削除"
   },
   "common": {
     "loading": "読み込み中..."
