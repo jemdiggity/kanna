@@ -344,14 +344,8 @@ const keyboardActions = {
     if (showNewTaskModal.value) { showNewTaskModal.value = false; focusAgentTerminal(); return; }
     if (showAddRepoModal.value) { showAddRepoModal.value = false; focusAgentTerminal(); return; }
   },
-  openShell: () => {
-    if (!showShellModal.value) { showTreeExplorer.value = false; showFilePreviewModal.value = false; }
-    showShellModal.value = !showShellModal.value;
-  },
-  showDiff: () => {
-    if (!showDiffModal.value) { showTreeExplorer.value = false; showFilePreviewModal.value = false; }
-    showDiffModal.value = !showDiffModal.value;
-  },
+  openShell: () => { showShellModal.value = !showShellModal.value; },
+  showDiff: () => { showDiffModal.value = !showDiffModal.value; },
   showShortcuts: () => {
     if (showShortcutsModal.value) {
       if (shortcutsStartFull.value && currentShortcutContext.value !== "main") {
