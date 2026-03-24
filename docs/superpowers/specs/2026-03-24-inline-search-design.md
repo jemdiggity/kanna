@@ -44,8 +44,13 @@ interface InlineSearchReturn {
   nextMatch: () => void           // jump to next
   prevMatch: () => void           // jump to previous
 
-  // Keyboard handler (for useLessScroll extraHandler chain)
+  // Keyboard handler for non-input keys (for useLessScroll extraHandler chain)
+  // Handles: "/" to open, "n"/"N" to navigate when input is NOT focused
   handleSearchKeys: (e: KeyboardEvent) => boolean
+
+  // Keyboard handler for the search <input> element (@keydown on the input)
+  // Handles: Enter (next), Shift+Enter (prev), Escape (close)
+  handleInputKeys: (e: KeyboardEvent) => void
 }
 
 function useInlineSearch(rawText: Ref<string>): InlineSearchReturn
@@ -53,10 +58,10 @@ function useInlineSearch(rawText: Ref<string>): InlineSearchReturn
 
 **Responsibilities:**
 - Owns search state (query, matches, current index)
-- Scans `rawText` for case-insensitive matches on query change (debounced ~150ms)
-- Converts match character offsets to `{ line, character }` positions
-- Produces Shiki-compatible decoration descriptors: all matches get `class: 'search-hl'`, active match gets `class: 'search-hl-active'`
-- Handles search-related keyboard events
+- Scans `rawText` for case-insensitive matches on query change (debounced ~150ms). Watches `rawText` reactively — if the underlying text changes, matches recompute against the new content while preserving the current query.
+- Converts match character offsets to numeric offsets (Shiki accepts plain numbers via `OffsetOrPosition`)
+- Produces Shiki-compatible decoration descriptors: inactive matches get `class: 'search-hl'`, active match gets **only** `class: 'search-hl-active'` (mutually exclusive — Shiki throws on overlapping decorations)
+- Exposes two keyboard handlers: `handleSearchKeys` for the `extraHandler` chain (non-input context), and `handleInputKeys` for direct `@keydown` on the search input
 
 **Does NOT own:**
 - Shiki calls or HTML generation (the component does that)
@@ -66,26 +71,40 @@ function useInlineSearch(rawText: Ref<string>): InlineSearchReturn
 
 **Integration points:**
 
-1. **Composable setup:** Call `useInlineSearch(content)` alongside existing composables
-2. **Shiki re-rendering:** The existing `loadFile()` function produces `highlighted.value`. This becomes reactive to search decorations — when decorations change, re-run `codeToHtml` with the new decorations array. The Shiki highlighter caches tokenization, so re-rendering with different decorations is fast.
-3. **Extra handler chain:** `handleSearchKeys` is called first in the `extraHandler` passed to `useLessScroll`. If it returns `true`, the existing handlers (`⌘O`, `l`, `m`) are skipped.
+1. **Composable setup:** Call `useInlineSearch(content)` alongside existing composables.
+2. **Shiki re-rendering refactor:** Extract the `codeToHtml` call out of `loadFile()` into a separate `watch` on `[content, decorations, lang]`. `loadFile()` handles file I/O and language loading only. The watch re-runs `codeToHtml` whenever the raw content or decorations change. Shiki does NOT cache tokenization — each call re-tokenizes — but with the 150ms debounce this is acceptable for files under ~10k lines.
+3. **Two keyboard handler paths:**
+   - `handleSearchKeys` is chained into `useLessScroll`'s `extraHandler` — handles `/` (open), `n`/`N` (navigate). These only fire when the search input is NOT focused, because `useLessScroll` has an `isInputTarget` early-return guard.
+   - `handleInputKeys` is bound directly as `@keydown` on the search `<input>` element — handles `Enter` (next), `Shift+Enter` (prev), `Escape` (close). This bypasses `useLessScroll` entirely.
 4. **Scroll to active match:** After `highlighted.value` updates, `nextTick(() => contentRef.value?.querySelector('.search-hl-active')?.scrollIntoView({ block: 'center' }))`.
-5. **Markdown gate:** When `renderMarkdown` is true, `handleSearchKeys` returns `false` for `/` (search disabled in rendered mode).
-6. **Shortcut registration:** Add `{ label: "Search", display: "/" }` and `{ label: "Next/prev match", display: "n / N" }` to `registerContextShortcuts`.
+5. **Markdown gate:** When `renderMarkdown` is true, `handleSearchKeys` returns `false` for `/` (search disabled in rendered mode). If search is open when user presses `m`, close search first.
+6. **Shortcut registration:** Add `{ label: "Search", display: "/" }`, `{ label: "Next/prev match", display: "n / N" }`, and `{ label: "Search (alt)", display: "⌘F" }` to `registerContextShortcuts`.
 
 ### Keyboard behavior
 
+**Via `handleSearchKeys` (extraHandler chain — only fires when input is NOT focused):**
+
 | Key | Context | Action |
 |-----|---------|--------|
-| `/` | Not searching, not in rendered markdown | Open search bar, focus input |
-| `Escape` | Search bar open | Close search bar, clear highlights |
+| `/` or `⌘F` | Not in rendered markdown | Open search bar, focus input |
+| `n` | Search bar open, input not focused | Jump to next match |
+| `N` (Shift+n) | Search bar open, input not focused | Jump to previous match |
+
+**Via `handleInputKeys` (direct `@keydown` on search `<input>`):**
+
+| Key | Context | Action |
+|-----|---------|--------|
+| `Escape` | Search input focused | Close search bar, clear highlights |
 | `Enter` | Search input focused | Jump to next match |
 | `Shift+Enter` | Search input focused | Jump to previous match |
-| `n` | Not searching, matches exist | Jump to next match |
-| `N` (Shift+n) | Not searching, matches exist | Jump to previous match |
-| `j/k/f/b/d/u/g/G` | Always | Normal scroll (unaffected by search) |
 
-**Note:** When search input is focused, `useLessScroll`'s `isInputTarget` check naturally prevents scroll keys from firing — typing works without conflict.
+**Unaffected (useLessScroll handles normally):**
+
+| Key | Context | Action |
+|-----|---------|--------|
+| `j/k/f/b/d/u/g/G` | Input not focused | Normal scroll |
+
+**Note:** `useLessScroll` has an `isInputTarget` early-return guard (line 35) that skips ALL handlers when the search input is focused. This is why input-focused keys (`Enter`, `Shift+Enter`, `Escape`) must be handled via a direct `@keydown` on the input element, not through the `extraHandler` chain.
 
 ### Search bar UI
 
@@ -98,13 +117,15 @@ function useInlineSearch(rawText: Ref<string>): InlineSearchReturn
 
 ### CSS classes
 
+Since `FilePreviewModal.vue` uses `<style scoped>` and Shiki output is injected via `v-html`, selectors must use `:deep()`:
+
 ```css
-.search-hl {
+.preview-content :deep(.search-hl) {
   background: rgba(255, 200, 0, 0.25);
   border-radius: 2px;
 }
 
-.search-hl-active {
+.preview-content :deep(.search-hl-active) {
   background: rgba(255, 200, 0, 0.55);
   border-radius: 2px;
   outline: 1px solid rgba(255, 200, 0, 0.8);
@@ -128,9 +149,10 @@ User presses Esc → closeSearch() → query = "", isSearching = false → decor
 
 - **Empty query:** decorations array is empty, match count shows nothing
 - **No matches:** counter shows "No matches", `n/N` are no-ops
-- **File changes (navigation):** `rawText` ref changes → `query` persists but matches recompute. `closeSearch()` should be called on file change (when `filePath` prop changes).
-- **Large files:** Shiki tokenization is cached; re-rendering with new decorations is O(tokens). For files under 10k lines, this is near-instant with 150ms debounce.
+- **File changes (navigation):** `rawText` is watched reactively — when it changes, matches recompute against the new content while preserving the query. `closeSearch()` should also be called on file change (when `filePath` prop changes) to reset state cleanly.
+- **Large files:** Shiki does NOT cache tokenization — each `codeToHtml` call re-tokenizes. With the 150ms debounce, this is acceptable for files under ~10k lines. For very large files, the debounce absorbs rapid keystrokes.
 - **Rendered markdown mode:** `/` is a no-op; if search is open when user presses `m`, close search first.
+- **Decoration overlap:** Shiki throws on overlapping decorations. The active match gets **only** `search-hl-active`, not both classes. The CSS for each class is self-contained.
 
 ## Reusability
 
