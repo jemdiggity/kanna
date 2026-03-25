@@ -40,6 +40,7 @@ enum Cmd {
         data: Vec<u8>,
     },
     List,
+    Subscribe,
 }
 
 #[allow(dead_code)]
@@ -64,6 +65,7 @@ enum Evt {
     Error {
         message: String,
     },
+    ShuttingDown,
     #[serde(other)]
     Unknown,
 }
@@ -366,5 +368,57 @@ fn test_handoff_multiple_sessions() {
     }
 
     drop(daemon_b);
+    cleanup(&dir);
+}
+
+/// Two subscribed clients both receive ShuttingDown when handoff is triggered.
+#[test]
+fn test_handoff_broadcasts_shutting_down() {
+    let dir = test_dir("shutdown-broadcast");
+
+    let daemon_a = DaemonHandle::start_in(&dir);
+
+    // Two subscriber clients
+    let mut sub_a = daemon_a.connect();
+    sub_a.send(&Cmd::Subscribe);
+    match sub_a.recv() {
+        Evt::Ok => {}
+        other => panic!("expected Ok, got {:?}", other),
+    }
+
+    let mut sub_b = daemon_a.connect();
+    sub_b.send(&Cmd::Subscribe);
+    match sub_b.recv() {
+        Evt::Ok => {}
+        other => panic!("expected Ok, got {:?}", other),
+    }
+
+    // Trigger handoff by starting daemon B in same dir
+    let _daemon_b = DaemonHandle::start_in(&dir);
+
+    // Both subscribers should receive ShuttingDown
+    sub_a
+        .writer
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    sub_b
+        .writer
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+
+    let evt_a = sub_a.recv();
+    assert!(
+        matches!(evt_a, Evt::ShuttingDown),
+        "sub_a should get ShuttingDown, got: {:?}",
+        evt_a
+    );
+
+    let evt_b = sub_b.recv();
+    assert!(
+        matches!(evt_b, Evt::ShuttingDown),
+        "sub_b should get ShuttingDown, got: {:?}",
+        evt_b
+    );
+
     cleanup(&dir);
 }

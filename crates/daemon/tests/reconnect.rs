@@ -376,6 +376,41 @@ fn test_input_works_after_reattach() {
     );
 }
 
+/// Two clients attached to the same session both receive output (broadcast model).
+#[test]
+fn test_broadcast_both_clients_receive_output() {
+    let daemon = DaemonHandle::start();
+
+    let mut shared = daemon.connect();
+    spawn_echo_session(&mut shared, "sess-broadcast");
+
+    // Two dedicated connections, both attach to the same session
+    let mut client_a = daemon.connect();
+    attach(&mut client_a, "sess-broadcast");
+    client_a.drain_output(Duration::from_millis(200));
+
+    let mut client_b = daemon.connect();
+    attach(&mut client_b, "sess-broadcast");
+    client_b.drain_output(Duration::from_millis(200));
+
+    // Send input
+    send_input(&mut shared, "sess-broadcast", b"BROADCAST\n");
+
+    // Both clients should receive the output
+    let output_a = client_a.collect_output(9);
+    let output_b = client_b.collect_output(9);
+    assert!(
+        String::from_utf8_lossy(&output_a).contains("BROADCAST"),
+        "client A should receive broadcast output, got: {:?}",
+        String::from_utf8_lossy(&output_a)
+    );
+    assert!(
+        String::from_utf8_lossy(&output_b).contains("BROADCAST"),
+        "client B should receive broadcast output, got: {:?}",
+        String::from_utf8_lossy(&output_b)
+    );
+}
+
 /// Rapid attach from separate connections: all connections receive output (broadcast).
 /// With the single-reader + broadcast architecture, each Attach pushes a writer
 /// to the broadcast Vec. The final connection (and all earlier ones) receive output.
