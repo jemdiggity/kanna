@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useModalZIndex } from '../composables/useModalZIndex'
 
 useI18n()
 const { zIndex } = useModalZIndex()
+const isDev = import.meta.env.DEV
 
 defineProps<{
   preferences: {
@@ -11,6 +13,7 @@ defineProps<{
     killAfterMinutes: number
     ideCommand: string
     locale: string
+    devLingerTerminals: boolean
   }
 }>()
 
@@ -19,22 +22,45 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const activeTab = ref<'general' | 'developer'>('general')
+
+const tabs: Array<'general' | 'developer'> = isDev ? ['general', 'developer'] : ['general']
+
+function cycleTab(direction: -1 | 1) {
+  const idx = tabs.indexOf(activeTab.value)
+  activeTab.value = tabs[(idx + direction + tabs.length) % tabs.length]
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") {
     e.preventDefault()
     emit("close")
   }
 }
+
+defineExpose({ cycleTab })
 </script>
 
 <template>
   <div class="modal-overlay" :style="{ zIndex }" @click.self="emit('close')" @keydown="handleKeydown">
     <div class="prefs-panel">
       <div class="prefs-header">
-        <h3>{{ $t('preferences.title') }}</h3>
+        <div class="tab-bar">
+          <button
+            class="tab"
+            :class="{ active: activeTab === 'general' }"
+            @click="activeTab = 'general'"
+          >{{ $t('preferences.title') }}</button>
+          <button
+            v-if="isDev"
+            class="tab"
+            :class="{ active: activeTab === 'developer' }"
+            @click="activeTab = 'developer'"
+          >Developer</button>
+        </div>
       </div>
 
-      <div class="prefs-body">
+      <div v-if="activeTab === 'general'" class="prefs-body">
         <div class="pref-row">
           <label>{{ $t('preferences.language') }}</label>
           <select
@@ -78,6 +104,17 @@ function handleKeydown(e: KeyboardEvent) {
         </div>
       </div>
 
+      <div v-if="activeTab === 'developer'" class="prefs-body">
+        <div class="pref-row">
+          <label>Linger terminals after teardown</label>
+          <input
+            type="checkbox"
+            :checked="preferences.devLingerTerminals"
+            @change="emit('update', 'dev.lingerTerminals', ($event.target as HTMLInputElement).checked ? 'true' : 'false')"
+          />
+        </div>
+      </div>
+
       <div class="prefs-footer">
         <button class="btn-done" @click="emit('close')">{{ $t('actions.done') }}</button>
       </div>
@@ -101,23 +138,45 @@ function handleKeydown(e: KeyboardEvent) {
   border-radius: 8px;
   width: 420px;
   max-width: 90vw;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
+
 .prefs-header {
-  padding: 14px 16px 0;
   border-bottom: 1px solid #333;
-  padding-bottom: 12px;
 }
 
-.prefs-header h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+.tab-bar {
+  display: flex;
+  padding: 0 12px;
+}
+
+.tab {
+  padding: 10px 12px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #888;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab:hover {
+  color: #ccc;
+}
+
+.tab.active {
   color: #e0e0e0;
+  border-bottom-color: #0066cc;
 }
 
 .prefs-body {
+  flex: 1;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -157,6 +216,13 @@ function handleKeydown(e: KeyboardEvent) {
 
 .pref-row input:focus {
   border-color: #0066cc;
+}
+
+.pref-row input[type="checkbox"] {
+  accent-color: #0066cc;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
 }
 
 .pref-row select {

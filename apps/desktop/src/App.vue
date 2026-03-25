@@ -74,6 +74,7 @@ const preferences = reactive({
   killAfterMinutes: 60,
   ideCommand: "code",
   locale: "en",
+  devLingerTerminals: false,
 });
 const diffScopes = new Map<string, "branch" | "commit" | "working">();
 const sidebarHidden = ref(false);
@@ -83,6 +84,7 @@ const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
 const shellModalRef = ref<InstanceType<typeof ShellModal> | null>(null);
 const diffModalRef = ref<InstanceType<typeof DiffModal> | null>(null);
 const treeExplorerRef = ref<InstanceType<typeof TreeExplorerModal> | null>(null);
+const preferencesRef = ref<InstanceType<typeof PreferencesPanel> | null>(null);
 
 // Navigation
 function navigateItems(direction: -1 | 1) {
@@ -443,6 +445,8 @@ const keyboardActions = {
   blockTask: () => { handleBlockTask(); },
   editBlockedTask: () => { handleEditBlockedTask(); },
   openPreferences: () => { showPreferencesPanel.value = true; },
+  prevTab: () => { preferencesRef.value?.cycleTab(-1); },
+  nextTab: () => { preferencesRef.value?.cycleTab(1); },
 };
 useKeyboardShortcuts(keyboardActions, {
   context: () => currentShortcutContext.value,
@@ -549,6 +553,8 @@ async function handlePreferenceUpdate(key: string, value: string) {
     preferences.killAfterMinutes = parseInt(value, 10) || 60;
   } else if (key === "ideCommand") {
     preferences.ideCommand = value;
+  } else if (key === "dev.lingerTerminals") {
+    preferences.devLingerTerminals = value === "true";
   }
 }
 
@@ -570,6 +576,7 @@ onMounted(async () => {
   preferences.suspendAfterMinutes = store.suspendAfterMinutes;
   preferences.killAfterMinutes = store.killAfterMinutes;
   preferences.ideCommand = store.ideCommand;
+  preferences.devLingerTerminals = store.devLingerTerminals;
 
   startPeriodicBackup(dbName, ref(db) as Ref<DbHandle | null>);
   if (!store.hideShortcutsOnStartup) {
@@ -710,6 +717,7 @@ onMounted(async () => {
     />
     <PreferencesPanel
       v-if="showPreferencesPanel"
+      ref="preferencesRef"
       :preferences="preferences"
       @update="handlePreferenceUpdate"
       @close="showPreferencesPanel = false"
