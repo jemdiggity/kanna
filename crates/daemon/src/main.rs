@@ -598,26 +598,15 @@ async fn handle_command(
             cols,
             rows,
         } => {
-            // Update this client's size in the registry
+            // Update this client's size and compute effective min across all attached clients
             let writer_id = Arc::as_ptr(&writer) as usize;
-            {
-                let mut sizes = session_sizes.lock().await;
-                sizes
-                    .entry(session_id.clone())
-                    .or_default()
-                    .insert(writer_id, (cols, rows));
-            }
-
-            // Compute effective size: min across all attached clients
             let (eff_cols, eff_rows) = {
-                let sizes = session_sizes.lock().await;
-                if let Some(client_sizes) = sizes.get(&session_id) {
-                    let min_cols = client_sizes.values().map(|(c, _)| *c).min().unwrap_or(cols);
-                    let min_rows = client_sizes.values().map(|(_, r)| *r).min().unwrap_or(rows);
-                    (min_cols, min_rows)
-                } else {
-                    (cols, rows)
-                }
+                let mut sizes = session_sizes.lock().await;
+                let client_sizes = sizes.entry(session_id.clone()).or_default();
+                client_sizes.insert(writer_id, (cols, rows));
+                let min_cols = client_sizes.values().map(|(c, _)| *c).min().unwrap_or(cols);
+                let min_rows = client_sizes.values().map(|(_, r)| *r).min().unwrap_or(rows);
+                (min_cols, min_rows)
             };
 
             let mgr = sessions.lock().await;

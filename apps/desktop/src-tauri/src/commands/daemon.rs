@@ -315,6 +315,9 @@ pub async fn detach_session(
     });
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    guard.as_mut().unwrap().send_command(&json).await
+    {
+        let mut guard = state.lock().await;
+        guard.as_mut().unwrap().send_command(&json).await?;
+    }
+    send_and_ack(&state).await
 }

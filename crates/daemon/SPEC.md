@@ -68,7 +68,7 @@ If handoff fails at any step, the new daemon kills the old one and starts fresh.
 The daemon does **not** buffer scrollback. Reconnection relies on Claude CLI's TUI redrawing on SIGWINCH:
 
 1. Client sends `Attach` (reattach path — session already has a reader)
-2. Daemon swaps the `ActiveWriter` to the new connection
+2. Daemon adds the new connection to the session's writer broadcast list
 3. Client sends `Resize` with current terminal dimensions
 4. Daemon calls `ioctl(TIOCSWINSZ)` which delivers SIGWINCH to the child
 5. Claude CLI (ink/React) re-renders its entire component tree

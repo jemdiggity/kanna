@@ -6,10 +6,7 @@ use commands::daemon::{AttachedSessions, DaemonState};
 use daemon_client::DaemonClient;
 use dashmap::DashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-static HAS_SPAWNED: AtomicBool = AtomicBool::new(false);
 use tauri::menu::{AboutMetadataBuilder, MenuBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
@@ -308,7 +305,9 @@ fn spawn_event_bridge(app: tauri::AppHandle, daemon_state: DaemonState) {
             let mut event_client = match connect_with_backoff().await {
                 Some(c) => c,
                 None => {
-                    // Crash recovery: backoff exhausted, try spawning a new daemon
+                    // Crash recovery: 30 attempts (~30s) of backoff exhausted with no daemon.
+                    // The backoff itself prevents thundering herd — if another app instance
+                    // spawned a replacement daemon, we'd have connected during backoff.
                     eprintln!("[event-bridge] backoff exhausted, attempting daemon spawn");
                     ensure_daemon_running().await;
                     match connect_with_backoff().await {
@@ -487,7 +486,6 @@ pub fn run() {
                 app.handle().state::<AttachedSessions>().inner().clone();
             spawn_reattach_coordinator(handle_reattach, attached);
             tauri::async_runtime::spawn(async move {
-                HAS_SPAWNED.store(true, Ordering::Relaxed);
                 ensure_daemon_running().await;
                 // Clear stale connection so commands reconnect to the new daemon
                 *daemon_state.lock().await = None;

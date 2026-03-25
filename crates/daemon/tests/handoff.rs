@@ -72,6 +72,16 @@ enum Evt {
 
 // ---- Test harness ----
 
+/// Compute the socket path using the same hash the daemon uses.
+fn compute_socket_path(dir: &PathBuf) -> PathBuf {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    dir.hash(&mut hasher);
+    let hash = hasher.finish() as u32;
+    PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
+}
+
 struct DaemonHandle {
     child: Child,
     socket_path: PathBuf,
@@ -85,7 +95,7 @@ impl DaemonHandle {
         std::fs::create_dir_all(dir).unwrap();
 
         let daemon_bin = PathBuf::from(env!("CARGO_BIN_EXE_kanna-daemon"));
-        let socket_path = dir.join("daemon.sock");
+        let socket_path = compute_socket_path(dir);
         let pid_path = dir.join("daemon.pid");
 
         let child = Command::new(&daemon_bin)
