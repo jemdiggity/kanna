@@ -447,6 +447,7 @@ const keyboardActions = {
   openPreferences: () => { showPreferencesPanel.value = true; },
   prevTab: () => { preferencesRef.value?.cycleTab(-1); },
   nextTab: () => { preferencesRef.value?.cycleTab(1); },
+  focusSearch: () => { sidebarRef.value?.focusSearch(); },
 };
 useKeyboardShortcuts(keyboardActions, {
   context: () => currentShortcutContext.value,
