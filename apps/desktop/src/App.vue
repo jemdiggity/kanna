@@ -673,10 +673,10 @@ onMounted(async () => {
       <ShellModal
         ref="shellModalRef"
         v-if="showShellModal && store.selectedRepo && (shellRepoRoot || store.currentItem)"
-        :key="`shell-${shellRepoRoot ? 'repo' : 'wt'}-${store.currentItem?.id ?? 'repo'}`"
-        :session-id="`shell-${shellRepoRoot ? 'repo' : 'wt'}-${store.currentItem?.id ?? 'repo'}`"
+        :key="`shell-${shellRepoRoot ? `repo-${store.selectedRepo.id}` : `wt-${store.currentItem?.id}`}`"
+        :session-id="`shell-${shellRepoRoot ? `repo-${store.selectedRepo.id}` : `wt-${store.currentItem?.id}`}`"
         :cwd="shellRepoRoot ? store.selectedRepo.path : (store.currentItem?.branch ? `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo.path)"
-        :port-env="store.currentItem?.port_env"
+        :port-env="shellRepoRoot ? undefined : store.currentItem?.port_env"
         :maximized="maximizedModal === 'shell'"
         @close="showShellModal = false; maximizedModal = null"
       />
