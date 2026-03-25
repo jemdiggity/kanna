@@ -334,6 +334,7 @@ async fn handle_connection(
                     session_writers.clone(),
                     session_sizes.clone(),
                     writer.clone(),
+                    hook_tx.clone(),
                 )
                 .await;
                 break; // Connection ends after handoff
@@ -731,6 +732,7 @@ async fn handle_handoff(
     session_writers: SessionWriters,
     session_sizes: SessionSizes,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    hook_tx: broadcast::Sender<String>,
 ) {
     if version != HANDOFF_VERSION {
         let evt = Event::Error {
@@ -797,15 +799,21 @@ async fn handle_handoff(
         }
     }
 
+    // Broadcast ShuttingDown so subscribed clients know not to reconnect to this daemon.
+    let shutdown_evt = Event::ShuttingDown;
+    if let Ok(json) = serde_json::to_string(&shutdown_evt) {
+        let _ = hook_tx.send(json);
+    }
+
     log::info!("[handoff] complete, exiting");
     // Use a blocking thread to exit — std::process::exit from an async context
     // can hang if tokio tasks are still running.
     std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(500));
         std::process::exit(0);
     });
-    // Give the thread a moment to run
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Give subscriber tasks time to flush the ShuttingDown event to their sockets.
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
 }
 
 /// Maximum pre-attach buffer size (64 KB). Output before client attaches is

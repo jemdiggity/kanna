@@ -49,6 +49,7 @@ pub enum Command {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[allow(clippy::enum_variant_names)]
 pub enum Event {
     Output {
         session_id: String,

@@ -46,8 +46,7 @@ pub async fn write_event<W>(writer: &mut W, event: &Event) -> std::io::Result<()
 where
     W: AsyncWriteExt + Unpin,
 {
-    let mut json = serde_json::to_string(event)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let mut json = serde_json::to_string(event).map_err(std::io::Error::other)?;
     json.push('\n');
     writer.write_all(json.as_bytes()).await?;
     writer.flush().await?;

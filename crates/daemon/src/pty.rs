@@ -128,7 +128,7 @@ impl PtySession {
     pub fn adopt(master_fd: OwnedFd, child_pid: libc::pid_t, cwd: String) -> Self {
         PtySession {
             master_fd,
-            child_pid: child_pid,
+            child_pid,
             cwd,
             last_active_at: Instant::now(),
         }
@@ -167,6 +167,7 @@ impl PtySession {
     }
 
     /// Clone the master fd for writing (e.g. kitty keyboard responses).
+    #[allow(dead_code)]
     pub fn try_clone_writer(&self) -> Result<OwnedFd, Box<dyn std::error::Error + Send + Sync>> {
         let new_fd = unsafe { libc::dup(self.master_fd.as_raw_fd()) };
         if new_fd < 0 {
