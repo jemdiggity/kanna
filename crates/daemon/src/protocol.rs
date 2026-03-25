@@ -74,6 +74,7 @@ pub enum Event {
         sessions: Vec<SessionInfo>,
     },
     HandoffUnsupported,
+    ShuttingDown,
     HookEvent {
         session_id: String,
         event: String,
@@ -292,6 +293,15 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn test_event_shutting_down_roundtrip() {
+        let evt = Event::ShuttingDown;
+        let json = serde_json::to_string(&evt).unwrap();
+        assert_eq!(json, r#"{"type":"ShuttingDown"}"#);
+        let decoded: Event = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, Event::ShuttingDown));
     }
 
     #[test]
