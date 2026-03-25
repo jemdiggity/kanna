@@ -384,6 +384,38 @@ export const useKannaStore = defineStore("kanna", () => {
   }
 
 
+  /** Spawn a bare zsh login shell in the daemon. Used for pre-warming and as ShellModal fallback. */
+  async function spawnShellSession(
+    sessionId: string,
+    cwd: string,
+    portEnv?: string | null,
+    isWorktree = true,
+  ): Promise<void> {
+    const env: Record<string, string> = { TERM: "xterm-256color" };
+    if (isWorktree) env.KANNA_WORKTREE = "1";
+    if (portEnv) {
+      try {
+        Object.assign(env, JSON.parse(portEnv));
+      } catch (e) {
+        console.error("[store] failed to parse portEnv:", e);
+      }
+    }
+    try {
+      env.ZDOTDIR = await invoke<string>("ensure_term_init");
+    } catch (e) {
+      console.error("[store] failed to set up term init:", e);
+    }
+    await invoke("spawn_session", {
+      sessionId,
+      cwd,
+      executable: "/bin/zsh",
+      args: ["--login"],
+      env,
+      cols: 80,
+      rows: 24,
+    });
+  }
+
   async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, options?: PtySpawnOptions) {
     let kannaHookPath: string;
     try {
@@ -1190,7 +1222,7 @@ export const useKannaStore = defineStore("kanna", () => {
     bump, init,
     selectRepo, selectItem,
     importRepo, createRepo, cloneAndImportRepo, hideRepo,
-    createItem, spawnPtySession, closeTask, undoClose,
+    createItem, spawnPtySession, spawnShellSession, closeTask, undoClose,
     startPrAgent, startMergeAgent, makePR, mergeQueue,
     blockTask, editBlockedTask,
     listBlockersForItem: (itemId: string) => listBlockersForItem(_db, itemId),
