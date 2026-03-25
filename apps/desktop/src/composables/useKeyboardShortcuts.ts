@@ -29,7 +29,9 @@ export type ActionName =
   | "editBlockedTask"
   | "toggleTreeExplorer"
   | "openPreferences"
-  | "openShellRepoRoot";
+  | "openShellRepoRoot"
+  | "prevTab"
+  | "nextTab";
 
 export type KeyboardActions = Record<ActionName, () => void>;
 
@@ -89,6 +91,9 @@ export const shortcuts: ShortcutDef[] = [
   // Help — ⇧⌘/ must come before ⌘/ so the more specific shortcut matches first
   { action: "showAllShortcuts", labelKey: "shortcuts.allShortcuts",       groupKey: "shortcuts.groupHelp",   key: "/",                           meta: true, shift: true,  display: "⇧⌘/",     context: ["main", "file", "shell"], hidden: true },
   { action: "showShortcuts",  labelKey: "shortcuts.keyboardShortcuts",  groupKey: "shortcuts.groupHelp",   key: "/",                           meta: true,               display: "⌘/",       context: ["main", "diff", "file", "shell"] },
+  // Tab cycling — used by modals with tabs (e.g. Preferences)
+  { action: "prevTab",    labelKey: "shortcuts.prevTab",       groupKey: "shortcuts.groupNavigation", key: ["[", "{"],                     meta: true, shift: true,  display: "⇧⌘[",     hidden: true },
+  { action: "nextTab",    labelKey: "shortcuts.nextTab",       groupKey: "shortcuts.groupNavigation", key: ["]", "}"],                     meta: true, shift: true,  display: "⇧⌘]",     hidden: true },
   // Escape is special — no meta required
   { action: "dismiss",    labelKey: "shortcuts.dismiss",       groupKey: "shortcuts.groupNavigation", key: "Escape",                                                 display: "Escape",   context: ["main", "diff", "file", "shell"] },
 ];

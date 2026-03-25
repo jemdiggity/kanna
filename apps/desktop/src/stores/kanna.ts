@@ -90,6 +90,7 @@ export const useKannaStore = defineStore("kanna", () => {
   const ideCommand = ref("code");
   const gcAfterDays = ref(3);
   const hideShortcutsOnStartup = ref(false);
+  const devLingerTerminals = ref(false);
 
   // ── Undo state ───────────────────────────────────────────────────
   const lastUndoAction = ref<{ type: "hideRepo"; repoId: string } | null>(null);
@@ -638,6 +639,16 @@ export const useKannaStore = defineStore("kanna", () => {
     const repo = selectedRepo.value;
     if (!item || !repo) return;
     try {
+      // Lingering — second close finishes the task
+      if (hasTag(item, "lingering")) {
+        await removePipelineItemTag(_db, item.id, "lingering");
+        await addPipelineItemTag(_db, item.id, "done");
+        selectNextItem(item.id);
+        await checkUnblocked(item.id);
+        bump();
+        return;
+      }
+
       // Already tearing down — force complete
       if (hasTag(item, "teardown")) {
         await invoke("kill_session", { sessionId: `td-${item.id}` }).catch((e: unknown) =>
@@ -667,9 +678,13 @@ export const useKannaStore = defineStore("kanna", () => {
       const teardownCmds = await collectTeardownCommands(item, repo);
 
       if (teardownCmds.length === 0) {
-        // No teardown — fast close
-        await addPipelineItemTag(_db, item.id, "done");
-        selectNextItem(item.id);
+        // No teardown — fast close (or linger if dev hack enabled)
+        if (devLingerTerminals.value) {
+          await addPipelineItemTag(_db, item.id, "lingering");
+        } else {
+          await addPipelineItemTag(_db, item.id, "done");
+          selectNextItem(item.id);
+        }
         bump();
         (async () => {
           try {
@@ -679,7 +694,7 @@ export const useKannaStore = defineStore("kanna", () => {
               invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
                 console.error("[store] kill shell session failed:", e)),
             ]);
-            await checkUnblocked(item.id);
+            if (!devLingerTerminals.value) await checkUnblocked(item.id);
           } catch (e) { console.error("[store] close cleanup failed:", e); }
         })();
         return;
@@ -853,6 +868,8 @@ export const useKannaStore = defineStore("kanna", () => {
     if (gc) gcAfterDays.value = parseInt(gc, 10) || 3;
     const hs = await getSetting(_db, "hideShortcutsOnStartup");
     hideShortcutsOnStartup.value = hs === "true";
+    const dl = await getSetting(_db, "dev.lingerTerminals");
+    devLingerTerminals.value = dl === "true";
   }
 
   async function savePreference(key: string, value: string) {
@@ -1276,11 +1293,15 @@ export const useKannaStore = defineStore("kanna", () => {
         const item = items.value.find((i) => i.id === itemId);
         if (!item || !hasTag(item, "teardown")) return;
         await removePipelineItemTag(_db, itemId, "teardown");
-        await addPipelineItemTag(_db, itemId, "done");
-        if (selectedItemId.value === itemId) {
-          selectNextItem(itemId);
+        if (devLingerTerminals.value) {
+          await addPipelineItemTag(_db, itemId, "lingering");
+        } else {
+          await addPipelineItemTag(_db, itemId, "done");
+          if (selectedItemId.value === itemId) {
+            selectNextItem(itemId);
+          }
+          await checkUnblocked(itemId);
         }
-        await checkUnblocked(itemId);
         bump();
         return;
       }
@@ -1294,7 +1315,7 @@ export const useKannaStore = defineStore("kanna", () => {
     repos, items, selectedRepoId, selectedItemId,
     canGoBack, canGoForward,
     suspendAfterMinutes, killAfterMinutes,
-    ideCommand, gcAfterDays, hideShortcutsOnStartup,
+    ideCommand, gcAfterDays, hideShortcutsOnStartup, devLingerTerminals,
     lastUndoAction, refreshKey,
     // Getters
     selectedRepo, currentItem, sortedItemsForCurrentRepo, sortedItemsAllRepos,
