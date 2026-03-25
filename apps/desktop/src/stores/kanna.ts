@@ -214,6 +214,10 @@ export const useKannaStore = defineStore("kanna", () => {
     await insertRepo(_db, { id, path, name, default_branch: defaultBranch });
     bump();
     selectedRepoId.value = id;
+    if (isTauri) {
+      spawnShellSession(`shell-repo-${id}`, path, null, false)
+        .catch(e => console.error("[store] repo shell pre-warm failed:", e));
+    }
   }
 
   async function createRepo(name: string, path: string) {
@@ -233,6 +237,10 @@ export const useKannaStore = defineStore("kanna", () => {
     await insertRepo(_db, { id, path, name, default_branch: defaultBranch });
     bump();
     selectedRepoId.value = id;
+    if (isTauri) {
+      spawnShellSession(`shell-repo-${id}`, path, null, false)
+        .catch(e => console.error("[store] repo shell pre-warm failed:", e));
+    }
   }
 
   async function cloneAndImportRepo(url: string, destination: string) {
@@ -243,6 +251,10 @@ export const useKannaStore = defineStore("kanna", () => {
     await insertRepo(_db, { id, path: destination, name, default_branch: defaultBranch });
     bump();
     selectedRepoId.value = id;
+    if (isTauri) {
+      spawnShellSession(`shell-repo-${id}`, destination, null, false)
+        .catch(e => console.error("[store] repo shell pre-warm failed:", e));
+    }
   }
 
   async function hideRepo(repoId: string) {
@@ -332,6 +344,10 @@ export const useKannaStore = defineStore("kanna", () => {
       toast.error(tt('toasts.worktreeFailed'));
       return;
     }
+
+    // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
+    spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv))
+      .catch(e => console.error("[store] shell pre-warm failed:", e));
 
     try {
       if (agentType !== "pty") {
@@ -425,6 +441,38 @@ export const useKannaStore = defineStore("kanna", () => {
     });
   }
 
+
+  /** Spawn a bare zsh login shell in the daemon. Used for pre-warming and as ShellModal fallback. */
+  async function spawnShellSession(
+    sessionId: string,
+    cwd: string,
+    portEnv?: string | null,
+    isWorktree = true,
+  ): Promise<void> {
+    const env: Record<string, string> = { TERM: "xterm-256color" };
+    if (isWorktree) env.KANNA_WORKTREE = "1";
+    if (portEnv) {
+      try {
+        Object.assign(env, JSON.parse(portEnv));
+      } catch (e) {
+        console.error("[store] failed to parse portEnv:", e);
+      }
+    }
+    try {
+      env.ZDOTDIR = await invoke<string>("ensure_term_init");
+    } catch (e) {
+      console.error("[store] failed to set up term init:", e);
+    }
+    await invoke("spawn_session", {
+      sessionId,
+      cwd,
+      executable: "/bin/zsh",
+      args: ["--login"],
+      env,
+      cols: 80,
+      rows: 24,
+    });
+  }
 
   async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, options?: PtySpawnOptions) {
     let kannaHookPath: string;
@@ -628,7 +676,7 @@ export const useKannaStore = defineStore("kanna", () => {
             await Promise.all([
               invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
                 console.error("[store] kill_session failed:", e)),
-              invoke("kill_session", { sessionId: `shell-${item.id}` }).catch((e: unknown) =>
+              invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
                 console.error("[store] kill shell session failed:", e)),
             ]);
             await checkUnblocked(item.id);
@@ -642,7 +690,7 @@ export const useKannaStore = defineStore("kanna", () => {
       await Promise.all([
         invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
           console.error("[store] kill_session failed:", e)),
-        invoke("kill_session", { sessionId: `shell-${item.id}` }).catch((e: unknown) =>
+        invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
           console.error("[store] kill shell session failed:", e)),
       ]);
 
@@ -826,7 +874,7 @@ export const useKannaStore = defineStore("kanna", () => {
     }
     try {
       await invoke("kill_session", { sessionId: originalId }).catch((e: unknown) => console.error("[store] kill_session failed:", e));
-      await invoke("kill_session", { sessionId: `shell-${originalId}` }).catch((e: unknown) => console.error("[store] kill shell session failed:", e));
+      await invoke("kill_session", { sessionId: `shell-wt-${originalId}` }).catch((e: unknown) => console.error("[store] kill shell session failed:", e));
       await addPipelineItemTag(_db, originalId, "done");
       await checkUnblocked(originalId);
       bump();
@@ -1038,7 +1086,7 @@ export const useKannaStore = defineStore("kanna", () => {
       await invoke("kill_session", { sessionId: originalId }).catch((e: unknown) =>
         console.error("[store] kill_session failed:", e)
       );
-      await invoke("kill_session", { sessionId: `shell-${originalId}` }).catch((e: unknown) =>
+      await invoke("kill_session", { sessionId: `shell-wt-${originalId}` }).catch((e: unknown) =>
         console.error("[store] kill shell session failed:", e)
       );
 
@@ -1170,6 +1218,23 @@ export const useKannaStore = defineStore("kanna", () => {
       } catch (e) { console.error("[store] git_app_info failed:", e); }
     }
 
+    // Pre-warm shell sessions so ⌘J / ⇧⌘J are instant
+    if (isTauri) {
+      for (const item of eagerItems) {
+        if (!item.branch) continue;
+        if (hasTag(item, "done") || hasTag(item, "merge")) continue;
+        const repo = eagerRepos.find(r => r.id === item.repo_id);
+        if (!repo) continue;
+        const wtPath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        spawnShellSession(`shell-wt-${item.id}`, wtPath, item.port_env, true)
+          .catch(e => console.error("[store] shell pre-warm failed:", e));
+      }
+      for (const repo of eagerRepos) {
+        spawnShellSession(`shell-repo-${repo.id}`, repo.path, null, false)
+          .catch(e => console.error("[store] repo shell pre-warm failed:", e));
+      }
+    }
+
     // Event listeners
     listen("hook_event", async (event: any) => {
       const payload = event.payload || event;
@@ -1237,7 +1302,7 @@ export const useKannaStore = defineStore("kanna", () => {
     bump, init,
     selectRepo, selectItem, goBack, goForward,
     importRepo, createRepo, cloneAndImportRepo, hideRepo,
-    createItem, spawnPtySession, closeTask, undoClose,
+    createItem, spawnPtySession, spawnShellSession, closeTask, undoClose,
     startPrAgent, startMergeAgent, makePR, mergeQueue,
     blockTask, editBlockedTask,
     listBlockersForItem: (itemId: string) => listBlockersForItem(_db, itemId),
