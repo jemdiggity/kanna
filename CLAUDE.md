@@ -96,6 +96,150 @@ Claude finishes → kanna-hook fires Stop → daemon broadcasts → app updates 
 User makes PR → GitHub API → DB update → stage transition
 ```
 
+## Codebase Overview
+
+### Utilities (`apps/desktop/src/utils/`)
+
+- **`fuzzyMatch.ts`** — VSCode-inspired fuzzy file-path scorer. Multi-part queries (e.g., "comp btn"), bonuses for path separators, camelCase boundaries, consecutive matches, filename boost (+1000). Returns score + matched indices. **Use this instead of writing a new fuzzy search.**
+- **`parseRepoInput.ts`** — Parses repo input in any format: local paths, SSH URLs, HTTPS URLs, `owner/repo` shorthand, `gh repo clone` commands. Returns structured `ParsedInput` with normalized clone URL.
+
+### Composables (`apps/desktop/src/composables/`)
+
+| Composable | Purpose |
+|---|---|
+| `useAnalytics` | Task analytics bucketing (daily/weekly/monthly), operator metrics (response time, dwell time, focus score, switches/hour) |
+| `useBackup` | Timestamped DB backups with WAL flush, 7-day retention, periodic interval (4h) |
+| `useClaudeUsage` | Regex parser for Claude CLI `/usage` output (session %, week %, dollar spend) |
+| `useCustomTasks` | Scans `.kanna/tasks/` for `agent.md` files, abortable via AbortController |
+| `useGc` | Garbage collection of old tasks/sessions |
+| `useInlineSearch` | Search/filtering for task lists |
+| `useKeyboardShortcuts` | Central shortcut registry (30+ actions), context-aware, modifier matching, terminal passthrough filtering |
+| `useLessScroll` | Vim/less-style scroll navigation (j/k/f/b/d/u/g/G), skips input elements |
+| `useModalZIndex` | Z-index stacking for overlapping modals |
+| `useNavigationHistory` | Back/forward stacks (max 50), 1s dwell threshold to skip transient visits |
+| `useOperatorEvents` | Emits `app_blur`/`app_focus` on visibility change for analytics |
+| `useRestoreFocus` | Restores focus to previous element after modal close |
+| `useShortcutContext` | Singleton context manager — components set active context on mount, register supplementary shortcuts |
+| `useTerminal` | xterm.js lifecycle, WebGL fallback, Kitty keyboard mode, SIGWINCH redraw on reconnect, debounced fit |
+| `useToast` | Toast notifications (max 3 visible, auto-dismiss, configurable duration) |
+| `useTreeExplorer` | Miller-columns file browser with caching, vim navigation (j/k/h/l/gg/G), `/` filter mode, 50ms debounced preview, prefetch |
+
+### Components (`apps/desktop/src/components/`)
+
+| Component | Purpose |
+|---|---|
+| `ActionBar` | PR creation button, conditional on task status |
+| `AddRepoModal` | Add repository (create or import tabs) |
+| `AgentView` | Claude agent message stream display |
+| `AnalyticsModal` | Task and operator analytics charts |
+| `BlockerSelectModal` | Task dependency/blocker editor |
+| `CommandPaletteModal` | Quick command launcher (`⇧⌘P`) |
+| `DiffModal` / `DiffView` | Git diff viewer using `@pierre/diffs` |
+| `FilePickerModal` | File open dialog from repo |
+| `FilePreviewModal` | File content preview pane |
+| `KeyboardShortcutsModal` | Shortcut reference display |
+| `MainPanel` | Central task view with terminal tabs or blocked placeholder |
+| `NewTaskModal` | Task creation with custom/predefined templates |
+| `PreferencesPanel` | Settings (IDE command, timeouts, locale) |
+| `ShellModal` | Standalone shell terminal |
+| `Sidebar` | Task list navigation (pinned/PR/merge/active/blocked sections) |
+| `TagBadges` | Task tag display |
+| `TaskHeader` | Task title, branch, PR link, tags |
+| `TerminalTabs` | Tab manager for multiple terminal/agent sessions |
+| `TerminalView` | xterm.js terminal renderer |
+| `ToastContainer` | Toast notification display |
+| `TreeExplorerModal` | Miller-columns file explorer |
+
+### Stores (`apps/desktop/src/stores/`)
+
+- **`kanna.ts`** (Pinia) — App state: repo/item selection, sorted items (pinned → merge → pr → active → blocked), debounced activity transitions (unread → idle after 1s), `generateId()` via `crypto.getRandomValues()`, operator event emission, undo support.
+- **`db.ts`** — DB setup: `resolveDbName()` from env vars, `loadDatabase()` with mock fallback, `runMigrations()` with all table schemas.
+
+### Tauri Commands (`apps/desktop/src-tauri/src/commands/`)
+
+| Module | Commands |
+|---|---|
+| `agent.rs` | `create_agent_session` — buffers Claude CLI NDJSON messages, background drainer |
+| `daemon.rs` | `spawn_session`, `attach_session`, `detach_session`, `send_input`, `resize_session`, `signal_session`, `kill_session` |
+| `fs.rs` | `get_app_data_dir`, `copy_file`, `remove_file`, `list_dir`, `read_dir_entries` (gitignore-aware), `read_text_file` |
+| `git.rs` | `git_diff` (staged + unstaged + untracked), `git_worktree_list`, `git_log`, `git_commit` |
+| `shell.rs` | `ensure_term_init` (ZDOTDIR proxy), `run_script` |
+
+### Packages
+
+**`@kanna/core`** (`packages/core/src/`):
+- `pipeline/types.ts` — `SYSTEM_TAGS`, `parseTags()`, `hasTag()` (safe JSON parse, never throws)
+- `config/repo-config.ts` — `parseRepoConfig()` from `.kanna/config.json`
+- `config/custom-tasks.ts` — `parseAgentMd()` frontmatter parser, slug-to-name conversion
+- `config/custom-tasks-scanner.ts` — Scans `.kanna/tasks/` with smart empty-file skipping
+- `slack/` — `SlackClient` (postMessage, fetchHistory)
+- `discord/` — `DiscordClient` (postMessage, fetchHistory)
+
+**`@kanna/db`** (`packages/db/src/`):
+- `schema.ts` — TypeScript types mirroring all SQLite tables
+- `queries.ts` — Abstracted query layer over `DbHandle` interface. Includes: CRUD for repos/items/sessions, JSON tag management, `hasCircularDependency()` (DFS cycle detection for task blockers), `getUnblockedItems()`, analytics aggregation, `getSetting`/`setSetting`
+
+### Rust Crates
+
+- **`claude-agent-sdk`** — Session builder pattern, NDJSON stream parsing, permission callbacks, `find_claude_binary()`. Types: `PermissionMode` (`DontAsk`/`AcceptEdits`/`Default`), `ThinkingMode`, `Effort` levels.
+- **`daemon`** — Raw libc PTY, Unix socket NDJSON protocol, SCM_RIGHTS fd transfer for handoff, session manager with spawn/attach/detach/resize/signal/kill.
+- **`kanna-hook`** — Lightweight binary that signals task completion to the daemon.
+- **`tauri-plugin-delta-updater`** — Self-updater plugin (stub).
+
+### Key Third-Party Libraries
+
+| Library | Usage | Notes |
+|---|---|---|
+| `@pierre/diffs` | Diff rendering | Use `containerWrapper` not `fileContainer`, `worker-portable.js` not `worker.js` |
+| `xterm.js` (6.x beta) | Terminal UI | With fit, image, serialize, web-links, webgl addons |
+| `shiki` | Syntax highlighting | Used for code preview |
+| `pinia` | State management | Single store in `kanna.ts` |
+| `markdown-it` | Markdown parsing | With strikethrough-alt, task-lists plugins |
+| `vue-chartjs` + `chart.js` | Charts | Analytics modal |
+| `vuedraggable` | Drag-drop | Task reordering |
+| `@vueuse/core` | Composable utilities | `computedAsync`, etc. |
+| `vue-i18n` | i18n | Locale support |
+| `git2` (Rust) | Git operations | Fully vendored (libgit2 + OpenSSL) |
+
+### Scripts (`scripts/`)
+
+| Script | Purpose |
+|---|---|
+| `dev.sh` | Dev server in tmux, auto-detects worktree, manages daemon lifecycle, seed data |
+| `setup.sh` | Verify prerequisites (Xcode CLT, Rust, Bun ≥1.3.9, tmux, etc.) |
+| `clean.sh` | Remove build artifacts (Rust targets, node_modules, dist, .turbo) |
+| `install.sh` | Download and install latest release from GitHub (DMG, arch auto-detect) |
+| `ship.sh` | Release automation: version bump, dual-arch build, sign, notarize, publish |
+| `sync-version.sh` | Generate VERSION from git tags, sync to tauri.conf.json |
+| `stage-sidecars.sh` | Stage daemon + hook binaries to Tauri's externalBin with target triples |
+
+### Environment Variables
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `KANNA_DEV_PORT` | vite.config.ts, dev.sh | Dev server port (default 1420) |
+| `KANNA_WORKTREE` | dev.sh → runtime | Flag: running in a worktree |
+| `KANNA_DB_NAME` | stores/db.ts | Override SQLite filename (default `kanna-v2.db`) |
+| `KANNA_DAEMON_DIR` | daemon, tests | Override daemon data directory |
+| `KANNA_GITHUB_TOKEN` | core/github | GitHub API auth |
+| `KANNA_SLACK_TOKEN` | core/slack | Slack API auth |
+| `KANNA_DISCORD_TOKEN` | core/discord | Discord API auth |
+| `KANNA_VERSION` | daemon build.rs | Compile-time version from git |
+
+### Database Tables
+
+| Table | Key Columns |
+|---|---|
+| `repo` | id, path, name, default_branch, hidden |
+| `pipeline_item` | id, repo_id, prompt, tags (JSON), pr_number/url, branch, activity, port_env (JSON), pinned, pin_order, display_name |
+| `task_blockers` | blocked_item_id, blocker_item_id |
+| `worktree` | id, pipeline_item_id, path, branch |
+| `terminal_session` | id, repo_id, pipeline_item_id, label, cwd, daemon_session_id |
+| `agent_run` | id, repo_id, agent_type, status, started_at, finished_at |
+| `settings` | key, value |
+| `activity_log` | id, pipeline_item_id, activity, started_at |
+| `operator_events` | id, event_type, pipeline_item_id, repo_id |
+
 ## Daemon
 
 - Raw libc PTY (not portable-pty) — needed for `SCM_RIGHTS` fd handoff
@@ -128,7 +272,7 @@ User makes PR → GitHub API → DB update → stage transition
 
 ## Database
 
-SQLite via `tauri-plugin-sql`. Tables: `repo`, `pipeline_item`, `worktree`, `terminal_session`, `agent_run`, `settings`. Schema defined inline in `App.vue`'s `runMigrations()`.
+SQLite via `tauri-plugin-sql`. Schema defined inline in `stores/db.ts`'s `runMigrations()`. See the Database Tables inventory in the Codebase Overview section for the full table list.
 
 DB name configurable via `KANNA_DB_NAME` env var (defaults to `kanna-v2.db`). E2E tests use `kanna-test.db`.
 
