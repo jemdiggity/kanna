@@ -6,7 +6,10 @@ use commands::daemon::DaemonState;
 use daemon_client::DaemonClient;
 use dashmap::DashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+static HAS_SPAWNED: AtomicBool = AtomicBool::new(false);
 use tauri::menu::{AboutMetadataBuilder, MenuBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
@@ -101,12 +104,18 @@ fn fix_path_from_shell() {
         Ok(output) if output.status.success() => {
             let path = String::from_utf8_lossy(&output.stdout);
             if !path.is_empty() {
-                eprintln!("[path] resolved shell PATH ({} entries)", path.matches(':').count() + 1);
+                eprintln!(
+                    "[path] resolved shell PATH ({} entries)",
+                    path.matches(':').count() + 1
+                );
                 std::env::set_var("PATH", path.as_ref());
             }
         }
         Ok(output) => {
-            eprintln!("[path] shell exited with {}, keeping default PATH", output.status);
+            eprintln!(
+                "[path] shell exited with {}, keeping default PATH",
+                output.status
+            );
         }
         Err(e) => {
             eprintln!("[path] failed to run {}: {}", shell, e);
@@ -268,56 +277,97 @@ async fn ensure_daemon_running() {
     }
 }
 
-/// Spawn the event bridge: a background task that reads events from a dedicated
-/// daemon connection and emits them as Tauri events.
-fn spawn_event_bridge(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        // Dedicated event connection — separate from the command connection
-        let mut event_client = match try_connect_daemon().await {
-            Some(c) => c,
-            None => {
-                eprintln!("[event-bridge] daemon not available, skipping event bridge");
-                return;
+/// Connect to the daemon with exponential backoff. Used by the event bridge
+/// to wait for the daemon to become available after a restart.
+async fn connect_with_backoff() -> Option<DaemonClient> {
+    let socket_path = daemon_socket_path();
+    let mut delay = std::time::Duration::from_millis(50);
+    for attempt in 1..=30 {
+        match DaemonClient::connect(&socket_path).await {
+            Ok(client) => {
+                eprintln!("[reconnect] connected on attempt {}", attempt);
+                return Some(client);
             }
-        };
+            Err(_) => {
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(2));
+            }
+        }
+    }
+    eprintln!("[reconnect] failed to connect after 30 attempts");
+    None
+}
 
-        // Subscribe to hook event broadcasts
-        let _ = event_client
-            .send_command(&serde_json::json!({"type":"Subscribe"}).to_string())
-            .await;
-        let _ = event_client.read_event().await; // consume Ok response
-
-        eprintln!("[event-bridge] connected and subscribed to daemon events");
-
+/// Spawn the event bridge: a background task that reads events from a dedicated
+/// daemon connection and emits them as Tauri events. Automatically reconnects
+/// when the daemon restarts.
+fn spawn_event_bridge(app: tauri::AppHandle, daemon_state: DaemonState) {
+    tauri::async_runtime::spawn(async move {
         loop {
-            match event_client.read_event().await {
-                Ok(line) => {
-                    let event: serde_json::Value = match serde_json::from_str(&line) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-
-                    match event.get("type").and_then(|t| t.as_str()) {
-                        Some("Output") => {
-                            let _ = app.emit("terminal_output", &event);
+            // Connect (with backoff for reconnection after daemon restart)
+            let mut event_client = match connect_with_backoff().await {
+                Some(c) => c,
+                None => {
+                    // Crash recovery: backoff exhausted, try spawning a new daemon
+                    eprintln!("[event-bridge] backoff exhausted, attempting daemon spawn");
+                    ensure_daemon_running().await;
+                    match connect_with_backoff().await {
+                        Some(c) => c,
+                        None => {
+                            eprintln!("[event-bridge] cannot connect after spawn, giving up");
+                            return;
                         }
-                        Some("Exit") => {
-                            let _ = app.emit("session_exit", &event);
-                        }
-                        Some("HookEvent") => {
-                            let _ = app.emit("hook_event", &event);
-                        }
-                        Some("StatusChanged") => {
-                            let _ = app.emit("status_changed", &event);
-                        }
-                        _ => {}
                     }
                 }
-                Err(_) => {
-                    eprintln!("[event-bridge] daemon connection lost");
-                    break;
+            };
+
+            // Subscribe to hook event broadcasts
+            let _ = event_client
+                .send_command(&serde_json::json!({"type":"Subscribe"}).to_string())
+                .await;
+            let _ = event_client.read_event().await; // consume Ok
+
+            eprintln!("[event-bridge] connected and subscribed to daemon events");
+            let _ = app.emit("daemon_ready", ());
+
+            // Inner read loop
+            loop {
+                match event_client.read_event().await {
+                    Ok(line) => {
+                        let event: serde_json::Value = match serde_json::from_str(&line) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+
+                        match event.get("type").and_then(|t| t.as_str()) {
+                            Some("ShuttingDown") => {
+                                eprintln!("[event-bridge] received ShuttingDown, reconnecting...");
+                                break;
+                            }
+                            Some("Output") => {
+                                let _ = app.emit("terminal_output", &event);
+                            }
+                            Some("Exit") => {
+                                let _ = app.emit("session_exit", &event);
+                            }
+                            Some("HookEvent") => {
+                                let _ = app.emit("hook_event", &event);
+                            }
+                            Some("StatusChanged") => {
+                                let _ = app.emit("status_changed", &event);
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(_) => {
+                        eprintln!("[event-bridge] daemon connection lost, reconnecting...");
+                        break;
+                    }
                 }
             }
+
+            // Clear command connection so next use reconnects
+            *daemon_state.lock().await = None;
         }
     });
 }
@@ -381,11 +431,13 @@ pub fn run() {
 
             let handle = app.handle().clone();
             let daemon_state: DaemonState = app.handle().state::<DaemonState>().inner().clone();
+            let daemon_state_bridge = daemon_state.clone();
             tauri::async_runtime::spawn(async move {
+                HAS_SPAWNED.store(true, Ordering::Relaxed);
                 ensure_daemon_running().await;
                 // Clear stale connection so commands reconnect to the new daemon
                 *daemon_state.lock().await = None;
-                spawn_event_bridge(handle);
+                spawn_event_bridge(handle, daemon_state_bridge);
             });
             Ok(())
         })
