@@ -2,7 +2,7 @@ mod commands;
 mod daemon_client;
 
 use commands::agent::AgentState;
-use commands::daemon::DaemonState;
+use commands::daemon::{AttachedSessions, DaemonState};
 use daemon_client::DaemonClient;
 use dashmap::DashMap;
 use std::path::PathBuf;
@@ -372,6 +372,53 @@ fn spawn_event_bridge(app: tauri::AppHandle, daemon_state: DaemonState) {
     });
 }
 
+/// Listen for `daemon_ready` events and re-attach all tracked sessions.
+/// After a daemon restart, sessions survive (child processes are unaware),
+/// but the attach streaming connections are lost. This coordinator re-establishes
+/// them so terminal output resumes without user intervention.
+fn spawn_reattach_coordinator(app: tauri::AppHandle, attached: AttachedSessions) {
+    use tauri::Listener;
+    let app_listener = app.clone();
+    let _ = app_listener.listen("daemon_ready", move |_| {
+        let app = app.clone();
+        let attached = attached.clone();
+        tauri::async_runtime::spawn(async move {
+            let session_ids: Vec<String> = attached.lock().await.iter().cloned().collect();
+            if session_ids.is_empty() {
+                return;
+            }
+            eprintln!(
+                "[reattach] re-attaching {} sessions after daemon restart",
+                session_ids.len()
+            );
+            for sid in session_ids {
+                match commands::daemon::attach_session_inner(&app, sid.clone(), &attached).await {
+                    Ok(()) => {
+                        eprintln!("[reattach] re-attached session {}", sid);
+                        // Send Resize to trigger SIGWINCH so Claude TUI redraws
+                        let resize_cmd = serde_json::json!({
+                            "type": "Resize",
+                            "session_id": sid,
+                            "cols": 80,
+                            "rows": 24,
+                        });
+                        let socket_path = daemon_socket_path();
+                        if let Ok(mut client) = DaemonClient::connect(&socket_path).await {
+                            let json = serde_json::to_string(&resize_cmd).unwrap_or_default();
+                            let _ = client.send_command(&json).await;
+                            let _ = client.read_event().await;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[reattach] failed to re-attach {}: {}", sid, e);
+                        attached.lock().await.remove(&sid);
+                    }
+                }
+            }
+        });
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -392,6 +439,9 @@ pub fn run() {
     builder
         .manage(Arc::new(DashMap::new()) as AgentState)
         .manage(Arc::new(Mutex::new(None)) as DaemonState)
+        .manage(
+            Arc::new(Mutex::new(std::collections::HashSet::<String>::new())) as AttachedSessions,
+        )
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -430,8 +480,12 @@ pub fn run() {
             app.set_menu(menu)?;
 
             let handle = app.handle().clone();
+            let handle_reattach = handle.clone();
             let daemon_state: DaemonState = app.handle().state::<DaemonState>().inner().clone();
             let daemon_state_bridge = daemon_state.clone();
+            let attached: AttachedSessions =
+                app.handle().state::<AttachedSessions>().inner().clone();
+            spawn_reattach_coordinator(handle_reattach, attached);
             tauri::async_runtime::spawn(async move {
                 HAS_SPAWNED.store(true, Ordering::Relaxed);
                 ensure_daemon_running().await;

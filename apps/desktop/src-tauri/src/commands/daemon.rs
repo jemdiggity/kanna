@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 use crate::daemon_client::DaemonClient;
 
 pub type DaemonState = Arc<Mutex<Option<DaemonClient>>>;
+pub type AttachedSessions = Arc<Mutex<HashSet<String>>>;
 
 /// Send a command and read the Ok/Error response, discarding it.
 async fn send_and_ack(state: &DaemonState) -> Result<(), String> {
@@ -196,8 +197,11 @@ pub async fn list_sessions(
     }
 }
 
-#[tauri::command]
-pub async fn attach_session(app: tauri::AppHandle, session_id: String) -> Result<(), String> {
+pub async fn attach_session_inner(
+    app: &tauri::AppHandle,
+    session_id: String,
+    attached: &AttachedSessions,
+) -> Result<(), String> {
     // Create a dedicated connection for this session's output streaming.
     // This avoids mixing Output events with command responses.
     let socket_path = daemon_socket_path();
@@ -220,63 +224,67 @@ pub async fn attach_session(app: tauri::AppHandle, session_id: String) -> Result
         return Err(msg.to_string());
     }
 
+    // Track this session as attached
+    attached.lock().await.insert(session_id.clone());
+
     // Spawn a background task to read Output/Exit events and emit Tauri events
     let sid = session_id.clone();
+    let app = app.clone();
+    let attached_clone = attached.clone();
     use tauri::Emitter;
     tauri::async_runtime::spawn(async move {
-        loop {
-            match stream_client.read_event().await {
-                Ok(line) => {
-                    let event: serde_json::Value = match serde_json::from_str(&line) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    match event.get("type").and_then(|t| t.as_str()) {
-                        Some("Output") => {
-                            // Convert data array to base64 string for efficient transfer
-                            // The raw number array can be large and slow to serialize
-                            if let Some(data) = event.get("data").and_then(|d| d.as_array()) {
-                                let bytes: Vec<u8> = data
-                                    .iter()
-                                    .filter_map(|v| v.as_u64().map(|n| n as u8))
-                                    .collect();
-                                use base64::Engine;
-                                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                                let payload = serde_json::json!({
-                                    "session_id": event.get("session_id"),
-                                    "data_b64": b64,
-                                });
-                                let _ = app.emit("terminal_output", &payload);
-                                // Detect Claude CLI interrupt from output
-                                if bytes.windows(11).any(|w| w == b"Interrupted") {
-                                    let hook = serde_json::json!({
-                                        "session_id": event.get("session_id"),
-                                        "event": "Interrupted",
-                                    });
-                                    let _ = app.emit("hook_event", &hook);
-                                }
-                                // Detect sandbox/permission prompts waiting for user input.
-                                // These prompts bypass --dangerously-skip-permissions and no
-                                // Claude Code hook fires for them, so we scan PTY output.
-                                if bytes.windows(21).any(|w| w == b"Do you want to allow") {
-                                    let hook = serde_json::json!({
-                                        "session_id": event.get("session_id"),
-                                        "event": "WaitingForInput",
-                                    });
-                                    let _ = app.emit("hook_event", &hook);
-                                }
-                            } else {
-                                let _ = app.emit("terminal_output", &event);
-                            }
+        // On Err (connection lost / daemon restart) we intentionally do NOT
+        // remove from attached so the re-attach coordinator can re-attach.
+        while let Ok(line) = stream_client.read_event().await {
+            let event: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            match event.get("type").and_then(|t| t.as_str()) {
+                Some("Output") => {
+                    // Convert data array to base64 string for efficient transfer
+                    // The raw number array can be large and slow to serialize
+                    if let Some(data) = event.get("data").and_then(|d| d.as_array()) {
+                        let bytes: Vec<u8> = data
+                            .iter()
+                            .filter_map(|v| v.as_u64().map(|n| n as u8))
+                            .collect();
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        let payload = serde_json::json!({
+                            "session_id": event.get("session_id"),
+                            "data_b64": b64,
+                        });
+                        let _ = app.emit("terminal_output", &payload);
+                        // Detect Claude CLI interrupt from output
+                        if bytes.windows(11).any(|w| w == b"Interrupted") {
+                            let hook = serde_json::json!({
+                                "session_id": event.get("session_id"),
+                                "event": "Interrupted",
+                            });
+                            let _ = app.emit("hook_event", &hook);
                         }
-                        Some("Exit") => {
-                            let _ = app.emit("session_exit", &event);
-                            break;
+                        // Detect sandbox/permission prompts waiting for user input.
+                        // These prompts bypass --dangerously-skip-permissions and no
+                        // Claude Code hook fires for them, so we scan PTY output.
+                        if bytes.windows(21).any(|w| w == b"Do you want to allow") {
+                            let hook = serde_json::json!({
+                                "session_id": event.get("session_id"),
+                                "event": "WaitingForInput",
+                            });
+                            let _ = app.emit("hook_event", &hook);
                         }
-                        _ => {}
+                    } else {
+                        let _ = app.emit("terminal_output", &event);
                     }
                 }
-                Err(_) => break,
+                Some("Exit") => {
+                    // Session exited normally — remove from tracked set
+                    attached_clone.lock().await.remove(&sid);
+                    let _ = app.emit("session_exit", &event);
+                    break;
+                }
+                _ => {}
             }
         }
         eprintln!("[attach] output stream ended for session {}", sid);
@@ -286,10 +294,21 @@ pub async fn attach_session(app: tauri::AppHandle, session_id: String) -> Result
 }
 
 #[tauri::command]
-pub async fn detach_session(
-    state: tauri::State<'_, DaemonState>,
+pub async fn attach_session(
+    app: tauri::AppHandle,
+    attached: tauri::State<'_, AttachedSessions>,
     session_id: String,
 ) -> Result<(), String> {
+    attach_session_inner(&app, session_id, &attached).await
+}
+
+#[tauri::command]
+pub async fn detach_session(
+    state: tauri::State<'_, DaemonState>,
+    attached: tauri::State<'_, AttachedSessions>,
+    session_id: String,
+) -> Result<(), String> {
+    attached.lock().await.remove(&session_id);
     let cmd = serde_json::json!({
         "type": "Detach",
         "session_id": session_id,
