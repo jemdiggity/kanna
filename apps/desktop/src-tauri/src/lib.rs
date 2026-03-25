@@ -409,8 +409,15 @@ fn spawn_reattach_coordinator(app: tauri::AppHandle, attached: AttachedSessions)
                         }
                     }
                     Err(e) => {
-                        eprintln!("[reattach] failed to re-attach {}: {}", sid, e);
-                        attached.lock().await.remove(&sid);
+                        // Only remove from tracking if the session definitively doesn't exist.
+                        // Transient errors (connection issues, timing) should leave the session
+                        // tracked so it can be re-attached on the next daemon_ready.
+                        if e.contains("session not found") || e.contains("not found") {
+                            eprintln!("[reattach] session {} not found after handoff, removing from tracking", sid);
+                            attached.lock().await.remove(&sid);
+                        } else {
+                            eprintln!("[reattach] failed to re-attach {} (will retry on next daemon_ready): {}", sid, e);
+                        }
                     }
                 }
             }

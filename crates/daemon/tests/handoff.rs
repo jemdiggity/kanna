@@ -403,18 +403,20 @@ fn test_handoff_broadcasts_shutting_down() {
         other => panic!("expected Ok, got {:?}", other),
     }
 
-    // Trigger handoff by starting daemon B in same dir
-    let _daemon_b = DaemonHandle::start_in(&dir);
-
-    // Both subscribers should receive ShuttingDown
+    // Set read timeouts before handoff (sockets may close during handoff)
     sub_a
-        .writer
+        .reader
+        .get_ref()
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
     sub_b
-        .writer
+        .reader
+        .get_ref()
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
+
+    // Trigger handoff by starting daemon B in same dir
+    let _daemon_b = DaemonHandle::start_in(&dir);
 
     let evt_a = sub_a.recv();
     assert!(
