@@ -176,9 +176,9 @@ type SessionWriter = Arc<Mutex<OwnedWriteHalf>>;
 type SessionWriters = Arc<Mutex<HashMap<String, Vec<SessionWriter>>>>;
 ```
 
-**Attach:** Adds the new client's writer to the session's writer list. Does not remove or affect existing writers.
+**Attach:** Adds the new client's writer to the session's writer list. Does not remove or affect existing writers. Also registers the client's terminal dimensions (see Resize below).
 
-**Detach:** Removes the client's writer from the session's writer list.
+**Detach:** Removes the client's writer from the session's writer list. Removes the client's dimensions from the size registry. If other clients remain, recomputes and applies the smallest dimensions.
 
 **`stream_output` changes:** Instead of writing to one `ActiveWriter`, iterate over all writers in the session's list. If a write to any client fails (broken pipe, slow consumer), remove that writer from the list and continue — don't block other clients.
 
@@ -188,6 +188,17 @@ stream_output loop:
   writers = session_writers.get(session_id)
   retain only writers where write_event succeeds
 ```
+
+**Resize — smallest client wins:** A PTY has one size. With multiple clients attached, the daemon tracks each client's dimensions and sets the PTY to `min(cols) x min(rows)` across all attached clients. This ensures all clients see correctly-rendered output (the larger client wastes space but nothing wraps or truncates).
+
+```rust
+// Per-session size registry: client_id → (cols, rows)
+type SessionSizes = Arc<Mutex<HashMap<String, HashMap<usize, (u16, u16)>>>>;
+```
+
+On `Resize { session_id, cols, rows }`: update this client's entry in the size registry, compute `min(cols)` and `min(rows)` across all attached clients, and apply to the PTY via `ioctl(TIOCSWINSZ)` only if the effective size changed. The client identifier can be the writer's `Arc` pointer address (unique per connection).
+
+On `Detach` or writer removal (broken pipe): remove the client's size entry, recompute, and resize if needed — the remaining client(s) may get more space.
 
 **Pre-attach buffer:** Each new Attach flushes the pre-attach buffer to that specific client (if still available). The buffer is consumed after the first Attach — subsequent clients that attach later won't receive startup output. This is acceptable: the primary consumer (the app that spawned the session) always attaches first.
 
@@ -263,7 +274,7 @@ New invariants:
 
 ### Daemon (`crates/daemon/`)
 - `src/protocol.rs` — Add `ShuttingDown` variant to `Event` enum + serialization test
-- `src/main.rs` — Replace `ActiveWriter` (single writer) with `Vec<SessionWriter>` (broadcast list); update `stream_output` to iterate writers and drop failed ones; update `Attach` to push to writer list instead of swapping; update `Detach` to remove from list; add `hook_tx` parameter to `handle_handoff`; update call site in `handle_connection`; broadcast `ShuttingDown` before exit; increase exit delay to 500ms
+- `src/main.rs` — Replace `ActiveWriter` (single writer) with `Vec<SessionWriter>` (broadcast list); add `SessionSizes` registry for smallest-client-wins resize; update `stream_output` to iterate writers and drop failed ones; update `Attach` to push to writer list and register client size; update `Detach` to remove from list and recompute size; update `Resize` to compute min dimensions across all attached clients; add `hook_tx` parameter to `handle_handoff`; update call site in `handle_connection`; broadcast `ShuttingDown` before exit; increase exit delay to 500ms
 
 ### Tauri Backend (`apps/desktop/src-tauri/`)
 - `src/lib.rs` — Rewrite `spawn_event_bridge` with reconnect loop and `daemon_state`/`daemon_ready` coordination; add `AttachedSessions` managed state; add `HAS_SPAWNED` guard with crash recovery fallback; spawn re-attach coordinator listening for `daemon_ready`
