@@ -290,6 +290,10 @@ export const useKannaStore = defineStore("kanna", () => {
       return;
     }
 
+    // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
+    spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv))
+      .catch(e => console.error("[store] shell pre-warm failed:", e));
+
     try {
       if (agentType !== "pty") {
         await invoke("create_agent_session", {
