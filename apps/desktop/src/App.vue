@@ -85,6 +85,7 @@ const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
 const shellModalRef = ref<InstanceType<typeof ShellModal> | null>(null);
 const diffModalRef = ref<InstanceType<typeof DiffModal> | null>(null);
 const treeExplorerRef = ref<InstanceType<typeof TreeExplorerModal> | null>(null);
+const filePreviewRef = ref<InstanceType<typeof FilePreviewModal> | null>(null);
 const preferencesRef = ref<InstanceType<typeof PreferencesPanel> | null>(null);
 
 // Navigation
@@ -346,7 +347,7 @@ const keyboardActions = {
   dismiss: () => {
     if (showCommandPalette.value) { showCommandPalette.value = false; return; }
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return; }
-    if (showFilePreviewModal.value) { showFilePreviewModal.value = false; maximizedModal.value = null; return; }
+    if (showFilePreviewModal.value) { filePreviewRef.value?.dismiss(); return; }
     if (showFilePickerModal.value) { showFilePickerModal.value = false; return; }
     // Shell before diff: Escape closes the topmost modal first
     if (showShellModal.value) { return; }
@@ -701,6 +702,7 @@ onMounted(async () => {
       @open-file="(f: string) => { previewFilePath = f; showFilePreviewModal = true; }"
     />
     <FilePreviewModal
+      ref="filePreviewRef"
       v-if="showFilePreviewModal && store.selectedRepo?.path"
       :file-path="previewFilePath"
       :worktree-path="activeWorktreePath"
