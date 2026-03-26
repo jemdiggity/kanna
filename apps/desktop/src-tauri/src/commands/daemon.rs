@@ -28,6 +28,7 @@ enum AgentState {
 struct SessionScanState {
     buffer: String,
     last_data_at: Instant,
+    last_spinner_at: Option<Instant>,
     state: AgentState,
     provider: AgentProvider,
 }
@@ -37,6 +38,7 @@ impl SessionScanState {
         Self {
             buffer: String::new(),
             last_data_at: Instant::now(),
+            last_spinner_at: None,
             state: AgentState::Idle,
             provider,
         }
@@ -51,48 +53,67 @@ impl SessionScanState {
         }
     }
 
-    fn flush(&mut self) -> Vec<&'static str> {
+    /// Called on each fragment. Returns events to emit immediately
+    /// (e.g., working transition when spinner first appears).
+    fn on_fragment(&mut self, text: &str) -> Vec<&'static str> {
         let mut events = Vec::new();
-        let buf = &self.buffer;
-        let has_idle_prompt = buf.contains('\u{276F}'); // ❯
 
         match self.provider {
             AgentProvider::Claude => {
-                let has_spinner = buf.chars().any(|c| CLAUDE_SPINNERS.contains(&c));
-                if has_spinner && self.state != AgentState::Working {
-                    self.state = AgentState::Working;
-                    events.push("ClaudeWorking");
-                } else if has_idle_prompt && !has_spinner && self.state != AgentState::Idle {
-                    self.state = AgentState::Idle;
-                    events.push("ClaudeIdle");
-                }
-                if buf.contains("Do you want to allow") {
-                    events.push("WaitingForInput");
+                if text.chars().any(|c| CLAUDE_SPINNERS.contains(&c)) {
+                    self.last_spinner_at = Some(Instant::now());
+                    if self.state != AgentState::Working {
+                        self.state = AgentState::Working;
+                        events.push("ClaudeWorking");
+                    }
                 }
             }
             AgentProvider::Copilot => {
-                if buf.contains("Thinking") {
+                if text.contains("Thinking") {
                     if self.state != AgentState::Working {
                         self.state = AgentState::Working;
                     }
                     events.push("CopilotThinking");
                 }
-                if has_idle_prompt && !buf.contains("Thinking") {
+                let has_idle_prompt = text.contains('\u{276F}');
+                if has_idle_prompt && !text.contains("Thinking") {
                     if self.state != AgentState::Idle {
                         self.state = AgentState::Idle;
                     }
                     events.push("CopilotIdle");
                 }
-                if buf.contains("Operation cancelled") {
+                if text.contains("Operation cancelled") {
                     events.push("Interrupted");
                 }
             }
         }
 
-        // Shared patterns
-        if buf.contains("Interrupted") {
+        // Shared text pattern checks
+        if text.contains("Interrupted") {
             self.state = AgentState::Idle;
             events.push("Interrupted");
+        }
+        if text.contains("Do you want to allow") {
+            events.push("WaitingForInput");
+        }
+
+        events
+    }
+
+    /// Called by the timer. Checks if spinner activity has gone quiet
+    /// and transitions to idle if so.
+    fn check_idle(&mut self) -> Vec<&'static str> {
+        let mut events = Vec::new();
+
+        if self.provider == AgentProvider::Claude && self.state == AgentState::Working {
+            let idle_threshold = std::time::Duration::from_millis(SCAN_FLUSH_MS);
+            let spinner_stale = self.last_spinner_at
+                .map(|t| t.elapsed() >= idle_threshold)
+                .unwrap_or(true);
+            if spinner_stale {
+                self.state = AgentState::Idle;
+                events.push("ClaudeIdle");
+            }
         }
 
         self.buffer.clear();
@@ -346,7 +367,7 @@ pub async fn attach_session_inner(
                     continue;
                 }
                 if state.last_data_at.elapsed() >= std::time::Duration::from_millis(SCAN_FLUSH_MS) {
-                    let events = state.flush();
+                    let events = state.check_idle();
                     for event_name in events {
                         let hook = serde_json::json!({
                             "session_id": &sid_timer,
@@ -421,16 +442,16 @@ pub async fn attach_session_inner(
                             let mut state = scan_state.lock().await;
                             state.append(text);
 
-                            // Immediate flush on idle prompt delimiter
-                            if text.contains('\u{276F}') {
-                                let events = state.flush();
-                                for event_name in events {
-                                    let hook = serde_json::json!({
-                                        "session_id": event.get("session_id"),
-                                        "event": event_name,
-                                    });
-                                    let _ = app.emit("hook_event", &hook);
-                                }
+                            // Check fragment for immediate events (spinner → working,
+                            // text patterns like Interrupted/WaitingForInput).
+                            // Idle detection is handled by the timer via check_idle().
+                            let events = state.on_fragment(text);
+                            for event_name in events {
+                                let hook = serde_json::json!({
+                                    "session_id": event.get("session_id"),
+                                    "event": event_name,
+                                });
+                                let _ = app.emit("hook_event", &hook);
                             }
                         }
                     } else {
