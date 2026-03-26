@@ -34,7 +34,7 @@ Tabs left to right: **Working** | **Last Commit** | **Branch**
 
 ### Database: `base_ref` Column
 
-Add `base_ref TEXT` to the `worktree` table via the existing `addColumn` migration pattern.
+Add `base_ref TEXT` to the `pipeline_item` table via the existing `addColumn` migration pattern. (The `worktree` table is unused at runtime — all task data lives on `pipeline_item`.)
 
 Populated at task creation time:
 1. Resolve `origin/{defaultBranch}` — use this if it exists
