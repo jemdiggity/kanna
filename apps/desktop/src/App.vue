@@ -91,17 +91,21 @@ const preferencesRef = ref<InstanceType<typeof PreferencesPanel> | null>(null);
 // Navigation
 function navigateItems(direction: -1 | 1) {
   const allItems = store.sortedItemsAllRepos;
-  if (allItems.length === 0) return;
-  const currentIndex = allItems.findIndex((i) => i.id === store.selectedItemId);
+  const sidebar = sidebarRef.value;
+  const visibleItems = sidebar?.searchQuery
+    ? allItems.filter((i) => sidebar.matchesSearch(i))
+    : allItems;
+  if (visibleItems.length === 0) return;
+  const currentIndex = visibleItems.findIndex((i) => i.id === store.selectedItemId);
   let nextIndex: number;
   if (currentIndex === -1) {
     nextIndex = 0;
   } else {
     nextIndex = currentIndex + direction;
     if (nextIndex < 0) nextIndex = 0;
-    if (nextIndex >= allItems.length) nextIndex = allItems.length - 1;
+    if (nextIndex >= visibleItems.length) nextIndex = visibleItems.length - 1;
   }
-  const nextItem = allItems[nextIndex];
+  const nextItem = visibleItems[nextIndex];
   if (nextItem.id !== store.selectedItemId) {
     if (nextItem.repo_id !== store.selectedRepoId) {
       store.selectRepo(nextItem.repo_id);

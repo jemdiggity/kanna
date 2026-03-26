@@ -197,7 +197,7 @@ function focusSearch() {
   searchInputRef.value?.focus();
 }
 
-defineExpose({ renameSelectedItem, focusSearch });
+defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
 </script>
 
 <template>
