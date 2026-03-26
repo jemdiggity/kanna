@@ -15,6 +15,7 @@ const { t } = useI18n();
 registerContextShortcuts("diff", [
   { label: t('diffView.shortcutScopeNext'), display: "⇧⌘]" },
   { label: t('diffView.shortcutScopePrev'), display: "⇧⌘[" },
+  { label: t('diffView.shortcutToggleStaged'), display: "s" },
   { label: t('diffView.shortcutLineUpDown'), display: "j / k" },
   { label: t('diffView.shortcutPageUpDown'), display: "f / b" },
   { label: t('diffView.shortcutHalfUpDown'), display: "d / u" },
@@ -235,6 +236,15 @@ function cycleScopeBack() {
 
 useLessScroll(containerRef, {
   extraHandler(e) {
+    // s — toggle include staged (only in working scope)
+    if (e.key === "s" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      if (scope.value === "working") {
+        e.preventDefault();
+        includeStaged.value = !includeStaged.value;
+        loadDiff();
+        return true;
+      }
+    }
     // Cmd+Shift+] — next scope
     if (e.key === "]" && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
@@ -263,12 +273,19 @@ defineExpose({ refresh: loadDiff });
   <div class="diff-view">
     <div class="diff-toolbar">
       <div class="scope-selector">
-        <button :class="{ active: scope === 'branch' }" @click="scope = 'branch'; loadDiff()">{{ $t('diffView.scopeBranch') }}</button>
-        <button :class="{ active: scope === 'commit' }" @click="scope = 'commit'; loadDiff()">{{ $t('diffView.scopeLastCommit') }}</button>
         <button :class="{ active: scope === 'working' }" @click="scope = 'working'; loadDiff()">{{ $t('diffView.scopeWorking') }}</button>
+        <button :class="{ active: scope === 'commit' }" @click="scope = 'commit'; loadDiff()">{{ $t('diffView.scopeLastCommit') }}</button>
+        <button :class="{ active: scope === 'branch' }" @click="scope = 'branch'; loadDiff()">{{ $t('diffView.scopeBranch') }}</button>
       </div>
+      <button
+        v-if="scope === 'working'"
+        class="staged-toggle"
+        :class="{ active: includeStaged }"
+        @click="includeStaged = !includeStaged; loadDiff()"
+      >{{ $t('diffView.includeStaged') }}</button>
     </div>
     <div v-if="error" class="diff-status diff-error">{{ error }}</div>
+    <div v-else-if="noBranchCommits && !loading" class="diff-status">{{ $t('diffView.noCommitsSinceBranching') }}</div>
     <div v-else-if="noDiff && !loading" class="diff-status">{{ $t('diffView.noChanges') }}</div>
     <div ref="containerRef" class="diff-container"></div>
   </div>
@@ -313,6 +330,23 @@ defineExpose({ refresh: loadDiff });
 .scope-selector button:not(:first-child) { border-left: none; }
 
 .scope-selector button.active {
+  background: #0066cc;
+  border-color: #0077ee;
+  color: #fff;
+}
+
+.staged-toggle {
+  margin-left: 12px;
+  padding: 3px 10px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  color: #888;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.staged-toggle.active {
   background: #0066cc;
   border-color: #0077ee;
   color: #fff;
