@@ -282,6 +282,17 @@ useLessScroll(contentRef, {
   onClose: () => emit("close"),
 });
 
+/** Layered dismiss: close search first, then close modal. */
+function dismiss() {
+  if (isSearching.value) {
+    closeSearch();
+  } else {
+    emit("close");
+  }
+}
+
+defineExpose({ dismiss });
+
 onMounted(() => {
   loadFile();
   nextTick(() => modalRef.value?.focus());

@@ -126,14 +126,16 @@ export function useInlineSearch(rawText: Ref<string>): InlineSearchReturn {
       closeSearch();
       return;
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter") {
       e.preventDefault();
-      nextMatch();
-      return;
-    }
-    if (e.key === "Enter" && e.shiftKey) {
-      e.preventDefault();
-      prevMatch();
+      // Blur the input to confirm the search (like vim/less).
+      // n / N will now navigate matches via handleSearchKeys.
+      (e.target as HTMLElement)?.blur();
+      if (e.shiftKey) {
+        prevMatch();
+      } else {
+        nextMatch();
+      }
       return;
     }
   }
