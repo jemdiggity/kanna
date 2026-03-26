@@ -3,9 +3,9 @@
 //! These tests spawn a real daemon process and communicate with it over
 //! Unix sockets, verifying that:
 //!   - Attach/reattach doesn't split PTY bytes between readers
-//!   - Reattach swaps writer without scrollback replay
+//!   - Multiple clients can attach and all receive output (broadcast)
 //!   - Input after reattach reaches the PTY
-//!   - Old stream_output tasks are cancelled on reattach
+//!   - New attachments join the broadcast without disrupting existing ones
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -49,17 +49,39 @@ enum Cmd {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum Evt {
-    Output { session_id: String, data: Vec<u8> },
-    Exit { session_id: String, code: i32 },
-    SessionCreated { session_id: String },
-    SessionList { sessions: Vec<Value> },
+    Output {
+        session_id: String,
+        data: Vec<u8>,
+    },
+    Exit {
+        session_id: String,
+        code: i32,
+    },
+    SessionCreated {
+        session_id: String,
+    },
+    SessionList {
+        sessions: Vec<Value>,
+    },
     Ok,
-    Error { message: String },
+    Error {
+        message: String,
+    },
     #[serde(other)]
     Unknown,
 }
 
 // ---- Test harness ----
+
+/// Compute the socket path using the same hash the daemon uses.
+fn compute_socket_path(dir: &PathBuf) -> PathBuf {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    dir.hash(&mut hasher);
+    let hash = hasher.finish() as u32;
+    PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
+}
 
 struct DaemonHandle {
     child: Child,
@@ -72,7 +94,7 @@ impl DaemonHandle {
         let dir = std::env::temp_dir().join(format!("kanna-daemon-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
-        let socket_path = dir.join("daemon.sock");
+        let socket_path = compute_socket_path(&dir);
 
         let daemon_bin = PathBuf::from(env!("CARGO_BIN_EXE_kanna-daemon"));
 
@@ -139,9 +161,8 @@ impl ClientConn {
     fn recv(&mut self) -> Evt {
         let mut line = String::new();
         self.reader.read_line(&mut line).expect("read timed out");
-        serde_json::from_str(line.trim()).unwrap_or_else(|e| {
-            panic!("failed to parse event: {} — line: {:?}", e, line.trim())
-        })
+        serde_json::from_str(line.trim())
+            .unwrap_or_else(|e| panic!("failed to parse event: {} — line: {:?}", e, line.trim()))
     }
 
     /// Read events until we've collected `n` bytes of Output data, or timeout.
@@ -159,9 +180,7 @@ impl ClientConn {
 
     /// Drain all pending Output events (non-blocking after first timeout).
     fn drain_output(&mut self, timeout: Duration) -> Vec<u8> {
-        self.writer
-            .set_read_timeout(Some(timeout))
-            .unwrap();
+        self.writer.set_read_timeout(Some(timeout)).unwrap();
         let mut collected = Vec::new();
         loop {
             let mut line = String::new();
@@ -309,8 +328,7 @@ fn test_reattach_same_connection_no_split_bytes() {
     );
 }
 
-/// Reattach from a DIFFERENT connection: simulates app restart.
-/// The old connection's stream_output should be cancelled.
+/// Attach from a DIFFERENT connection: both connections receive output (broadcast).
 #[test]
 fn test_reattach_new_connection_no_split_bytes() {
     let daemon = DaemonHandle::start();
@@ -324,11 +342,11 @@ fn test_reattach_new_connection_no_split_bytes() {
     send_input(&mut conn1, "sess-reconnect", b"initial\n");
     conn1.drain_output(Duration::from_millis(500));
 
-    // Connection 2: simulates app restart — new attach
+    // Connection 2: joins the broadcast — both conn1 and conn2 receive output
     let mut conn2 = daemon.connect();
     attach(&mut conn2, "sess-reconnect");
 
-    // Send data — should all arrive on conn2, none on conn1
+    // Send data — should arrive on conn2 (and conn1 too, via broadcast)
     let test_data = b"0123456789ABCDEF\n";
     send_input(&mut conn2, "sess-reconnect", test_data);
 
@@ -336,7 +354,7 @@ fn test_reattach_new_connection_no_split_bytes() {
     let output_str = String::from_utf8_lossy(&output);
     assert!(
         output_str.contains("0123456789ABCDEF"),
-        "expected full data on new connection (no split), got: {:?}",
+        "expected full data on new connection, got: {:?}",
         output_str
     );
 }
@@ -368,9 +386,44 @@ fn test_input_works_after_reattach() {
     );
 }
 
-/// Rapid reattach from separate connections: only the last should receive output.
-/// With the single-reader architecture, this just works — Attach swaps the
-/// writer target atomically, no reader duplication or cancellation needed.
+/// Two clients attached to the same session both receive output (broadcast model).
+#[test]
+fn test_broadcast_both_clients_receive_output() {
+    let daemon = DaemonHandle::start();
+
+    let mut shared = daemon.connect();
+    spawn_echo_session(&mut shared, "sess-broadcast");
+
+    // Two dedicated connections, both attach to the same session
+    let mut client_a = daemon.connect();
+    attach(&mut client_a, "sess-broadcast");
+    client_a.drain_output(Duration::from_millis(200));
+
+    let mut client_b = daemon.connect();
+    attach(&mut client_b, "sess-broadcast");
+    client_b.drain_output(Duration::from_millis(200));
+
+    // Send input
+    send_input(&mut shared, "sess-broadcast", b"BROADCAST\n");
+
+    // Both clients should receive the output
+    let output_a = client_a.collect_output(9);
+    let output_b = client_b.collect_output(9);
+    assert!(
+        String::from_utf8_lossy(&output_a).contains("BROADCAST"),
+        "client A should receive broadcast output, got: {:?}",
+        String::from_utf8_lossy(&output_a)
+    );
+    assert!(
+        String::from_utf8_lossy(&output_b).contains("BROADCAST"),
+        "client B should receive broadcast output, got: {:?}",
+        String::from_utf8_lossy(&output_b)
+    );
+}
+
+/// Rapid attach from separate connections: all connections receive output (broadcast).
+/// With the single-reader + broadcast architecture, each Attach pushes a writer
+/// to the broadcast Vec. The final connection (and all earlier ones) receive output.
 #[test]
 fn test_rapid_reattach() {
     let daemon = DaemonHandle::start();

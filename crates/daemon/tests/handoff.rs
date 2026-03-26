@@ -32,26 +32,55 @@ enum Cmd {
         cols: u16,
         rows: u16,
     },
-    Attach { session_id: String },
-    Input { session_id: String, data: Vec<u8> },
+    Attach {
+        session_id: String,
+    },
+    Input {
+        session_id: String,
+        data: Vec<u8>,
+    },
     List,
+    Subscribe,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum Evt {
-    Output { session_id: String, data: Vec<u8> },
-    Exit { session_id: String, code: i32 },
-    SessionCreated { session_id: String },
-    SessionList { sessions: Vec<Value> },
+    Output {
+        session_id: String,
+        data: Vec<u8>,
+    },
+    Exit {
+        session_id: String,
+        code: i32,
+    },
+    SessionCreated {
+        session_id: String,
+    },
+    SessionList {
+        sessions: Vec<Value>,
+    },
     Ok,
-    Error { message: String },
+    Error {
+        message: String,
+    },
+    ShuttingDown,
     #[serde(other)]
     Unknown,
 }
 
 // ---- Test harness ----
+
+/// Compute the socket path using the same hash the daemon uses.
+fn compute_socket_path(dir: &PathBuf) -> PathBuf {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    dir.hash(&mut hasher);
+    let hash = hasher.finish() as u32;
+    PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
+}
 
 struct DaemonHandle {
     child: Child,
@@ -66,7 +95,7 @@ impl DaemonHandle {
         std::fs::create_dir_all(dir).unwrap();
 
         let daemon_bin = PathBuf::from(env!("CARGO_BIN_EXE_kanna-daemon"));
-        let socket_path = dir.join("daemon.sock");
+        let socket_path = compute_socket_path(dir);
         let pid_path = dir.join("daemon.pid");
 
         let child = Command::new(&daemon_bin)
@@ -104,7 +133,9 @@ impl DaemonHandle {
 
     fn connect(&self) -> ClientConn {
         let stream = UnixStream::connect(&self.socket_path).expect("failed to connect");
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         ClientConn {
             reader: BufReader::new(stream.try_clone().unwrap()),
             writer: stream,
@@ -143,9 +174,8 @@ impl ClientConn {
     fn recv(&mut self) -> Evt {
         let mut line = String::new();
         self.reader.read_line(&mut line).expect("read timed out");
-        serde_json::from_str(line.trim()).unwrap_or_else(|e| {
-            panic!("failed to parse: {} — {:?}", e, line.trim())
-        })
+        serde_json::from_str(line.trim())
+            .unwrap_or_else(|e| panic!("failed to parse: {} — {:?}", e, line.trim()))
     }
 
     fn collect_output(&mut self, n: usize) -> Vec<u8> {
@@ -175,7 +205,9 @@ impl ClientConn {
                 Err(_) => break,
             }
         }
-        self.writer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        self.writer
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         collected
     }
 }
@@ -197,7 +229,9 @@ fn spawn_echo(conn: &mut ClientConn, id: &str) {
 }
 
 fn attach(conn: &mut ClientConn, id: &str) {
-    conn.send(&Cmd::Attach { session_id: id.to_string() });
+    conn.send(&Cmd::Attach {
+        session_id: id.to_string(),
+    });
     match conn.recv() {
         Evt::Ok => {}
         Evt::Error { message } => panic!("attach failed: {}", message),
@@ -206,7 +240,10 @@ fn attach(conn: &mut ClientConn, id: &str) {
 }
 
 fn send_input(conn: &mut ClientConn, id: &str, data: &[u8]) {
-    conn.send(&Cmd::Input { session_id: id.to_string(), data: data.to_vec() });
+    conn.send(&Cmd::Input {
+        session_id: id.to_string(),
+        data: data.to_vec(),
+    });
     loop {
         match conn.recv() {
             Evt::Ok => break,
@@ -218,7 +255,11 @@ fn send_input(conn: &mut ClientConn, id: &str, data: &[u8]) {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("kanna-handoff-test-{}-{}", name, std::process::id()))
+    std::env::temp_dir().join(format!(
+        "kanna-handoff-test-{}-{}",
+        name,
+        std::process::id()
+    ))
 }
 
 fn cleanup(dir: &PathBuf) {
@@ -303,7 +344,11 @@ fn test_handoff_multiple_sessions() {
         spawn_echo(&mut conn, &format!("sess-{}", i));
         let mut attach_conn = daemon_a.connect();
         attach(&mut attach_conn, &format!("sess-{}", i));
-        send_input(&mut attach_conn, &format!("sess-{}", i), format!("init-{}\n", i).as_bytes());
+        send_input(
+            &mut attach_conn,
+            &format!("sess-{}", i),
+            format!("init-{}\n", i).as_bytes(),
+        );
         attach_conn.drain_output(Duration::from_millis(200));
     }
 
@@ -317,15 +362,75 @@ fn test_handoff_multiple_sessions() {
     for i in 0..3 {
         let mut c = daemon_b.connect();
         attach(&mut c, &format!("sess-{}", i));
-        send_input(&mut c, &format!("sess-{}", i), format!("via-b-{}\n", i).as_bytes());
+        send_input(
+            &mut c,
+            &format!("sess-{}", i),
+            format!("via-b-{}\n", i).as_bytes(),
+        );
         let output = c.collect_output(6);
         let s = String::from_utf8_lossy(&output);
         assert!(
             s.contains(&format!("via-b-{}", i)),
-            "session {} should work after handoff, got: {:?}", i, s
+            "session {} should work after handoff, got: {:?}",
+            i,
+            s
         );
     }
 
     drop(daemon_b);
+    cleanup(&dir);
+}
+
+/// Two subscribed clients both receive ShuttingDown when handoff is triggered.
+#[test]
+fn test_handoff_broadcasts_shutting_down() {
+    let dir = test_dir("shutdown-broadcast");
+
+    let daemon_a = DaemonHandle::start_in(&dir);
+
+    // Two subscriber clients
+    let mut sub_a = daemon_a.connect();
+    sub_a.send(&Cmd::Subscribe);
+    match sub_a.recv() {
+        Evt::Ok => {}
+        other => panic!("expected Ok, got {:?}", other),
+    }
+
+    let mut sub_b = daemon_a.connect();
+    sub_b.send(&Cmd::Subscribe);
+    match sub_b.recv() {
+        Evt::Ok => {}
+        other => panic!("expected Ok, got {:?}", other),
+    }
+
+    // Set read timeouts before handoff (sockets may close during handoff)
+    sub_a
+        .reader
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    sub_b
+        .reader
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+
+    // Trigger handoff by starting daemon B in same dir
+    let _daemon_b = DaemonHandle::start_in(&dir);
+
+    let evt_a = sub_a.recv();
+    assert!(
+        matches!(evt_a, Evt::ShuttingDown),
+        "sub_a should get ShuttingDown, got: {:?}",
+        evt_a
+    );
+
+    let evt_b = sub_b.recv();
+    assert!(
+        matches!(evt_b, Evt::ShuttingDown),
+        "sub_b should get ShuttingDown, got: {:?}",
+        evt_b
+    );
+
     cleanup(&dir);
 }

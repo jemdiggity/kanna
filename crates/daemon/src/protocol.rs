@@ -37,7 +37,9 @@ pub enum Command {
     },
     List,
     Subscribe,
-    Handoff { version: u32 },
+    Handoff {
+        version: u32,
+    },
     HookEvent {
         session_id: String,
         event: String,
@@ -47,6 +49,7 @@ pub enum Command {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[allow(clippy::enum_variant_names)]
 pub enum Event {
     Output {
         session_id: String,
@@ -74,6 +77,7 @@ pub enum Event {
         sessions: Vec<SessionInfo>,
     },
     HandoffUnsupported,
+    ShuttingDown,
     HookEvent {
         session_id: String,
         event: String,
@@ -117,7 +121,13 @@ mod tests {
         let json = serde_json::to_string(&cmd).unwrap();
         let decoded: Command = serde_json::from_str(&json).unwrap();
         match decoded {
-            Command::Spawn { session_id, executable, cols, rows, .. } => {
+            Command::Spawn {
+                session_id,
+                executable,
+                cols,
+                rows,
+                ..
+            } => {
                 assert_eq!(session_id, "abc123");
                 assert_eq!(executable, "/bin/bash");
                 assert_eq!(cols, 80);
@@ -266,7 +276,11 @@ mod tests {
         let json = serde_json::to_string(&cmd).unwrap();
         let decoded: Command = serde_json::from_str(&json).unwrap();
         match decoded {
-            Command::HookEvent { session_id, event, data } => {
+            Command::HookEvent {
+                session_id,
+                event,
+                data,
+            } => {
                 assert_eq!(session_id, "s1");
                 assert_eq!(event, "Stop");
                 assert!(data.is_some());
@@ -285,13 +299,26 @@ mod tests {
         let json = serde_json::to_string(&evt).unwrap();
         let decoded: Event = serde_json::from_str(&json).unwrap();
         match decoded {
-            Event::HookEvent { session_id, event, data } => {
+            Event::HookEvent {
+                session_id,
+                event,
+                data,
+            } => {
                 assert_eq!(session_id, "s1");
                 assert_eq!(event, "Stop");
                 assert!(data.is_none());
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn test_event_shutting_down_roundtrip() {
+        let evt = Event::ShuttingDown;
+        let json = serde_json::to_string(&evt).unwrap();
+        assert_eq!(json, r#"{"type":"ShuttingDown"}"#);
+        let decoded: Event = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, Event::ShuttingDown));
     }
 
     #[test]
