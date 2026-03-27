@@ -144,7 +144,7 @@ export function useKeyboardShortcuts(actions: KeyboardActions, options?: { befor
     const ctx = options?.context?.();
     for (const def of shortcuts) {
       if (matches(def, e)) {
-        if (ctx && def.context && !def.context.includes(ctx)) continue;
+        if (ctx && !(def.context ?? ["main"]).includes(ctx)) continue;
         if (def.action !== "dismiss") e.preventDefault();
         options?.beforeAction?.(def.action);
         actions[def.action]();

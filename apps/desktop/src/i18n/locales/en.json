@@ -74,7 +74,8 @@
     "diff": "Diff Viewer Shortcuts",
     "file": "File Viewer Shortcuts",
     "shell": "Shell Shortcuts",
-    "tree": "Tree Explorer Shortcuts"
+    "tree": "Tree Explorer Shortcuts",
+    "newTask": "New Task Shortcuts"
   },
   "sidebar": {
     "searchPlaceholder": "Search tasks…  ⌘F",
