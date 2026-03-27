@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
-import { hasTag } from "@kanna/core";
+import { parseRepoConfig } from "@kanna/core";
 import { getSetting, setSetting, type DbHandle } from "@kanna/db";
 import i18n from "./i18n";
 import Sidebar from "./components/Sidebar.vue";
@@ -38,6 +38,11 @@ import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
 
+function hasTag(item: { tags: string }, tag: string): boolean {
+  try { return (JSON.parse(item.tags) as string[]).includes(tag); }
+  catch { return false; }
+}
+
 const store = useKannaStore();
 const toast = useToast();
 const { t } = useI18n();
@@ -49,6 +54,8 @@ useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 
 // UI state
 const showNewTaskModal = ref(false);
+const availablePipelines = ref<string[]>([]);
+const defaultPipelineName = ref<string | undefined>(undefined);
 const showAddRepoModal = ref(false);
 const addRepoInitialTab = ref<"create" | "import">("create");
 const showShortcutsModal = ref(false);
@@ -136,7 +143,7 @@ function navigateRepos(direction: -1 | 1) {
   // Restore last-selected task for this repo, or fall back to first task
   const lastItemId = store.lastSelectedItemByRepo[nextRepo.id];
   const lastItem = lastItemId
-    ? store.items.find((i) => i.id === lastItemId && i.repo_id === nextRepo.id && !hasTag(i, "done"))
+    ? store.items.find((i) => i.id === lastItemId && i.repo_id === nextRepo.id && i.closed_at == null)
     : undefined;
   if (lastItem) {
     store.selectItem(lastItem.id);
@@ -163,7 +170,7 @@ const blockerCandidates = computed(() => {
   if (!item) return [];
   return store.items.filter((i) =>
     i.id !== item.id &&
-    !hasTag(i, "done") &&
+    i.closed_at == null &&
     i.repo_id === store.selectedRepoId
   );
 });
@@ -172,7 +179,7 @@ const blockerCandidates = computed(() => {
 const disabledBlockerIds = computedAsync(async () => {
   const item = store.currentItem;
   if (!item) return [];
-  if (!hasTag(item, "done")) {
+  if (item.closed_at == null) {
     const dependents = await collectDependents(item.id);
     return [...dependents];
   }
@@ -198,9 +205,9 @@ async function collectDependents(itemId: string): Promise<Set<string>> {
 
 const preselectedBlockerIds = computedAsync(async () => {
   const item = store.currentItem;
-  if (!item || !hasTag(item, "blocked")) return [];
+  if (!item) return [];
   const blockers = await store.listBlockersForItem(item.id);
-  return blockers.map((b: any) => b.id);
+  return blockers.map((b) => b.id);
 }, []);
 
 // Build a map of blocked item ID → blocker names for the sidebar
@@ -236,7 +243,7 @@ async function onBlockerConfirm(selectedIds: string[]) {
 const paletteExtraCommands = computed(() => {
   const cmds: Array<{ action: ActionName; label: string; group: string; shortcut: string }> = [];
   const item = store.currentItem;
-  if (item && !hasTag(item, "done") && !hasTag(item, "blocked")) {
+  if (item && item.closed_at == null && !hasTag(item, "blocked")) {
     cmds.push({ action: "blockTask", label: t('tasks.blockTask'), group: t('shortcuts.groupTasks'), shortcut: "" });
   }
   if (item && hasTag(item, "blocked")) {
@@ -278,9 +285,47 @@ async function handleCreateCustomTask() {
   if (!repo) return;
   try {
     await store.createItem(store.selectedRepoId, repo.path, NEW_CUSTOM_TASK_PROMPT);
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[App] custom task creation failed:", e);
-    alert(`${t('app.customTaskCreationFailed')}: ${e?.message || e}`);
+    alert(`${t('app.customTaskCreationFailed')}: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+async function handleCreateAgent() {
+  if (!store.selectedRepoId) {
+    if (store.repos.length === 1) {
+      store.selectedRepoId = store.repos[0].id;
+    } else {
+      alert(t('app.selectRepoFirst'));
+      return;
+    }
+  }
+  const repo = store.repos.find((r) => r.id === store.selectedRepoId);
+  if (!repo) return;
+  try {
+    await store.createItem(store.selectedRepoId, repo.path, "Help me create a new agent definition for this repository.");
+  } catch (e: unknown) {
+    console.error("[App] create agent task failed:", e);
+    alert(`Failed to create agent task: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+async function handleCreatePipeline() {
+  if (!store.selectedRepoId) {
+    if (store.repos.length === 1) {
+      store.selectedRepoId = store.repos[0].id;
+    } else {
+      alert(t('app.selectRepoFirst'));
+      return;
+    }
+  }
+  const repo = store.repos.find((r) => r.id === store.selectedRepoId);
+  if (!repo) return;
+  try {
+    await store.createItem(store.selectedRepoId, repo.path, "Help me create a new pipeline definition for this repository.");
+  } catch (e: unknown) {
+    console.error("[App] create pipeline task failed:", e);
+    alert(`Failed to create pipeline task: ${e instanceof Error ? e.message : e}`);
   }
 }
 
@@ -294,6 +339,19 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
       execute: () => sidebarRef.value?.renameSelectedItem(),
     });
   }
+  // Factory commands
+  cmds.push({
+    id: "create-agent",
+    label: "Create Agent",
+    description: "Create a new agent definition",
+    execute: () => { handleCreateAgent().catch((e) => console.error("[App] create agent failed:", e)); },
+  });
+  cmds.push({
+    id: "create-pipeline",
+    label: "Create Pipeline",
+    description: "Create a new pipeline definition",
+    execute: () => { handleCreatePipeline().catch((e) => console.error("[App] create pipeline failed:", e)); },
+  });
   // Always include "New Custom Task" option
   cmds.push({
     id: "custom-task-new",
@@ -333,7 +391,7 @@ const currentShortcutContext = computed<ShortcutContext>(() => {
 
 // Keyboard shortcuts
 const keyboardActions = {
-  newTask: () => { showNewTaskModal.value = true; },
+  newTask: () => { openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e)); },
   newWindow: async () => {
     if (isTauri) {
       const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -371,8 +429,7 @@ const keyboardActions = {
     const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
     await invoke("run_script", { script: `${store.ideCommand} "${worktreePath}"`, cwd: worktreePath, env: {} }).catch((e) => console.error("[openInIDE] failed:", e));
   },
-  makePR: () => store.makePR(),
-  mergeQueue: () => store.mergeQueue(),
+  advanceStage: () => { const item = store.currentItem; if (item) void store.advanceStage(item.id); },
   closeTask: () => store.closeTask(),
   undoClose: () => store.undoClose(),
   navigateUp: () => navigateItems(-1),
@@ -560,8 +617,35 @@ function handleSelectItem(itemId: string) {
   store.selectItem(itemId);
 }
 
+async function openNewTaskModal(repoId?: string) {
+  if (repoId) store.selectedRepoId = repoId;
+  const repoPath = store.repos.find((r) => r.id === (repoId ?? store.selectedRepoId))?.path;
+  if (repoPath) {
+    const pipelinesDir = `${repoPath}/.kanna/pipelines`;
+    const files = await invoke<string[]>("list_dir", { path: pipelinesDir }).catch(() => [] as string[]);
+    availablePipelines.value = files
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => f.replace(/\.json$/, ""));
+    const configContent = await invoke<string>("read_text_file", { path: `${repoPath}/.kanna/config.json` }).catch(() => "");
+    if (configContent) {
+      try {
+        const config = parseRepoConfig(configContent);
+        defaultPipelineName.value = config.pipeline;
+      } catch {
+        defaultPipelineName.value = undefined;
+      }
+    } else {
+      defaultPipelineName.value = undefined;
+    }
+  } else {
+    availablePipelines.value = [];
+    defaultPipelineName.value = undefined;
+  }
+  showNewTaskModal.value = true;
+}
+
 // Handlers that mix UI state + store
-async function handleNewTaskSubmit(prompt: string, agentProvider: "claude" | "copilot" = "claude") {
+async function handleNewTaskSubmit(prompt: string, agentProvider: "claude" | "copilot" = "claude", pipelineName?: string) {
   if (!store.selectedRepoId) {
     if (store.repos.length === 1) {
       store.selectedRepoId = store.repos[0].id;
@@ -574,10 +658,11 @@ async function handleNewTaskSubmit(prompt: string, agentProvider: "claude" | "co
   if (!repo) return;
   showNewTaskModal.value = false;
   try {
-    await store.createItem(store.selectedRepoId, repo.path, prompt, "pty", { agentProvider });
-  } catch (e: any) {
+    await store.createItem(store.selectedRepoId, repo.path, prompt, "pty", { agentProvider, pipelineName });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
     console.error("Task creation failed:", e);
-    toast.error(`${t('toasts.taskCreationFailed')}: ${e?.message || e}`);
+    toast.error(`${t('toasts.taskCreationFailed')}: ${msg}`);
   }
 }
 
@@ -613,7 +698,7 @@ async function handleCloneRepo(url: string, destination: string) {
 
 const currentBlockers = computedAsync(async () => {
   const item = store.currentItem;
-  if (!item || !hasTag(item, "blocked")) return [];
+  if (!item) return [];
   return store.listBlockersForItem(item.id);
 }, []);
 
@@ -698,7 +783,7 @@ onMounted(async () => {
       :blocker-names="sidebarBlockerNames"
       @select-repo="store.selectRepo"
       @select-item="handleSelectItem"
-      @new-task="(repoId: string) => { store.selectedRepoId = repoId; showNewTaskModal = true; }"
+      @new-task="(repoId: string) => openNewTaskModal(repoId).catch((e) => console.error('[App] openNewTaskModal failed:', e))"
       @pin-item="store.pinItem"
       @unpin-item="store.unpinItem"
       @reorder-pinned="store.reorderPinned"
@@ -720,7 +805,9 @@ onMounted(async () => {
     <NewTaskModal
       v-if="showNewTaskModal"
       :default-agent-provider="preferences.defaultAgentProvider"
-      @submit="handleNewTaskSubmit"
+      :pipelines="availablePipelines"
+      :default-pipeline="defaultPipelineName"
+      @submit="(prompt, agentProvider, pipelineName) => handleNewTaskSubmit(prompt, agentProvider, pipelineName)"
       @cancel="showNewTaskModal = false"
     />
     <AddRepoModal

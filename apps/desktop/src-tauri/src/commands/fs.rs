@@ -38,6 +38,17 @@ pub fn get_app_data_dir(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn get_pipeline_socket_path(
+    state: tauri::State<'_, crate::PipelineSocketState>,
+) -> Result<String, String> {
+    state
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "pipeline socket path not initialized".to_string())
+}
+
+#[tauri::command]
 pub fn copy_file(src: String, dst: String) -> Result<(), String> {
     std::fs::copy(&src, &dst)
         .map(|_| ())

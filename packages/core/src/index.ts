@@ -1,4 +1,4 @@
-// Pipeline (tags)
+// Pipeline (stage helpers)
 export * from "./pipeline/types.js";
 
 // Slack

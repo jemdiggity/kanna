@@ -1,8 +1,6 @@
 {
   "tasks": {
     "newTask": "新規タスク",
-    "makePR": "PR作成",
-    "mergeQueue": "マージキュー",
     "closeTask": "クローズ / 却下",
     "undoClose": "クローズ取り消し",
     "blockTask": "タスクをブロック",
@@ -41,8 +39,7 @@
     "groupViews": "表示",
     "groupHelp": "ヘルプ",
     "newTask": "新規タスク",
-    "makePR": "PR作成",
-    "mergeQueue": "マージキュー",
+    "advanceStage": "ステージを進める",
     "closeReject": "クローズ / 却下",
     "undoClose": "クローズ取り消し",
     "previousTask": "前のタスク",
@@ -114,7 +111,12 @@
     "blockedWorktreeFailed": "ブロックタスクのワークツリー作成に失敗しました",
     "blockTaskFailed": "タスクのブロックに失敗しました",
     "selectRepoFirst": "リポジトリを先に選択してください",
-    "agentStartFailed": "エージェントの開始に失敗しました"
+    "agentStartFailed": "エージェントの開始に失敗しました",
+    "pipelineNotFound": "パイプライン定義が見つかりません",
+    "taskAtFinalStage": "タスクは最終ステージにあります",
+    "stageTeardownFailed": "ステージのティアダウンスクリプトが失敗しました",
+    "stageSetupFailed": "ステージのセットアップスクリプトが失敗しました",
+    "stageNotFound": "パイプラインにステージが見つかりません"
   },
   "tags": {
     "inProgress": "進行中",

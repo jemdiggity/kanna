@@ -358,7 +358,8 @@ pub async fn attach_session_inner(
     let attached_clone = attached.clone();
     use tauri::Emitter;
     tauri::async_runtime::spawn(async move {
-        let scan_state = std::sync::Arc::new(tokio::sync::Mutex::new(SessionScanState::new(provider)));
+        let scan_state =
+            std::sync::Arc::new(tokio::sync::Mutex::new(SessionScanState::new(provider)));
 
         // Spawn a flush timer task
         let scan_state_timer = scan_state.clone();

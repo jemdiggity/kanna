@@ -62,19 +62,21 @@ export async function listPipelineItems(
 
 export async function insertPipelineItem(
   db: DbHandle,
-  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "stage" | "tags" | "base_ref" | "claude_session_id"> & { tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
+  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "claude_session_id"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
 ): Promise<void> {
   const tagsJson = JSON.stringify(item.tags ?? []);
   await db.execute(
     `INSERT INTO pipeline_item
-       (id, repo_id, issue_number, issue_title, prompt, stage, tags, pr_number, pr_url, branch, agent_type, agent_provider, port_offset, port_env, activity, activity_changed_at, display_name, base_ref)
-     VALUES (?, ?, ?, ?, ?, 'legacy', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
+       (id, repo_id, issue_number, issue_title, prompt, pipeline, stage, tags, pr_number, pr_url, branch, agent_type, agent_provider, port_offset, port_env, activity, activity_changed_at, display_name, base_ref)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
     [
       item.id,
       item.repo_id,
       item.issue_number,
       item.issue_title,
       item.prompt,
+      item.pipeline ?? "default",
+      item.stage ?? "in progress",
       tagsJson,
       item.pr_number,
       item.pr_url,
@@ -94,52 +96,35 @@ export async function insertPipelineItem(
   );
 }
 
-export async function updatePipelineItemTags(
+export async function updatePipelineItemStage(
   db: DbHandle,
   id: string,
-  tags: string[]
+  stage: string
 ): Promise<void> {
   await db.execute(
-    "UPDATE pipeline_item SET tags = ?, updated_at = datetime('now') WHERE id = ?",
-    [JSON.stringify(tags), id]
+    `UPDATE pipeline_item SET stage = ?, updated_at = datetime('now') WHERE id = ?`,
+    [stage, id]
   );
 }
 
-export async function addPipelineItemTag(
+export async function updatePipelineItemStageResult(
   db: DbHandle,
   id: string,
-  tag: string
+  result: string
 ): Promise<void> {
-  const rows = await db.select<{ tags: string }>(
-    "SELECT tags FROM pipeline_item WHERE id = ?",
-    [id]
-  );
-  const current: string[] = rows[0]?.tags ? JSON.parse(rows[0].tags) : [];
-  if (!current.includes(tag)) {
-    current.push(tag);
-  }
-  const closedAt = (tag === "done" || tag === "archived") ? ", closed_at = datetime('now')" : "";
   await db.execute(
-    `UPDATE pipeline_item SET tags = ?${closedAt}, updated_at = datetime('now') WHERE id = ?`,
-    [JSON.stringify(current), id]
+    `UPDATE pipeline_item SET stage_result = ?, updated_at = datetime('now') WHERE id = ?`,
+    [result, id]
   );
 }
 
-export async function removePipelineItemTag(
+export async function clearPipelineItemStageResult(
   db: DbHandle,
-  id: string,
-  tag: string
+  id: string
 ): Promise<void> {
-  const rows = await db.select<{ tags: string }>(
-    "SELECT tags FROM pipeline_item WHERE id = ?",
-    [id]
-  );
-  const current: string[] = rows[0]?.tags ? JSON.parse(rows[0].tags) : [];
-  const updated = current.filter((t) => t !== tag);
-  const closedAt = (tag === "done" || tag === "archived") ? ", closed_at = NULL" : "";
   await db.execute(
-    `UPDATE pipeline_item SET tags = ?${closedAt}, updated_at = datetime('now') WHERE id = ?`,
-    [JSON.stringify(updated), id]
+    `UPDATE pipeline_item SET stage_result = NULL, updated_at = datetime('now') WHERE id = ?`,
+    [id]
   );
 }
 
@@ -212,6 +197,26 @@ export async function updateClaudeSessionId(
   await db.execute(
     "UPDATE pipeline_item SET claude_session_id = ?, updated_at = datetime('now') WHERE id = ?",
     [claudeSessionId, id]
+  );
+}
+
+export async function closePipelineItem(
+  db: DbHandle,
+  id: string
+): Promise<void> {
+  await db.execute(
+    "UPDATE pipeline_item SET closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+    [id]
+  );
+}
+
+export async function reopenPipelineItem(
+  db: DbHandle,
+  id: string
+): Promise<void> {
+  await db.execute(
+    "UPDATE pipeline_item SET closed_at = NULL, updated_at = datetime('now') WHERE id = ?",
+    [id]
   );
 }
 
@@ -297,14 +302,19 @@ export async function listBlockedByItem(
 export async function getUnblockedItems(
   db: DbHandle,
 ): Promise<PipelineItem[]> {
+  // A task is "blocked" if it has entries in task_blocker.
+  // It becomes "unblocked" when all its blockers have closed_at set.
   return db.select<PipelineItem>(
     `SELECT pi.* FROM pipeline_item pi
-     WHERE pi.tags LIKE '%"blocked"%'
+     WHERE EXISTS (
+       SELECT 1 FROM task_blocker tb WHERE tb.blocked_item_id = pi.id
+     )
+     AND pi.closed_at IS NULL
      AND NOT EXISTS (
        SELECT 1 FROM task_blocker tb
        JOIN pipeline_item blocker ON blocker.id = tb.blocker_item_id
        WHERE tb.blocked_item_id = pi.id
-       AND blocker.tags NOT LIKE '%"done"%'
+       AND blocker.closed_at IS NULL
      )`,
   );
 }

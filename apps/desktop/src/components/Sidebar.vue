@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import type { Repo, PipelineItem } from "@kanna/db";
-import { hasTag, isHidden } from "@kanna/core";
 import { ref, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
 import { fuzzyMatch } from "../utils/fuzzyMatch";
+
+function hasTag(item: { tags: string }, tag: string): boolean {
+  try { return (JSON.parse(item.tags) as string[]).includes(tag); }
+  catch { return false; }
+}
+
+function isHidden(item: { closed_at: string | null }): boolean {
+  return item.closed_at !== null;
+}
 
 const { t } = useI18n();
 
@@ -49,25 +57,7 @@ function sortedPinned(repoId: string): PipelineItem[] {
 }
 
 function sortByCreatedAt(items: PipelineItem[]): PipelineItem[] {
-  return items.sort((a, b) => b.created_at.localeCompare(a.created_at));
-}
-
-function sortedPR(repoId: string): PipelineItem[] {
-  return sortByCreatedAt(
-    props.pipelineItems.filter((i) => i.repo_id === repoId && hasTag(i, "pr") && !isHidden(i) && !i.pinned && matchesSearch(i))
-  );
-}
-
-function sortedMerge(repoId: string): PipelineItem[] {
-  return sortByCreatedAt(
-    props.pipelineItems.filter((i) => i.repo_id === repoId && hasTag(i, "merge") && !isHidden(i) && !i.pinned && matchesSearch(i))
-  );
-}
-
-function sortedActive(repoId: string): PipelineItem[] {
-  return sortByCreatedAt(
-    props.pipelineItems.filter((i) => i.repo_id === repoId && !hasTag(i, "pr") && !hasTag(i, "merge") && !hasTag(i, "blocked") && !isHidden(i) && !i.pinned && matchesSearch(i))
-  );
+  return [...items].sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 function sortedBlocked(repoId: string): PipelineItem[] {
@@ -76,8 +66,60 @@ function sortedBlocked(repoId: string): PipelineItem[] {
   );
 }
 
+interface StageGroup {
+  stageName: string;
+  items: PipelineItem[];
+}
+
+/**
+ * Group non-pinned, non-blocked items for a repo by their stage field.
+ * Stage order is derived from first-appearance when items are sorted by created_at ASC
+ * (oldest items tend to be in earlier pipeline stages, giving a stable ordering).
+ */
+function groupedByStage(repoId: string): StageGroup[] {
+  const blockedSet = new Set(
+    props.pipelineItems
+      .filter((i) => i.repo_id === repoId && hasTag(i, "blocked") && !isHidden(i) && !i.pinned)
+      .map((i) => i.id)
+  );
+
+  const stageItems = props.pipelineItems.filter(
+    (i) => i.repo_id === repoId && !isHidden(i) && !i.pinned && !blockedSet.has(i.id) && matchesSearch(i)
+  );
+
+  // Sort items by created_at ASC to derive stage order (older items → earlier stages)
+  const sortedAsc = [...stageItems].sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  // Collect unique stage names in first-appearance order
+  const stageOrder: string[] = [];
+  const seenStages = new Set<string>();
+  for (const item of sortedAsc) {
+    if (!seenStages.has(item.stage)) {
+      seenStages.add(item.stage);
+      stageOrder.push(item.stage);
+    }
+  }
+
+  // Group items by stage, sorted by created_at DESC within each group
+  const groups = new Map<string, PipelineItem[]>();
+  for (const stage of stageOrder) {
+    groups.set(stage, []);
+  }
+  for (const item of stageItems) {
+    groups.get(item.stage)?.push(item);
+  }
+  for (const [, items] of groups) {
+    items.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  return stageOrder
+    .map((stageName) => ({ stageName, items: groups.get(stageName) ?? [] }))
+    .filter((g) => g.items.length > 0);
+}
+
 function itemsForRepo(repoId: string): PipelineItem[] {
-  return [...sortedPinned(repoId), ...sortedMerge(repoId), ...sortedPR(repoId), ...sortedActive(repoId), ...sortedBlocked(repoId)];
+  const stageItems = groupedByStage(repoId).flatMap((g) => g.items);
+  return [...sortedPinned(repoId), ...stageItems, ...sortedBlocked(repoId)];
 }
 
 function itemTitle(item: PipelineItem): string {
@@ -283,140 +325,52 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
             <div class="pin-divider-line"></div>
           </div>
 
-          <!-- Merge Queue tasks -->
-          <div v-if="sortedMerge(repo.id).length > 0" class="section-label">{{ $t('sidebar.sectionMergeQueue') }}</div>
-          <draggable
-            :model-value="sortedMerge(repo.id)"
-            :group="{ name: `repo-${repo.id}` }"
-            item-key="id"
-            :animation="150"
-            :sort="false"
-            :force-fallback="true"
-            ghost-class="sortable-ghost"
-            chosen-class="sortable-chosen"
-            fallback-class="sortable-fallback"
-            class="type-zone"
-            @change="(evt: any) => onUnpinnedChange(repo.id, evt)"
-          >
-            <template #item="{ element }">
-              <div
-                class="pipeline-item"
-                :class="{ selected: selectedItemId === element.id }"
-                @click="handleSelectItem(element)"
-                @dblclick.stop="startRename(element)"
-              >
-                <input
-                  v-if="editingItemId === element.id"
-                  class="rename-input"
-                  v-model="editingValue"
-                  @keydown.enter="commitRename(element.id)"
-                  @keydown.escape="cancelRename()"
-                  @blur="commitRename(element.id)"
-                  @click.stop
-                />
-                <span
-                  v-else
-                  class="item-title"
-                  :style="{
-                    fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
-                    fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                    textDecoration: hasTag(element, 'teardown') ? 'line-through' : 'none',
-                    opacity: hasTag(element, 'teardown') ? 0.5 : 1,
-                  }"
-                >{{ itemTitle(element) }}</span>
-              </div>
-            </template>
-          </draggable>
-
-          <!-- PR tasks -->
-          <div v-if="sortedPR(repo.id).length > 0" class="section-label">{{ $t('sidebar.sectionPullRequests') }}</div>
-          <draggable
-            :model-value="sortedPR(repo.id)"
-            :group="{ name: `repo-${repo.id}` }"
-            item-key="id"
-            :animation="150"
-            :sort="false"
-            :force-fallback="true"
-            ghost-class="sortable-ghost"
-            chosen-class="sortable-chosen"
-            fallback-class="sortable-fallback"
-            class="type-zone"
-            @change="(evt: any) => onUnpinnedChange(repo.id, evt)"
-          >
-            <template #item="{ element }">
-              <div
-                class="pipeline-item"
-                :class="{ selected: selectedItemId === element.id }"
-                @click="handleSelectItem(element)"
-                @dblclick.stop="startRename(element)"
-              >
-                <input
-                  v-if="editingItemId === element.id"
-                  class="rename-input"
-                  v-model="editingValue"
-                  @keydown.enter="commitRename(element.id)"
-                  @keydown.escape="cancelRename()"
-                  @blur="commitRename(element.id)"
-                  @click.stop
-                />
-                <span
-                  v-else
-                  class="item-title"
-                  :style="{
-                    fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
-                    fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                    textDecoration: hasTag(element, 'teardown') ? 'line-through' : 'none',
-                    opacity: hasTag(element, 'teardown') ? 0.5 : 1,
-                  }"
-                >{{ itemTitle(element) }}</span>
-              </div>
-            </template>
-          </draggable>
-
-          <!-- In Progress tasks -->
-          <div v-if="sortedActive(repo.id).length > 0" class="section-label">{{ $t('sidebar.sectionInProgress') }}</div>
-          <draggable
-            :model-value="sortedActive(repo.id)"
-            :group="{ name: `repo-${repo.id}` }"
-            item-key="id"
-            :animation="150"
-            :sort="false"
-            :force-fallback="true"
-            ghost-class="sortable-ghost"
-            chosen-class="sortable-chosen"
-            fallback-class="sortable-fallback"
-            class="type-zone"
-            @change="(evt: any) => onUnpinnedChange(repo.id, evt)"
-          >
-            <template #item="{ element }">
-              <div
-                class="pipeline-item"
-                :class="{ selected: selectedItemId === element.id }"
-                @click="handleSelectItem(element)"
-                @dblclick.stop="startRename(element)"
-              >
-                <input
-                  v-if="editingItemId === element.id"
-                  class="rename-input"
-                  v-model="editingValue"
-                  @keydown.enter="commitRename(element.id)"
-                  @keydown.escape="cancelRename()"
-                  @blur="commitRename(element.id)"
-                  @click.stop
-                />
-                <span
-                  v-else
-                  class="item-title"
-                  :style="{
-                    fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
-                    fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                    textDecoration: hasTag(element, 'teardown') ? 'line-through' : 'none',
-                    opacity: hasTag(element, 'teardown') ? 0.5 : 1,
-                  }"
-                >{{ itemTitle(element) }}</span>
-              </div>
-            </template>
-          </draggable>
+          <!-- Stage sections (dynamic) -->
+          <template v-for="group in groupedByStage(repo.id)" :key="group.stageName">
+            <div class="section-label">{{ group.stageName }}</div>
+            <draggable
+              :model-value="group.items"
+              :group="{ name: `repo-${repo.id}` }"
+              item-key="id"
+              :animation="150"
+              :sort="false"
+              :force-fallback="true"
+              ghost-class="sortable-ghost"
+              chosen-class="sortable-chosen"
+              fallback-class="sortable-fallback"
+              class="type-zone"
+              @change="(evt: any) => onUnpinnedChange(repo.id, evt)"
+            >
+              <template #item="{ element }">
+                <div
+                  class="pipeline-item"
+                  :class="{ selected: selectedItemId === element.id }"
+                  @click="handleSelectItem(element)"
+                  @dblclick.stop="startRename(element)"
+                >
+                  <input
+                    v-if="editingItemId === element.id"
+                    class="rename-input"
+                    v-model="editingValue"
+                    @keydown.enter="commitRename(element.id)"
+                    @keydown.escape="cancelRename()"
+                    @blur="commitRename(element.id)"
+                    @click.stop
+                  />
+                  <span
+                    v-else
+                    class="item-title"
+                    :style="{
+                      fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
+                      fontStyle: element.activity === 'working' ? 'italic' : 'normal',
+                      textDecoration: hasTag(element, 'teardown') ? 'line-through' : 'none',
+                      opacity: hasTag(element, 'teardown') ? 0.5 : 1,
+                    }"
+                  >{{ itemTitle(element) }}</span>
+                </div>
+              </template>
+            </draggable>
+          </template>
 
           <!-- Blocked tasks -->
           <div v-if="sortedBlocked(repo.id).length > 0" class="section-label">{{ $t('sidebar.sectionBlocked') }}</div>

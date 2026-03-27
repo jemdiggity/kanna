@@ -1,5 +1,4 @@
 import { invoke } from "../invoke";
-import { hasTag } from "@kanna/core";
 import type { DbHandle, PipelineItem } from "@kanna/db";
 import { listRepos, listPipelineItems } from "@kanna/db";
 import { useKannaStore } from "../stores/kanna";
@@ -19,7 +18,7 @@ export function useGc(db: DbHandle) {
 
       const cutoff = new Date(Date.now() - store.gcAfterDays * 86400000).toISOString();
       const stale = allItems.filter(
-        (i) => hasTag(i, "done") && i.updated_at < cutoff
+        (i) => i.closed_at != null && i.updated_at < cutoff
       );
       for (const item of stale) {
         if (item.branch) {

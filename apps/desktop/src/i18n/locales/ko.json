@@ -1,8 +1,6 @@
 {
   "tasks": {
     "newTask": "새 작업",
-    "makePR": "PR 생성",
-    "mergeQueue": "머지 큐",
     "closeTask": "닫기 / 거부",
     "undoClose": "닫기 취소",
     "blockTask": "작업 차단",
@@ -41,8 +39,7 @@
     "groupViews": "보기",
     "groupHelp": "도움말",
     "newTask": "새 작업",
-    "makePR": "PR 생성",
-    "mergeQueue": "머지 큐",
+    "advanceStage": "단계 진행",
     "closeReject": "닫기 / 거부",
     "undoClose": "닫기 취소",
     "previousTask": "이전 작업",
@@ -114,7 +111,12 @@
     "blockedWorktreeFailed": "차단된 작업의 워크트리 생성 실패",
     "blockTaskFailed": "작업 차단 실패",
     "selectRepoFirst": "먼저 저장소를 선택하세요",
-    "agentStartFailed": "에이전트 시작 실패"
+    "agentStartFailed": "에이전트 시작 실패",
+    "pipelineNotFound": "파이프라인 정의를 찾을 수 없습니다",
+    "taskAtFinalStage": "작업이 마지막 단계에 있습니다",
+    "stageTeardownFailed": "단계 종료 스크립트 실패",
+    "stageSetupFailed": "단계 설정 스크립트 실패",
+    "stageNotFound": "파이프라인에서 단계를 찾을 수 없습니다"
   },
   "tags": {
     "inProgress": "진행 중",

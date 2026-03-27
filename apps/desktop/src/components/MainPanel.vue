@@ -1,10 +1,10 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { PipelineItem } from "@kanna/db";
-import { hasTag } from "@kanna/core";
 import TaskHeader from "./TaskHeader.vue";
 import TerminalTabs from "./TerminalTabs.vue";
 
-defineProps<{
+const props = defineProps<{
   item: PipelineItem | null;
   repoPath?: string;
   spawnPtySession?: (sessionId: string, cwd: string, prompt: string, cols: number, rows: number) => Promise<void>;
@@ -16,13 +16,18 @@ defineProps<{
 const emit = defineEmits<{
   (e: "agent-completed"): void;
 }>();
+
+const isBlocked = computed(() => {
+  if (!props.blockers || props.blockers.length === 0) return false;
+  return props.blockers.some(b => !b.closed_at);
+});
 </script>
 
 <template>
   <main class="main-panel">
     <template v-if="item">
       <TaskHeader v-if="!maximized" :item="item" />
-      <template v-if="hasTag(item, 'blocked')">
+      <template v-if="isBlocked">
         <div class="blocked-placeholder">
           <p class="blocked-title">{{ $t('mainPanel.taskBlocked') }}</p>
           <p class="blocked-hint">{{ $t('mainPanel.taskBlockedHint') }}</p>
@@ -31,8 +36,8 @@ const emit = defineEmits<{
             <div v-for="b in blockers" :key="b.id" class="blocker-item">
               <span
                 class="blocker-status"
-                :style="{ color: hasTag(b, 'done') ? '#666' : '#0066cc' }"
-              >{{ hasTag(b, 'done') ? $t('mainPanel.blockerDone') : $t('mainPanel.blockerActive') }}</span>
+                :style="{ color: b.closed_at != null ? '#666' : '#0066cc' }"
+              >{{ b.closed_at != null ? $t('mainPanel.blockerDone') : $t('mainPanel.blockerActive') }}</span>
               <span class="blocker-name">{{ b.display_name || (b.prompt ? b.prompt.slice(0, 60) : $t('tasks.untitled')) }}</span>
             </div>
           </div>

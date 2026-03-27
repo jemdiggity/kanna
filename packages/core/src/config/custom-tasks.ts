@@ -63,7 +63,7 @@ function slugToDisplayName(slug: string): string {
     .join(" ");
 }
 
-function parseFrontmatter(content: string): { frontmatter: Record<string, unknown> | null | undefined; body: string } {
+export function parseFrontmatter(content: string): { frontmatter: Record<string, unknown> | null | undefined; body: string } {
   const match = content.match(/^---[ \t]*\r?\n([\s\S]*?\r?\n)?---[ \t]*\r?\n?([\s\S]*)$/);
   if (!match) {
     return { frontmatter: null, body: content };
