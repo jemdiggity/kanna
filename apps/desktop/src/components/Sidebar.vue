@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import type { Repo, PipelineItem } from "@kanna/db";
-import { hasTag, isHidden } from "@kanna/core";
 import { ref, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
 import { fuzzyMatch } from "../utils/fuzzyMatch";
+
+function hasTag(item: { tags: string }, tag: string): boolean {
+  try { return (JSON.parse(item.tags) as string[]).includes(tag); }
+  catch { return false; }
+}
+
+function isHidden(item: { closed_at: string | null }): boolean {
+  return item.closed_at !== null;
+}
 
 const { t } = useI18n();
 

@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
-import { hasTag, parseRepoConfig } from "@kanna/core";
+import { parseRepoConfig } from "@kanna/core";
 import { getSetting, setSetting, type DbHandle } from "@kanna/db";
 import i18n from "./i18n";
 import Sidebar from "./components/Sidebar.vue";
@@ -37,6 +37,11 @@ import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
+
+function hasTag(item: { tags: string }, tag: string): boolean {
+  try { return (JSON.parse(item.tags) as string[]).includes(tag); }
+  catch { return false; }
+}
 
 const store = useKannaStore();
 const toast = useToast();

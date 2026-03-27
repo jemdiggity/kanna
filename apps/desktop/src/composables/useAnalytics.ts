@@ -1,5 +1,4 @@
 import { ref, computed, watch, type Ref } from "vue";
-import { hasTag } from "@kanna/core";
 import type { DbHandle, PipelineItem, ActivityLog, OperatorEvent } from "@kanna/db";
 
 interface TaskBucket {
@@ -215,7 +214,7 @@ export function useAnalytics(db: Ref<DbHandle | null>, repoId: Ref<string | null
         bucketMap.set(key, entry);
       }
       for (const item of items) {
-        if (hasTag(item, "done")) {
+        if (item.closed_at != null) {
           const key = bucketKey(item.closed_at || item.updated_at, size);
           const entry = bucketMap.get(key) || { created: 0, closed: 0 };
           entry.closed++;

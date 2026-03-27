@@ -96,17 +96,6 @@ export async function insertPipelineItem(
   );
 }
 
-export async function updatePipelineItemTags(
-  db: DbHandle,
-  id: string,
-  tags: string[]
-): Promise<void> {
-  await db.execute(
-    "UPDATE pipeline_item SET tags = ?, updated_at = datetime('now') WHERE id = ?",
-    [JSON.stringify(tags), id]
-  );
-}
-
 export async function updatePipelineItemStage(
   db: DbHandle,
   id: string,
@@ -136,44 +125,6 @@ export async function clearPipelineItemStageResult(
   await db.execute(
     `UPDATE pipeline_item SET stage_result = NULL, updated_at = datetime('now') WHERE id = ?`,
     [id]
-  );
-}
-
-export async function addPipelineItemTag(
-  db: DbHandle,
-  id: string,
-  tag: string
-): Promise<void> {
-  const rows = await db.select<{ tags: string }>(
-    "SELECT tags FROM pipeline_item WHERE id = ?",
-    [id]
-  );
-  const current: string[] = rows[0]?.tags ? JSON.parse(rows[0].tags) : [];
-  if (!current.includes(tag)) {
-    current.push(tag);
-  }
-  const closedAt = (tag === "done" || tag === "archived") ? ", closed_at = datetime('now')" : "";
-  await db.execute(
-    `UPDATE pipeline_item SET tags = ?${closedAt}, updated_at = datetime('now') WHERE id = ?`,
-    [JSON.stringify(current), id]
-  );
-}
-
-export async function removePipelineItemTag(
-  db: DbHandle,
-  id: string,
-  tag: string
-): Promise<void> {
-  const rows = await db.select<{ tags: string }>(
-    "SELECT tags FROM pipeline_item WHERE id = ?",
-    [id]
-  );
-  const current: string[] = rows[0]?.tags ? JSON.parse(rows[0].tags) : [];
-  const updated = current.filter((t) => t !== tag);
-  const closedAt = (tag === "done" || tag === "archived") ? ", closed_at = NULL" : "";
-  await db.execute(
-    `UPDATE pipeline_item SET tags = ?${closedAt}, updated_at = datetime('now') WHERE id = ?`,
-    [JSON.stringify(updated), id]
   );
 }
 

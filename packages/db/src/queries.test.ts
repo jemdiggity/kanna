@@ -9,12 +9,9 @@ import {
   findRepoByPath,
   listPipelineItems,
   insertPipelineItem,
-  updatePipelineItemTags,
   updatePipelineItemStage,
   updatePipelineItemStageResult,
   clearPipelineItemStageResult,
-  addPipelineItemTag,
-  removePipelineItemTag,
   updatePipelineItemPR,
   getSetting,
   setSetting,
@@ -382,94 +379,6 @@ describe("pipeline_item queries", () => {
     });
     const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
     expect(item?.tags).toBe('["pr"]');
-  });
-
-  it("updatePipelineItemTags updates the tags", async () => {
-    await insertPipelineItem(db, {
-      id: "pi1",
-      repo_id: "r1",
-      issue_number: null,
-      issue_title: null,
-      prompt: "do it",
-      tags: [],
-      pr_number: null,
-      pr_url: null,
-      branch: null,
-      agent_type: null,
-      agent_provider: "claude",
-      activity: "idle",
-      port_offset: null,
-      port_env: null,
-    });
-    await updatePipelineItemTags(db, "pi1", ["done"]);
-    const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
-    expect(item?.tags).toBe('["done"]');
-  });
-
-  it("addPipelineItemTag adds a tag", async () => {
-    await insertPipelineItem(db, {
-      id: "pi1",
-      repo_id: "r1",
-      issue_number: null,
-      issue_title: null,
-      prompt: "do it",
-      tags: ["pr"],
-      pr_number: null,
-      pr_url: null,
-      branch: null,
-      agent_type: null,
-      agent_provider: "claude",
-      activity: "idle",
-      port_offset: null,
-      port_env: null,
-    });
-    await addPipelineItemTag(db, "pi1", "blocked");
-    const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
-    expect(JSON.parse(item!.tags)).toEqual(["pr", "blocked"]);
-  });
-
-  it("addPipelineItemTag is idempotent", async () => {
-    await insertPipelineItem(db, {
-      id: "pi1",
-      repo_id: "r1",
-      issue_number: null,
-      issue_title: null,
-      prompt: "do it",
-      tags: ["pr"],
-      pr_number: null,
-      pr_url: null,
-      branch: null,
-      agent_type: null,
-      agent_provider: "claude",
-      activity: "idle",
-      port_offset: null,
-      port_env: null,
-    });
-    await addPipelineItemTag(db, "pi1", "pr");
-    const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
-    expect(JSON.parse(item!.tags)).toEqual(["pr"]);
-  });
-
-  it("removePipelineItemTag removes a tag", async () => {
-    await insertPipelineItem(db, {
-      id: "pi1",
-      repo_id: "r1",
-      issue_number: null,
-      issue_title: null,
-      prompt: "do it",
-      tags: ["pr", "blocked"],
-      pr_number: null,
-      pr_url: null,
-      branch: null,
-      agent_type: null,
-      agent_provider: "claude",
-      activity: "idle",
-      port_offset: null,
-      port_env: null,
-    });
-    await removePipelineItemTag(db, "pi1", "pr");
-    const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
-    expect(JSON.parse(item!.tags)).toEqual(["blocked"]);
   });
 
   it("updatePipelineItemPR sets pr_number and pr_url", async () => {

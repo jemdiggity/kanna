@@ -5,7 +5,7 @@ import { invoke } from "../invoke";
 import { useToast } from '../composables/useToast';
 import { isTauri } from "../tauri-mock";
 import { listen } from "../listen";
-import { parseRepoConfig, parseAgentMd, hasTag } from "@kanna/core";
+import { parseRepoConfig, parseAgentMd } from "@kanna/core";
 import { parseAgentDefinition } from "../../../../packages/core/src/pipeline/agent-loader";
 import { parsePipelineJson } from "../../../../packages/core/src/pipeline/pipeline-loader";
 import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-builder";
@@ -19,7 +19,6 @@ import {
   listRepos, insertRepo, findRepoByPath,
   hideRepo as hideRepoQuery, unhideRepo as unhideRepoQuery,
   listPipelineItems, insertPipelineItem,
-  addPipelineItemTag, removePipelineItemTag,
   updatePipelineItemActivity, pinPipelineItem, unpinPipelineItem,
   reorderPinnedItems, updatePipelineItemDisplayName,
   updatePipelineItemStage, clearPipelineItemStageResult,
@@ -35,6 +34,55 @@ function generateId(): string {
   const buf = new Uint8Array(4);
   crypto.getRandomValues(buf);
   return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ── Internal tag helpers (not exported — tags column is legacy) ──────────
+function parseTags(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try { return JSON.parse(raw) as string[]; }
+  catch { return []; }
+}
+
+function hasTag(item: { tags: string }, tag: string): boolean {
+  return parseTags(item.tags).includes(tag);
+}
+
+async function addPipelineItemTag(
+  db: DbHandle,
+  id: string,
+  tag: string
+): Promise<void> {
+  const rows = await db.select<{ tags: string }>(
+    "SELECT tags FROM pipeline_item WHERE id = ?",
+    [id]
+  );
+  const current: string[] = rows[0]?.tags ? JSON.parse(rows[0].tags) as string[] : [];
+  if (!current.includes(tag)) {
+    current.push(tag);
+  }
+  const closedAt = (tag === "done" || tag === "archived") ? ", closed_at = datetime('now')" : "";
+  await db.execute(
+    `UPDATE pipeline_item SET tags = ?${closedAt}, updated_at = datetime('now') WHERE id = ?`,
+    [JSON.stringify(current), id]
+  );
+}
+
+async function removePipelineItemTag(
+  db: DbHandle,
+  id: string,
+  tag: string
+): Promise<void> {
+  const rows = await db.select<{ tags: string }>(
+    "SELECT tags FROM pipeline_item WHERE id = ?",
+    [id]
+  );
+  const current: string[] = rows[0]?.tags ? JSON.parse(rows[0].tags) as string[] : [];
+  const updated = current.filter((t) => t !== tag);
+  const closedAt = (tag === "done" || tag === "archived") ? ", closed_at = NULL" : "";
+  await db.execute(
+    `UPDATE pipeline_item SET tags = ?${closedAt}, updated_at = datetime('now') WHERE id = ?`,
+    [JSON.stringify(updated), id]
+  );
 }
 
 export interface PtySpawnOptions {

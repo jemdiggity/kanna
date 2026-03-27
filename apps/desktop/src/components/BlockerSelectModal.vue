@@ -2,7 +2,6 @@
 import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import type { PipelineItem } from "@kanna/db";
-import { hasTag } from "@kanna/core";
 import { useModalZIndex } from "../composables/useModalZIndex";
 
 const { t } = useI18n();
@@ -25,6 +24,11 @@ const selected = ref<Set<string>>(new Set(props.preselected || []));
 const selectedIndex = ref(-1);
 const inputRef = ref<HTMLInputElement | null>(null);
 const mouseMoved = ref(false);
+
+function hasTag(item: { tags: string }, tag: string): boolean {
+  try { return (JSON.parse(item.tags) as string[]).includes(tag); }
+  catch { return false; }
+}
 
 const disabledSet = computed(() => new Set(props.disabledIds || []));
 

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { PipelineItem } from "@kanna/db";
-import { hasTag } from "@kanna/core";
 import TaskHeader from "./TaskHeader.vue";
 import TerminalTabs from "./TerminalTabs.vue";
 
@@ -37,8 +36,8 @@ const isBlocked = computed(() => {
             <div v-for="b in blockers" :key="b.id" class="blocker-item">
               <span
                 class="blocker-status"
-                :style="{ color: hasTag(b, 'done') ? '#666' : '#0066cc' }"
-              >{{ hasTag(b, 'done') ? $t('mainPanel.blockerDone') : $t('mainPanel.blockerActive') }}</span>
+                :style="{ color: b.closed_at != null ? '#666' : '#0066cc' }"
+              >{{ b.closed_at != null ? $t('mainPanel.blockerDone') : $t('mainPanel.blockerActive') }}</span>
               <span class="blocker-name">{{ b.display_name || (b.prompt ? b.prompt.slice(0, 60) : $t('tasks.untitled')) }}</span>
             </div>
           </div>
