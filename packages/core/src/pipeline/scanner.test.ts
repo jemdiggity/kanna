@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { scanAgentsAndPipelines } from "./scanner";
+import { getBuiltInAgents, getBuiltInPipelines } from "./built-in";
+
+const BUILTIN_AGENT_COUNT = getBuiltInAgents().length;
+const BUILTIN_PIPELINE_COUNT = getBuiltInPipelines().length;
 
 const VALID_AGENT_MD = `---
 name: Test Agent
@@ -49,9 +53,10 @@ Do the other task.
 
     const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
 
-    expect(result.agents).toHaveLength(2);
+    // 2 repo agents + built-in agents that aren't overridden
     expect(result.agents.map((a) => a.name)).toContain("Test Agent");
     expect(result.agents.map((a) => a.name)).toContain("Other Agent");
+    expect(result.agents.length).toBeGreaterThanOrEqual(2);
     expect(result.errors).toHaveLength(0);
   });
 
@@ -79,9 +84,10 @@ Do the other task.
 
     const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
 
-    expect(result.pipelines).toHaveLength(2);
+    // 2 repo pipelines + built-in pipelines that aren't overridden
     expect(result.pipelines.map((p) => p.name)).toContain("Test Pipeline");
     expect(result.pipelines.map((p) => p.name)).toContain("Second Pipeline");
+    expect(result.pipelines.length).toBeGreaterThanOrEqual(2);
     expect(result.errors).toHaveLength(0);
   });
 
@@ -104,8 +110,8 @@ Do the other task.
 
     const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
 
-    expect(result.agents).toHaveLength(1);
-    expect(result.agents[0].name).toBe("Test Agent");
+    // 1 valid repo agent + built-in agents
+    expect(result.agents.map((a) => a.name)).toContain("Test Agent");
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("invalid-agent");
   });
@@ -129,13 +135,13 @@ Do the other task.
 
     const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
 
-    expect(result.pipelines).toHaveLength(1);
-    expect(result.pipelines[0].name).toBe("Test Pipeline");
+    // 1 valid repo pipeline + built-in pipelines
+    expect(result.pipelines.map((p) => p.name)).toContain("Test Pipeline");
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("invalid.json");
   });
 
-  it("returns empty arrays when directories don't exist", async () => {
+  it("returns built-in defaults when directories don't exist", async () => {
     const readFile = async (path: string): Promise<string> => {
       throw new Error(`File not found: ${path}`);
     };
@@ -146,8 +152,11 @@ Do the other task.
 
     const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
 
-    expect(result.agents).toHaveLength(0);
-    expect(result.pipelines).toHaveLength(0);
+    // No repo files, but built-in defaults are included
+    expect(result.agents.length).toBe(BUILTIN_AGENT_COUNT);
+    expect(result.pipelines.length).toBe(BUILTIN_PIPELINE_COUNT);
+    expect(result.agents.map((a) => a.name)).toContain("implement");
+    expect(result.pipelines.map((p) => p.name)).toContain("default");
     expect(result.errors).toHaveLength(0);
   });
 
@@ -172,10 +181,8 @@ Do the other task.
 
     const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
 
-    expect(result.agents).toHaveLength(1);
-    expect(result.agents[0].name).toBe("Test Agent");
-    expect(result.pipelines).toHaveLength(1);
-    expect(result.pipelines[0].name).toBe("Test Pipeline");
+    expect(result.agents.map((a) => a.name)).toContain("Test Agent");
+    expect(result.pipelines.map((p) => p.name)).toContain("Test Pipeline");
     expect(result.errors).toHaveLength(2);
   });
 
@@ -197,7 +204,40 @@ Do the other task.
 
     const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
 
-    expect(result.pipelines).toHaveLength(1);
+    // 1 repo pipeline + built-in default pipeline
+    expect(result.pipelines.map((p) => p.name)).toContain("Test Pipeline");
     expect(result.errors).toHaveLength(0);
+  });
+
+  it("repo agents override built-in agents with the same name", async () => {
+    const customImplement = `---
+name: implement
+description: Custom implement agent
+---
+
+Custom implementation instructions.
+`;
+
+    const files: Record<string, string> = {
+      "/repo/.kanna/agents/implement/AGENT.md": customImplement,
+    };
+
+    const readFile = async (path: string): Promise<string> => {
+      if (path in files) return files[path];
+      throw new Error(`File not found: ${path}`);
+    };
+
+    const listDir = async (path: string): Promise<string[]> => {
+      if (path === "/repo/.kanna/agents") return ["implement"];
+      if (path === "/repo/.kanna/pipelines") return [];
+      throw new Error(`Directory not found: ${path}`);
+    };
+
+    const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
+
+    // Should have only one "implement" agent — the repo override, not the built-in
+    const implementAgents = result.agents.filter((a) => a.name === "implement");
+    expect(implementAgents).toHaveLength(1);
+    expect(implementAgents[0].description).toBe("Custom implement agent");
   });
 });
