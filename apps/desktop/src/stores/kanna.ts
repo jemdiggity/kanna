@@ -1120,15 +1120,32 @@ export const useKannaStore = defineStore("kanna", () => {
       }
     }
 
-    // Close the source task first (runs teardown, kills sessions, cleans up)
-    await closeTask(item.id);
+    // Create the new task first (DB insert + background spawn).
+    // Don't use closeTask() — it calls selectNextItem and runs teardown,
+    // which interferes with the stage handoff. Follow the old makePR pattern:
+    // create new task, then lightweight close the source in the background.
+    const oldId = item.id;
 
-    // Create new task for the next stage
     await createItem(repo.id, repo.path, stagePrompt, "pty", {
       baseBranch: item.branch,
       pipelineName: item.pipeline,
       stage: nextStage.name,
       ...agentOpts,
+    });
+
+    // Lightweight close: kill sessions + mark done. No selectNextItem, no teardown.
+    // The new task auto-selects itself when setupWorktreeAndSpawn finishes.
+    Promise.all([
+      invoke("kill_session", { sessionId: oldId }).catch((e: unknown) =>
+        console.error("[store] kill_session failed:", e)),
+      invoke("kill_session", { sessionId: `shell-wt-${oldId}` }).catch((e: unknown) =>
+        console.error("[store] kill shell session failed:", e)),
+      closePipelineItem(_db, oldId),
+    ]).then(async () => {
+      await checkUnblocked(oldId);
+      bump();
+    }).catch((e) => {
+      console.error("[store] failed to close source task after stage advance:", e);
     });
   }
 
