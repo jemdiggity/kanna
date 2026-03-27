@@ -325,6 +325,7 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
 // Derive shortcut context from visible modals (more reliable than the global singleton
 // which can be stale if a KeepAlive deactivation resets it after a modal sets it).
 const currentShortcutContext = computed<ShortcutContext>(() => {
+  if (showNewTaskModal.value) return "newTask";
   if (showFilePreviewModal.value) return "file";
   if (showShellModal.value) return "shell";
   if (showDiffModal.value) return "diff";
