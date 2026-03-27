@@ -108,6 +108,7 @@ kanna-cli stage-complete --task-id $KANNA_TASK_ID --status failure --summary "wh
       "name": "in progress",
       "description": "Agent implements the task",
       "agent": "implement",
+      "prompt": "$TASK_PROMPT",
       "environment": "worktree",
       "transition": "manual"
     },
@@ -115,6 +116,7 @@ kanna-cli stage-complete --task-id $KANNA_TASK_ID --status failure --summary "wh
       "name": "pr",
       "description": "Agent creates a GitHub PR",
       "agent": "pr",
+      "prompt": "Create a PR for the work done in the previous stage. Previous result: $PREV_RESULT",
       "environment": "worktree",
       "transition": "manual"
     }
@@ -129,6 +131,7 @@ kanna-cli stage-complete --task-id $KANNA_TASK_ID --status failure --summary "wh
 | `name` | string | yes | Stage identifier, unique within pipeline |
 | `description` | string | no | Human-readable description |
 | `agent` | string | no | Agent directory name (resolves to `.kanna/agents/{name}/AGENT.md`). Null for gate stages (no agent spawns, just waits). |
+| `prompt` | string | no | Stage-specific prompt appended to the agent's base instructions. Can reference `$TASK_PROMPT` for the user's original task prompt and `$PREV_RESULT` for the previous stage's completion metadata. |
 | `agent_provider` | string | no | Override agent provider for this stage (`claude`, `copilot`) |
 | `environment` | string | no | Environment name for setup/teardown. Null = no setup/teardown. |
 | `transition` | `"manual"` or `"auto"` | yes | How the task advances to the next stage |
