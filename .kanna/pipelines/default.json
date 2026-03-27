@@ -1,0 +1,20 @@
+{
+  "name": "default",
+  "description": "Standard in progress -> PR flow",
+  "stages": [
+    {
+      "name": "in progress",
+      "description": "Agent implements the task",
+      "agent": "implement",
+      "prompt": "$TASK_PROMPT",
+      "transition": "manual"
+    },
+    {
+      "name": "pr",
+      "description": "Agent creates a GitHub PR",
+      "agent": "pr",
+      "prompt": "Create a PR for the work on branch $BRANCH. Previous result: $PREV_RESULT",
+      "transition": "manual"
+    }
+  ]
+}
