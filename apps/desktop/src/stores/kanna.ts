@@ -5,7 +5,12 @@ import { invoke } from "../invoke";
 import { useToast } from '../composables/useToast';
 import { isTauri } from "../tauri-mock";
 import { listen } from "../listen";
-import { parseRepoConfig, parseAgentMd, hasTag, isHidden } from "@kanna/core";
+import { parseRepoConfig, parseAgentMd, hasTag } from "@kanna/core";
+import { parseAgentDefinition } from "../../../../packages/core/src/pipeline/agent-loader";
+import { parsePipelineJson } from "../../../../packages/core/src/pipeline/pipeline-loader";
+import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-builder";
+import { getNextStage, getStageIndex } from "../../../../packages/core/src/pipeline/types";
+import type { PipelineDefinition, AgentDefinition, StageCompleteResult } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { createNavigationHistory } from "../composables/useNavigationHistory";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
 import type { DbHandle, PipelineItem, Repo } from "@kanna/db";
@@ -17,6 +22,8 @@ import {
   addPipelineItemTag, removePipelineItemTag,
   updatePipelineItemActivity, pinPipelineItem, unpinPipelineItem,
   reorderPinnedItems, updatePipelineItemDisplayName,
+  updatePipelineItemStage, clearPipelineItemStageResult,
+  closePipelineItem, reopenPipelineItem,
   getRepo, getSetting, setSetting,
   insertTaskBlocker, removeTaskBlocker, removeAllBlockersForItem,
   listBlockersForItem, listBlockedByItem, getUnblockedItems,
@@ -104,15 +111,54 @@ export const useKannaStore = defineStore("kanna", () => {
   // session actually exists in the daemon.
   const pendingSetupIds = ref<string[]>([]);
 
+  // ── Pipeline cache ────────────────────────────────────────────────
+  const pipelineCache = new Map<string, PipelineDefinition>();
+  const agentCache = new Map<string, AgentDefinition>();
+
+  async function loadPipeline(repoPath: string, pipelineName: string): Promise<PipelineDefinition> {
+    const cacheKey = `${repoPath}::${pipelineName}`;
+    const cached = pipelineCache.get(cacheKey);
+    if (cached) return cached;
+
+    const path = `${repoPath}/.kanna/pipelines/${pipelineName}.json`;
+    const content = await invoke<string>("read_text_file", { path });
+    const pipeline = parsePipelineJson(content);
+    pipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  async function loadAgent(repoPath: string, agentName: string): Promise<AgentDefinition> {
+    const cacheKey = `${repoPath}::${agentName}`;
+    const cached = agentCache.get(cacheKey);
+    if (cached) return cached;
+
+    const path = `${repoPath}/.kanna/agents/${agentName}/AGENT.md`;
+    const content = await invoke<string>("read_text_file", { path });
+    const agent = parseAgentDefinition(content);
+    agentCache.set(cacheKey, agent);
+    return agent;
+  }
+
+  /** Check if an item has unresolved blockers (blockers whose closed_at is null). */
+  async function hasUnresolvedBlockers(itemId: string): Promise<boolean> {
+    const blockers = await listBlockersForItem(_db, itemId);
+    return blockers.some(b => b.closed_at === null);
+  }
+
   // ── Computed getters ─────────────────────────────────────────────
   const selectedRepo = computed(() =>
     repos.value.find((r) => r.id === selectedRepoId.value) ?? null
   );
 
+  /** An item is considered "hidden" if it has been closed. */
+  function isItemHidden(item: PipelineItem): boolean {
+    return item.closed_at !== null;
+  }
+
   const currentItem = computed(() => {
     if (selectedItemId.value) {
       const item = items.value.find((i) => i.id === selectedItemId.value);
-      if (item && !isHidden(item)) return item;
+      if (item && !isItemHidden(item)) return item;
     }
     // Auto-select first task in current repo if nothing valid is selected.
     // Skip items whose worktree/agent setup is still in progress — their
@@ -121,23 +167,50 @@ export const useKannaStore = defineStore("kanna", () => {
       .find(i => !pendingSetupIds.value.includes(i.id)) ?? null;
   });
 
+  /**
+   * Sort items for a repo by pipeline stage order.
+   * Order: pinned -> stages in pipeline order -> blocked (items with unresolved blockers).
+   * Within each group, sorted by created_at DESC.
+   */
   function sortItemsForRepo(repoId: string): PipelineItem[] {
     const repoItems = items.value.filter(
-      (item) => item.repo_id === repoId && !isHidden(item)
+      (item) => item.repo_id === repoId && !isItemHidden(item)
     );
     const pinned = repoItems
       .filter((i) => i.pinned)
       .sort((a, b) => (a.pin_order ?? 0) - (b.pin_order ?? 0));
     const sortByCreatedAt = (arr: typeof repoItems) =>
       arr.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    const merge = sortByCreatedAt(repoItems.filter((i) => hasTag(i, "merge") && !i.pinned));
-    const pr = sortByCreatedAt(repoItems.filter((i) => hasTag(i, "pr") && !i.pinned));
-    const active = sortByCreatedAt(repoItems.filter((i) => !hasTag(i, "pr") && !hasTag(i, "merge") && !hasTag(i, "blocked") && !i.pinned));
+
+    // Separate blocked items (those with "blocked" tag — kept for backward compat
+    // until blocker system fully migrated) from stage-sorted items
     const blocked = sortByCreatedAt(repoItems.filter((i) => hasTag(i, "blocked") && !i.pinned));
-    return [...pinned, ...merge, ...pr, ...active, ...blocked];
+    const blockedIds = new Set(blocked.map(i => i.id));
+
+    // Non-pinned, non-blocked items sorted by stage order within their pipeline.
+    // Items in the same stage are sorted by created_at DESC.
+    const stageItems = repoItems.filter(i => !i.pinned && !blockedIds.has(i.id));
+
+    // Build stage order from cached pipelines (synchronous — uses cache)
+    const stageOrder = (item: PipelineItem): number => {
+      const cacheKey = `${repos.value.find(r => r.id === repoId)?.path ?? ""}::${item.pipeline}`;
+      const pipeline = pipelineCache.get(cacheKey);
+      if (!pipeline) return 0; // unknown pipeline — sort first
+      const idx = getStageIndex(pipeline, item.stage);
+      return idx === -1 ? pipeline.stages.length : idx;
+    };
+
+    const sortedStageItems = stageItems.sort((a, b) => {
+      const orderA = stageOrder(a);
+      const orderB = stageOrder(b);
+      if (orderA !== orderB) return orderA - orderB;
+      return b.created_at.localeCompare(a.created_at);
+    });
+
+    return [...pinned, ...sortedStageItems, ...blocked];
   }
 
-  // Mirrors Sidebar.vue's itemsForRepo(): pinned (by pin_order), then merge → pr → active → blocked (each by created_at desc).
+  // pinned (by pin_order) -> stages in pipeline order -> blocked (each by created_at desc).
   const sortedItemsForCurrentRepo = computed(() =>
     sortItemsForRepo(selectedRepoId.value ?? "")
   );
@@ -191,7 +264,7 @@ export const useKannaStore = defineStore("kanna", () => {
   /** Navigate back, switching repos if needed. */
   function goBack() {
     if (!selectedItemId.value) return;
-    const validIds = new Set(items.value.filter((i) => !hasTag(i, "done")).map((i) => i.id));
+    const validIds = new Set(items.value.filter((i) => !isItemHidden(i)).map((i) => i.id));
     const taskId = nav.goBack(selectedItemId.value, validIds);
     if (!taskId) return;
     const item = items.value.find((i) => i.id === taskId);
@@ -210,7 +283,7 @@ export const useKannaStore = defineStore("kanna", () => {
   /** Navigate forward, switching repos if needed. */
   function goForward() {
     if (!selectedItemId.value) return;
-    const validIds = new Set(items.value.filter((i) => !hasTag(i, "done")).map((i) => i.id));
+    const validIds = new Set(items.value.filter((i) => !isItemHidden(i)).map((i) => i.id));
     const taskId = nav.goForward(selectedItemId.value, validIds);
     if (!taskId) return;
     const item = items.value.find((i) => i.id === taskId);
@@ -297,7 +370,7 @@ export const useKannaStore = defineStore("kanna", () => {
     repoPath: string,
     prompt: string,
     agentType: "pty" | "sdk" = "pty",
-    opts?: { baseBranch?: string; tags?: string[]; customTask?: CustomTaskConfig; agentProvider?: "claude" | "copilot" },
+    opts?: { baseBranch?: string; tags?: string[]; pipelineName?: string; customTask?: CustomTaskConfig; agentProvider?: "claude" | "copilot" },
   ) {
     const id = generateId();
     const branch = `task-${id}`;
@@ -308,6 +381,44 @@ export const useKannaStore = defineStore("kanna", () => {
     const effectiveAgentType = opts?.customTask?.executionMode ?? agentType;
     const effectiveAgentProvider = opts?.customTask?.agentProvider ?? opts?.agentProvider ?? "claude";
     const displayName = opts?.customTask?.name ?? null;
+
+    // Resolve pipeline name: explicit > repo config > "default"
+    let pipelineName = opts?.pipelineName;
+    if (!pipelineName) {
+      try {
+        const repoConfig = await readRepoConfig(repoPath);
+        pipelineName = repoConfig.pipeline ?? "default";
+      } catch {
+        pipelineName = "default";
+      }
+    }
+
+    // Load pipeline definition and resolve first stage
+    let firstStageName = "in progress";
+    let pipelinePrompt = effectivePrompt;
+    try {
+      const pipeline = await loadPipeline(repoPath, pipelineName);
+      if (pipeline.stages.length > 0) {
+        const firstStage = pipeline.stages[0];
+        firstStageName = firstStage.name;
+
+        // Load the first stage's agent and build prompt
+        if (firstStage.agent) {
+          try {
+            const agent = await loadAgent(repoPath, firstStage.agent);
+            pipelinePrompt = buildStagePrompt(agent.prompt, firstStage.prompt, {
+              taskPrompt: effectivePrompt,
+            });
+          } catch (e) {
+            console.error("[store] failed to load agent for first stage:", e);
+            // Fall back to the raw prompt
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[store] failed to load pipeline definition:", e);
+      // Fall back to defaults — pipeline missing is not fatal at creation time
+    }
 
     // Assign port offset
     const usedOffsets = new Set(
@@ -339,6 +450,8 @@ export const useKannaStore = defineStore("kanna", () => {
         issue_number: null,
         issue_title: null,
         prompt: effectivePrompt,
+        pipeline: pipelineName,
+        stage: firstStageName,
         tags: opts?.tags ?? ["in progress"],
         pr_number: null,
         pr_url: null,
@@ -363,7 +476,7 @@ export const useKannaStore = defineStore("kanna", () => {
     // Worktree creation, config read, and agent spawn run in the background.
     // Selection is deferred until setup completes so the terminal mounts
     // only after the session exists in the daemon.
-    setupWorktreeAndSpawn(id, repoPath, worktreePath, branch, portOffset, effectivePrompt, effectiveAgentType, opts);
+    setupWorktreeAndSpawn(id, repoPath, worktreePath, branch, portOffset, pipelinePrompt, effectiveAgentType, opts);
   }
 
   /** Background IO for createItem: read config, create worktree, spawn agent, then select. */
@@ -371,7 +484,7 @@ export const useKannaStore = defineStore("kanna", () => {
     id: string, repoPath: string, worktreePath: string,
     branch: string, portOffset: number, prompt: string,
     agentType: "pty" | "sdk",
-    opts?: { baseBranch?: string; tags?: string[]; customTask?: CustomTaskConfig; agentProvider?: "claude" | "copilot" },
+    opts?: { baseBranch?: string; tags?: string[]; pipelineName?: string; customTask?: CustomTaskConfig; agentProvider?: "claude" | "copilot" },
   ) {
     try {
       // Read config and create worktree concurrently — they're independent.
@@ -724,7 +837,7 @@ export const useKannaStore = defineStore("kanna", () => {
       // Lingering — second close finishes the task
       if (hasTag(item, "lingering")) {
         await removePipelineItemTag(_db, item.id, "lingering");
-        await addPipelineItemTag(_db, item.id, "done");
+        await closePipelineItem(_db, item.id);
         selectNextItem(item.id);
         await checkUnblocked(item.id);
         bump();
@@ -736,7 +849,7 @@ export const useKannaStore = defineStore("kanna", () => {
         await invoke("kill_session", { sessionId: `td-${item.id}` }).catch((e: unknown) =>
           console.error("[store] kill teardown session failed:", e));
         await removePipelineItemTag(_db, item.id, "teardown");
-        await addPipelineItemTag(_db, item.id, "done");
+        await closePipelineItem(_db, item.id);
         selectNextItem(item.id);
         bump();
         return;
@@ -747,7 +860,7 @@ export const useKannaStore = defineStore("kanna", () => {
       // Blocked tasks never started — no teardown needed
       if (wasBlocked) {
         await removeAllBlockersForItem(_db, item.id);
-        await addPipelineItemTag(_db, item.id, "done");
+        await closePipelineItem(_db, item.id);
         selectNextItem(item.id);
         bump();
         (async () => {
@@ -760,11 +873,11 @@ export const useKannaStore = defineStore("kanna", () => {
       const teardownCmds = await collectTeardownCommands(item, repo);
 
       if (teardownCmds.length === 0) {
-        // No teardown — archive (or linger if dev hack enabled)
+        // No teardown — close (or linger if dev hack enabled)
         if (devLingerTerminals.value) {
           await addPipelineItemTag(_db, item.id, "lingering");
         } else {
-          await addPipelineItemTag(_db, item.id, "archived");
+          await closePipelineItem(_db, item.id);
           selectNextItem(item.id);
         }
         bump();
@@ -776,8 +889,7 @@ export const useKannaStore = defineStore("kanna", () => {
               invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
                 console.error("[store] kill shell session failed:", e)),
             ]);
-            // NOTE: do not call checkUnblocked — archived ≠ done
-          } catch (e) { console.error("[store] archive cleanup failed:", e); }
+          } catch (e) { console.error("[store] close cleanup failed:", e); }
         })();
         return;
       }
@@ -829,14 +941,15 @@ export const useKannaStore = defineStore("kanna", () => {
       return;
     }
     try {
+      // Find most recently closed item to undo
       const rows = await _db.select<PipelineItem>(
-        "SELECT * FROM pipeline_item WHERE tags LIKE '%\"archived\"%' ORDER BY updated_at DESC LIMIT 1"
+        "SELECT * FROM pipeline_item WHERE closed_at IS NOT NULL ORDER BY updated_at DESC LIMIT 1"
       );
       const item = rows[0];
       if (!item) return;
       const repo = repos.value.find((r) => r.id === item.repo_id);
       if (!repo) return;
-      await removePipelineItemTag(_db, item.id, "archived");
+      await reopenPipelineItem(_db, item.id);
       await updatePipelineItemActivity(_db, item.id, "working");
       await selectItem(item.id);
       bump();
@@ -861,64 +974,272 @@ export const useKannaStore = defineStore("kanna", () => {
     }
   }
 
-  async function startPrAgent(itemId: string, repoId: string, repoPath: string) {
-    const item = items.value.find((i) => i.id === itemId);
-    if (!item?.branch) return;
+  // ── Pipeline engine: advanceStage ─────────────────────────────────
+  /** Advance a task to the next pipeline stage. Core pipeline engine function. */
+  async function advanceStage(taskId: string): Promise<void> {
+    const item = items.value.find(i => i.id === taskId);
+    if (!item) return;
 
-    const sourceWorktree = `${repoPath}/.kanna-worktrees/${item.branch}`;
-    const prompt = [
-      `You are in a worktree branched from "${item.branch}".`,
-      `Your job is to create a GitHub pull request for that work.`,
-      `IMPORTANT: First, check for uncommitted changes in the source worktree at "${sourceWorktree}" by running "git -C ${sourceWorktree} status".`,
-      `If there are uncommitted changes there, commit them from that worktree: "git -C ${sourceWorktree} add -A && git -C ${sourceWorktree} commit -m '<appropriate message>'", then pull those commits into your branch: "git pull --rebase".`,
-      `Then:`,
-      `1. Rebase onto latest main: "git fetch origin main && git rebase origin/main". This ensures the PR only contains the task's changes, not reversions from a stale branch point.`,
-      `2. Rename this branch to something meaningful based on the commits (use "git branch -m <new-name>").`,
-      `3. Push the branch (git push -u origin HEAD).`,
-      `4. Create a PR with "gh pr create" — write a clear title and description summarizing the changes.`,
-      `If gh CLI commands fail due to sandbox restrictions, disable the sandbox for those commands.`,
-    ].join("\n");
+    const repo = repos.value.find(r => r.id === item.repo_id) ?? await getRepo(_db, item.repo_id);
+    if (!repo) {
+      console.error("[store] advanceStage: repo not found for", taskId);
+      return;
+    }
 
-    await createItem(repoId, repoPath, prompt, "pty", { baseBranch: item.branch, tags: ["pr"] });
+    // Load pipeline definition
+    let pipeline: PipelineDefinition;
+    try {
+      pipeline = await loadPipeline(repo.path, item.pipeline);
+    } catch (e) {
+      console.error("[store] advanceStage: pipeline definition not found:", e);
+      toast.error(tt('toasts.pipelineNotFound'));
+      return;
+    }
+
+    const currentStage = pipeline.stages.find(s => s.name === item.stage);
+
+    // Run environment teardown for the current stage (if any)
+    if (currentStage?.environment) {
+      const env = pipeline.environments?.[currentStage.environment];
+      if (env?.teardown?.length) {
+        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        try {
+          for (const script of env.teardown) {
+            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
+          }
+        } catch (e) {
+          console.error("[store] advanceStage: teardown script failed:", e);
+          toast.error(tt('toasts.stageTeardownFailed'));
+          return;
+        }
+      }
+    }
+
+    // Find next stage
+    const nextStage = getNextStage(pipeline, item.stage);
+    if (!nextStage) {
+      toast.warning(tt('toasts.taskAtFinalStage'));
+      return;
+    }
+
+    // Check blockers
+    if (await hasUnresolvedBlockers(taskId)) {
+      toast.warning(tt('toasts.taskBlocked'));
+      return;
+    }
+
+    // Update DB: set stage, clear stage_result
+    await updatePipelineItemStage(_db, taskId, nextStage.name);
+    await clearPipelineItemStageResult(_db, taskId);
+
+    // Run environment setup for the next stage (if any)
+    if (nextStage.environment) {
+      const env = pipeline.environments?.[nextStage.environment];
+      if (env?.setup?.length) {
+        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        try {
+          for (const script of env.setup) {
+            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
+          }
+        } catch (e) {
+          console.error("[store] advanceStage: setup script failed:", e);
+          toast.error(tt('toasts.stageSetupFailed'));
+          bump();
+          return;
+        }
+      }
+    }
+
+    // Spawn next stage's agent
+    if (nextStage.agent) {
+      try {
+        const agent = await loadAgent(repo.path, nextStage.agent);
+        const prevResult = item.stage_result ?? undefined;
+        const stagePrompt = buildStagePrompt(agent.prompt, nextStage.prompt, {
+          taskPrompt: item.prompt ?? "",
+          prevResult,
+          branch: item.branch ?? undefined,
+        });
+        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+
+        // Determine agent provider: stage override > agent definition > item default
+        const agentProvider = (nextStage.agent_provider ?? (
+          Array.isArray(agent.agent_provider) ? agent.agent_provider[0] : agent.agent_provider
+        ) ?? item.agent_provider) as "claude" | "copilot";
+
+        // Kill existing session before spawning new one
+        await invoke("kill_session", { sessionId: taskId }).catch((e: unknown) =>
+          console.error("[store] kill_session before advance failed:", e));
+
+        await spawnPtySession(taskId, worktreePath, stagePrompt, 80, 24, {
+          agentProvider,
+          model: agent.model,
+          permissionMode: agent.permission_mode,
+          allowedTools: agent.allowed_tools,
+        });
+      } catch (e) {
+        console.error("[store] advanceStage: agent spawn failed:", e);
+        toast.error(`${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+
+    bump();
   }
 
-  async function startMergeAgent(repoId: string, repoPath: string) {
-    const prompt = [
-      `You are a merge agent. Your job is to safely merge pull requests without breaking the target branch.`,
-      ``,
-      `## Process`,
-      ``,
-      `1. Ask the user which PR(s) to merge and the target branch (default: main).`,
-      ``,
-      `2. Your worktree is your staging area. Fetch and reset it to the latest origin target branch.`,
-      ``,
-      `3. Determine what checks to run:`,
-      `   a. Check .kanna/config.json for a configured test script (the "test" field, an array of shell commands).`,
-      `   b. If none, discover what checks the repo has (CI config, test scripts, Makefile, etc.).`,
-      `   c. If you can't determine what to run, ask the user.`,
-      ``,
-      `4. For each PR, sequentially:`,
-      `   a. Rebase the PR branch onto your worktree's HEAD.`,
-      `   b. If there are conflicts, attempt to resolve them. Show the user your resolutions and get approval before continuing.`,
-      `   c. Run the checks determined in step 3.`,
-      `   d. If checks fail, attempt to fix the issue. Show the user your fix and get approval before continuing.`,
-      `   e. If checks pass, merge the PR to the target branch on origin.`,
-      `   f. Update your worktree HEAD to match the new origin target branch.`,
-      `   g. Delete the merged remote branch.`,
-      ``,
-      `5. Report results — which PRs merged, which failed, and why.`,
-      ``,
-      `## Principles`,
-      ``,
-      `- Each PR is merged individually. Don't hold passing PRs hostage to failing ones.`,
-      `- Always rebase onto the latest target branch before running checks.`,
-      `- Work in your worktree. Never modify the user's local main.`,
-      `- When in doubt, ask the user. Don't force-push, skip tests, or resolve ambiguous conflicts silently.`,
-      `- Keep the user informed of progress but don't be verbose.`,
-      `- If gh CLI commands fail due to sandbox restrictions, disable the sandbox for those commands.`,
-    ].join("\n");
+  /** Force advance, skipping teardown scripts. Used when teardown fails. */
+  async function forceAdvanceStage(taskId: string): Promise<void> {
+    const item = items.value.find(i => i.id === taskId);
+    if (!item) return;
 
-    await createItem(repoId, repoPath, prompt, "pty", { tags: ["merge"] });
+    const repo = repos.value.find(r => r.id === item.repo_id) ?? await getRepo(_db, item.repo_id);
+    if (!repo) return;
+
+    let pipeline: PipelineDefinition;
+    try {
+      pipeline = await loadPipeline(repo.path, item.pipeline);
+    } catch (e) {
+      console.error("[store] forceAdvanceStage: pipeline not found:", e);
+      toast.error(tt('toasts.pipelineNotFound'));
+      return;
+    }
+
+    const nextStage = getNextStage(pipeline, item.stage);
+    if (!nextStage) {
+      toast.warning(tt('toasts.taskAtFinalStage'));
+      return;
+    }
+
+    if (await hasUnresolvedBlockers(taskId)) {
+      toast.warning(tt('toasts.taskBlocked'));
+      return;
+    }
+
+    await updatePipelineItemStage(_db, taskId, nextStage.name);
+    await clearPipelineItemStageResult(_db, taskId);
+
+    // Run setup and spawn agent (same as advanceStage from this point)
+    if (nextStage.environment) {
+      const env = pipeline.environments?.[nextStage.environment];
+      if (env?.setup?.length) {
+        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        try {
+          for (const script of env.setup) {
+            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
+          }
+        } catch (e) {
+          console.error("[store] forceAdvanceStage: setup script failed:", e);
+          toast.error(tt('toasts.stageSetupFailed'));
+          bump();
+          return;
+        }
+      }
+    }
+
+    if (nextStage.agent) {
+      try {
+        const agent = await loadAgent(repo.path, nextStage.agent);
+        const prevResult = item.stage_result ?? undefined;
+        const stagePrompt = buildStagePrompt(agent.prompt, nextStage.prompt, {
+          taskPrompt: item.prompt ?? "",
+          prevResult,
+          branch: item.branch ?? undefined,
+        });
+        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        const agentProvider = (nextStage.agent_provider ?? (
+          Array.isArray(agent.agent_provider) ? agent.agent_provider[0] : agent.agent_provider
+        ) ?? item.agent_provider) as "claude" | "copilot";
+
+        await invoke("kill_session", { sessionId: taskId }).catch((e: unknown) =>
+          console.error("[store] kill_session before force advance failed:", e));
+
+        await spawnPtySession(taskId, worktreePath, stagePrompt, 80, 24, {
+          agentProvider,
+          model: agent.model,
+          permissionMode: agent.permission_mode,
+          allowedTools: agent.allowed_tools,
+        });
+      } catch (e) {
+        console.error("[store] forceAdvanceStage: agent spawn failed:", e);
+        toast.error(`${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+
+    bump();
+  }
+
+  /** Re-run the current stage's setup + agent without advancing. Used after failure. */
+  async function rerunStage(taskId: string): Promise<void> {
+    const item = items.value.find(i => i.id === taskId);
+    if (!item) return;
+
+    const repo = repos.value.find(r => r.id === item.repo_id) ?? await getRepo(_db, item.repo_id);
+    if (!repo) return;
+
+    let pipeline: PipelineDefinition;
+    try {
+      pipeline = await loadPipeline(repo.path, item.pipeline);
+    } catch (e) {
+      console.error("[store] rerunStage: pipeline not found:", e);
+      toast.error(tt('toasts.pipelineNotFound'));
+      return;
+    }
+
+    const currentStage = pipeline.stages.find(s => s.name === item.stage);
+    if (!currentStage) {
+      console.error("[store] rerunStage: stage not found:", item.stage);
+      toast.error(tt('toasts.stageNotFound'));
+      return;
+    }
+
+    // Clear previous stage result
+    await clearPipelineItemStageResult(_db, taskId);
+
+    // Run setup
+    if (currentStage.environment) {
+      const env = pipeline.environments?.[currentStage.environment];
+      if (env?.setup?.length) {
+        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        try {
+          for (const script of env.setup) {
+            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
+          }
+        } catch (e) {
+          console.error("[store] rerunStage: setup script failed:", e);
+          toast.error(tt('toasts.stageSetupFailed'));
+          return;
+        }
+      }
+    }
+
+    // Spawn agent
+    if (currentStage.agent) {
+      try {
+        const agent = await loadAgent(repo.path, currentStage.agent);
+        const stagePrompt = buildStagePrompt(agent.prompt, currentStage.prompt, {
+          taskPrompt: item.prompt ?? "",
+          branch: item.branch ?? undefined,
+        });
+        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        const agentProvider = (currentStage.agent_provider ?? (
+          Array.isArray(agent.agent_provider) ? agent.agent_provider[0] : agent.agent_provider
+        ) ?? item.agent_provider) as "claude" | "copilot";
+
+        await invoke("kill_session", { sessionId: taskId }).catch((e: unknown) =>
+          console.error("[store] kill_session before rerun failed:", e));
+
+        await spawnPtySession(taskId, worktreePath, stagePrompt, 80, 24, {
+          agentProvider,
+          model: agent.model,
+          permissionMode: agent.permission_mode,
+          allowedTools: agent.allowed_tools,
+        });
+      } catch (e) {
+        console.error("[store] rerunStage: agent spawn failed:", e);
+        toast.error(`${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+
+    bump();
   }
 
   async function pinItem(itemId: string, position: number) {
@@ -962,33 +1283,16 @@ export const useKannaStore = defineStore("kanna", () => {
     await loadPreferences();
   }
 
-  // ── Actions: Make PR (keyboard shortcut) ─────────────────────────
+  // ── Actions: Stage advance (keyboard shortcut, replaces makePR) ──
   async function makePR() {
     const item = currentItem.value;
-    const repo = selectedRepo.value;
-    if (!item || !repo) return;
-    const originalId = item.id;
+    if (!item) return;
     try {
-      await startPrAgent(originalId, repo.id, repo.path);
+      await advanceStage(item.id);
     } catch (e) {
-      console.error("[store] PR agent failed to start:", e);
+      console.error("[store] stage advance failed:", e);
       toast.error(tt('toasts.prAgentFailed'));
-      return;
     }
-    // Cleanup runs concurrently in the background — don't block the UI.
-    Promise.all([
-      invoke("kill_session", { sessionId: originalId }).catch((e: unknown) =>
-        console.error("[store] kill_session failed:", e)),
-      invoke("kill_session", { sessionId: `shell-wt-${originalId}` }).catch((e: unknown) =>
-        console.error("[store] kill shell session failed:", e)),
-      addPipelineItemTag(_db, originalId, "done"),
-    ]).then(async () => {
-      await checkUnblocked(originalId);
-      bump();
-    }).catch((e) => {
-      console.error("[store] failed to close source task:", e);
-      toast.error(tt('toasts.closeSourceTaskFailed'));
-    });
   }
 
   async function mergeQueue() {
@@ -1003,7 +1307,9 @@ export const useKannaStore = defineStore("kanna", () => {
     const repo = repos.value.find((r) => r.id === selectedRepoId.value);
     if (!repo) return;
     try {
-      await startMergeAgent(repo.id, repo.path);
+      // Load merge agent from pipeline definitions
+      const agent = await loadAgent(repo.path, "merge");
+      await createItem(repo.id, repo.path, agent.prompt, "pty");
     } catch (e) {
       console.error("[store] merge agent failed to start:", e);
       toast.error(tt('toasts.mergeAgentFailed'));
@@ -1024,11 +1330,12 @@ export const useKannaStore = defineStore("kanna", () => {
   async function checkUnblocked(blockerItemId: string) {
     const blockedItems = await listBlockedByItem(_db, blockerItemId);
     for (const blocked of blockedItems) {
-      if (!hasTag(blocked, "blocked")) continue;
+      // A task is "blocked" if it has entries in task_blocker.
+      // Check if all its blockers have been closed.
+      if (blocked.closed_at !== null) continue; // already closed
       const blockers = await listBlockersForItem(_db, blocked.id);
-      const allClear = blockers.every(
-        (b) => hasTag(b, "pr") || hasTag(b, "merge") || hasTag(b, "done")
-      );
+      if (blockers.length === 0) continue;
+      const allClear = blockers.every(b => b.closed_at !== null);
       if (allClear) {
         await startBlockedTask(blocked);
       }
@@ -1115,7 +1422,7 @@ export const useKannaStore = defineStore("kanna", () => {
     let portItems = items.value;
     if (portItems.length === 0) {
       portItems = await _db.select<PipelineItem>(
-        "SELECT * FROM pipeline_item WHERE repo_id = ? AND tags NOT LIKE '%\"done\"%'",
+        "SELECT * FROM pipeline_item WHERE repo_id = ? AND closed_at IS NULL",
         [item.repo_id],
       );
     }
@@ -1157,7 +1464,7 @@ export const useKannaStore = defineStore("kanna", () => {
   async function blockTask(blockerIds: string[]) {
     const item = currentItem.value;
     const repo = selectedRepo.value;
-    if (!item || !repo || hasTag(item, "done") || hasTag(item, "blocked")) return;
+    if (!item || !repo || isItemHidden(item) || hasTag(item, "blocked")) return;
 
     const originalPrompt = item.prompt;
     const originalRepoId = item.repo_id;
@@ -1173,6 +1480,8 @@ export const useKannaStore = defineStore("kanna", () => {
       issue_number: null,
       issue_title: null,
       prompt: originalPrompt,
+      pipeline: item.pipeline,
+      stage: item.stage,
       tags: ["blocked"],
       pr_number: null,
       pr_url: null,
@@ -1231,8 +1540,8 @@ export const useKannaStore = defineStore("kanna", () => {
         console.error("[store] worktree remove failed:", e)
       );
 
-      await addPipelineItemTag(_db, originalId, "done");
-      // The original task going to "done" may unblock other tasks that
+      await closePipelineItem(_db, originalId);
+      // The original task being closed may unblock other tasks that
       // were waiting on it. We must check — suppressing this causes deadlocks
       // when two tasks block each other (A blocked by B, then B blocked by A').
       await checkUnblocked(originalId);
@@ -1276,7 +1585,7 @@ export const useKannaStore = defineStore("kanna", () => {
 
     const updatedBlockers = await listBlockersForItem(_db, itemId);
     const allClear = updatedBlockers.length === 0 || updatedBlockers.every(
-      (b) => hasTag(b, "pr") || hasTag(b, "merge") || hasTag(b, "done")
+      b => b.closed_at !== null
     );
     if (allClear) {
       await startBlockedTask(item);
@@ -1308,7 +1617,7 @@ export const useKannaStore = defineStore("kanna", () => {
     // Check for blocked tasks that can now start
     const unblockedItems = await getUnblockedItems(_db);
     for (const item of unblockedItems) {
-      console.log(`[store] auto-starting previously blocked task: ${item.id}`);
+      console.debug(`[store] auto-starting previously blocked task: ${item.id}`);
       await startBlockedTask(item);
     }
 
@@ -1342,7 +1651,7 @@ export const useKannaStore = defineStore("kanna", () => {
     if (isTauri) {
       for (const item of eagerItems) {
         if (!item.branch) continue;
-        if (hasTag(item, "done") || hasTag(item, "merge")) continue;
+        if (item.closed_at !== null) continue;
         const repo = eagerRepos.find(r => r.id === item.repo_id);
         if (!repo) continue;
         const wtPath = `${repo.path}/.kanna-worktrees/${item.branch}`;
@@ -1397,7 +1706,7 @@ export const useKannaStore = defineStore("kanna", () => {
       const sessionId = payload.session_id;
       if (!sessionId) return;
 
-      // Teardown session finished — mark task done
+      // Teardown session finished — close task
       if (typeof sessionId === "string" && sessionId.startsWith("td-")) {
         const itemId = sessionId.slice(3);
         const item = items.value.find((i) => i.id === itemId);
@@ -1406,7 +1715,7 @@ export const useKannaStore = defineStore("kanna", () => {
         if (devLingerTerminals.value) {
           await addPipelineItemTag(_db, itemId, "lingering");
         } else {
-          await addPipelineItemTag(_db, itemId, "done");
+          await closePipelineItem(_db, itemId);
           if (selectedItemId.value === itemId) {
             selectNextItem(itemId);
           }
@@ -1417,6 +1726,57 @@ export const useKannaStore = defineStore("kanna", () => {
       }
 
       _handleAgentFinished(sessionId);
+    });
+
+    // Pipeline stage-complete signal from kanna-cli via app socket
+    listen("pipeline_stage_complete", async (event: unknown) => {
+      const payload = (event as { payload: { task_id: string } }).payload;
+      const taskId = payload?.task_id;
+      if (!taskId) return;
+
+      const item = items.value.find(i => i.id === taskId);
+      if (!item) return;
+
+      // Reload item from DB to get fresh stage_result
+      bump();
+
+      // Wait a tick for computedAsync to refresh
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const freshItem = items.value.find(i => i.id === taskId);
+      if (!freshItem) return;
+
+      // Load pipeline to check transition type
+      const repo = repos.value.find(r => r.id === freshItem.repo_id);
+      if (!repo) return;
+
+      try {
+        const pipeline = await loadPipeline(repo.path, freshItem.pipeline);
+        const stage = pipeline.stages.find(s => s.name === freshItem.stage);
+        if (!stage) return;
+
+        if (stage.transition === "auto") {
+          // Parse stage_result to check if agent signaled success
+          if (freshItem.stage_result) {
+            try {
+              const result = JSON.parse(freshItem.stage_result) as StageCompleteResult;
+              if (result.status === "success") {
+                await advanceStage(taskId);
+              }
+            } catch (e) {
+              console.error("[store] failed to parse stage_result:", e);
+            }
+          }
+        }
+
+        // For manual transition or failure: mark activity as unread so user notices
+        if (selectedItemId.value !== taskId) {
+          await updatePipelineItemActivity(_db, taskId, "unread");
+          bump();
+        }
+      } catch (e) {
+        console.error("[store] pipeline_stage_complete handler failed:", e);
+      }
     });
   }
 
@@ -1434,7 +1794,9 @@ export const useKannaStore = defineStore("kanna", () => {
     selectRepo, selectItem, goBack, goForward,
     importRepo, createRepo, cloneAndImportRepo, hideRepo,
     createItem, spawnPtySession, spawnShellSession, closeTask, undoClose,
-    startPrAgent, startMergeAgent, makePR, mergeQueue,
+    advanceStage, forceAdvanceStage, rerunStage,
+    loadPipeline, loadAgent,
+    makePR, mergeQueue,
     blockTask, editBlockedTask,
     listBlockersForItem: (itemId: string) => listBlockersForItem(_db, itemId),
     listBlockedByItem: (itemId: string) => listBlockedByItem(_db, itemId),

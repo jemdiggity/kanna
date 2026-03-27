@@ -114,7 +114,12 @@
     "blockedWorktreeFailed": "Failed to create worktree for blocked task",
     "blockTaskFailed": "Failed to block task",
     "selectRepoFirst": "Select a repository first",
-    "agentStartFailed": "Agent failed to start"
+    "agentStartFailed": "Agent failed to start",
+    "pipelineNotFound": "Pipeline definition not found",
+    "taskAtFinalStage": "Task is at the final stage",
+    "stageTeardownFailed": "Stage teardown script failed",
+    "stageSetupFailed": "Stage setup script failed",
+    "stageNotFound": "Stage not found in pipeline"
   },
   "tags": {
     "inProgress": "In Progress",

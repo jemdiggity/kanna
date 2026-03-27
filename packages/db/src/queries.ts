@@ -62,7 +62,7 @@ export async function listPipelineItems(
 
 export async function insertPipelineItem(
   db: DbHandle,
-  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "stage" | "stage_result" | "tags" | "base_ref" | "claude_session_id"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
+  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "claude_session_id"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
 ): Promise<void> {
   const tagsJson = JSON.stringify(item.tags ?? []);
   await db.execute(
@@ -249,6 +249,26 @@ export async function updateClaudeSessionId(
   );
 }
 
+export async function closePipelineItem(
+  db: DbHandle,
+  id: string
+): Promise<void> {
+  await db.execute(
+    "UPDATE pipeline_item SET closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+    [id]
+  );
+}
+
+export async function reopenPipelineItem(
+  db: DbHandle,
+  id: string
+): Promise<void> {
+  await db.execute(
+    "UPDATE pipeline_item SET closed_at = NULL, updated_at = datetime('now') WHERE id = ?",
+    [id]
+  );
+}
+
 export async function reorderPinnedItems(
   db: DbHandle,
   _repoId: string,
@@ -331,14 +351,19 @@ export async function listBlockedByItem(
 export async function getUnblockedItems(
   db: DbHandle,
 ): Promise<PipelineItem[]> {
+  // A task is "blocked" if it has entries in task_blocker.
+  // It becomes "unblocked" when all its blockers have closed_at set.
   return db.select<PipelineItem>(
     `SELECT pi.* FROM pipeline_item pi
-     WHERE pi.tags LIKE '%"blocked"%'
+     WHERE EXISTS (
+       SELECT 1 FROM task_blocker tb WHERE tb.blocked_item_id = pi.id
+     )
+     AND pi.closed_at IS NULL
      AND NOT EXISTS (
        SELECT 1 FROM task_blocker tb
        JOIN pipeline_item blocker ON blocker.id = tb.blocker_item_id
        WHERE tb.blocked_item_id = pi.id
-       AND blocker.tags NOT LIKE '%"done"%'
+       AND blocker.closed_at IS NULL
      )`,
   );
 }

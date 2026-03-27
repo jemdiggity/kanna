@@ -114,7 +114,12 @@
     "blockedWorktreeFailed": "ブロックタスクのワークツリー作成に失敗しました",
     "blockTaskFailed": "タスクのブロックに失敗しました",
     "selectRepoFirst": "リポジトリを先に選択してください",
-    "agentStartFailed": "エージェントの開始に失敗しました"
+    "agentStartFailed": "エージェントの開始に失敗しました",
+    "pipelineNotFound": "パイプライン定義が見つかりません",
+    "taskAtFinalStage": "タスクは最終ステージにあります",
+    "stageTeardownFailed": "ステージのティアダウンスクリプトが失敗しました",
+    "stageSetupFailed": "ステージのセットアップスクリプトが失敗しました",
+    "stageNotFound": "パイプラインにステージが見つかりません"
   },
   "tags": {
     "inProgress": "進行中",
