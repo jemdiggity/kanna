@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { PipelineItem } from "@kanna/db";
-import { hasTag } from "@kanna/core";
 import { computed } from "vue";
 
 const props = defineProps<{
@@ -8,22 +7,20 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "make-pr"): void;
+  (e: "advance-stage"): void;
 }>();
 
-const showMakePR = computed(() => {
-  return !hasTag(props.item, "done") && !hasTag(props.item, "pr") && !hasTag(props.item, "merge") && !hasTag(props.item, "blocked");
-});
+const showAdvanceStage = computed(() => props.item.closed_at == null);
 </script>
 
 <template>
   <div class="action-bar">
     <button
-      v-if="showMakePR"
+      v-if="showAdvanceStage"
       class="btn btn-primary"
-      @click="emit('make-pr')"
+      @click="emit('advance-stage')"
     >
-      {{ $t('tasks.makePR') }}
+      {{ $t('shortcuts.advanceStage') }}
     </button>
   </div>
 </template>

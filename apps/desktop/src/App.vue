@@ -138,7 +138,7 @@ function navigateRepos(direction: -1 | 1) {
   // Restore last-selected task for this repo, or fall back to first task
   const lastItemId = store.lastSelectedItemByRepo[nextRepo.id];
   const lastItem = lastItemId
-    ? store.items.find((i) => i.id === lastItemId && i.repo_id === nextRepo.id && !hasTag(i, "done"))
+    ? store.items.find((i) => i.id === lastItemId && i.repo_id === nextRepo.id && i.closed_at == null)
     : undefined;
   if (lastItem) {
     store.selectItem(lastItem.id);
@@ -165,7 +165,7 @@ const blockerCandidates = computed(() => {
   if (!item) return [];
   return store.items.filter((i) =>
     i.id !== item.id &&
-    !hasTag(i, "done") &&
+    i.closed_at == null &&
     i.repo_id === store.selectedRepoId
   );
 });
@@ -174,7 +174,7 @@ const blockerCandidates = computed(() => {
 const disabledBlockerIds = computedAsync(async () => {
   const item = store.currentItem;
   if (!item) return [];
-  if (!hasTag(item, "done")) {
+  if (item.closed_at == null) {
     const dependents = await collectDependents(item.id);
     return [...dependents];
   }
@@ -200,9 +200,9 @@ async function collectDependents(itemId: string): Promise<Set<string>> {
 
 const preselectedBlockerIds = computedAsync(async () => {
   const item = store.currentItem;
-  if (!item || !hasTag(item, "blocked")) return [];
+  if (!item) return [];
   const blockers = await store.listBlockersForItem(item.id);
-  return blockers.map((b: any) => b.id);
+  return blockers.map((b) => b.id);
 }, []);
 
 // Build a map of blocked item ID → blocker names for the sidebar
@@ -238,7 +238,7 @@ async function onBlockerConfirm(selectedIds: string[]) {
 const paletteExtraCommands = computed(() => {
   const cmds: Array<{ action: ActionName; label: string; group: string; shortcut: string }> = [];
   const item = store.currentItem;
-  if (item && !hasTag(item, "done") && !hasTag(item, "blocked")) {
+  if (item && item.closed_at == null && !hasTag(item, "blocked")) {
     cmds.push({ action: "blockTask", label: t('tasks.blockTask'), group: t('shortcuts.groupTasks'), shortcut: "" });
   }
   if (item && hasTag(item, "blocked")) {
@@ -693,7 +693,7 @@ async function handleCloneRepo(url: string, destination: string) {
 
 const currentBlockers = computedAsync(async () => {
   const item = store.currentItem;
-  if (!item || !hasTag(item, "blocked")) return [];
+  if (!item) return [];
   return store.listBlockersForItem(item.id);
 }, []);
 
