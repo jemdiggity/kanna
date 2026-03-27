@@ -902,7 +902,7 @@ export const useKannaStore = defineStore("kanna", () => {
     }
   }
 
-  async function closeTask(targetItemId?: string) {
+  async function closeTask(targetItemId?: string, opts?: { selectNext?: boolean }) {
     lastUndoAction.value = null;
     const item = targetItemId
       ? items.value.find(i => i.id === targetItemId)
@@ -916,7 +916,7 @@ export const useKannaStore = defineStore("kanna", () => {
       if (hasTag(item, "lingering")) {
         await removePipelineItemTag(_db, item.id, "lingering");
         await closePipelineItem(_db, item.id);
-        selectNextItem(item.id);
+        if (opts?.selectNext !== false) selectNextItem(item.id);
         await checkUnblocked(item.id);
         bump();
         return;
@@ -928,7 +928,7 @@ export const useKannaStore = defineStore("kanna", () => {
           console.error("[store] kill teardown session failed:", e));
         await removePipelineItemTag(_db, item.id, "teardown");
         await closePipelineItem(_db, item.id);
-        selectNextItem(item.id);
+        if (opts?.selectNext !== false) selectNextItem(item.id);
         bump();
         return;
       }
@@ -939,7 +939,7 @@ export const useKannaStore = defineStore("kanna", () => {
       if (wasBlocked) {
         await removeAllBlockersForItem(_db, item.id);
         await closePipelineItem(_db, item.id);
-        selectNextItem(item.id);
+        if (opts?.selectNext !== false) selectNextItem(item.id);
         bump();
         (async () => {
           await invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
@@ -956,7 +956,7 @@ export const useKannaStore = defineStore("kanna", () => {
           await addPipelineItemTag(_db, item.id, "lingering");
         } else {
           await closePipelineItem(_db, item.id);
-          selectNextItem(item.id);
+          if (opts?.selectNext !== false) selectNextItem(item.id);
         }
         bump();
         (async () => {
@@ -1120,10 +1120,9 @@ export const useKannaStore = defineStore("kanna", () => {
       }
     }
 
-    // Create the new task first (DB insert + background spawn).
-    // Don't use closeTask() — it calls selectNextItem and runs teardown,
-    // which interferes with the stage handoff. Follow the old makePR pattern:
-    // create new task, then lightweight close the source in the background.
+    // Create the new task first (DB insert + background spawn), then close
+    // the old task with teardown but without moving selection — the new task
+    // auto-selects itself when setupWorktreeAndSpawn finishes.
     const oldId = item.id;
 
     await createItem(repo.id, repo.path, stagePrompt, "pty", {
@@ -1133,20 +1132,8 @@ export const useKannaStore = defineStore("kanna", () => {
       ...agentOpts,
     });
 
-    // Lightweight close: kill sessions + mark done. No selectNextItem, no teardown.
-    // The new task auto-selects itself when setupWorktreeAndSpawn finishes.
-    Promise.all([
-      invoke("kill_session", { sessionId: oldId }).catch((e: unknown) =>
-        console.error("[store] kill_session failed:", e)),
-      invoke("kill_session", { sessionId: `shell-wt-${oldId}` }).catch((e: unknown) =>
-        console.error("[store] kill shell session failed:", e)),
-      closePipelineItem(_db, oldId),
-    ]).then(async () => {
-      await checkUnblocked(oldId);
-      bump();
-    }).catch((e) => {
-      console.error("[store] failed to close source task after stage advance:", e);
-    });
+    // Close with full teardown but don't select next — new task auto-selects
+    await closeTask(oldId, { selectNext: false });
   }
 
   /** Force advance, skipping teardown scripts. Used when teardown fails. */
