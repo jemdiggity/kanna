@@ -435,7 +435,7 @@ export const useKannaStore = defineStore("kanna", () => {
     repoPath: string,
     prompt: string,
     agentType: "pty" | "sdk" = "pty",
-    opts?: { baseBranch?: string; tags?: string[]; pipelineName?: string; customTask?: CustomTaskConfig; agentProvider?: "claude" | "copilot" },
+    opts?: { baseBranch?: string; tags?: string[]; pipelineName?: string; stage?: string; customTask?: CustomTaskConfig; agentProvider?: "claude" | "copilot"; model?: string; permissionMode?: string; allowedTools?: string[] },
   ) {
     const id = generateId();
     const branch = `task-${id}`;
@@ -458,17 +458,17 @@ export const useKannaStore = defineStore("kanna", () => {
       }
     }
 
-    // Load pipeline definition and resolve first stage
-    let firstStageName = "in progress";
+    // Load pipeline definition and resolve stage
+    let firstStageName = opts?.stage ?? "in progress";
     let pipelinePrompt = effectivePrompt;
     try {
       const pipeline = await loadPipeline(repoPath, pipelineName);
-      if (pipeline.stages.length > 0) {
+      if (!opts?.stage && pipeline.stages.length > 0) {
         const firstStage = pipeline.stages[0];
         firstStageName = firstStage.name;
 
-        // Load the first stage's agent and build prompt
-        if (firstStage.agent) {
+        // Load the first stage's agent and build prompt (skip if stage was overridden — prompt already built)
+        if (firstStage.agent && !opts?.stage) {
           try {
             const agent = await loadAgent(repoPath, firstStage.agent);
             pipelinePrompt = buildStagePrompt(agent.prompt, firstStage.prompt, {
@@ -549,7 +549,7 @@ export const useKannaStore = defineStore("kanna", () => {
     id: string, repoPath: string, worktreePath: string,
     branch: string, portOffset: number, prompt: string,
     agentType: "pty" | "sdk",
-    opts?: { baseBranch?: string; tags?: string[]; pipelineName?: string; customTask?: CustomTaskConfig; agentProvider?: "claude" | "copilot" },
+    opts?: { baseBranch?: string; tags?: string[]; pipelineName?: string; stage?: string; customTask?: CustomTaskConfig; agentProvider?: "claude" | "copilot"; model?: string; permissionMode?: string; allowedTools?: string[] },
   ) {
     try {
       // Read config and create worktree concurrently — they're independent.
@@ -1043,7 +1043,7 @@ export const useKannaStore = defineStore("kanna", () => {
   /** Advance a task to the next pipeline stage. Core pipeline engine function. */
   async function advanceStage(taskId: string): Promise<void> {
     const item = items.value.find(i => i.id === taskId);
-    if (!item) return;
+    if (!item?.branch) return;
 
     const repo = repos.value.find(r => r.id === item.repo_id) ?? await getRepo(_db, item.repo_id);
     if (!repo) {
@@ -1061,25 +1061,6 @@ export const useKannaStore = defineStore("kanna", () => {
       return;
     }
 
-    const currentStage = pipeline.stages.find(s => s.name === item.stage);
-
-    // Run environment teardown for the current stage (if any)
-    if (currentStage?.environment) {
-      const env = pipeline.environments?.[currentStage.environment];
-      if (env?.teardown?.length) {
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-        try {
-          for (const script of env.teardown) {
-            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
-          }
-        } catch (e) {
-          console.error("[store] advanceStage: teardown script failed:", e);
-          toast.error(tt('toasts.stageTeardownFailed'));
-          return;
-        }
-      }
-    }
-
     // Find next stage
     const nextStage = getNextStage(pipeline, item.stage);
     if (!nextStage) {
@@ -1093,143 +1074,57 @@ export const useKannaStore = defineStore("kanna", () => {
       return;
     }
 
-    // Update DB: set stage, clear stage_result
-    await updatePipelineItemStage(_db, taskId, nextStage.name);
-    await clearPipelineItemStageResult(_db, taskId);
+    // Build the next stage's prompt
+    let stagePrompt = "";
+    const agentProvider = item.agent_provider as "claude" | "copilot" | undefined;
+    let agentOpts: Record<string, unknown> = {};
 
-    // Run environment setup for the next stage (if any)
-    if (nextStage.environment) {
-      const env = pipeline.environments?.[nextStage.environment];
-      if (env?.setup?.length) {
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-        try {
-          for (const script of env.setup) {
-            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
-          }
-        } catch (e) {
-          console.error("[store] advanceStage: setup script failed:", e);
-          toast.error(tt('toasts.stageSetupFailed'));
-          bump();
-          return;
-        }
-      }
-    }
-
-    // Spawn next stage's agent
     if (nextStage.agent) {
       try {
         const agent = await loadAgent(repo.path, nextStage.agent);
         const prevResult = item.stage_result ?? undefined;
-        const stagePrompt = buildStagePrompt(agent.prompt, nextStage.prompt, {
+        stagePrompt = buildStagePrompt(agent.prompt, nextStage.prompt, {
           taskPrompt: item.prompt ?? "",
           prevResult,
           branch: item.branch ?? undefined,
         });
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
 
         // Determine agent provider: stage override > agent definition > item default
-        const agentProvider = (nextStage.agent_provider ?? (
+        const resolvedProvider = (nextStage.agent_provider ?? (
           Array.isArray(agent.agent_provider) ? agent.agent_provider[0] : agent.agent_provider
-        ) ?? item.agent_provider) as "claude" | "copilot";
+        ) ?? agentProvider) as "claude" | "copilot" | undefined;
 
-        // Kill existing session before spawning new one
-        await invoke("kill_session", { sessionId: taskId }).catch((e: unknown) =>
-          console.error("[store] kill_session before advance failed:", e));
-
-        await spawnPtySession(taskId, worktreePath, stagePrompt, 80, 24, {
-          agentProvider,
+        agentOpts = {
+          agentProvider: resolvedProvider,
           model: agent.model,
           permissionMode: agent.permission_mode,
           allowedTools: agent.allowed_tools,
-        });
+        };
       } catch (e) {
-        console.error("[store] advanceStage: agent spawn failed:", e);
+        console.error("[store] advanceStage: failed to load agent:", e);
         toast.error(`${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`);
+        return;
       }
     }
 
-    bump();
+    // Close the current task, then create a new task for the next stage
+    // This matches the old startPrAgent pattern: new task inherits the branch
+    await createItem(repo.id, repo.path, stagePrompt, "pty", {
+      baseBranch: item.branch,
+      pipelineName: item.pipeline,
+      stage: nextStage.name,
+      ...agentOpts,
+    });
+
+    // Close the source task
+    await closeTask(taskId);
   }
 
   /** Force advance, skipping teardown scripts. Used when teardown fails. */
   async function forceAdvanceStage(taskId: string): Promise<void> {
-    const item = items.value.find(i => i.id === taskId);
-    if (!item) return;
-
-    const repo = repos.value.find(r => r.id === item.repo_id) ?? await getRepo(_db, item.repo_id);
-    if (!repo) return;
-
-    let pipeline: PipelineDefinition;
-    try {
-      pipeline = await loadPipeline(repo.path, item.pipeline);
-    } catch (e) {
-      console.error("[store] forceAdvanceStage: pipeline not found:", e);
-      toast.error(tt('toasts.pipelineNotFound'));
-      return;
-    }
-
-    const nextStage = getNextStage(pipeline, item.stage);
-    if (!nextStage) {
-      toast.warning(tt('toasts.taskAtFinalStage'));
-      return;
-    }
-
-    if (await hasUnresolvedBlockers(taskId)) {
-      toast.warning(tt('toasts.taskBlocked'));
-      return;
-    }
-
-    await updatePipelineItemStage(_db, taskId, nextStage.name);
-    await clearPipelineItemStageResult(_db, taskId);
-
-    // Run setup and spawn agent (same as advanceStage from this point)
-    if (nextStage.environment) {
-      const env = pipeline.environments?.[nextStage.environment];
-      if (env?.setup?.length) {
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-        try {
-          for (const script of env.setup) {
-            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
-          }
-        } catch (e) {
-          console.error("[store] forceAdvanceStage: setup script failed:", e);
-          toast.error(tt('toasts.stageSetupFailed'));
-          bump();
-          return;
-        }
-      }
-    }
-
-    if (nextStage.agent) {
-      try {
-        const agent = await loadAgent(repo.path, nextStage.agent);
-        const prevResult = item.stage_result ?? undefined;
-        const stagePrompt = buildStagePrompt(agent.prompt, nextStage.prompt, {
-          taskPrompt: item.prompt ?? "",
-          prevResult,
-          branch: item.branch ?? undefined,
-        });
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-        const agentProvider = (nextStage.agent_provider ?? (
-          Array.isArray(agent.agent_provider) ? agent.agent_provider[0] : agent.agent_provider
-        ) ?? item.agent_provider) as "claude" | "copilot";
-
-        await invoke("kill_session", { sessionId: taskId }).catch((e: unknown) =>
-          console.error("[store] kill_session before force advance failed:", e));
-
-        await spawnPtySession(taskId, worktreePath, stagePrompt, 80, 24, {
-          agentProvider,
-          model: agent.model,
-          permissionMode: agent.permission_mode,
-          allowedTools: agent.allowed_tools,
-        });
-      } catch (e) {
-        console.error("[store] forceAdvanceStage: agent spawn failed:", e);
-        toast.error(`${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`);
-      }
-    }
-
-    bump();
+    // Same as advanceStage but skips teardown — advanceStage currently
+    // doesn't run teardown anyway (it closes + creates new), so just delegate
+    await advanceStage(taskId);
   }
 
   /** Re-run the current stage's setup + agent without advancing. Used after failure. */
