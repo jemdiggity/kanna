@@ -9,7 +9,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::menu::{AboutMetadataBuilder, MenuBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
+
+/// Managed state holding the pipeline socket path so the frontend can read it.
+pub type PipelineSocketState = Arc<Mutex<Option<String>>>;
 
 /// Install a native macOS event monitor that intercepts fn+F (Globe+F) and
 /// toggles fullscreen.  The fn/Globe modifier sets NSEventModifierFlagFunction
@@ -72,9 +76,7 @@ fn setup_fn_f_fullscreen(app: tauri::AppHandle) {
                                     if let Some(w) = app_clone.get_webview_window("main") {
                                         let wv: &tauri::Webview<_> = w.as_ref();
                                         let _ = wv.set_focus();
-                                        let _ = wv.eval(
-                                            "window.__kannaRestoreFocus?.()"
-                                        );
+                                        let _ = wv.eval("window.__kannaRestoreFocus?.()");
                                     }
                                 });
                                 return ptr::null_mut(); // consume the event
@@ -203,6 +205,111 @@ pub fn daemon_socket_path() -> PathBuf {
         .join("Application Support")
         .join("Kanna");
     short_socket_path(&dir)
+}
+
+/// Compute the kanna.sock path for the pipeline listener.
+/// Follows the same worktree isolation convention as daemon_data_dir().
+fn pipeline_socket_path() -> PathBuf {
+    daemon_data_dir().join("kanna.sock")
+}
+
+/// Spawn a Unix socket listener at kanna.sock that accepts stage-complete
+/// notifications from kanna-cli. Each connection sends a single JSON line;
+/// we parse it and emit a Tauri event so the frontend can react.
+fn spawn_pipeline_listener(app: &tauri::AppHandle) {
+    let socket_path = pipeline_socket_path();
+
+    // Store the path in managed state so the frontend can retrieve it
+    let state: tauri::State<'_, PipelineSocketState> = app.state();
+    {
+        let path_str = socket_path.to_string_lossy().to_string();
+        let state_inner = state.inner().clone();
+        tauri::async_runtime::block_on(async {
+            *state_inner.lock().await = Some(path_str);
+        });
+    }
+
+    // Remove stale socket file if it exists
+    if socket_path.exists() {
+        if let Err(e) = std::fs::remove_file(&socket_path) {
+            eprintln!(
+                "[pipeline-listener] failed to remove stale socket {:?}: {}",
+                socket_path, e
+            );
+        }
+    }
+
+    // Ensure the parent directory exists
+    if let Some(parent) = socket_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!(
+                "[pipeline-listener] failed to create directory {:?}: {}",
+                parent, e
+            );
+            return;
+        }
+    }
+
+    let app_handle = app.clone();
+    let path = socket_path.clone();
+    tauri::async_runtime::spawn(async move {
+        let listener = match tokio::net::UnixListener::bind(&path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[pipeline-listener] failed to bind {:?}: {}", path, e);
+                return;
+            }
+        };
+
+        eprintln!("[pipeline-listener] listening on {:?}", path);
+
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    eprintln!("[pipeline-listener] accept error: {}", e);
+                    continue;
+                }
+            };
+
+            let reader = tokio::io::BufReader::new(stream);
+            let mut lines = reader.lines();
+
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let parsed: serde_json::Value = match serde_json::from_str(&line) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("[pipeline-listener] invalid JSON: {} — {:?}", e, line);
+                            continue;
+                        }
+                    };
+
+                    let msg_type = parsed.get("type").and_then(|t| t.as_str());
+                    let task_id = parsed.get("task_id").and_then(|t| t.as_str());
+
+                    if msg_type == Some("stage_complete") {
+                        if let Some(tid) = task_id {
+                            eprintln!("[pipeline-listener] stage_complete for task {}", tid);
+                            let _ = app_handle.emit(
+                                "pipeline_stage_complete",
+                                serde_json::json!({ "task_id": tid }),
+                            );
+                        } else {
+                            eprintln!("[pipeline-listener] stage_complete missing task_id");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Connection closed without sending data
+                }
+                Err(e) => {
+                    eprintln!("[pipeline-listener] read error: {}", e);
+                }
+            }
+            // Connection is dropped/closed here automatically
+        }
+    });
 }
 
 /// Try to connect to the daemon. Returns None if not available.
@@ -471,6 +578,7 @@ pub fn run() {
         .manage(
             Arc::new(Mutex::new(std::collections::HashSet::<String>::new())) as AttachedSessions,
         )
+        .manage(Arc::new(Mutex::new(None)) as PipelineSocketState)
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -526,6 +634,10 @@ pub fn run() {
                     }
                 });
             }
+
+            // Start pipeline socket listener (kanna.sock) — must run before
+            // agents are spawned so KANNA_SOCKET_PATH is available.
+            spawn_pipeline_listener(app.handle());
 
             let handle = app.handle().clone();
             let handle_reattach = handle.clone();
@@ -584,6 +696,7 @@ pub fn run() {
             commands::fs::read_env_var,
             commands::fs::append_log,
             commands::fs::get_app_data_dir,
+            commands::fs::get_pipeline_socket_path,
             commands::fs::copy_file,
             commands::fs::remove_file,
             commands::fs::list_dir,
