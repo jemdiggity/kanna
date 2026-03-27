@@ -1120,20 +1120,18 @@ export const useKannaStore = defineStore("kanna", () => {
       }
     }
 
-    // Create the new task first (DB insert + background spawn), then close
-    // the old task with teardown but without moving selection — the new task
-    // auto-selects itself when setupWorktreeAndSpawn finishes.
-    const oldId = item.id;
+    // Close old task first (teardown, graceful SIGINT, mark done) — must
+    // complete before createItem to avoid daemon command connection race.
+    // selectNext: false because the new task will auto-select itself.
+    await closeTask(item.id, { selectNext: false });
 
+    // Create new task for the next stage
     await createItem(repo.id, repo.path, stagePrompt, "pty", {
       baseBranch: item.branch,
       pipelineName: item.pipeline,
       stage: nextStage.name,
       ...agentOpts,
     });
-
-    // Close with full teardown but don't select next — new task auto-selects
-    await closeTask(oldId, { selectNext: false });
   }
 
   /** Force advance, skipping teardown scripts. Used when teardown fails. */
