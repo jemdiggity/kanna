@@ -180,8 +180,8 @@ export const useKannaStore = defineStore("kanna", () => {
           relativePath: `.kanna/pipelines/${pipelineName}.json`,
         });
         pipeline = parsePipelineJson(content);
-      } catch {
-        throw new Error(`Pipeline "${pipelineName}" not found on disk or in bundled resources`);
+      } catch (resourceErr) {
+        throw new Error(`Pipeline "${pipelineName}" not found on disk or in bundled resources: ${resourceErr instanceof Error ? resourceErr.message : JSON.stringify(resourceErr)}`);
       }
     }
     pipelineCache.set(cacheKey, pipeline);
@@ -205,8 +205,8 @@ export const useKannaStore = defineStore("kanna", () => {
           relativePath: `.kanna/agents/${agentName}/AGENT.md`,
         });
         agent = parseAgentDefinition(content);
-      } catch {
-        throw new Error(`Agent "${agentName}" not found on disk or in bundled resources`);
+      } catch (resourceErr) {
+        throw new Error(`Agent "${agentName}" not found on disk or in bundled resources: ${resourceErr instanceof Error ? resourceErr.message : JSON.stringify(resourceErr)}`);
       }
     }
     agentCache.set(cacheKey, agent);

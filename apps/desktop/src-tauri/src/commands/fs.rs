@@ -50,28 +50,32 @@ pub async fn get_pipeline_socket_path(
 
 /// Resolve the built-in resources directory.
 /// In release builds: `$RESOURCE/` (inside the app bundle).
-/// In dev builds: the repo root (3 levels up from src-tauri).
+/// In dev builds: walk up from cwd to find the repo root containing `.kanna/`.
 fn builtin_resource_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("failed to get resource dir: {}", e))?;
 
-    // In dev mode, resource_dir points to src-tauri/ which won't have .kanna/.
-    // Walk up to the repo root and check there.
-    let candidates = [
-        resource_dir.clone(),
-        resource_dir.join("../../.."),  // src-tauri -> desktop -> apps -> repo root
-    ];
+    // Check the bundled resource dir first (works in release builds)
+    if resource_dir.join(".kanna").is_dir() {
+        return Ok(resource_dir);
+    }
 
-    for candidate in &candidates {
-        if candidate.join(".kanna").is_dir() {
-            return Ok(candidate.clone());
+    // Dev mode: walk up from cwd to find repo root with .kanna/
+    if let Ok(mut dir) = std::env::current_dir() {
+        for _ in 0..10 {
+            if dir.join(".kanna").is_dir() {
+                return Ok(dir);
+            }
+            if !dir.pop() {
+                break;
+            }
         }
     }
 
-    // Default to resource_dir (will fail gracefully downstream)
-    Ok(resource_dir)
+    // Last resort
+    Err("could not find .kanna/ directory in resource dir or any parent of cwd".to_string())
 }
 
 /// Read a file from the app's bundled resources directory.
