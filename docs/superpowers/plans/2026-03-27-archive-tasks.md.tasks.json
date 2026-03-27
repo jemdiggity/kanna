@@ -1,0 +1,39 @@
+{
+  "planPath": "docs/superpowers/plans/2026-03-27-archive-tasks.md",
+  "tasks": [
+    {
+      "id": 2,
+      "subject": "Task 1: Database & Type Foundation",
+      "status": "pending",
+      "description": "**Goal:** Add `claude_session_id` column and `\"archived\"` system tag.\n\n**Files:** packages/db/src/schema.ts, packages/core/src/pipeline/types.ts, packages/db/src/queries.ts, apps/desktop/src/stores/db.ts\n\n```json:metadata\n{\"files\": [\"packages/db/src/schema.ts\", \"packages/core/src/pipeline/types.ts\", \"packages/db/src/queries.ts\", \"apps/desktop/src/stores/db.ts\"], \"verifyCommand\": \"cd packages/db && bun tsc --noEmit && cd ../core && bun tsc --noEmit\", \"acceptanceCriteria\": [\"PipelineItem has claude_session_id\", \"SYSTEM_TAGS includes archived\", \"addPipelineItemTag handles archived closed_at\", \"removePipelineItemTag handles archived closed_at\", \"migration adds column\", \"updateClaudeSessionId exported\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 2: Add SIGINT to Daemon Signal Handler",
+      "status": "pending",
+      "description": "**Goal:** Allow frontend to send SIGINT for graceful Claude shutdown.\n\n**Files:** crates/daemon/src/main.rs\n\n```json:metadata\n{\"files\": [\"crates/daemon/src/main.rs\"], \"verifyCommand\": \"cd crates/daemon && cargo clippy && cargo test -- --test-threads=1\", \"acceptanceCriteria\": [\"SIGINT accepted in Signal command\", \"existing signals unaffected\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 3: Pass --session-id on Spawn and Store in DB",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Generate UUID on spawn, pass --session-id, store in DB.\n\n**Files:** apps/desktop/src/stores/kanna.ts\n\n```json:metadata\n{\"files\": [\"apps/desktop/src/stores/kanna.ts\"], \"verifyCommand\": \"cd apps/desktop && bun tsc --noEmit\", \"acceptanceCriteria\": [\"UUID generated and stored on spawn\", \"--session-id flag passed\", \"resumeSessionId option\", \"--resume used when resuming\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 4: Convert closeTask() to Archive and Update undoClose()",
+      "status": "pending",
+      "blockedBy": [2, 3, 4],
+      "description": "**Goal:** closeTask sends SIGINT + tags archived. undoClose resumes with --resume.\n\n**Files:** apps/desktop/src/stores/kanna.ts\n\n```json:metadata\n{\"files\": [\"apps/desktop/src/stores/kanna.ts\"], \"verifyCommand\": \"cd apps/desktop && bun tsc --noEmit\", \"acceptanceCriteria\": [\"SIGINT instead of kill\", \"archived tag on close\", \"undoClose queries archived\", \"undoClose passes resumeSessionId\", \"checkUnblocked not called\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 5: Sidebar and Store Filtering — Hide Archived Tasks",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Archived tasks hidden from sidebar and store lists.\n\n**Files:** packages/core/src/pipeline/types.ts, apps/desktop/src/components/Sidebar.vue, apps/desktop/src/stores/kanna.ts\n\n```json:metadata\n{\"files\": [\"packages/core/src/pipeline/types.ts\", \"apps/desktop/src/components/Sidebar.vue\", \"apps/desktop/src/stores/kanna.ts\"], \"verifyCommand\": \"cd apps/desktop && bun tsc --noEmit\", \"acceptanceCriteria\": [\"isHidden helper exported\", \"Sidebar filters exclude archived\", \"sortItemsForRepo excludes archived\", \"currentItem skips archived\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-03-27T00:00:00Z"
+}
