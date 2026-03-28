@@ -47,43 +47,7 @@ function hasTag(item: { tags: string }, tag: string): boolean {
   return parseTags(item.tags).includes(tag);
 }
 
-async function addPipelineItemTag(
-  db: DbHandle,
-  id: string,
-  tag: string
-): Promise<void> {
-  const rows = await db.select<{ tags: string }>(
-    "SELECT tags FROM pipeline_item WHERE id = ?",
-    [id]
-  );
-  const current: string[] = rows[0]?.tags ? JSON.parse(rows[0].tags) as string[] : [];
-  if (!current.includes(tag)) {
-    current.push(tag);
-  }
-  const closedAt = (tag === "done" || tag === "archived") ? ", closed_at = datetime('now')" : "";
-  await db.execute(
-    `UPDATE pipeline_item SET tags = ?${closedAt}, updated_at = datetime('now') WHERE id = ?`,
-    [JSON.stringify(current), id]
-  );
-}
 
-async function removePipelineItemTag(
-  db: DbHandle,
-  id: string,
-  tag: string
-): Promise<void> {
-  const rows = await db.select<{ tags: string }>(
-    "SELECT tags FROM pipeline_item WHERE id = ?",
-    [id]
-  );
-  const current: string[] = rows[0]?.tags ? JSON.parse(rows[0].tags) as string[] : [];
-  const updated = current.filter((t) => t !== tag);
-  const closedAt = (tag === "done" || tag === "archived") ? ", closed_at = NULL" : "";
-  await db.execute(
-    `UPDATE pipeline_item SET tags = ?${closedAt}, updated_at = datetime('now') WHERE id = ?`,
-    [JSON.stringify(updated), id]
-  );
-}
 
 export interface PtySpawnOptions {
   agentProvider?: "claude" | "copilot";
@@ -902,7 +866,7 @@ export const useKannaStore = defineStore("kanna", () => {
     }
   }
 
-  async function closeTask(targetItemId?: string, opts?: { selectNext?: boolean; forceClose?: boolean }) {
+  async function closeTask(targetItemId?: string, opts?: { selectNext?: boolean }) {
     lastUndoAction.value = null;
     const item = targetItemId
       ? items.value.find(i => i.id === targetItemId)
@@ -912,23 +876,19 @@ export const useKannaStore = defineStore("kanna", () => {
       : selectedRepo.value;
     if (!item || !repo) return;
     try {
-      // Lingering — second close finishes the task
-      if (hasTag(item, "lingering")) {
-        await removePipelineItemTag(_db, item.id, "lingering");
+      // Already torndown — second close kills sessions and finishes
+      if (item.activity === "torndown") {
+        await Promise.all([
+          invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
+            console.error("[store] kill agent session failed:", e)),
+          invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
+            console.error("[store] kill shell session failed:", e)),
+          invoke("kill_session", { sessionId: `td-${item.id}` }).catch((e: unknown) =>
+            console.error("[store] kill teardown session failed:", e)),
+        ]);
         await closePipelineItem(_db, item.id);
         if (opts?.selectNext !== false) selectNextItem(item.id);
         await checkUnblocked(item.id);
-        bump();
-        return;
-      }
-
-      // Already tearing down — force complete
-      if (hasTag(item, "teardown")) {
-        await invoke("kill_session", { sessionId: `td-${item.id}` }).catch((e: unknown) =>
-          console.error("[store] kill teardown session failed:", e));
-        await removePipelineItemTag(_db, item.id, "teardown");
-        await closePipelineItem(_db, item.id);
-        if (opts?.selectNext !== false) selectNextItem(item.id);
         bump();
         return;
       }
@@ -948,61 +908,49 @@ export const useKannaStore = defineStore("kanna", () => {
         return;
       }
 
-      const teardownCmds = await collectTeardownCommands(item, repo);
+      // 1. Stop the agent CLI
+      await invoke("signal_session", { sessionId: item.id, signal: "SIGINT" }).catch((e: unknown) =>
+        console.error("[store] signal_session failed:", e));
 
-      if (teardownCmds.length === 0) {
-        // No teardown — close (or linger if dev hack enabled and not force-closing)
-        if (devLingerTerminals.value && !opts?.forceClose) {
-          await addPipelineItemTag(_db, item.id, "lingering");
-        } else {
-          await closePipelineItem(_db, item.id);
-          if (opts?.selectNext !== false) selectNextItem(item.id);
-        }
-        bump();
-        (async () => {
-          try {
-            await Promise.all([
-              invoke("signal_session", { sessionId: item.id, signal: "SIGINT" }).catch((e: unknown) =>
-                console.error("[store] signal_session failed:", e)),
-              invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
-                console.error("[store] kill shell session failed:", e)),
-            ]);
-          } catch (e) { console.error("[store] close cleanup failed:", e); }
-        })();
+      // 2. Run teardown scripts if any
+      const teardownCmds = await collectTeardownCommands(item, repo);
+      if (teardownCmds.length > 0) {
+        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        const scriptParts = teardownCmds.map((cmd) => {
+          const escaped = cmd.replace(/'/g, "'\\''");
+          return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${cmd}`;
+        });
+        const fullCmd = `printf '\\033[33mRunning teardown...\\033[0m\\n' && ${scriptParts.join(" && ")} && printf '\\n'`;
+        const tdSessionId = `td-${item.id}`;
+        await invoke("spawn_session", {
+          sessionId: tdSessionId,
+          cwd: worktreePath,
+          executable: "/bin/zsh",
+          args: ["--login", "-i", "-c", fullCmd],
+          env: { KANNA_WORKTREE: "1" },
+          cols: 120,
+          rows: 30,
+        });
+        await invoke("attach_session", { sessionId: tdSessionId, agentProvider: "claude" });
+      }
+
+      // 3. Mark torndown — if linger, keep sessions alive for user to review
+      await updatePipelineItemActivity(_db, item.id, "torndown");
+      bump();
+
+      if (devLingerTerminals.value) {
         return;
       }
 
-      // Has teardown scripts — enter teardown state
-      // 1. Gracefully stop Claude, kill shell
+      // 4. No linger: kill sessions and close immediately
       await Promise.all([
-        invoke("signal_session", { sessionId: item.id, signal: "SIGINT" }).catch((e: unknown) =>
-          console.error("[store] signal_session failed:", e)),
+        invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
+          console.error("[store] kill agent session failed:", e)),
         invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
           console.error("[store] kill shell session failed:", e)),
       ]);
-
-      // 2. Spawn teardown PTY session and attach so output flows to the
-      //    existing terminal (useTerminal listens for td-{sessionId} events)
-      const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-      const scriptParts = teardownCmds.map((cmd) => {
-        const escaped = cmd.replace(/'/g, "'\\''");
-        return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${cmd}`;
-      });
-      const fullCmd = `printf '\\033[33mRunning teardown...\\033[0m\\n' && ${scriptParts.join(" && ")} && printf '\\n'`;
-      const tdSessionId = `td-${item.id}`;
-      await invoke("spawn_session", {
-        sessionId: tdSessionId,
-        cwd: worktreePath,
-        executable: "/bin/zsh",
-        args: ["--login", "-i", "-c", fullCmd],
-        env: { KANNA_WORKTREE: "1" },
-        cols: 120,
-        rows: 30,
-      });
-      await invoke("attach_session", { sessionId: tdSessionId, agentProvider: "claude" });
-
-      // 3. Tag and refresh sidebar (strikethrough)
-      await addPipelineItemTag(_db, item.id, "teardown");
+      await closePipelineItem(_db, item.id);
+      if (opts?.selectNext !== false) selectNextItem(item.id);
       bump();
     } catch (e) {
       console.error("[store] close failed:", e);
@@ -1123,7 +1071,7 @@ export const useKannaStore = defineStore("kanna", () => {
     // Close old task first (teardown, graceful SIGINT, mark done) — must
     // complete before createItem to avoid daemon command connection race.
     // selectNext: false because the new task will auto-select itself.
-    await closeTask(item.id, { selectNext: false, forceClose: true });
+    await closeTask(item.id, { selectNext: false });
 
     // Create new task for the next stage
     await createItem(repo.id, repo.path, stagePrompt, "pty", {
@@ -1132,13 +1080,6 @@ export const useKannaStore = defineStore("kanna", () => {
       stage: nextStage.name,
       ...agentOpts,
     });
-  }
-
-  /** Force advance, skipping teardown scripts. Used when teardown fails. */
-  async function forceAdvanceStage(taskId: string): Promise<void> {
-    // Same as advanceStage but skips teardown — advanceStage currently
-    // doesn't run teardown anyway (it closes + creates new), so just delegate
-    await advanceStage(taskId);
   }
 
   /** Re-run the current stage's setup + agent without advancing. Used after failure. */
@@ -1680,22 +1621,8 @@ export const useKannaStore = defineStore("kanna", () => {
       const sessionId = payload.session_id;
       if (!sessionId) return;
 
-      // Teardown session finished — close task
+      // Teardown session finished — already in torndown state, nothing extra needed
       if (typeof sessionId === "string" && sessionId.startsWith("td-")) {
-        const itemId = sessionId.slice(3);
-        const item = items.value.find((i) => i.id === itemId);
-        if (!item || !hasTag(item, "teardown")) return;
-        await removePipelineItemTag(_db, itemId, "teardown");
-        if (devLingerTerminals.value) {
-          await addPipelineItemTag(_db, itemId, "lingering");
-        } else {
-          await closePipelineItem(_db, itemId);
-          if (selectedItemId.value === itemId) {
-            selectNextItem(itemId);
-          }
-          await checkUnblocked(itemId);
-        }
-        bump();
         return;
       }
 
@@ -1768,7 +1695,7 @@ export const useKannaStore = defineStore("kanna", () => {
     selectRepo, selectItem, goBack, goForward,
     importRepo, createRepo, cloneAndImportRepo, hideRepo,
     createItem, spawnPtySession, spawnShellSession, closeTask, undoClose,
-    advanceStage, forceAdvanceStage, rerunStage,
+    advanceStage, rerunStage,
     loadPipeline, loadAgent,
     makePR, mergeQueue,
     blockTask, editBlockedTask,
