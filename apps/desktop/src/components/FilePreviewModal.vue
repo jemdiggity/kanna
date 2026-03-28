@@ -274,6 +274,8 @@ useLessScroll(contentRef, {
   extraHandler(e) {
     // Search keys first (disabled in rendered markdown mode)
     if (!(renderMarkdown.value && isMarkdownFile.value) && handleSearchKeys(e)) {
+      // Always re-focus the search input (the watcher only fires on false→true transition)
+      if (isSearching.value) nextTick(() => searchInputRef.value?.focus());
       return true;
     }
 
