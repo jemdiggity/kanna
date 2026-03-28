@@ -897,6 +897,7 @@ onMounted(async () => {
     <FilePickerModal
       v-if="showFilePickerModal && !isMobile && store.selectedRepo?.path"
       :worktree-path="activeWorktreePath"
+      :repo-root="store.selectedRepo?.path ?? ''"
       @close="showFilePickerModal = false"
       @select="(f: string) => { showFilePickerModal = false; previewFilePath = f; previewInitialLine = undefined; showFilePreviewModal = true; previewFromPicker = true; previewHidden = false; }"
     />
@@ -904,7 +905,7 @@ onMounted(async () => {
       ref="treeExplorerRef"
       v-if="showTreeExplorer && store.selectedRepo?.path"
       :worktree-path="activeWorktreePath"
-      :repo-root="activeWorktreePath"
+      :repo-root="store.selectedRepo?.path ?? ''"
       :suspended="showFilePreviewModal"
       @close="showTreeExplorer = false"
       @open-file="(f: string) => { previewFilePath = f; previewInitialLine = undefined; showFilePreviewModal = true; previewFromPicker = false; previewHidden = false; }"

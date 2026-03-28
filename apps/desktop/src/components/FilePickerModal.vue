@@ -3,10 +3,12 @@ import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { invoke } from "../invoke";
 import { fuzzyMatch, type FuzzyResult } from "../utils/fuzzyMatch";
 import { useModalZIndex } from "../composables/useModalZIndex";
+import { useToast } from "../composables/useToast";
 const { zIndex } = useModalZIndex();
 
 const props = defineProps<{
   worktreePath: string;
+  repoRoot?: string;
   ideCommand?: string;
 }>();
 
@@ -44,6 +46,18 @@ async function loadFiles() {
       path: props.worktreePath,
     });
   } catch (e) {
+    // If worktree path doesn't exist, fall back to repo root
+    if (props.repoRoot && props.repoRoot !== props.worktreePath) {
+      try {
+        files.value = await invoke<string[]>("list_files", {
+          path: props.repoRoot,
+        });
+        useToast().warning("Worktree missing — showing repo root");
+        return;
+      } catch (_fallback) {
+        // Fall through to original error
+      }
+    }
     console.error("Failed to list files:", e);
   }
 }

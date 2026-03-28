@@ -1,5 +1,6 @@
 import { ref, shallowRef } from "vue";
 import { invoke } from "../invoke";
+import { useToast } from "./useToast";
 
 export interface TreeNode {
   name: string;
@@ -21,6 +22,11 @@ export interface MillerState {
 
 export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) {
   const cache = new Map<string, TreeNode[]>();
+  // When rootPath doesn't exist on disk (e.g. deleted worktree), fall back to repoRoot
+  const fallbackRoot = ref<string | null>(null);
+  function effectiveRoot(): string {
+    return fallbackRoot.value ?? rootPath();
+  }
 
   const state = ref<MillerState>({
     columns: [[], [], []],
@@ -59,7 +65,7 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
     });
 
     const nodes: TreeNode[] = entries.map((e) => {
-      const root = rootPath();
+      const root = effectiveRoot();
       const rel = dirPath === root
         ? e.name
         : dirPath.slice(root.length + 1) + "/" + e.name;
@@ -71,13 +77,13 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
   }
 
   function absolutePath(relativePath: string): string {
-    return relativePath ? `${rootPath()}/${relativePath}` : rootPath();
+    return relativePath ? `${effectiveRoot()}/${relativePath}` : effectiveRoot();
   }
 
   function breadcrumbToAbsolute(segments: string[]): string {
     return segments.length === 0
-      ? rootPath()
-      : `${rootPath()}/${segments.join("/")}`;
+      ? effectiveRoot()
+      : `${effectiveRoot()}/${segments.join("/")}`;
   }
 
   async function prefetch(node: TreeNode) {
@@ -91,10 +97,10 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
   }
 
   async function open(initialPath?: string) {
-    const startPath = initialPath ?? rootPath();
-    const bc = startPath === rootPath()
+    const startPath = initialPath ?? effectiveRoot();
+    const bc = startPath === effectiveRoot()
       ? []
-      : startPath.replace(rootPath() + "/", "").split("/");
+      : startPath.replace(effectiveRoot() + "/", "").split("/");
 
     state.value.breadcrumb = bc;
     loading.value = true;
@@ -137,6 +143,15 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // If the browse root doesn't exist and repo root is different, fall back
+      const rr = repoRoot();
+      if (!fallbackRoot.value && effectiveRoot() !== rr && rr) {
+        console.warn("[tree-explorer] rootPath unavailable, falling back to repo root");
+        useToast().warning("Worktree missing — showing repo root");
+        fallbackRoot.value = rr;
+        loading.value = false;
+        return open();
+      }
       error.value = msg;
       console.error("[tree-explorer] open failed:", msg);
     } finally {
@@ -346,7 +361,7 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
   async function jumpToBreadcrumb(index: number) {
     const newBc = state.value.breadcrumb.slice(0, index);
     // Re-open at that level
-    const targetPath = newBc.length === 0 ? rootPath() : `${rootPath()}/${newBc.join("/")}`;
+    const targetPath = newBc.length === 0 ? effectiveRoot() : `${effectiveRoot()}/${newBc.join("/")}`;
     await open(targetPath);
   }
 
@@ -472,6 +487,7 @@ export function useTreeExplorer(rootPath: () => string, repoRoot: () => string) 
     filterText.value = "";
     filtering.value = false;
     cache.clear();
+    fallbackRoot.value = null;
     slideDirection.value = null;
     pendingG.value = false;
   }
