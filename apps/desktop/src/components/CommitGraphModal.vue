@@ -3,7 +3,7 @@ import { ref, onMounted, nextTick } from "vue";
 import CommitGraphView from "./CommitGraphView.vue";
 import { useShortcutContext } from "../composables/useShortcutContext";
 import { useModalZIndex } from "../composables/useModalZIndex";
-useShortcutContext("main");
+useShortcutContext("graph");
 const { zIndex, bringToFront } = useModalZIndex();
 defineExpose({ zIndex, bringToFront });
 

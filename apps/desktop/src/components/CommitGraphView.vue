@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, nextTick } from "vue";
 import { invoke } from "../invoke";
 import { useLessScroll } from "../composables/useLessScroll";
+import { registerContextShortcuts } from "../composables/useShortcutContext";
 import {
   layoutCommitGraph,
-  type GraphCommit,
+  type GraphResult,
   type GraphLayout,
   type CurveDef,
 } from "../utils/commitGraph";
@@ -33,6 +34,8 @@ const layout = ref<GraphLayout>({
   curves: [],
   maxColumn: 0,
 });
+const headCommit = ref<string | null>(null);
+const mode = ref<"auto" | "all">("auto");
 
 const scrollTop = ref(0);
 const viewportHeight = ref(600);
@@ -46,6 +49,8 @@ const graphWidth = computed(
 );
 
 const textStartX = computed(() => graphWidth.value + TEXT_GAP);
+
+const canvasWidth = computed(() => textStartX.value + 750);
 
 const visibleRange = computed(() => {
   const first = Math.max(
@@ -117,6 +122,12 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "\u2026" : s;
 }
 
+function refType(name: string): "local" | "remote" | "tag" {
+  if (name.includes("/")) return "remote";
+  if (/^v?\d/.test(name)) return "tag";
+  return "local";
+}
+
 function onScroll() {
   if (scrollRef.value) {
     scrollTop.value = scrollRef.value.scrollTop;
@@ -124,21 +135,63 @@ function onScroll() {
   }
 }
 
-useLessScroll(scrollRef, { onClose: () => emit("close") });
+function scrollToHead() {
+  if (!headCommit.value || !scrollRef.value) return;
+  const row = layout.value.commits.find((c) => c.hash === headCommit.value);
+  if (row) {
+    const targetY = py(row.y) - scrollRef.value.clientHeight / 2;
+    scrollRef.value.scrollTop = Math.max(0, targetY);
+  }
+}
+
+function toggleMode() {
+  mode.value = mode.value === "auto" ? "all" : "auto";
+  loadGraph();
+}
+
+useLessScroll(scrollRef, {
+  extraHandler: (e: KeyboardEvent) => {
+    if (e.key === " " && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      toggleMode();
+      return true;
+    }
+    return false;
+  },
+  onClose: () => emit("close"),
+});
+
+registerContextShortcuts("graph", [
+  { label: "Scroll down", display: "j" },
+  { label: "Scroll up", display: "k" },
+  { label: "Page down", display: "f" },
+  { label: "Page up", display: "b" },
+  { label: "Half-page down", display: "d" },
+  { label: "Half-page up", display: "u" },
+  { label: "Top", display: "g" },
+  { label: "Bottom", display: "G" },
+  { label: "Toggle auto / all", display: "Space" },
+  { label: "Close", display: "q" },
+]);
 
 async function loadGraph() {
   loading.value = true;
   error.value = null;
   try {
     const path = props.worktreePath || props.repoPath;
-    const commits = await invoke<GraphCommit[]>("git_graph", {
+    const fromRef = mode.value === "auto" ? "HEAD" : undefined;
+    const result = await invoke<GraphResult>("git_graph", {
       repoPath: path,
+      fromRef,
     });
-    layout.value = layoutCommitGraph(commits);
+    headCommit.value = result.head_commit;
+    layout.value = layoutCommitGraph(result.commits);
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     loading.value = false;
+    await nextTick();
+    scrollToHead();
   }
 }
 
@@ -152,10 +205,11 @@ onMounted(() => {
 
 <template>
   <div ref="scrollRef" class="graph-scroll" tabindex="-1" @scroll="onScroll">
+    <div class="mode-indicator">{{ mode.toUpperCase() }}</div>
     <div v-if="loading" class="graph-status">Loading commit graph&#x2026;</div>
     <div v-else-if="error" class="graph-status error">{{ error }}</div>
     <template v-else>
-      <div class="graph-canvas" :style="{ height: totalHeight + 'px' }">
+      <div class="graph-canvas" :style="{ height: totalHeight + 'px', minWidth: canvasWidth + 'px' }">
         <svg
           class="graph-svg"
           :width="graphWidth"
@@ -212,6 +266,12 @@ onMounted(() => {
             class="commit-row"
             :style="{ top: py(commit.y) - 8 + 'px' }"
           >
+            <span
+              v-for="r in commit.refs"
+              :key="r"
+              class="ref-pill"
+              :class="'ref-' + refType(r)"
+            >{{ truncate(r, 20) }}</span>
             <span class="commit-hash" :style="{ color: commit.color }">{{
               commit.short_hash
             }}</span>
@@ -234,6 +294,20 @@ onMounted(() => {
   overflow-x: auto;
   outline: none;
   position: relative;
+}
+
+.mode-indicator {
+  position: sticky;
+  top: 8px;
+  right: 0;
+  float: right;
+  margin-right: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #888;
+  letter-spacing: 0.05em;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .graph-status {
@@ -272,6 +346,36 @@ onMounted(() => {
   height: 16px;
   font-size: 12px;
   line-height: 16px;
+}
+
+.ref-pill {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 15px;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ref-local {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+.ref-remote {
+  background: rgba(136, 136, 136, 0.1);
+  color: #888;
+  border: 1px solid rgba(136, 136, 136, 0.2);
+}
+
+.ref-tag {
+  background: rgba(210, 168, 255, 0.1);
+  color: #d2a8ff;
+  border: 1px solid rgba(210, 168, 255, 0.2);
 }
 
 .commit-hash {
