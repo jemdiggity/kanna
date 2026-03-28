@@ -91,7 +91,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "importRepo",   labelKey: "shortcuts.importClone",    groupKey: "shortcuts.groupNavigation", key: ["I", "i"],                     meta: true, shift: true,  display: "⇧⌘I",     context: ["main"] },
   { action: "goBack",       labelKey: "shortcuts.goBack",         groupKey: "shortcuts.groupNavigation", key: "-",                            ctrl: true,               display: "⌃-",       context: ["main"] },
   { action: "goForward",    labelKey: "shortcuts.goForward",      groupKey: "shortcuts.groupNavigation", key: ["_", "-"],                     ctrl: true, shift: true,  display: "⌃⇧-",     context: ["main"] },
-  { action: "toggleTreeExplorer", labelKey: "shortcuts.treeExplorer", groupKey: "shortcuts.groupNavigation", key: "e", meta: true, shift: true, display: "⇧⌘E", context: ["main", "diff", "shell"] },
+  { action: "toggleTreeExplorer", labelKey: "shortcuts.treeExplorer", groupKey: "shortcuts.groupNavigation", key: "e", meta: true, shift: true, display: "⇧⌘E", context: ["main", "diff", "shell", "file"] },
   { action: "goToOldestUnread", labelKey: "shortcuts.oldestUnread", groupKey: "shortcuts.groupNavigation", key: "u", meta: true, display: "⌘U", context: ["main"] },
   { action: "focusSearch", labelKey: "shortcuts.focusSearch", groupKey: "shortcuts.groupNavigation", key: "f", meta: true, display: "⌘F", context: ["main"] },
   // Settings
