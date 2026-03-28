@@ -75,7 +75,8 @@
     "file": "File Viewer Shortcuts",
     "shell": "Shell Shortcuts",
     "tree": "Tree Explorer Shortcuts",
-    "newTask": "New Task Shortcuts"
+    "newTask": "New Task Shortcuts",
+    "graph": "Commit Graph Shortcuts"
   },
   "sidebar": {
     "searchPlaceholder": "Search tasks…  ⌘F",

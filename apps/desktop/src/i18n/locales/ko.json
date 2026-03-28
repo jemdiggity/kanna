@@ -75,7 +75,8 @@
     "file": "파일 뷰어 단축키",
     "shell": "셸 단축키",
     "tree": "트리 탐색기 단축키",
-    "newTask": "새 작업 단축키"
+    "newTask": "새 작업 단축키",
+    "graph": "커밋 그래프 단축키"
   },
   "sidebar": {
     "searchPlaceholder": "작업 검색…  ⌘F",

@@ -8,6 +8,7 @@ export interface GraphCommit {
   author: string;
   timestamp: number;
   parents: string[];
+  refs: string[];
 }
 
 export interface PositionedCommit extends GraphCommit {
@@ -36,6 +37,11 @@ export interface GraphLayout {
   branches: BranchSegment[];
   curves: CurveDef[];
   maxColumn: number;
+}
+
+export interface GraphResult {
+  commits: GraphCommit[];
+  head_commit: string | null;
 }
 
 const BRANCH_COLORS = [
@@ -107,8 +113,18 @@ export function layoutCommitGraph(rawCommits: GraphCommit[]): GraphLayout {
     let color: string;
 
     if (children.length === 0 || (branchChildXs.length === 0 && mergeChildXs.length === 0)) {
-      col = columns.length;
-      columns.push([]);
+      col = -1;
+      for (let c = 0; c < columns.length; c++) {
+        const lastSeg = columns[c][columns[c].length - 1];
+        if (!lastSeg || (lastSeg.endRow !== Infinity && lastSeg.endRow < row)) {
+          col = c;
+          break;
+        }
+      }
+      if (col === -1) {
+        col = columns.length;
+        columns.push([]);
+      }
       const order = branchOrder++;
       color = BRANCH_COLORS[order % BRANCH_COLORS.length];
       columns[col].push({
@@ -140,7 +156,7 @@ export function layoutCommitGraph(rawCommits: GraphCommit[]): GraphLayout {
         if (bx !== col) {
           const otherSeg = columns[bx][columns[bx].length - 1];
           if (otherSeg && otherSeg.endRow === Infinity) {
-            otherSeg.endRow = row;
+            otherSeg.endRow = otherSeg.startRow;
             otherSeg.endCommitHash = commit.hash;
           }
         }
@@ -179,7 +195,7 @@ export function layoutCommitGraph(rawCommits: GraphCommit[]): GraphLayout {
   for (const colSegs of columns) {
     const last = colSegs[colSegs.length - 1];
     if (last && last.endRow === Infinity) {
-      last.endRow = sorted.length - 1;
+      last.endRow = last.startRow;
     }
   }
 

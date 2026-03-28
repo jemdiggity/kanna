@@ -11,9 +11,9 @@ describe("layoutCommitGraph", () => {
 
   it("assigns single column for linear history", () => {
     const commits: GraphCommit[] = [
-      { hash: "c", short_hash: "c", message: "third", author: "A", timestamp: 3, parents: ["b"] },
-      { hash: "b", short_hash: "b", message: "second", author: "A", timestamp: 2, parents: ["a"] },
-      { hash: "a", short_hash: "a", message: "first", author: "A", timestamp: 1, parents: [] },
+      { hash: "c", short_hash: "c", message: "third", author: "A", timestamp: 3, parents: ["b"], refs: [] },
+      { hash: "b", short_hash: "b", message: "second", author: "A", timestamp: 2, parents: ["a"], refs: [] },
+      { hash: "a", short_hash: "a", message: "first", author: "A", timestamp: 1, parents: [], refs: [] },
     ];
     const result = layoutCommitGraph(commits);
     expect(result.commits).toHaveLength(3);
@@ -26,10 +26,10 @@ describe("layoutCommitGraph", () => {
 
   it("assigns separate columns for branches", () => {
     const commits: GraphCommit[] = [
-      { hash: "d", short_hash: "d", message: "merge", author: "A", timestamp: 4, parents: ["b", "c"] },
-      { hash: "c", short_hash: "c", message: "feat work", author: "A", timestamp: 3, parents: ["b"] },
-      { hash: "b", short_hash: "b", message: "second", author: "A", timestamp: 2, parents: ["a"] },
-      { hash: "a", short_hash: "a", message: "first", author: "A", timestamp: 1, parents: [] },
+      { hash: "d", short_hash: "d", message: "merge", author: "A", timestamp: 4, parents: ["b", "c"], refs: [] },
+      { hash: "c", short_hash: "c", message: "feat work", author: "A", timestamp: 3, parents: ["b"], refs: [] },
+      { hash: "b", short_hash: "b", message: "second", author: "A", timestamp: 2, parents: ["a"], refs: [] },
+      { hash: "a", short_hash: "a", message: "first", author: "A", timestamp: 1, parents: [], refs: [] },
     ];
     const result = layoutCommitGraph(commits);
     expect(result.commits).toHaveLength(4);
@@ -43,8 +43,8 @@ describe("layoutCommitGraph", () => {
 
   it("assigns colors from the palette", () => {
     const commits: GraphCommit[] = [
-      { hash: "b", short_hash: "b", message: "second", author: "A", timestamp: 2, parents: ["a"] },
-      { hash: "a", short_hash: "a", message: "first", author: "A", timestamp: 1, parents: [] },
+      { hash: "b", short_hash: "b", message: "second", author: "A", timestamp: 2, parents: ["a"], refs: [] },
+      { hash: "a", short_hash: "a", message: "first", author: "A", timestamp: 1, parents: [], refs: [] },
     ];
     const result = layoutCommitGraph(commits);
     expect(result.commits.every((c) => typeof c.color === "string" && c.color.startsWith("#"))).toBe(true);
@@ -52,7 +52,7 @@ describe("layoutCommitGraph", () => {
 
   it("handles single commit (root with no parents)", () => {
     const commits: GraphCommit[] = [
-      { hash: "a", short_hash: "a", message: "init", author: "A", timestamp: 1, parents: [] },
+      { hash: "a", short_hash: "a", message: "init", author: "A", timestamp: 1, parents: [], refs: [] },
     ];
     const result = layoutCommitGraph(commits);
     expect(result.commits).toHaveLength(1);
