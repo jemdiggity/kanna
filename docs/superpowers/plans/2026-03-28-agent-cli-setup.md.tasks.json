@@ -1,0 +1,26 @@
+{
+  "planPath": "docs/superpowers/plans/2026-03-28-agent-cli-setup.md",
+  "tasks": [
+    {
+      "id": 7,
+      "subject": "Task 1: Add i18n strings for agent setup cards",
+      "status": "pending",
+      "description": "**Goal:** Add all i18n keys needed by the agent setup UI to all three locale files.\n\n**Files:**\n- Modify: `apps/desktop/src/i18n/locales/en.json` (mainPanel section)\n- Modify: `apps/desktop/src/i18n/locales/ja.json` (mainPanel section)\n- Modify: `apps/desktop/src/i18n/locales/ko.json` (mainPanel section)\n\n**Acceptance Criteria:**\n- [ ] English strings added under `mainPanel` key\n- [ ] Japanese strings added under `mainPanel` key\n- [ ] Korean strings added under `mainPanel` key\n- [ ] `bun tsc --noEmit` passes\n\n**Verify:** `cd apps/desktop && bun tsc --noEmit` → exits 0\n\n```json:metadata\n{\"files\": [\"apps/desktop/src/i18n/locales/en.json\", \"apps/desktop/src/i18n/locales/ja.json\", \"apps/desktop/src/i18n/locales/ko.json\"], \"verifyCommand\": \"cd apps/desktop && bun tsc --noEmit\", \"acceptanceCriteria\": [\"English strings added\", \"Japanese strings added\", \"Korean strings added\", \"tsc passes\"], \"requiresUserVerification\": false}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 2: Add agent CLI detection and setup cards to MainPanel",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "**Goal:** When no repos exist, the empty state shows two agent cards with install instructions or installed status with version.\n\n**Files:**\n- Modify: `apps/desktop/src/components/MainPanel.vue`\n\n**Acceptance Criteria:**\n- [ ] `which_binary` called for both claude and copilot on mount when !hasRepos\n- [ ] Version extracted via semver regex from `--version` output\n- [ ] Not-installed card shows name, install command, copy button, shell hint\n- [ ] Installed card shows name, green checkmark, version\n- [ ] Copy button copies install command with brief feedback\n- [ ] Import repo hint still appears below agent cards\n- [ ] `bun tsc --noEmit` passes\n\n**Verify:** `cd apps/desktop && bun tsc --noEmit` → exits 0\n\n```json:metadata\n{\"files\": [\"apps/desktop/src/components/MainPanel.vue\"], \"verifyCommand\": \"cd apps/desktop && bun tsc --noEmit\", \"acceptanceCriteria\": [\"which_binary called for both CLIs\", \"semver version extraction\", \"install card UI\", \"installed card UI\", \"copy button works\", \"import hint preserved\", \"tsc passes\"], \"requiresUserVerification\": false}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 3: Enable shell at $HOME and re-check CLIs on close",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** `⇧⌘J` opens ShellModal to `$HOME` when no repo is selected. Closing ShellModal triggers CLI re-check in the empty state.\n\n**Files:**\n- Modify: `apps/desktop/src/App.vue`\n\n**Acceptance Criteria:**\n- [ ] `⇧⌘J` works with no repo selected — shell opens at $HOME\n- [ ] ShellModal v-if no longer requires store.selectedRepo when shellRepoRoot is true\n- [ ] Closing ShellModal calls recheckClis() on MainPanel ref when no repos\n- [ ] `bun tsc --noEmit` passes\n\n**Verify:** `cd apps/desktop && bun tsc --noEmit` → exits 0\n\n```json:metadata\n{\"files\": [\"apps/desktop/src/App.vue\"], \"verifyCommand\": \"cd apps/desktop && bun tsc --noEmit\", \"acceptanceCriteria\": [\"shell opens at $HOME with no repo\", \"ShellModal works without selectedRepo\", \"re-check on shell close\", \"tsc passes\"], \"requiresUserVerification\": false}\n```"
+    }
+  ],
+  "lastUpdated": "2026-03-28T00:00:00Z"
+}
