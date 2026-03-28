@@ -910,7 +910,7 @@ onMounted(async () => {
       ref="treeExplorerRef"
       v-if="showTreeExplorer && treeExplorerRoot"
       :worktree-path="treeExplorerRoot"
-      :repo-root="treeExplorerRoot"
+      :repo-root="store.selectedRepo?.path ?? treeExplorerRoot"
       :home-path="homePath"
       :suspended="showFilePreviewModal"
       @close="showTreeExplorer = false"
