@@ -5,11 +5,11 @@ import { invoke } from "../invoke";
 import { useToast } from '../composables/useToast';
 import { isTauri } from "../tauri-mock";
 import { listen } from "../listen";
-import { parseRepoConfig, parseAgentMd } from "@kanna/core";
+import { parseRepoConfig, parseAgentMd, DEFAULT_STAGE_ORDER } from "@kanna/core";
 import { parseAgentDefinition } from "../../../../packages/core/src/pipeline/agent-loader";
 import { parsePipelineJson } from "../../../../packages/core/src/pipeline/pipeline-loader";
 import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-builder";
-import { getNextStage, getStageIndex } from "../../../../packages/core/src/pipeline/types";
+import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { PipelineDefinition, AgentDefinition, StageCompleteResult } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { createNavigationHistory } from "../composables/useNavigationHistory";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
@@ -94,6 +94,15 @@ export const useKannaStore = defineStore("kanna", () => {
     const loaded: PipelineItem[] = [];
     for (const repo of repos.value) {
       loaded.push(...await listPipelineItems(_db, repo.id));
+      // Populate stage_order cache from repo config
+      if (!stageOrderCache.has(repo.path)) {
+        try {
+          const config = await readRepoConfig(repo.path);
+          if (config.stage_order) {
+            stageOrderCache.set(repo.path, config.stage_order);
+          }
+        } catch { /* no config — no custom order */ }
+      }
     }
     return loaded;
   }, []);
@@ -126,6 +135,7 @@ export const useKannaStore = defineStore("kanna", () => {
   // ── Pipeline cache ────────────────────────────────────────────────
   const pipelineCache = new Map<string, PipelineDefinition>();
   const agentCache = new Map<string, AgentDefinition>();
+  const stageOrderCache = new Map<string, string[]>(); // repo path -> stage_order from config
 
   async function loadPipeline(repoPath: string, pipelineName: string): Promise<PipelineDefinition> {
     const cacheKey = `${repoPath}::${pipelineName}`;
@@ -225,23 +235,28 @@ export const useKannaStore = defineStore("kanna", () => {
     const blocked = sortByCreatedAt(repoItems.filter((i) => hasTag(i, "blocked") && !i.pinned));
     const blockedIds = new Set(blocked.map(i => i.id));
 
-    // Non-pinned, non-blocked items sorted by stage order within their pipeline.
+    // Non-pinned, non-blocked items sorted by stage order.
     // Items in the same stage are sorted by created_at DESC.
     const stageItems = repoItems.filter(i => !i.pinned && !blockedIds.has(i.id));
 
-    // Build stage order from cached pipelines (synchronous — uses cache)
+    // Use repo-level stage_order from config.json, falling back to built-in default.
+    // Stages not in the list sort alphabetically after listed stages.
+    const repoPath = repos.value.find(r => r.id === repoId)?.path ?? "";
+    const order = stageOrderCache.get(repoPath) ?? DEFAULT_STAGE_ORDER;
+
     const stageOrder = (item: PipelineItem): number => {
-      const cacheKey = `${repos.value.find(r => r.id === repoId)?.path ?? ""}::${item.pipeline}`;
-      const pipeline = pipelineCache.get(cacheKey);
-      if (!pipeline) return 0; // unknown pipeline — sort first
-      const idx = getStageIndex(pipeline, item.stage);
-      return idx === -1 ? pipeline.stages.length : idx;
+      const idx = order.indexOf(item.stage);
+      return idx === -1 ? order.length : idx;
     };
 
     const sortedStageItems = stageItems.sort((a, b) => {
       const orderA = stageOrder(a);
       const orderB = stageOrder(b);
       if (orderA !== orderB) return orderA - orderB;
+      // Unlisted stages with same sort position: alphabetical by stage name
+      if (orderA === order.length && a.stage !== b.stage) {
+        return a.stage.localeCompare(b.stage);
+      }
       return b.created_at.localeCompare(a.created_at);
     });
 
