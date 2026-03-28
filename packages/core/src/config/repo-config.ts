@@ -1,9 +1,16 @@
+/**
+ * Built-in stage display order used when no repo-level override is configured.
+ * Stages not listed here sort alphabetically after the listed ones.
+ */
+export const DEFAULT_STAGE_ORDER: readonly string[] = ["merge", "pr", "in progress"];
+
 export interface RepoConfig {
   pipeline?: string;
   setup?: string[];
   teardown?: string[];
   test?: string[];
   ports?: Record<string, number>;
+  stage_order?: string[];
 }
 
 export function parseRepoConfig(json: string): RepoConfig {
@@ -32,6 +39,10 @@ export function parseRepoConfig(json: string): RepoConfig {
       if (typeof value === "number") ports[name] = value;
     }
     if (Object.keys(ports).length > 0) config.ports = ports;
+  }
+
+  if (Array.isArray(raw.stage_order) && raw.stage_order.every((s) => typeof s === "string")) {
+    config.stage_order = raw.stage_order as string[];
   }
 
   return config;

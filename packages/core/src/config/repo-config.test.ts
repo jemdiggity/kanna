@@ -78,4 +78,21 @@ describe("parseRepoConfig", () => {
     const config = parseRepoConfig(JSON.stringify({ test: ["valid", 123] }));
     expect(config.test).toBeUndefined();
   });
+
+  it("parses stage_order", () => {
+    const config = parseRepoConfig(JSON.stringify({
+      stage_order: ["merge", "pr", "in progress"],
+    }));
+    expect(config.stage_order).toEqual(["merge", "pr", "in progress"]);
+  });
+
+  it("ignores stage_order if not an array of strings", () => {
+    const config = parseRepoConfig(JSON.stringify({ stage_order: "not-an-array" }));
+    expect(config.stage_order).toBeUndefined();
+  });
+
+  it("ignores stage_order with mixed types in array", () => {
+    const config = parseRepoConfig(JSON.stringify({ stage_order: ["merge", 42] }));
+    expect(config.stage_order).toBeUndefined();
+  });
 });
