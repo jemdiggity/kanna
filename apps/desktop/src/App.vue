@@ -38,6 +38,8 @@ import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
 
+const isMobile = __KANNA_MOBILE__;
+
 function hasTag(item: { tags: string }, tag: string): boolean {
   try { return (JSON.parse(item.tags) as string[]).includes(tag); }
   catch { return false; }
@@ -773,10 +775,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app" :class="{ mobile: __KANNA_MOBILE__ }">
+  <div class="app" :class="{ mobile: isMobile }">
     <Sidebar
       ref="sidebarRef"
-      v-if="!maximized && !sidebarHidden && (!__KANNA_MOBILE__ || !store.selectedItemId)"
+      v-if="!maximized && !sidebarHidden && (!isMobile || !store.selectedItemId)"
       :repos="store.repos"
       :pipeline-items="store.items"
       :selected-repo-id="store.selectedRepoId"
@@ -793,7 +795,7 @@ onMounted(async () => {
       @hide-repo="store.hideRepo"
     />
     <MainPanel
-      v-if="!__KANNA_MOBILE__ || store.selectedItemId"
+      v-if="!isMobile || store.selectedItemId"
       :item="store.currentItem"
       :repo-path="store.selectedRepo?.path"
       :spawn-pty-session="store.spawnPtySession"
@@ -843,7 +845,7 @@ onMounted(async () => {
     <KeepAlive :max="10">
       <ShellModal
         ref="shellModalRef"
-        v-if="showShellModal && !__KANNA_MOBILE__ && store.selectedRepo && (shellRepoRoot || store.currentItem)"
+        v-if="showShellModal && !isMobile && store.selectedRepo && (shellRepoRoot || store.currentItem)"
         :key="`shell-${shellRepoRoot ? `repo-${store.selectedRepo.id}` : `wt-${store.currentItem?.id}`}`"
         :session-id="`shell-${shellRepoRoot ? `repo-${store.selectedRepo.id}` : `wt-${store.currentItem?.id}`}`"
         :cwd="shellRepoRoot ? store.selectedRepo.path : (store.currentItem?.branch ? `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo.path)"
@@ -854,7 +856,7 @@ onMounted(async () => {
     </KeepAlive>
     <DiffModal
       ref="diffModalRef"
-      v-if="showDiffModal && !__KANNA_MOBILE__ && store.selectedRepo?.path"
+      v-if="showDiffModal && !isMobile && store.selectedRepo?.path"
       :repo-path="store.selectedRepo.path"
       :worktree-path="store.currentItem?.branch ? activeWorktreePath : undefined"
       :initial-scope="store.currentItem ? diffScopes.get(store.currentItem.id) : undefined"
@@ -871,7 +873,7 @@ onMounted(async () => {
       @close="showCommitGraphModal = false"
     />
     <FilePickerModal
-      v-if="showFilePickerModal && !__KANNA_MOBILE__ && store.selectedRepo?.path"
+      v-if="showFilePickerModal && !isMobile && store.selectedRepo?.path"
       :worktree-path="activeWorktreePath"
       @close="showFilePickerModal = false"
       @select="(f: string) => { showFilePickerModal = false; previewFilePath = f; previewInitialLine = undefined; showFilePreviewModal = true; }"
@@ -887,7 +889,7 @@ onMounted(async () => {
     />
     <FilePreviewModal
       ref="filePreviewRef"
-      v-if="showFilePreviewModal && !__KANNA_MOBILE__ && store.selectedRepo?.path"
+      v-if="showFilePreviewModal && !isMobile && store.selectedRepo?.path"
       :file-path="previewFilePath"
       :worktree-path="activeWorktreePath"
       :ide-command="store.ideCommand"

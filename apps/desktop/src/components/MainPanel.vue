@@ -18,6 +18,8 @@ const emit = defineEmits<{
   (e: "back"): void;
 }>();
 
+const isMobile = __KANNA_MOBILE__;
+
 const isBlocked = computed(() => {
   if (!props.blockers || props.blockers.length === 0) return false;
   return props.blockers.some(b => !b.closed_at);
@@ -27,7 +29,7 @@ const isBlocked = computed(() => {
 <template>
   <main class="main-panel">
     <template v-if="item">
-      <div v-if="__KANNA_MOBILE__" class="mobile-back-bar" @click="emit('back')">
+      <div v-if="isMobile" class="mobile-back-bar" @click="emit('back')">
         <span class="mobile-back-arrow">&larr;</span>
         <span>Tasks</span>
       </div>
