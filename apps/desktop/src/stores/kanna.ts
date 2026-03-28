@@ -1554,6 +1554,23 @@ export const useKannaStore = defineStore("kanna", () => {
       eagerItems.push(...await listPipelineItems(_db, repo.id));
     }
 
+    // Close tasks whose worktrees no longer exist on disk (orphaned by manual
+    // cleanup, hide/re-import, or other out-of-band deletion).
+    if (isTauri) {
+      for (const item of eagerItems) {
+        if (!item.branch || item.closed_at !== null) continue;
+        const repo = eagerRepos.find(r => r.id === item.repo_id);
+        if (!repo) continue;
+        const wtPath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        const exists = await invoke<boolean>("file_exists", { path: wtPath });
+        if (!exists) {
+          console.warn(`[store] closing orphaned task ${item.id}: worktree missing at ${wtPath}`);
+          await closePipelineItem(_db, item.id);
+          item.closed_at = new Date().toISOString();
+        }
+      }
+    }
+
     // Check for blocked tasks that can now start
     const unblockedItems = await getUnblockedItems(_db);
     for (const item of unblockedItems) {
@@ -1569,7 +1586,7 @@ export const useKannaStore = defineStore("kanna", () => {
     const savedItem = await getSetting(_db, "selected_item_id");
     if (savedRepo && eagerRepos.some((r) => r.id === savedRepo)) {
       selectedRepoId.value = savedRepo;
-      if (savedItem && eagerItems.some((i) => i.id === savedItem)) {
+      if (savedItem && eagerItems.some((i) => i.id === savedItem && i.closed_at === null)) {
         restoreSelection(savedItem);
       }
     } else if (eagerRepos.length === 1) {
