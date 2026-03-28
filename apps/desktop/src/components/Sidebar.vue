@@ -312,8 +312,8 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
                   :style="{
                     fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
                     fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                    textDecoration: element.activity === 'torndown' ? 'line-through' : 'none',
-                    opacity: element.activity === 'torndown' ? 0.5 : 1,
+                    textDecoration: element.stage === 'torndown' ? 'line-through' : 'none',
+                    opacity: element.stage === 'torndown' ? 0.5 : 1,
                   }"
                 >{{ itemTitle(element) }}</span>
               </div>
@@ -363,8 +363,8 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
                     :style="{
                       fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
                       fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                      textDecoration: element.activity === 'torndown' ? 'line-through' : 'none',
-                      opacity: element.activity === 'torndown' ? 0.5 : 1,
+                      textDecoration: element.stage === 'torndown' ? 'line-through' : 'none',
+                      opacity: element.stage === 'torndown' ? 0.5 : 1,
                     }"
                   >{{ itemTitle(element) }}</span>
                 </div>

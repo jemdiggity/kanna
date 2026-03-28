@@ -143,7 +143,7 @@ export async function updatePipelineItemPR(
 export async function updatePipelineItemActivity(
   db: DbHandle,
   id: string,
-  activity: "working" | "unread" | "idle" | "torndown"
+  activity: "working" | "unread" | "idle"
 ): Promise<void> {
   const unreadClause = activity === "unread" ? ", unread_at = datetime('now')" : "";
   const result = await db.execute(
