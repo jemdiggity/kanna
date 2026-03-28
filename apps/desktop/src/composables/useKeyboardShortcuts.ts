@@ -37,7 +37,7 @@ export type ActionName =
   | "focusSearch"
   | "goToOldestUnread";
 
-export type KeyboardActions = Record<ActionName, () => void | boolean>;
+export type KeyboardActions = Record<ActionName, () => void | boolean | Promise<void>>;
 
 interface ShortcutDef {
   action: ActionName;
