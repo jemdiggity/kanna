@@ -1,0 +1,26 @@
+{
+  "planPath": "docs/superpowers/plans/2026-03-28-commit-graph-enhancements.md",
+  "tasks": [
+    {
+      "id": 6,
+      "subject": "Task 1: Enhance Rust git_graph backend",
+      "status": "completed",
+      "description": "**Goal:** Add ref labels, HEAD resolution, and optional from_ref filtering to the git_graph Tauri command.\n\n**Files:**\n- Modify: `apps/desktop/src-tauri/src/commands/git.rs:18-185`\n\n**Verify:** `cd apps/desktop/src-tauri && cargo build`\n\n```json:metadata\n{\"files\": [\"apps/desktop/src-tauri/src/commands/git.rs\"], \"verifyCommand\": \"cd apps/desktop/src-tauri && cargo build\", \"acceptanceCriteria\": [\"GraphCommit has refs field\", \"GraphResult struct exists\", \"from_ref parameter works\", \"HEAD commit returned\"], \"requiresUserVerification\": false}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 2: Frontend plumbing — types, mock, shortcut context, i18n",
+      "status": "completed",
+      "blockedBy": [6],
+      "description": "**Goal:** Update TypeScript types, browser mock, shortcut context infrastructure, and i18n keys.\n\n**Files:**\n- Modify: `apps/desktop/src/utils/commitGraph.ts`, `apps/desktop/src/tauri-mock.ts`, `apps/desktop/src/composables/useShortcutContext.ts`, `apps/desktop/src/composables/useKeyboardShortcuts.ts`, `apps/desktop/src/i18n/locales/*.json`, `apps/desktop/src/utils/__tests__/commitGraph.test.ts`\n\n**Verify:** `bun tsc --noEmit --project apps/desktop/tsconfig.json && bun test apps/desktop/src/utils/__tests__/commitGraph.test.ts`\n\n```json:metadata\n{\"files\": [\"apps/desktop/src/utils/commitGraph.ts\", \"apps/desktop/src/tauri-mock.ts\", \"apps/desktop/src/composables/useShortcutContext.ts\", \"apps/desktop/src/composables/useKeyboardShortcuts.ts\", \"apps/desktop/src/i18n/locales/en.json\", \"apps/desktop/src/i18n/locales/ja.json\", \"apps/desktop/src/i18n/locales/ko.json\", \"apps/desktop/src/utils/__tests__/commitGraph.test.ts\"], \"verifyCommand\": \"bun tsc --noEmit --project apps/desktop/tsconfig.json && bun test apps/desktop/src/utils/__tests__/commitGraph.test.ts\", \"acceptanceCriteria\": [\"GraphCommit has refs field\", \"GraphResult interface exists\", \"graph shortcut context added\", \"mock updated\", \"i18n keys added\", \"tests pass\"], \"requiresUserVerification\": false}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 3: CommitGraphView — labels, filtering, scroll-to-HEAD, shortcuts",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "**Goal:** Wire up all frontend features: ref labels on commits, auto/all mode toggle via Space, scroll-to-HEAD on open, and register supplementary shortcuts for the help overlay.\n\n**Files:**\n- Modify: `apps/desktop/src/components/CommitGraphModal.vue`, `apps/desktop/src/components/CommitGraphView.vue`\n\n**Verify:** `bun tsc --noEmit --project apps/desktop/tsconfig.json`\n\n```json:metadata\n{\"files\": [\"apps/desktop/src/components/CommitGraphModal.vue\", \"apps/desktop/src/components/CommitGraphView.vue\"], \"verifyCommand\": \"bun tsc --noEmit --project apps/desktop/tsconfig.json\", \"acceptanceCriteria\": [\"ref labels render\", \"Space toggles mode\", \"mode indicator visible\", \"scrolls to HEAD\", \"shortcuts registered\", \"modal uses graph context\"], \"requiresUserVerification\": false}\n```"
+    }
+  ],
+  "lastUpdated": "2026-03-28T00:00:00Z"
+}

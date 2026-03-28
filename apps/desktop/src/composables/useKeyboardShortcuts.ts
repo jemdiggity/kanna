@@ -78,7 +78,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "commandPalette", labelKey: "shortcuts.commandPalette", groupKey: "shortcuts.groupNavigation", key: ["P", "p"],                  meta: true, shift: true,  display: "⇧⌘P",     context: ["main"] },
   // Views — panels, modes, and display
   { action: "showDiff",       labelKey: "shortcuts.viewDiff",       groupKey: "shortcuts.groupViews",      key: "d",                         meta: true, display: "⌘D",                       context: ["main", "diff", "shell"] },
-  { action: "showCommitGraph", labelKey: "shortcuts.commitGraph", groupKey: "shortcuts.groupViews", key: "g", meta: true, display: "⌘G", context: ["main"] },
+  { action: "showCommitGraph", labelKey: "shortcuts.commitGraph", groupKey: "shortcuts.groupViews", key: "g", meta: true, display: "⌘G", context: ["main", "graph"] },
   { action: "openShell",      labelKey: "shortcuts.shellTerminal",  groupKey: "shortcuts.groupViews",      key: "j",                         meta: true,               display: "⌘J",       context: ["main", "diff", "shell"] },
   { action: "openShellRepoRoot", labelKey: "shortcuts.shellRepoRoot", groupKey: "shortcuts.groupViews",   key: ["J", "j"],                  meta: true, shift: true,  display: "⇧⌘J",     context: ["main", "diff", "shell"] },
   { action: "openInIDE",      labelKey: "shortcuts.openInIDE",      groupKey: "shortcuts.groupViews",      key: "o",                         meta: true,               display: "⌘O",       context: ["main"] },
@@ -98,12 +98,12 @@ export const shortcuts: ShortcutDef[] = [
   { action: "openPreferences", labelKey: "shortcuts.preferences", groupKey: "shortcuts.groupHelp", key: ",",                            meta: true,               display: "⌘,",       context: ["main"] },
   // Help — ⇧⌘/ must come before ⌘/ so the more specific shortcut matches first
   { action: "showAllShortcuts", labelKey: "shortcuts.allShortcuts",       groupKey: "shortcuts.groupHelp",   key: "/",                           meta: true, shift: true,  display: "⇧⌘/",     context: ["main", "file", "shell"], hidden: true },
-  { action: "showShortcuts",  labelKey: "shortcuts.keyboardShortcuts",  groupKey: "shortcuts.groupHelp",   key: "/",                           meta: true,               display: "⌘/",       context: ["main", "diff", "file", "shell"] },
+  { action: "showShortcuts",  labelKey: "shortcuts.keyboardShortcuts",  groupKey: "shortcuts.groupHelp",   key: "/",                           meta: true,               display: "⌘/",       context: ["main", "diff", "file", "shell", "graph"] },
   // Tab cycling — used by modals with tabs (e.g. Preferences)
   { action: "prevTab",    labelKey: "shortcuts.prevTab",       groupKey: "shortcuts.groupNavigation", key: ["[", "{"],                     meta: true, shift: true,  display: "⇧⌘[",     hidden: true },
   { action: "nextTab",    labelKey: "shortcuts.nextTab",       groupKey: "shortcuts.groupNavigation", key: ["]", "}"],                     meta: true, shift: true,  display: "⇧⌘]",     hidden: true },
   // Escape is special — no meta required
-  { action: "dismiss",    labelKey: "shortcuts.dismiss",       groupKey: "shortcuts.groupNavigation", key: "Escape",                                                 display: "Escape",   context: ["main", "diff", "file", "shell"] },
+  { action: "dismiss",    labelKey: "shortcuts.dismiss",       groupKey: "shortcuts.groupNavigation", key: "Escape",                                                 display: "Escape",   context: ["main", "diff", "file", "shell", "graph"] },
 ];
 
 function matches(def: ShortcutDef, e: KeyboardEvent): boolean {
