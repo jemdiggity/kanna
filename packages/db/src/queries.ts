@@ -205,7 +205,7 @@ export async function closePipelineItem(
   id: string
 ): Promise<void> {
   await db.execute(
-    "UPDATE pipeline_item SET closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+    "UPDATE pipeline_item SET stage = 'done', closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
     [id]
   );
 }

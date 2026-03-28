@@ -10,8 +10,8 @@ function hasTag(item: { tags: string }, tag: string): boolean {
   catch { return false; }
 }
 
-function isHidden(item: { closed_at: string | null }): boolean {
-  return item.closed_at !== null;
+function isHidden(item: { stage: string }): boolean {
+  return item.stage === "done";
 }
 
 const { t } = useI18n();
