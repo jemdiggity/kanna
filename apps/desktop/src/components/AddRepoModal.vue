@@ -290,7 +290,10 @@ function switchTab(tab: "create" | "import") {
         </template>
 
         <template v-else>
-          <div class="selected-path">{{ selectedLocalPath }}</div>
+          <div class="selected-path-row">
+            <div class="selected-path">{{ selectedLocalPath }}</div>
+            <a class="change-link" @click="selectedLocalPath = null">{{ $t('addRepo.change') }}</a>
+          </div>
           <div v-if="localLoading" class="path-hint">{{ $t('addRepo.detecting') }}</div>
           <div v-else-if="localIsGitRepo" class="resolved-url">
             {{ $t('addRepo.gitRepoConfirmed') }} {{ localBranch }}<template v-if="localRemote"> · {{ localRemote }}</template>
@@ -444,7 +447,18 @@ function switchTab(tab: "create" | "import") {
   padding: 4px 2px 0;
 }
 
+.selected-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .selected-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   font-size: 12px;
   color: #ccc;
