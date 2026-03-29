@@ -4,22 +4,22 @@ import { useModalZIndex } from "../composables/useModalZIndex";
 const { zIndex } = useModalZIndex();
 
 const props = defineProps<{
-  defaultAgentProvider?: "claude" | "copilot";
+  defaultAgentProvider?: "claude" | "copilot" | "codex";
   pipelines?: string[];
   defaultPipeline?: string;
 }>();
 
 const emit = defineEmits<{
-  submit: [prompt: string, agentProvider: "claude" | "copilot", pipelineName: string];
+  submit: [prompt: string, agentProvider: "claude" | "copilot" | "codex", pipelineName: string];
   cancel: [];
 }>();
 
 const prompt = ref("");
-const agentProvider = ref<"claude" | "copilot">(props.defaultAgentProvider ?? "claude");
+const agentProvider = ref<"claude" | "copilot" | "codex">(props.defaultAgentProvider ?? "claude");
 const selectedPipeline = ref<string>(props.defaultPipeline ?? props.pipelines?.[0] ?? "default");
 const textareaRef = ref<HTMLTextAreaElement>();
 
-const providers: Array<"claude" | "copilot"> = ["claude", "copilot"];
+const providers: Array<"claude" | "copilot" | "codex"> = ["claude", "copilot", "codex"];
 
 function cycleProvider(direction: -1 | 1) {
   const idx = providers.indexOf(agentProvider.value);
@@ -76,6 +76,10 @@ function handleKeydown(e: KeyboardEvent) {
             :class="['toggle-btn', { active: agentProvider === 'copilot' }]"
             @click="agentProvider = 'copilot'"
           >Copilot</button>
+          <button
+            :class="['toggle-btn', { active: agentProvider === 'codex' }]"
+            @click="agentProvider = 'codex'"
+          >Codex</button>
         </div>
       </div>
       <div class="modal-body">

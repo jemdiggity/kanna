@@ -21,6 +21,7 @@ const CLAUDE_IDLE_PROMPT: char = '\u{276F}';
 enum AgentProvider {
     Claude,
     Copilot,
+    Codex,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,22 +66,29 @@ impl SessionScanState {
     /// Claude detection uses two signals:
     /// - "esctointerrupt" in fragment → Working (status bar text during processing)
     /// - ❯ (U+276F) idle prompt without "esctointerrupt" → Idle
+    /// - Codex uses the same "esctointerrupt" working indicator and ❯ idle prompt as Claude
     fn on_fragment(&mut self, text: &str) -> Vec<&'static str> {
         let mut events = Vec::new();
 
         match self.provider {
-            AgentProvider::Claude => {
+            AgentProvider::Claude | AgentProvider::Codex => {
                 let has_working = text.contains(CLAUDE_WORKING_INDICATOR);
                 let has_idle_prompt = text.contains(CLAUDE_IDLE_PROMPT);
 
                 if has_working {
                     if self.state != AgentState::Working {
                         self.state = AgentState::Working;
-                        events.push("ClaudeWorking");
+                        events.push(match self.provider {
+                            AgentProvider::Codex => "CodexWorking",
+                            _ => "ClaudeWorking",
+                        });
                     }
                 } else if has_idle_prompt && self.state != AgentState::Idle {
                     self.state = AgentState::Idle;
-                    events.push("ClaudeIdle");
+                    events.push(match self.provider {
+                        AgentProvider::Codex => "CodexIdle",
+                        _ => "ClaudeIdle",
+                    });
                 }
 
                 if text.contains("Do you want to allow") {
@@ -343,6 +351,7 @@ pub async fn attach_session_inner(
     // Determine the agent provider for pattern matching
     let provider = match agent_provider.as_deref() {
         Some("copilot") => AgentProvider::Copilot,
+        Some("codex") => AgentProvider::Codex,
         _ => AgentProvider::Claude,
     };
 

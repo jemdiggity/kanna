@@ -14,7 +14,7 @@ defineProps<{
     ideCommand: string
     locale: string
     devLingerTerminals: boolean
-    defaultAgentProvider: "claude" | "copilot"
+    defaultAgentProvider: "claude" | "copilot" | "codex"
   }
 }>()
 
@@ -118,6 +118,7 @@ defineExpose({ cycleTab })
           >
             <option value="claude">Claude</option>
             <option value="copilot">Copilot</option>
+            <option value="codex">Codex</option>
           </select>
         </div>
       </div>
