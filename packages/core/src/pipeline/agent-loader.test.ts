@@ -135,15 +135,13 @@ describe("validateAgentDefinition", () => {
     expect(errors.some((e) => e.includes("description"))).toBe(true);
   });
 
-  it("returns error when prompt is empty", () => {
+  it("allows empty prompt (stage prompt provides the task)", () => {
     const def = {
       name: "Valid Name",
       description: "Valid description",
       prompt: "",
     };
-    const errors = validateAgentDefinition(def);
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors.some((e) => e.includes("prompt") || e.includes("body"))).toBe(true);
+    expect(validateAgentDefinition(def)).toEqual([]);
   });
 
   it("returns error for invalid permission_mode value", () => {

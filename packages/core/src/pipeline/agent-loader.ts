@@ -57,8 +57,8 @@ export function validateAgentDefinition(def: AgentDefinition): string[] {
     errors.push("description is required and must be a non-empty string");
   }
 
-  if (typeof def.prompt !== "string" || def.prompt.trim() === "") {
-    errors.push("prompt (AGENT.md body) must be non-empty");
+  if (def.prompt !== undefined && typeof def.prompt !== "string") {
+    errors.push("prompt (AGENT.md body) must be a string");
   }
 
   if (
