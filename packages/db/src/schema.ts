@@ -34,6 +34,7 @@ export interface PipelineItem {
   pin_order: number | null;
   base_ref: string | null;
   claude_session_id: string | null;
+  previous_stage: string | null;
   created_at: string;
   updated_at: string;
 }

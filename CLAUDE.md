@@ -434,6 +434,23 @@ DB name configurable via `KANNA_DB_NAME` env var (defaults to `kanna-v2.db`). E2
   - `pipelines/{name}.json` — pipeline definitions (stages, environments, transitions). Built-in `default.json` ships as Tauri resource.
   - `tasks/{slug}/agent.md` — custom task templates with YAML frontmatter (prompt, model, permissions, allowed tools)
 
+## Working on the Codebase
+
+### Trace before you touch
+
+Before fixing a bug or adding a feature, trace the complete data flow for the affected feature: DB → store → component → composable → daemon. Read all files in the path before proposing changes. A fix that only looks at one layer will break another.
+
+For example, a task close/undo touches: `queries.ts` (DB), `kanna.ts` (store), `Sidebar.vue` (visibility), `TerminalTabs.vue` (component lifecycle), `useTerminal.ts` (attach/detach), and the daemon (PTY sessions). Changing one without understanding the others leads to piecemeal hacks.
+
+### Improve the architecture
+
+Changes should leave the architecture cleaner than you found it. Adding a hack to work around a design problem is not acceptable — fix the design instead. If a fix requires a polling loop, a retry timer, or duplicating logic that already exists elsewhere, that's a signal the approach is wrong.
+
+When something doesn't work, find the architectural reason and fix it at the right layer:
+- If a component needs to react to a state change, make sure the lifecycle handles it (mount/unmount/watch) — don't add manual triggers from the store.
+- If two systems disagree on the source of truth (e.g., `stage` vs `closed_at` for visibility), pick one and make everything use it.
+- If a resource needs cleanup, clean it up where the lifecycle owns it — don't leave stale state for another layer to work around.
+
 ## Coding Style
 
 ### TypeScript

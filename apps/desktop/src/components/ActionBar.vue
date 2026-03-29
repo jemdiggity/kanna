@@ -10,7 +10,7 @@ const emit = defineEmits<{
   (e: "advance-stage"): void;
 }>();
 
-const showAdvanceStage = computed(() => props.item.closed_at == null);
+const showAdvanceStage = computed(() => props.item.stage !== "done");
 </script>
 
 <template>

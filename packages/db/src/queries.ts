@@ -62,7 +62,7 @@ export async function listPipelineItems(
 
 export async function insertPipelineItem(
   db: DbHandle,
-  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "claude_session_id"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
+  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "claude_session_id" | "previous_stage"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
 ): Promise<void> {
   const tagsJson = JSON.stringify(item.tags ?? []);
   await db.execute(
@@ -202,11 +202,17 @@ export async function updateClaudeSessionId(
 
 export async function closePipelineItem(
   db: DbHandle,
-  id: string
+  id: string,
+  previousStage?: string
 ): Promise<void> {
   await db.execute(
-    "UPDATE pipeline_item SET stage = 'done', closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
-    [id]
+    `UPDATE pipeline_item SET
+       previous_stage = COALESCE(?, previous_stage, stage),
+       stage = 'done',
+       closed_at = datetime('now'),
+       updated_at = datetime('now')
+     WHERE id = ?`,
+    [previousStage ?? null, id]
   );
 }
 
@@ -215,7 +221,12 @@ export async function reopenPipelineItem(
   id: string
 ): Promise<void> {
   await db.execute(
-    "UPDATE pipeline_item SET closed_at = NULL, updated_at = datetime('now') WHERE id = ?",
+    `UPDATE pipeline_item SET
+       stage = COALESCE(previous_stage, 'in progress'),
+       previous_stage = NULL,
+       closed_at = NULL,
+       updated_at = datetime('now')
+     WHERE id = ?`,
     [id]
   );
 }
