@@ -880,12 +880,15 @@ export const useKannaStore = defineStore("kanna", () => {
     return cmds;
   }
 
-  function selectNextItem(closingId: string) {
+  function computeNextItemId(closingId: string): string | null {
     const sorted = sortedItemsForCurrentRepo.value;
     const idx = sorted.findIndex((i) => i.id === closingId);
     const remaining = sorted.filter((i) => i.id !== closingId);
     const nextIdx = idx >= remaining.length ? remaining.length - 1 : idx;
-    const nextId = remaining[nextIdx]?.id || null;
+    return remaining[nextIdx]?.id || null;
+  }
+
+  function selectNextItem(nextId: string | null) {
     if (nextId) {
       selectItem(nextId);
     } else {
@@ -902,6 +905,9 @@ export const useKannaStore = defineStore("kanna", () => {
       : selectedRepo.value;
     if (!item || !repo) return;
     try {
+      // Compute next item before any stage changes move the item in the sort order
+      const nextId = opts?.selectNext !== false ? computeNextItemId(item.id) : null;
+
       // Save current stage for undo (idempotent — skips if already saved from linger)
       await _db.execute(
         "UPDATE pipeline_item SET previous_stage = stage, updated_at = datetime('now') WHERE id = ? AND previous_stage IS NULL",
@@ -920,7 +926,7 @@ export const useKannaStore = defineStore("kanna", () => {
         ]);
         await closePipelineItem(_db, item.id);
 
-        if (opts?.selectNext !== false) selectNextItem(item.id);
+        if (opts?.selectNext !== false) selectNextItem(nextId);
         await checkUnblocked(item.id);
         bump();
         return;
@@ -933,7 +939,7 @@ export const useKannaStore = defineStore("kanna", () => {
         await removeAllBlockersForItem(_db, item.id);
         await closePipelineItem(_db, item.id);
 
-        if (opts?.selectNext !== false) selectNextItem(item.id);
+        if (opts?.selectNext !== false) selectNextItem(nextId);
         bump();
         (async () => {
           await invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
@@ -984,7 +990,7 @@ export const useKannaStore = defineStore("kanna", () => {
           console.error("[store] kill shell session failed:", e)),
       ]);
       await closePipelineItem(_db, item.id);
-      if (opts?.selectNext !== false) selectNextItem(item.id);
+      if (opts?.selectNext !== false) selectNextItem(nextId);
       bump();
     } catch (e) {
       console.error("[store] close failed:", e);
