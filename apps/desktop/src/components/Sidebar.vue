@@ -4,6 +4,7 @@ import { ref, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
 import { fuzzyMatch } from "../utils/fuzzyMatch";
+import { useKannaStore } from "../stores/kanna";
 
 function hasTag(item: { tags: string }, tag: string): boolean {
   try { return (JSON.parse(item.tags) as string[]).includes(tag); }
@@ -15,6 +16,7 @@ function isHidden(item: { stage: string }): boolean {
 }
 
 const { t } = useI18n();
+const store = useKannaStore();
 
 const props = defineProps<{
   repos: Repo[];
@@ -73,8 +75,8 @@ interface StageGroup {
 
 /**
  * Group non-pinned, non-blocked items for a repo by their stage field.
- * Stage order is derived from first-appearance when items are sorted by created_at ASC
- * (oldest items tend to be in earlier pipeline stages, giving a stable ordering).
+ * Stage order comes from the store (repo config or DEFAULT_STAGE_ORDER).
+ * Stages not in the configured order sort alphabetically after listed stages.
  */
 function groupedByStage(repoId: string): StageGroup[] {
   const blockedSet = new Set(
@@ -87,32 +89,28 @@ function groupedByStage(repoId: string): StageGroup[] {
     (i) => i.repo_id === repoId && !isHidden(i) && !i.pinned && !blockedSet.has(i.id) && matchesSearch(i)
   );
 
-  // Sort items by created_at ASC to derive stage order (older items → earlier stages)
-  const sortedAsc = [...stageItems].sort((a, b) => a.created_at.localeCompare(b.created_at));
-
-  // Collect unique stage names in first-appearance order
-  const stageOrder: string[] = [];
-  const seenStages = new Set<string>();
-  for (const item of sortedAsc) {
-    if (!seenStages.has(item.stage)) {
-      seenStages.add(item.stage);
-      stageOrder.push(item.stage);
-    }
-  }
-
-  // Group items by stage, sorted by created_at DESC within each group
+  // Group items by stage
   const groups = new Map<string, PipelineItem[]>();
-  for (const stage of stageOrder) {
-    groups.set(stage, []);
-  }
   for (const item of stageItems) {
-    groups.get(item.stage)?.push(item);
+    if (!groups.has(item.stage)) groups.set(item.stage, []);
+    groups.get(item.stage)!.push(item);
   }
   for (const [, items] of groups) {
     items.sort((a, b) => b.created_at.localeCompare(a.created_at));
   }
 
-  return stageOrder
+  // Sort stages by configured order; unlisted stages sort alphabetically after
+  const order = store.getStageOrder(repoId);
+  const stageNames = [...groups.keys()].sort((a, b) => {
+    const idxA = order.indexOf(a);
+    const idxB = order.indexOf(b);
+    const orderA = idxA === -1 ? order.length : idxA;
+    const orderB = idxB === -1 ? order.length : idxB;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.localeCompare(b);
+  });
+
+  return stageNames
     .map((stageName) => ({ stageName, items: groups.get(stageName) ?? [] }))
     .filter((g) => g.items.length > 0);
 }
