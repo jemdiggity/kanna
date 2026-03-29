@@ -80,10 +80,9 @@ export interface Setting {
 }
 
 export interface ActivityLog {
-  id: number;
   pipeline_item_id: string;
   activity: "working" | "unread" | "idle";
-  started_at: string;
+  seconds: number;
 }
 
 export interface OperatorEvent {

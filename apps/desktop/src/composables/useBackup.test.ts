@@ -120,7 +120,7 @@ describe("useBackup", () => {
       };
       await createBackup("kanna-v2.db", mockDb as any);
 
-      expect(mockDb.execute).toHaveBeenCalledWith("PRAGMA wal_checkpoint(PASSIVE)");
+      expect(mockDb.execute).toHaveBeenCalledWith("PRAGMA wal_checkpoint(TRUNCATE)");
     });
 
     it("triggers cleanup after backup", async () => {

@@ -145,7 +145,7 @@ export function useAnalytics(db: Ref<DbHandle | null>, repoId: Ref<string | null
 
   function computeResponseTimes(
     events: OperatorEvent[],
-    activityLogs: ActivityLog[]
+    items: PipelineItem[]
   ): Map<string, number> {
     const responses = new Map<string, number[]>();
 
@@ -158,16 +158,16 @@ export function useAnalytics(db: Ref<DbHandle | null>, repoId: Ref<string | null
       }
     }
 
-    for (const log of activityLogs) {
-      if (log.activity !== "unread") continue;
-      const unreadAt = new Date(log.started_at + "Z").getTime();
-      const selections = selectionTimes.get(log.pipeline_item_id) || [];
+    for (const item of items) {
+      if (!item.unread_at) continue;
+      const unreadAt = new Date(item.unread_at + "Z").getTime();
+      const selections = selectionTimes.get(item.id) || [];
       const firstAfter = selections.find((t) => t > unreadAt);
       if (firstAfter !== undefined) {
         const dur = (firstAfter - unreadAt) / 1000;
-        const arr = responses.get(log.pipeline_item_id) || [];
+        const arr = responses.get(item.id) || [];
         arr.push(dur);
-        responses.set(log.pipeline_item_id, arr);
+        responses.set(item.id, arr);
       }
     }
 
@@ -233,35 +233,27 @@ export function useAnalytics(db: Ref<DbHandle | null>, repoId: Ref<string | null
       const logs = await db.value.select<ActivityLog>(
         `SELECT al.* FROM activity_log al
          JOIN pipeline_item pi ON al.pipeline_item_id = pi.id
-         WHERE pi.repo_id = ? AND pi.stage = 'done'
-         ORDER BY al.pipeline_item_id, al.started_at ASC`,
+         WHERE pi.repo_id = ? AND pi.stage = 'done'`,
         [repoId.value]
       );
 
-      const grouped = new Map<string, ActivityLog[]>();
+      const grouped = new Map<string, Record<string, number>>();
       for (const log of logs) {
-        const arr = grouped.get(log.pipeline_item_id) || [];
-        arr.push(log);
-        grouped.set(log.pipeline_item_id, arr);
+        const m = grouped.get(log.pipeline_item_id) ?? {};
+        m[log.activity] = (m[log.activity] ?? 0) + log.seconds;
+        grouped.set(log.pipeline_item_id, m);
       }
 
       const totals = { working: 0, idle: 0, unread: 0 };
       let taskCount = 0;
 
       for (const item of doneItems) {
-        const itemLogs = grouped.get(item.id);
-        if (!itemLogs || itemLogs.length === 0) continue;
+        const m = grouped.get(item.id);
+        if (!m) continue;
         taskCount++;
-        for (let i = 0; i < itemLogs.length; i++) {
-          const endTime = i + 1 < itemLogs.length
-            ? itemLogs[i + 1].started_at
-            : item.updated_at;
-          const start = new Date(itemLogs[i].started_at + "Z").getTime();
-          const end = new Date(endTime + "Z").getTime();
-          const seconds = Math.max(0, (end - start) / 1000);
-          const activity = itemLogs[i].activity as keyof typeof totals;
-          if (activity in totals) totals[activity] += seconds;
-        }
+        totals.working += m.working ?? 0;
+        totals.idle += m.idle ?? 0;
+        totals.unread += m.unread ?? 0;
       }
 
       if (taskCount > 0) {
@@ -298,7 +290,7 @@ export function useAnalytics(db: Ref<DbHandle | null>, repoId: Ref<string | null
         const focusDwell = dwellValues.filter((d) => d > 30).reduce((a, b) => a + b, 0);
         const focusScore = totalDwell > 0 ? focusDwell / totalDwell : null;
 
-        const responseTimes = computeResponseTimes(opEvents, logs);
+        const responseTimes = computeResponseTimes(opEvents, items);
         const responseValues = [...responseTimes.values()];
         const avgResponse = responseValues.length > 0
           ? responseValues.reduce((a, b) => a + b, 0) / responseValues.length
