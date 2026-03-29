@@ -138,6 +138,11 @@ export const useKannaStore = defineStore("kanna", () => {
   const agentCache = new Map<string, AgentDefinition>();
   const stageOrderCache = new Map<string, string[]>(); // repo path -> stage_order from config
 
+  function getStageOrder(repoId: string): readonly string[] {
+    const repoPath = repos.value.find(r => r.id === repoId)?.path ?? "";
+    return stageOrderCache.get(repoPath) ?? DEFAULT_STAGE_ORDER;
+  }
+
   async function loadPipeline(repoPath: string, pipelineName: string): Promise<PipelineDefinition> {
     const cacheKey = `${repoPath}::${pipelineName}`;
     const cached = pipelineCache.get(cacheKey);
@@ -242,8 +247,7 @@ export const useKannaStore = defineStore("kanna", () => {
 
     // Use repo-level stage_order from config.json, falling back to built-in default.
     // Stages not in the list sort alphabetically after listed stages.
-    const repoPath = repos.value.find(r => r.id === repoId)?.path ?? "";
-    const order = stageOrderCache.get(repoPath) ?? DEFAULT_STAGE_ORDER;
+    const order = getStageOrder(repoId);
 
     const stageOrder = (item: PipelineItem): number => {
       const idx = order.indexOf(item.stage);
@@ -1737,7 +1741,7 @@ export const useKannaStore = defineStore("kanna", () => {
     ideCommand, gcAfterDays, hideShortcutsOnStartup, devLingerTerminals,
     lastHiddenRepoId, refreshKey,
     // Getters
-    selectedRepo, currentItem, sortedItemsForCurrentRepo, sortedItemsAllRepos,
+    selectedRepo, currentItem, sortedItemsForCurrentRepo, sortedItemsAllRepos, getStageOrder,
     // Actions
     bump, init,
     selectRepo, selectItem, goBack, goForward,
