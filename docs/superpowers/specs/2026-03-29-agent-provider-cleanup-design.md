@@ -12,7 +12,7 @@ The inconsistency is deeper than the markdown files. The app runtime already sup
 
 Update every built-in agent under `.kanna/agents` so `agent_provider` is `codex, copilot`.
 
-For agents that currently set `model: sonnet`, remove the `model` field instead of replacing it with a guessed Codex model name. That keeps the definitions provider-agnostic and lets each CLI use its configured default model.
+Remove the `model` field from every built-in `AGENT.md` file. This applies both to agents that currently set `model: sonnet` and to any future built-in definitions touched by this cleanup. The built-in agents should stay provider-agnostic and let each CLI use its configured default model.
 
 Files:
 
@@ -86,7 +86,7 @@ Run targeted tests for the affected parsing layer after the edits:
 Also inspect the updated built-in agent files to confirm:
 
 - every built-in agent now lists `codex, copilot`
-- no built-in agent still pins `model: sonnet`
+- no built-in agent includes a `model` field
 - no affected built-in factory docs still tell users to use Claude for these definitions
 
 ## Scope
@@ -94,7 +94,7 @@ Also inspect the updated built-in agent files to confirm:
 ### In scope
 
 - Built-in `.kanna/agents` provider cleanup
-- Removal of Claude-specific model pins from built-in agents
+- Removal of the `model` field from built-in agents
 - Documentation/example updates in built-in factory agents
 - Custom task parser/type updates to accept `codex`
 - Targeted tests for the affected parser/config paths
