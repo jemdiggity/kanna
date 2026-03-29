@@ -9,10 +9,10 @@ export function buildStagePrompt(
   stagePrompt: string | undefined,
   context: PromptContext
 ): string {
-  const combined =
-    stagePrompt !== undefined
-      ? `${agentPrompt}\n\n${stagePrompt}`
-      : agentPrompt;
+  const parts = [agentPrompt, stagePrompt].filter(
+    (p): p is string => p !== undefined && p.trim() !== ""
+  );
+  const combined = parts.join("\n\n");
 
   return combined
     .replaceAll("$TASK_PROMPT", context.taskPrompt ?? "")
