@@ -16,6 +16,10 @@ const SCAN_FLUSH_MS: u64 = 150;
 const CLAUDE_WORKING_INDICATOR: &str = "esctointerrupt";
 // Claude's idle prompt character (❯, U+276F). Present when waiting for input.
 const CLAUDE_IDLE_PROMPT: char = '\u{276F}';
+// Codex uses "esc to interrupt" (with spaces) in its status bar while processing.
+const CODEX_WORKING_INDICATOR: &str = "esc to interrupt";
+// Codex idle prompt character (›, U+203A). Present when waiting for input.
+const CODEX_IDLE_PROMPT: char = '\u{203A}';
 
 #[derive(Clone, Debug, PartialEq)]
 enum AgentProvider {
@@ -65,30 +69,42 @@ impl SessionScanState {
     ///
     /// Claude detection uses two signals:
     /// - "esctointerrupt" in fragment → Working (status bar text during processing)
-    /// - ❯ (U+276F) idle prompt without "esctointerrupt" → Idle
-    /// - Codex uses the same "esctointerrupt" working indicator and ❯ idle prompt as Claude
+    /// - ❯ (U+276F) idle prompt without "esctointerrupt" → Claude Idle
+    /// - Codex uses "esc to interrupt" (with spaces) and › (U+203A) idle prompt
     fn on_fragment(&mut self, text: &str) -> Vec<&'static str> {
         let mut events = Vec::new();
 
         match self.provider {
-            AgentProvider::Claude | AgentProvider::Codex => {
+            AgentProvider::Claude => {
                 let has_working = text.contains(CLAUDE_WORKING_INDICATOR);
                 let has_idle_prompt = text.contains(CLAUDE_IDLE_PROMPT);
 
                 if has_working {
                     if self.state != AgentState::Working {
                         self.state = AgentState::Working;
-                        events.push(match self.provider {
-                            AgentProvider::Codex => "CodexWorking",
-                            _ => "ClaudeWorking",
-                        });
+                        events.push("ClaudeWorking");
                     }
                 } else if has_idle_prompt && self.state != AgentState::Idle {
                     self.state = AgentState::Idle;
-                    events.push(match self.provider {
-                        AgentProvider::Codex => "CodexIdle",
-                        _ => "ClaudeIdle",
-                    });
+                    events.push("ClaudeIdle");
+                }
+
+                if text.contains("Do you want to allow") {
+                    events.push("WaitingForInput");
+                }
+            }
+            AgentProvider::Codex => {
+                let has_working = text.contains(CODEX_WORKING_INDICATOR);
+                let has_idle_prompt = text.contains(CODEX_IDLE_PROMPT);
+
+                if has_working {
+                    if self.state != AgentState::Working {
+                        self.state = AgentState::Working;
+                        events.push("CodexWorking");
+                    }
+                } else if has_idle_prompt && self.state != AgentState::Idle {
+                    self.state = AgentState::Idle;
+                    events.push("CodexIdle");
                 }
 
                 if text.contains("Do you want to allow") {
