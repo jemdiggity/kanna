@@ -6,7 +6,7 @@ import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
 import { parseRepoConfig } from "@kanna/core";
-import { getSetting, setSetting, type DbHandle } from "@kanna/db";
+import { getSetting, setSetting, type AgentProvider, type DbHandle } from "@kanna/db";
 import i18n from "./i18n";
 import Sidebar from "./components/Sidebar.vue";
 import MainPanel from "./components/MainPanel.vue";
@@ -93,7 +93,7 @@ const preferences = reactive({
   ideCommand: "code",
   locale: "en",
   devLingerTerminals: false,
-  defaultAgentProvider: "claude" as "claude" | "copilot" | "codex",
+  defaultAgentProvider: "claude" as AgentProvider,
 });
 const diffScopes = new Map<string, "branch" | "working">();
 const sidebarHidden = ref(false);
@@ -672,7 +672,7 @@ async function openNewTaskModal(repoId?: string) {
 }
 
 // Handlers that mix UI state + store
-async function handleNewTaskSubmit(prompt: string, agentProvider: "claude" | "copilot" | "codex" = "claude", pipelineName?: string) {
+async function handleNewTaskSubmit(prompt: string, agentProvider: AgentProvider = "claude", pipelineName?: string) {
   if (!store.selectedRepoId) {
     if (store.repos.length === 1) {
       store.selectedRepoId = store.repos[0].id;
