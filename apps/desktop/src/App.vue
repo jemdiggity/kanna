@@ -154,7 +154,7 @@ function navigateRepos(direction: -1 | 1) {
   // Restore last-selected task for this repo, or fall back to first task
   const lastItemId = store.lastSelectedItemByRepo[nextRepo.id];
   const lastItem = lastItemId
-    ? store.items.find((i) => i.id === lastItemId && i.repo_id === nextRepo.id && i.closed_at == null)
+    ? store.items.find((i) => i.id === lastItemId && i.repo_id === nextRepo.id && i.stage !== "done")
     : undefined;
   if (lastItem) {
     store.selectItem(lastItem.id);
@@ -181,7 +181,7 @@ const blockerCandidates = computed(() => {
   if (!item) return [];
   return store.items.filter((i) =>
     i.id !== item.id &&
-    i.closed_at == null &&
+    i.stage !== "done" &&
     i.repo_id === store.selectedRepoId
   );
 });
@@ -190,7 +190,7 @@ const blockerCandidates = computed(() => {
 const disabledBlockerIds = computedAsync(async () => {
   const item = store.currentItem;
   if (!item) return [];
-  if (item.closed_at == null) {
+  if (item.stage !== "done") {
     const dependents = await collectDependents(item.id);
     return [...dependents];
   }
@@ -220,6 +220,13 @@ const preselectedBlockerIds = computedAsync(async () => {
   const blockers = await store.listBlockersForItem(item.id);
   return blockers.map((b) => b.id);
 }, []);
+
+// Active session IDs — drives terminal cleanup in TerminalTabs.
+// When a task is closed (stage='done'), its ID leaves this set and
+// TerminalTabs unmounts the stale TerminalView reactively.
+const activeSessionIds = computed(() =>
+  new Set(store.items.filter((i) => i.stage !== "done").map((i) => i.id))
+);
 
 // Build a map of blocked item ID → blocker names for the sidebar
 const sidebarBlockerNames = computedAsync(async () => {
@@ -254,7 +261,7 @@ async function onBlockerConfirm(selectedIds: string[]) {
 const paletteExtraCommands = computed(() => {
   const cmds: Array<{ action: ActionName; label: string; group: string; shortcut: string }> = [];
   const item = store.currentItem;
-  if (item && item.closed_at == null && !hasTag(item, "blocked")) {
+  if (item && item.stage !== "done" && !hasTag(item, "blocked")) {
     cmds.push({ action: "blockTask", label: t('tasks.blockTask'), group: t('shortcuts.groupTasks'), shortcut: "" });
   }
   if (item && hasTag(item, "blocked")) {
@@ -824,6 +831,7 @@ onMounted(async () => {
       ref="mainPanelRef"
       v-if="!isMobile || store.selectedItemId"
       :item="store.currentItem"
+      :active-session-ids="activeSessionIds"
       :repo-path="store.selectedRepo?.path"
       :spawn-pty-session="store.spawnPtySession"
       :maximized="maximized"

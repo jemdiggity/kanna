@@ -452,8 +452,10 @@ async fn handle_command(
             cols,
             rows,
         } => {
+            log::info!("[spawn] session={} executable={} cwd={} cols={} rows={}", session_id, executable, cwd, cols, rows);
             let mut mgr = sessions.lock().await;
             if mgr.contains(&session_id) {
+                log::warn!("[spawn] session already exists: {}", session_id);
                 let evt = Event::Error {
                     message: format!("session already exists: {}", session_id),
                 };
@@ -514,6 +516,7 @@ async fn handle_command(
         }
 
         Command::Attach { session_id } => {
+            log::info!("[attach] session={}", session_id);
             let mgr = sessions.lock().await;
             if !mgr.contains(&session_id) {
                 let evt = Event::Error {
@@ -597,6 +600,7 @@ async fn handle_command(
         }
 
         Command::Detach { session_id } => {
+            log::info!("[detach] session={}", session_id);
             let evt = if sessions.lock().await.contains(&session_id) {
                 let mut writers = session_writers.lock().await;
                 if let Some(vec) = writers.get_mut(&session_id) {
@@ -687,6 +691,7 @@ async fn handle_command(
         }
 
         Command::Signal { session_id, signal } => {
+            log::info!("[signal] session={} signal={}", session_id, signal);
             let sig = match signal.as_str() {
                 "SIGINT" => libc::SIGINT,
                 "SIGTSTP" => libc::SIGTSTP,
@@ -715,6 +720,7 @@ async fn handle_command(
         }
 
         Command::Kill { session_id } => {
+            log::info!("[kill] session={}", session_id);
             let mut mgr = sessions.lock().await;
             let result = match mgr.get_mut(&session_id) {
                 Some(session) => session.kill(),

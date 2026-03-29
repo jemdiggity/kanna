@@ -455,7 +455,13 @@ pub async fn attach_session_inner(
                         let text = text.trim();
 
                         if !text.is_empty() {
-                            eprintln!("[pty-scan] sid={} {:?}", sid, text);
+                            {
+                                use std::io::Write;
+                                let log_path = crate::daemon_data_dir().join("pty-scan.log");
+                                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+                                    let _ = writeln!(f, "[pty-scan] sid={} {:?}", sid, text);
+                                }
+                            }
 
                             let mut state = scan_state.lock().await;
                             state.append(text);

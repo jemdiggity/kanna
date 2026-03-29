@@ -5,6 +5,7 @@ import TerminalView from "./TerminalView.vue";
 
 const props = defineProps<{
   sessionId: string | null;
+  activeSessionIds: Set<string>;
   agentType?: string;
   agentProvider?: string;
   worktreePath?: string;
@@ -61,6 +62,20 @@ watch(
 function setTermRef(sessionId: string, el: ComponentPublicInstance | null) {
   termRefs.value[sessionId] = el;
 }
+
+// Prune terminals for sessions that are no longer active (closed/deleted tasks).
+// This unmounts the TerminalView so undo gets a fresh mount with proper attach.
+watch(
+  () => props.activeSessionIds,
+  (activeIds) => {
+    for (const sid of visitedPtySessions.value.keys()) {
+      if (!activeIds.has(sid)) {
+        visitedPtySessions.value.delete(sid);
+        delete termRefs.value[sid];
+      }
+    }
+  }
+);
 </script>
 
 <template>

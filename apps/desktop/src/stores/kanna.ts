@@ -199,9 +199,9 @@ export const useKannaStore = defineStore("kanna", () => {
     repos.value.find((r) => r.id === selectedRepoId.value) ?? null
   );
 
-  /** An item is considered "hidden" if it has been closed. */
+  /** An item is hidden when its stage is 'done'. closed_at is informational only. */
   function isItemHidden(item: PipelineItem): boolean {
-    return item.closed_at !== null;
+    return item.stage === "done";
   }
 
   const currentItem = computed(() => {
@@ -815,7 +815,7 @@ export const useKannaStore = defineStore("kanna", () => {
         flags.push(`--session-id ${claudeSessionId}`);
       }
 
-      if (options?.resumeSessionId) {
+      if (options?.resumeSessionId || !escapedPrompt) {
         agentCmd = `claude ${flags.join(" ")}`;
       } else {
         agentCmd = `claude ${flags.join(" ")} '${escapedPrompt}'`;
@@ -902,6 +902,12 @@ export const useKannaStore = defineStore("kanna", () => {
       : selectedRepo.value;
     if (!item || !repo) return;
     try {
+      // Save current stage for undo (idempotent — skips if already saved from linger)
+      await _db.execute(
+        "UPDATE pipeline_item SET previous_stage = stage, updated_at = datetime('now') WHERE id = ? AND previous_stage IS NULL",
+        [item.id]
+      );
+
       // Already torndown — second close kills sessions and finishes
       if (item.stage === "torndown") {
         await Promise.all([
@@ -1009,7 +1015,7 @@ export const useKannaStore = defineStore("kanna", () => {
       if (item.branch) {
         const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
         try {
-          await spawnPtySession(item.id, worktreePath, item.prompt || "", 80, 24, {
+          await spawnPtySession(item.id, worktreePath, "", 80, 24, {
             agentProvider: (item.agent_provider as "claude" | "copilot") || "claude",
             ...(item.claude_session_id ? { resumeSessionId: item.claude_session_id } : {}),
           });
@@ -1362,7 +1368,7 @@ export const useKannaStore = defineStore("kanna", () => {
     let portItems = items.value;
     if (portItems.length === 0) {
       portItems = await _db.select<PipelineItem>(
-        "SELECT * FROM pipeline_item WHERE repo_id = ? AND closed_at IS NULL",
+        "SELECT * FROM pipeline_item WHERE repo_id = ? AND stage != 'done'",
         [item.repo_id],
       );
     }
@@ -1558,7 +1564,7 @@ export const useKannaStore = defineStore("kanna", () => {
     // cleanup, hide/re-import, or other out-of-band deletion).
     if (isTauri) {
       for (const item of eagerItems) {
-        if (!item.branch || item.closed_at !== null) continue;
+        if (!item.branch || item.stage === "done") continue;
         const repo = eagerRepos.find(r => r.id === item.repo_id);
         if (!repo) continue;
         const wtPath = `${repo.path}/.kanna-worktrees/${item.branch}`;
@@ -1566,7 +1572,7 @@ export const useKannaStore = defineStore("kanna", () => {
         if (!exists) {
           console.warn(`[store] closing orphaned task ${item.id}: worktree missing at ${wtPath}`);
           await closePipelineItem(_db, item.id);
-          item.closed_at = new Date().toISOString();
+          item.stage = "done";
         }
       }
     }
@@ -1586,7 +1592,7 @@ export const useKannaStore = defineStore("kanna", () => {
     const savedItem = await getSetting(_db, "selected_item_id");
     if (savedRepo && eagerRepos.some((r) => r.id === savedRepo)) {
       selectedRepoId.value = savedRepo;
-      if (savedItem && eagerItems.some((i) => i.id === savedItem && i.closed_at === null)) {
+      if (savedItem && eagerItems.some((i) => i.id === savedItem && i.stage !== "done")) {
         restoreSelection(savedItem);
       }
     } else if (eagerRepos.length === 1) {
@@ -1608,7 +1614,7 @@ export const useKannaStore = defineStore("kanna", () => {
     if (isTauri) {
       for (const item of eagerItems) {
         if (!item.branch) continue;
-        if (item.closed_at !== null) continue;
+        if (item.stage === "done") continue;
         const repo = eagerRepos.find(r => r.id === item.repo_id);
         if (!repo) continue;
         const wtPath = `${repo.path}/.kanna-worktrees/${item.branch}`;
