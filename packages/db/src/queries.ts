@@ -90,10 +90,6 @@ export async function insertPipelineItem(
       item.base_ref ?? null,
     ]
   );
-  await db.execute(
-    "INSERT INTO activity_log (pipeline_item_id, activity) VALUES (?, ?)",
-    [item.id, item.activity ?? "idle"]
-  );
 }
 
 export async function updatePipelineItemStage(
@@ -146,15 +142,20 @@ export async function updatePipelineItemActivity(
   activity: "working" | "unread" | "idle"
 ): Promise<void> {
   const unreadClause = activity === "unread" ? ", unread_at = datetime('now')" : "";
+  // Accumulate elapsed seconds in the current state before transitioning away.
+  // The WHERE activity != ? guard ensures we only accumulate on real transitions.
+  await db.execute(
+    `INSERT INTO activity_log (pipeline_item_id, activity, seconds)
+     SELECT id, activity, CAST((julianday('now') - julianday(COALESCE(activity_changed_at, created_at))) * 86400 AS INTEGER)
+     FROM pipeline_item WHERE id = ? AND activity != ?
+     ON CONFLICT (pipeline_item_id, activity) DO UPDATE SET seconds = seconds + excluded.seconds`,
+    [id, activity]
+  );
   const result = await db.execute(
     `UPDATE pipeline_item SET activity = ?, activity_changed_at = datetime('now')${unreadClause}, updated_at = datetime('now') WHERE id = ? AND activity != ?`,
     [activity, id, activity]
   );
   if (result.rowsAffected === 0) return;
-  await db.execute(
-    "INSERT INTO activity_log (pipeline_item_id, activity) VALUES (?, ?)",
-    [id, activity]
-  );
 }
 
 export async function pinPipelineItem(

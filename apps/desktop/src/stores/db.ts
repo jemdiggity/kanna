@@ -51,6 +51,12 @@ export async function loadDatabase(): Promise<{ db: DbHandle; dbName: string }> 
 export async function runMigrations(db: DbHandle): Promise<void> {
   // Enable foreign key enforcement so ON DELETE CASCADE works
   await db.execute("PRAGMA foreign_keys = ON");
+  // Checkpoint every 100 pages (~400 KB) instead of the default 1000 (~4 MB).
+  // tauri-plugin-sql uses a 10-connection pool; idle connections hold open WAL read
+  // snapshots that block checkpoints. A large WAL can then be partially truncated
+  // mid-read by a checkpoint, causing SQLITE_IOERR_SHORT_READ (522) bursts.
+  // Frequent small checkpoints keep the WAL too small for this race to matter.
+  await db.execute("PRAGMA wal_autocheckpoint = 100");
 
   await db.execute(`CREATE TABLE IF NOT EXISTS repo (
     id TEXT PRIMARY KEY, path TEXT NOT NULL, name TEXT NOT NULL,
@@ -127,6 +133,17 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     started_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_activity_log_item ON activity_log(pipeline_item_id)`);
+  // Migrate activity_log from time-series to accumulator model
+  try {
+    await db.execute(`DROP TABLE IF EXISTS activity_log`);
+    await db.execute(`DROP INDEX IF EXISTS idx_activity_log_item`);
+    await db.execute(`CREATE TABLE IF NOT EXISTS activity_log (
+      pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
+      activity TEXT NOT NULL,
+      seconds INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (pipeline_item_id, activity)
+    )`);
+  } catch (e) { console.debug("[db] activity_log accumulator migration:", e); }
 
   // Task blocker junction table for blocked task dependencies
   await db.execute(`CREATE TABLE IF NOT EXISTS task_blocker (

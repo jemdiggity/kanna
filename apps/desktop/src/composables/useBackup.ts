@@ -39,10 +39,11 @@ export async function createBackup(
   const exists = await invoke<boolean>("file_exists", { path: dbPath });
   if (!exists) return;
 
-  // Flush WAL if we have an open connection
+  // Flush WAL before copying. TRUNCATE checkpoints and empties the WAL file,
+  // preventing it from accumulating to several MB between backups.
   if (db) {
     try {
-      await db.execute("PRAGMA wal_checkpoint(PASSIVE)");
+      await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
     } catch (e) {
       console.warn("[backup] WAL checkpoint failed (non-fatal):", e);
     }
