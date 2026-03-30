@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue"
 import { useTerminal, type SpawnOptions } from "../composables/useTerminal"
+import { shouldDelayConnectUntilAfterInitialLayout } from "../composables/terminalSessionRecovery"
 import "@xterm/xterm/css/xterm.css"
 
 const props = defineProps<{
@@ -23,12 +24,35 @@ defineExpose({
 
 let resizeObserver: ResizeObserver | null = null
 
-onMounted(() => {
+async function waitForStableLayout(el: HTMLElement) {
+  let last = { width: 0, height: 0 }
+  for (let i = 0; i < 10; i++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    const current = { width: el.offsetWidth, height: el.offsetHeight }
+    if (
+      current.width > 0 &&
+      current.height > 0 &&
+      current.width === last.width &&
+      current.height === last.height
+    ) {
+      return
+    }
+    last = current
+  }
+}
+
+onMounted(async () => {
   if (containerRef.value) {
     init(containerRef.value)
-    startListening()
     resizeObserver = new ResizeObserver(() => fitDeferred())
     resizeObserver.observe(containerRef.value)
+    if (shouldDelayConnectUntilAfterInitialLayout(props.spawnOptions, {
+      agentProvider: props.agentProvider,
+      worktreePath: props.worktreePath,
+    })) {
+      await waitForStableLayout(containerRef.value)
+    }
+    startListening()
   }
 })
 
