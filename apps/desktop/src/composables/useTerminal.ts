@@ -11,7 +11,6 @@ import { listen } from "../listen"
 import { isTauri } from "../tauri-mock"
 import { isAppShortcut } from "./useKeyboardShortcuts"
 import {
-  clearCachedTerminalState,
   loadCachedTerminalState,
   saveCachedTerminalState,
 } from "./terminalStateCache"
@@ -395,7 +394,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       attached = true
       // Attach succeeded — session was alive in daemon.
       if (terminal.value) {
-        if (shouldResetTerminalOnReconnect(options)) {
+        const preserveRestoredState =
+          restoredCachedState && shouldRestoreCachedTerminalState(spawnOptions, options)
+        if (shouldResetTerminalOnReconnect(options) && !preserveRestoredState) {
           terminal.value.reset()
         }
         const reconnectKeyboardPush = getReconnectKeyboardPush({
@@ -516,14 +517,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   function persistTerminalState() {
     if (!terminal.value || !shouldPersistTerminalStateOnUnmount(spawnOptions, options)) return
 
-    const serialized = serializeAddon.serialize()
-    if (!serialized) {
-      clearCachedTerminalState(sessionId)
-      return
-    }
-
     saveCachedTerminalState(sessionId, {
-      serialized,
+      serialized: serializeAddon.serialize(),
       cols: terminal.value.cols,
       rows: terminal.value.rows,
       savedAt: Date.now(),

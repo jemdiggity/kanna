@@ -146,6 +146,15 @@ describe("shouldPersistTerminalStateOnUnmount", () => {
       )
     ).toBe(true);
   });
+
+  it("does not persist state for shell terminals", () => {
+    expect(
+      shouldPersistTerminalStateOnUnmount(
+        { cwd: "/tmp/repo", prompt: "", spawnFn: async () => {} },
+        undefined,
+      )
+    ).toBe(false);
+  });
 });
 
 describe("shouldEnableKittyKeyboard", () => {
