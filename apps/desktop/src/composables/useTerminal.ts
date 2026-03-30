@@ -1,6 +1,7 @@
 import { ref, onUnmounted } from "vue"
 import { Terminal, type ILink } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
+import { SerializeAddon } from "@xterm/addon-serialize"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import { ImageAddon } from "@xterm/addon-image"
 import { WebglAddon } from "@xterm/addon-webgl"
@@ -10,10 +11,19 @@ import { listen } from "../listen"
 import { isTauri } from "../tauri-mock"
 import { isAppShortcut } from "./useKeyboardShortcuts"
 import {
+  clearCachedTerminalState,
+  loadCachedTerminalState,
+  saveCachedTerminalState,
+} from "./terminalStateCache"
+import {
   formatAttachFailureMessage,
   getReconnectRedrawPolicy,
+  getReconnectKeyboardPush,
   getTerminalRecoveryMode,
+  shouldPersistTerminalStateOnUnmount,
   shouldPushKittyKeyboardOnFreshAttach,
+  shouldRestoreCachedTerminalState,
+  shouldResetTerminalOnReconnect,
   shouldSupportKittyKeyboard,
   shouldSkipReconnect,
   shouldForceDoubleResizeOnReconnect,
@@ -35,6 +45,7 @@ export interface TerminalOptions {
 export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, options?: TerminalOptions) {
   const terminal = ref<Terminal | null>(null)
   const fitAddon = new FitAddon()
+  const serializeAddon = new SerializeAddon()
   let unlistenOutput: (() => void) | null = null
   let unlistenExit: (() => void) | null = null
   let unlistenDaemonReady: (() => void) | null = null
@@ -42,6 +53,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let fitRafId = 0
   let attached = false
   let connecting = false
+  let restoredCachedState = false
 
   // Scroll-lock: when the user scrolls up, hold their viewport position
   // instead of letting TUI redraws yank them to the top of the buffer.
@@ -118,6 +130,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       ...(shouldSupportKittyKeyboard(options) ? { vtExtensions: { kittyKeyboard: true } } : {}),
     })
     term.loadAddon(fitAddon)
+    term.loadAddon(serializeAddon)
     term.loadAddon(new WebLinksAddon(handleLinkActivate))
     try {
       const webgl = new WebglAddon()
@@ -206,6 +219,14 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     }
 
     term.open(container)
+
+    if (!restoredCachedState && shouldRestoreCachedTerminalState(spawnOptions, options)) {
+      const cached = loadCachedTerminalState(sessionId)
+      if (cached?.serialized) {
+        term.write(cached.serialized)
+        restoredCachedState = true
+      }
+    }
 
     // --- Scroll-lock tracking ---
     const viewport = container.querySelector(".xterm-viewport") as HTMLElement | null
@@ -374,9 +395,15 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       attached = true
       // Attach succeeded — session was alive in daemon.
       if (terminal.value) {
-        terminal.value.reset()
-        if (options?.kittyKeyboard) {
-          terminal.value.write("\x1b[>1u")
+        if (shouldResetTerminalOnReconnect(options)) {
+          terminal.value.reset()
+        }
+        const reconnectKeyboardPush = getReconnectKeyboardPush({
+          ...options,
+          kittyKeyboard: options?.kittyKeyboard,
+        })
+        if (reconnectKeyboardPush) {
+          terminal.value.write(reconnectKeyboardPush)
         }
         await ensureFitted()
         await waitForReconnectRedrawSettle()
@@ -486,6 +513,23 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     })
   }
 
+  function persistTerminalState() {
+    if (!terminal.value || !shouldPersistTerminalStateOnUnmount(spawnOptions, options)) return
+
+    const serialized = serializeAddon.serialize()
+    if (!serialized) {
+      clearCachedTerminalState(sessionId)
+      return
+    }
+
+    saveCachedTerminalState(sessionId, {
+      serialized,
+      cols: terminal.value.cols,
+      rows: terminal.value.rows,
+      savedAt: Date.now(),
+    })
+  }
+
   function dispose() {
     attached = false
     fileExistsCache.clear()
@@ -493,6 +537,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     if (unlistenOutput) unlistenOutput()
     if (unlistenExit) unlistenExit()
     if (unlistenDaemonReady) unlistenDaemonReady()
+    persistTerminalState()
     terminal.value?.dispose()
   }
 

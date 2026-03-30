@@ -5,8 +5,12 @@ import {
   getTaskTerminalEnv,
   getTerminalRecoveryMode,
   getReconnectRedrawPolicy,
+  getReconnectKeyboardPush,
+  shouldPersistTerminalStateOnUnmount,
   shouldEnableKittyKeyboard,
   shouldPushKittyKeyboardOnFreshAttach,
+  shouldRestoreCachedTerminalState,
+  shouldResetTerminalOnReconnect,
   shouldSupportKittyKeyboard,
   shouldSkipReconnect,
   shouldForceDoubleResizeOnReconnect,
@@ -113,6 +117,37 @@ describe("shouldDelayConnectUntilAfterInitialLayout", () => {
   });
 });
 
+describe("shouldRestoreCachedTerminalState", () => {
+  it("restores cached state for attach-only task terminals", () => {
+    expect(
+      shouldRestoreCachedTerminalState(
+        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
+        { agentProvider: "codex", worktreePath: "/tmp/task" },
+      )
+    ).toBe(true);
+  });
+
+  it("does not restore cached state for shell terminals", () => {
+    expect(
+      shouldRestoreCachedTerminalState(
+        { cwd: "/tmp/repo", prompt: "", spawnFn: async () => {} },
+        undefined,
+      )
+    ).toBe(false);
+  });
+});
+
+describe("shouldPersistTerminalStateOnUnmount", () => {
+  it("persists state for attach-only task terminals", () => {
+    expect(
+      shouldPersistTerminalStateOnUnmount(
+        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
+        { agentProvider: "claude", worktreePath: "/tmp/task" },
+      )
+    ).toBe(true);
+  });
+});
+
 describe("shouldEnableKittyKeyboard", () => {
   it("enables kitty keyboard for Claude and Copilot task terminals", () => {
     expect(shouldEnableKittyKeyboard({ agentProvider: "claude" })).toBe(true);
@@ -146,6 +181,33 @@ describe("shouldPushKittyKeyboardOnFreshAttach", () => {
     expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "copilot" })).toBe(false);
     expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "codex" })).toBe(false);
     expect(shouldPushKittyKeyboardOnFreshAttach()).toBe(false);
+  });
+});
+
+describe("shouldResetTerminalOnReconnect", () => {
+  it("keeps reset behavior for Claude and Copilot reconnects", () => {
+    expect(shouldResetTerminalOnReconnect({ agentProvider: "claude" })).toBe(true);
+    expect(shouldResetTerminalOnReconnect({ agentProvider: "copilot" })).toBe(true);
+  });
+
+  it("avoids resetting xterm state for Codex reconnects", () => {
+    expect(shouldResetTerminalOnReconnect({ agentProvider: "codex" })).toBe(false);
+  });
+});
+
+describe("getReconnectKeyboardPush", () => {
+  it("re-pushes kitty keyboard mode for Codex reconnects", () => {
+    expect(getReconnectKeyboardPush({ agentProvider: "codex" })).toBe("\x1b[>1u");
+  });
+
+  it("re-pushes kitty keyboard mode when kitty keyboard is enabled", () => {
+    expect(getReconnectKeyboardPush({ agentProvider: "claude", kittyKeyboard: true })).toBe("\x1b[>1u");
+    expect(getReconnectKeyboardPush({ agentProvider: "copilot", kittyKeyboard: true })).toBe("\x1b[>1u");
+  });
+
+  it("does not push keyboard mode when not needed", () => {
+    expect(getReconnectKeyboardPush({ agentProvider: "copilot", kittyKeyboard: false })).toBe(null);
+    expect(getReconnectKeyboardPush()).toBe(null);
   });
 });
 

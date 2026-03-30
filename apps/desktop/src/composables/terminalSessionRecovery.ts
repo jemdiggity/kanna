@@ -34,6 +34,20 @@ export function shouldDelayConnectUntilAfterInitialLayout(
   return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
 }
 
+export function shouldRestoreCachedTerminalState(
+  spawnOptions?: SpawnOptions,
+  options?: TerminalOptions,
+): boolean {
+  return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
+}
+
+export function shouldPersistTerminalStateOnUnmount(
+  spawnOptions?: SpawnOptions,
+  options?: TerminalOptions,
+): boolean {
+  return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
+}
+
 export function shouldEnableKittyKeyboard(options?: TerminalOptions): boolean {
   return !!options?.agentProvider && options.agentProvider !== "codex";
 }
@@ -44,6 +58,20 @@ export function shouldSupportKittyKeyboard(options?: TerminalOptions): boolean {
 
 export function shouldPushKittyKeyboardOnFreshAttach(options?: TerminalOptions): boolean {
   return options?.agentProvider === "claude";
+}
+
+export function shouldResetTerminalOnReconnect(options?: TerminalOptions): boolean {
+  return options?.agentProvider !== "codex";
+}
+
+export function getReconnectKeyboardPush(options?: TerminalOptions): string | null {
+  if (options?.agentProvider === "codex") {
+    return "\x1b[>1u";
+  }
+  if (options?.kittyKeyboard) {
+    return "\x1b[>1u";
+  }
+  return null;
 }
 
 export function getTaskTerminalEnv(agentProvider?: string): TaskTerminalEnv {
