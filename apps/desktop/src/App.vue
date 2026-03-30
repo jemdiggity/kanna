@@ -237,7 +237,7 @@ const activePtySessions = computed(() =>
         sessionId: i.id,
         worktreePath: i.branch && repo ? `${repo.path}/.kanna-worktrees/${i.branch}` : undefined,
         prompt: i.prompt || "",
-        agentProvider: i.agent_provider || "claude",
+        agentProvider: i.agent_provider,
       };
     })
 );
@@ -686,7 +686,7 @@ async function openNewTaskModal(repoId?: string) {
 }
 
 // Handlers that mix UI state + store
-async function handleNewTaskSubmit(prompt: string, agentProvider: AgentProvider = "claude", pipelineName?: string) {
+async function handleNewTaskSubmit(prompt: string, agentProvider: AgentProvider, pipelineName?: string) {
   if (!store.selectedRepoId) {
     if (store.repos.length === 1) {
       store.selectedRepoId = store.repos[0].id;
