@@ -28,9 +28,19 @@ describe("terminalStateCache", () => {
 
   it("returns null for missing or malformed entries", () => {
     localStorage.setItem("kanna:terminal-state:task-2", "{bad json");
+    localStorage.setItem(
+      "kanna:terminal-state:task-4",
+      JSON.stringify({ serialized: "cached", cols: "bad", rows: 24, savedAt: 456 }),
+    );
+    localStorage.setItem(
+      "kanna:terminal-state:task-5",
+      JSON.stringify({ serialized: "cached", cols: 80, savedAt: 456 }),
+    );
 
     expect(loadCachedTerminalState("missing")).toBeNull();
     expect(loadCachedTerminalState("task-2")).toBeNull();
+    expect(loadCachedTerminalState("task-4")).toBeNull();
+    expect(loadCachedTerminalState("task-5")).toBeNull();
   });
 
   it("removes cached state by session id", () => {

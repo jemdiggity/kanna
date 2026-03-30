@@ -12,7 +12,11 @@ function getStorageKey(sessionId: string): string {
 }
 
 export function saveCachedTerminalState(sessionId: string, state: CachedTerminalState): void {
-  localStorage.setItem(getStorageKey(sessionId), JSON.stringify(state));
+  try {
+    localStorage.setItem(getStorageKey(sessionId), JSON.stringify(state));
+  } catch {
+    // Best-effort cache: ignore storage quota or availability failures.
+  }
 }
 
 export function loadCachedTerminalState(sessionId: string): CachedTerminalState | null {
