@@ -11,7 +11,10 @@ import { isTauri } from "../tauri-mock"
 import { isAppShortcut } from "./useKeyboardShortcuts"
 import {
   formatAttachFailureMessage,
+  getReconnectRedrawPolicy,
   getTerminalRecoveryMode,
+  shouldSkipReconnect,
+  shouldForceDoubleResizeOnReconnect,
   shouldReattachOnDaemonReady,
 } from "./terminalSessionRecovery"
 
@@ -36,6 +39,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let container: HTMLElement | null = null
   let fitRafId = 0
   let attached = false
+  let connecting = false
 
   // Scroll-lock: when the user scrolls up, hold their viewport position
   // instead of letting TUI redraws yank them to the top of the buffer.
@@ -320,22 +324,64 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     }
   }
 
+  async function waitForReconnectRedrawSettle() {
+    const policy = getReconnectRedrawPolicy(options)
+    if (!policy.waitForIdleEvent) return
+
+    await new Promise<void>((resolve) => {
+      let settled = false
+      let stopListening: (() => void) | null = null
+
+      const finish = (delayMs: number) => {
+        if (settled) return
+        settled = true
+        stopListening?.()
+        setTimeout(resolve, delayMs)
+      }
+
+      const fallback = setTimeout(() => finish(0), policy.fallbackDelayMs)
+      const completeFromIdle = () => {
+        clearTimeout(fallback)
+        finish(policy.settleDelayMs)
+      }
+
+      listen("hook_event", (event) => {
+        const payload = event.payload || event
+        if (payload?.session_id === sessionId && payload?.event === policy.waitForIdleEvent) {
+          completeFromIdle()
+        }
+      }).then((unlisten) => {
+        stopListening = unlisten
+        if (settled) {
+          stopListening()
+        }
+      }).catch(() => {
+        clearTimeout(fallback)
+        finish(0)
+      })
+    })
+  }
+
   async function connectSession() {
+    if (shouldSkipReconnect(connecting, attached)) return
+    connecting = true
     const recoveryMode = getTerminalRecoveryMode(spawnOptions, options)
 
     try {
       await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
       attached = true
       // Attach succeeded — session was alive in daemon.
-      // Clear display and force SIGWINCH so Claude TUI redraws from scratch.
-      // Use CSI 2 J + CSI H instead of reset() to preserve internal state
-      // (kitty keyboard mode, character attributes, etc.).
       if (terminal.value) {
-        terminal.value.write("\x1b[?25l\x1b[2J\x1b[H") // hide cursor, clear display, cursor home
+        terminal.value.reset()
+        if (options?.kittyKeyboard) {
+          terminal.value.write("\x1b[>1u")
+        }
         await ensureFitted()
+        await waitForReconnectRedrawSettle()
         const { cols, rows } = terminal.value
-        // Force a size change then restore — guarantees SIGWINCH fires
-        await invoke("resize_session", { sessionId, cols: cols - 1, rows }).catch(() => {})
+        if (shouldForceDoubleResizeOnReconnect(options)) {
+          await invoke("resize_session", { sessionId, cols: cols - 1, rows }).catch(() => {})
+        }
         await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
       }
       return
@@ -345,6 +391,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         terminal.value?.write(formatAttachFailureMessage(msg))
         return
       }
+    } finally {
+      connecting = false
     }
 
     // No existing session — spawn a new one if we have spawn options

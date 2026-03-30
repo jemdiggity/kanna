@@ -1,6 +1,11 @@
 import type { SpawnOptions, TerminalOptions } from "./useTerminal";
 
 export type TerminalRecoveryMode = "attach-only" | "spawn-on-missing";
+export interface ReconnectRedrawPolicy {
+  waitForIdleEvent: string | null;
+  settleDelayMs: number;
+  fallbackDelayMs: number;
+}
 
 export function getTerminalRecoveryMode(
   spawnOptions?: SpawnOptions,
@@ -17,6 +22,36 @@ export function shouldReattachOnDaemonReady(
   return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
 }
 
+export function shouldDelayConnectUntilAfterInitialLayout(
+  spawnOptions?: SpawnOptions,
+  options?: TerminalOptions,
+): boolean {
+  return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
+}
+
 export function formatAttachFailureMessage(message: string): string {
   return `\r\n\x1b[31mFailed to reconnect to existing session: ${message}\x1b[0m\r\n`;
+}
+
+export function shouldForceDoubleResizeOnReconnect(_options?: TerminalOptions): boolean {
+  return _options?.agentProvider === "claude";
+}
+
+export function shouldSkipReconnect(connecting: boolean, attached: boolean): boolean {
+  return connecting || attached;
+}
+
+export function getReconnectRedrawPolicy(options?: TerminalOptions): ReconnectRedrawPolicy {
+  if (options?.agentProvider === "claude") {
+    return {
+      waitForIdleEvent: "ClaudeIdle",
+      settleDelayMs: 200,
+      fallbackDelayMs: 2000,
+    };
+  }
+  return {
+    waitForIdleEvent: null,
+    settleDelayMs: 0,
+    fallbackDelayMs: 0,
+  };
 }
