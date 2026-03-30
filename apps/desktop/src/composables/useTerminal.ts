@@ -10,11 +10,7 @@ import { invoke } from "../invoke"
 import { listen } from "../listen"
 import { isTauri } from "../tauri-mock"
 import { isAppShortcut } from "./useKeyboardShortcuts"
-import {
-  clearCachedTerminalState,
-  loadCachedTerminalState,
-  saveCachedTerminalState,
-} from "./terminalStateCache"
+import { loadCachedTerminalState, saveCachedTerminalState } from "./terminalStateCache"
 import {
   formatAttachFailureMessage,
   getReconnectRedrawPolicy,
@@ -489,9 +485,6 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           if (sid === sessionId || sid === teardownId) {
             if (terminal.value) {
               terminal.value.write(`\r\n[Process exited with code ${event.payload.code}]\r\n`)
-            }
-            if (!sid.startsWith("td-")) {
-              clearCachedTerminalState(sessionId)
             }
           }
         }

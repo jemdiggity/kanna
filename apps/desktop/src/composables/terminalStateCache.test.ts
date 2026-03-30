@@ -55,17 +55,4 @@ describe("terminalStateCache", () => {
 
     expect(loadCachedTerminalState("task-3")).toBeNull();
   });
-
-  it("can be cleared after session exit cleanup", () => {
-    saveCachedTerminalState("task-exit", {
-      serialized: "cached",
-      cols: 80,
-      rows: 24,
-      savedAt: 1,
-    });
-
-    clearCachedTerminalState("task-exit");
-
-    expect(loadCachedTerminalState("task-exit")).toBeNull();
-  });
 });
