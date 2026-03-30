@@ -90,14 +90,7 @@ function handleKeydown(e: KeyboardEvent) {
     <div class="modal">
       <div class="modal-header">
         <h3>{{ $t('tasks.newTask') }}</h3>
-        <div class="agent-toggle">
-          <button
-            v-for="prov in availableProviders"
-            :key="prov"
-            :class="['toggle-btn', { active: agentProvider === prov }]"
-            @click="agentProvider = prov"
-          >{{ prov === 'claude' ? 'Claude' : prov === 'copilot' ? 'Copilot' : 'Codex' }}</button>
-        </div>
+        <div class="agent-provider">{{ agentProvider === 'claude' ? 'Claude' : agentProvider === 'copilot' ? 'Copilot' : 'Codex' }}</div>
       </div>
       <div class="modal-body">
         <textarea
@@ -181,32 +174,10 @@ function handleKeydown(e: KeyboardEvent) {
   color: #e0e0e0;
 }
 
-.agent-toggle {
-  display: flex;
-  background: #1a1a1a;
-  border: 1px solid #444;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.toggle-btn {
-  padding: 3px 10px;
+.agent-provider {
   font-size: 11px;
-  font-weight: 500;
-  color: #888;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.toggle-btn:hover {
-  color: #ccc;
-}
-
-.toggle-btn.active {
-  background: #333;
-  color: #e0e0e0;
+  font-weight: 600;
+  color: #b8b8b8;
 }
 
 .modal-body {
