@@ -7,10 +7,12 @@ import {
   getReconnectRedrawPolicy,
   getReconnectKeyboardPush,
   shouldPersistTerminalStateOnUnmount,
+  shouldRestoreCachedTerminalSnapshot,
   shouldEnableKittyKeyboard,
   shouldPushKittyKeyboardOnFreshAttach,
   shouldRestoreCachedTerminalState,
   shouldResetTerminalOnReconnect,
+  shouldRunTerminalDispose,
   shouldSupportKittyKeyboard,
   shouldSkipReconnect,
   shouldForceDoubleResizeOnReconnect,
@@ -154,6 +156,48 @@ describe("shouldPersistTerminalStateOnUnmount", () => {
         undefined,
       )
     ).toBe(false);
+  });
+});
+
+describe("shouldRestoreCachedTerminalSnapshot", () => {
+  it("restores cached content when fitted geometry matches", () => {
+    expect(
+      shouldRestoreCachedTerminalSnapshot(
+        { serialized: "cached", cols: 80, rows: 24, savedAt: 123 },
+        { cols: 80, rows: 24 },
+      )
+    ).toBe(true);
+  });
+
+  it("skips restore when cached geometry mismatches the current terminal", () => {
+    expect(
+      shouldRestoreCachedTerminalSnapshot(
+        { serialized: "cached", cols: 120, rows: 24, savedAt: 123 },
+        { cols: 80, rows: 24 },
+      )
+    ).toBe(false);
+    expect(
+      shouldRestoreCachedTerminalSnapshot(
+        { serialized: "cached", cols: 80, rows: 40, savedAt: 123 },
+        { cols: 80, rows: 24 },
+      )
+    ).toBe(false);
+  });
+
+  it("allows restore before fitted geometry is available", () => {
+    expect(
+      shouldRestoreCachedTerminalSnapshot(
+        { serialized: "cached", cols: 80, rows: 24, savedAt: 123 },
+        { cols: 0, rows: 0 },
+      )
+    ).toBe(true);
+  });
+});
+
+describe("shouldRunTerminalDispose", () => {
+  it("runs disposal only once per terminal instance", () => {
+    expect(shouldRunTerminalDispose(false)).toBe(true);
+    expect(shouldRunTerminalDispose(true)).toBe(false);
   });
 });
 

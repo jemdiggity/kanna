@@ -21,8 +21,10 @@ import {
   getTerminalRecoveryMode,
   shouldPersistTerminalStateOnUnmount,
   shouldPushKittyKeyboardOnFreshAttach,
+  shouldRestoreCachedTerminalSnapshot,
   shouldRestoreCachedTerminalState,
   shouldResetTerminalOnReconnect,
+  shouldRunTerminalDispose,
   shouldSupportKittyKeyboard,
   shouldSkipReconnect,
   shouldForceDoubleResizeOnReconnect,
@@ -52,6 +54,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let fitRafId = 0
   let attached = false
   let connecting = false
+  let disposed = false
   let restoredCachedState = false
 
   // Scroll-lock: when the user scrolls up, hold their viewport position
@@ -219,9 +222,13 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
     term.open(container)
 
+    if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+      fitAddon.fit()
+    }
+
     if (!restoredCachedState && shouldRestoreCachedTerminalState(spawnOptions, options)) {
       const cached = loadCachedTerminalState(sessionId)
-      if (cached?.serialized) {
+      if (cached && shouldRestoreCachedTerminalSnapshot(cached, { cols: term.cols, rows: term.rows })) {
         term.write(cached.serialized)
         restoredCachedState = true
       }
@@ -271,10 +278,6 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       } else {
         console.warn(`[kitty] sid=${sessionId} push sent but kitty object not found on coreService`)
       }
-    }
-
-    if (container.offsetWidth > 0 && container.offsetHeight > 0) {
-      fitAddon.fit()
     }
 
     // Let app-level shortcuts pass through even when terminal has focus,
@@ -526,6 +529,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   }
 
   function dispose() {
+    if (!shouldRunTerminalDispose(disposed)) return
+    disposed = true
     attached = false
     fileExistsCache.clear()
     if (fitRafId) cancelAnimationFrame(fitRafId)
@@ -534,6 +539,11 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     if (unlistenDaemonReady) unlistenDaemonReady()
     persistTerminalState()
     terminal.value?.dispose()
+    terminal.value = null
+    unlistenOutput = null
+    unlistenExit = null
+    unlistenDaemonReady = null
+    container = null
   }
 
   onUnmounted(() => {
