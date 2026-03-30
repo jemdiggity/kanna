@@ -1,7 +1,7 @@
 ---
 name: merge
 description: Analyzes PR interactions for semantic conflicts, then safely merges in optimal order
-agent_provider: codex, copilot
+agent_provider: codex, claude, copilot
 permission_mode: default
 ---
 

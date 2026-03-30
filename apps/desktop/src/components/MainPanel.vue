@@ -126,7 +126,7 @@ async function copyCommand(agent: string) {
           :active-session-ids="activeSessionIds"
           :active-pty-sessions="activePtySessions"
           :agent-type="item.agent_type || 'pty'"
-          :agent-provider="item.agent_provider || 'claude'"
+          :agent-provider="item.agent_provider"
           :repo-path="repoPath"
           :worktree-path="item.branch ? `${repoPath}/.kanna-worktrees/${item.branch}` : undefined"
           :prompt="item.prompt || ''"

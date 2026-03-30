@@ -70,7 +70,7 @@ function createMockDb(): DbHandle & {
         const repo = tables.repo.find((r) => r.id === id);
         if (repo) repo.hidden = 0;
       } else if (q.startsWith("INSERT INTO PIPELINE_ITEM")) {
-        const [id, repo_id, issue_number, issue_title, prompt, pipeline, stage, tagsJson, pr_number, pr_url, branch, agent_type, _agent_provider, port_offset, _port_env, activity] =
+        const [id, repo_id, issue_number, issue_title, prompt, pipeline, stage, tagsJson, pr_number, pr_url, branch, agent_type, agent_provider, port_offset, port_env, activity] =
           bindValues as unknown[];
         tables.pipeline_item.push({
           id: id as string,
@@ -86,10 +86,17 @@ function createMockDb(): DbHandle & {
           pr_url: (pr_url as string | null),
           branch: (branch as string | null),
           agent_type: (agent_type as string | null),
+          agent_provider: agent_provider as PipelineItem["agent_provider"],
           port_offset: (port_offset as number | null) ?? null,
+          port_env: (port_env as string | null) ?? null,
           activity: (activity as string) || "idle",
           activity_changed_at: new Date().toISOString(),
           unread_at: null,
+          closed_at: null,
+          display_name: null,
+          base_ref: null,
+          claude_session_id: null,
+          previous_stage: null,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           pinned: 0,
@@ -358,6 +365,27 @@ describe("pipeline_item queries", () => {
     const items = await listPipelineItems(db, "r1");
     expect(items).toHaveLength(1);
     expect(items[0].tags).toBe("[]");
+  });
+
+  it("throws when insertPipelineItem is called without an agent provider", async () => {
+    await expect(
+      insertPipelineItem(db, {
+        id: "pi1",
+        repo_id: "r1",
+        issue_number: null,
+        issue_title: null,
+        prompt: "do it",
+        tags: [],
+        pr_number: null,
+        pr_url: null,
+        branch: null,
+        agent_type: null,
+        agent_provider: undefined as never,
+        activity: "idle",
+        port_offset: null,
+        port_env: null,
+      }),
+    ).rejects.toThrow("No agent provider configured for pipeline item insertion.");
   });
 
   it("insertPipelineItem with tags", async () => {

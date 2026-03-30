@@ -1,7 +1,7 @@
 ---
 name: agent-factory
 description: Helps users create new agent definitions for Kanna
-agent_provider: codex, copilot
+agent_provider: codex, claude, copilot
 permission_mode: default
 ---
 
@@ -15,7 +15,7 @@ An agent is defined by a directory with an `AGENT.md` file. The frontmatter defi
 ---
 name: <agent-identifier>
 description: <what this agent does>
-agent_provider: codex, copilot   # or just: codex
+agent_provider: codex, claude, copilot   # or just: codex
 model: <provider-default-override> # optional: provider-specific model override
 permission_mode: default           # optional: default | acceptEdits | dontAsk
 allowed_tools: []                  # optional: tool allowlist (provider-specific)
@@ -30,7 +30,7 @@ allowed_tools: []                  # optional: tool allowlist (provider-specific
 |-------|------|----------|-------------|
 | `name` | string | yes | Agent identifier — must match the directory name |
 | `description` | string | yes | Short description of what this agent does |
-| `agent_provider` | string or list | no | Compatible providers: `codex`, `copilot`, or both. Falls back to user default. |
+| `agent_provider` | string or list | no | Compatible providers: `codex`, `claude`, `copilot`, or any ordered subset of them. |
 | `model` | string | no | Optional model override for the selected provider. Falls back to provider default. |
 | `permission_mode` | string | no | `default`, `acceptEdits`, or `dontAsk`. Falls back to `default`. |
 | `allowed_tools` | list | no | Tool allowlist (provider-specific). Empty = provider defaults. |
