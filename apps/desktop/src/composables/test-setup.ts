@@ -6,5 +6,7 @@ const win = new Window();
 globalThis.document = win.document;
 // @ts-ignore
 globalThis.window = win;
+// @ts-ignore
+globalThis.localStorage = win.localStorage;
 // @ts-ignore — use happy-dom's Event so dispatchEvent instanceof check passes
 globalThis.Event = win.Event;
