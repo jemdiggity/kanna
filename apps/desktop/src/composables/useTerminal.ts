@@ -44,6 +44,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   const terminal = ref<Terminal | null>(null)
   const fitAddon = new FitAddon()
   const serializeAddon = new SerializeAddon()
+  const PERSIST_DEBOUNCE_MS = 500
   let unlistenOutput: (() => void) | null = null
   let unlistenExit: (() => void) | null = null
   let unlistenDaemonReady: (() => void) | null = null
@@ -53,6 +54,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let connecting = false
   let disposed = false
   let restoredCachedState = false
+  let persistTimer: ReturnType<typeof setTimeout> | null = null
 
   // Scroll-lock: when the user scrolls up, hold their viewport position
   // instead of letting TUI redraws yank them to the top of the buffer.
@@ -225,7 +227,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
     if (!restoredCachedState && shouldRestoreCachedTerminalState(spawnOptions, options)) {
       const cached = loadCachedTerminalState(sessionId)
-      if (cached && shouldRestoreCachedTerminalSnapshot(cached, { cols: term.cols, rows: term.rows })) {
+      const hasRealLayout = !!container && container.offsetWidth > 0 && container.offsetHeight > 0
+      const currentGeometry = hasRealLayout ? { cols: term.cols, rows: term.rows } : { cols: 0, rows: 0 }
+      const shouldRestore = shouldRestoreCachedTerminalSnapshot(cached, currentGeometry)
+      if (cached && shouldRestore) {
         term.write(cached.serialized)
         restoredCachedState = true
       }
@@ -446,6 +451,27 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     }
   }
 
+  function persistTerminalState() {
+    if (!terminal.value || !shouldPersistTerminalStateOnUnmount(spawnOptions, options)) return
+
+    const serialized = serializeAddon.serialize()
+    saveCachedTerminalState(sessionId, {
+      serialized,
+      cols: terminal.value.cols,
+      rows: terminal.value.rows,
+      savedAt: Date.now(),
+    })
+  }
+
+  function schedulePersistTerminalState() {
+    if (!shouldPersistTerminalStateOnUnmount(spawnOptions, options)) return
+    if (persistTimer) clearTimeout(persistTimer)
+    persistTimer = setTimeout(() => {
+      persistTimer = null
+      persistTerminalState()
+    }, PERSIST_DEBOUNCE_MS)
+  }
+
   async function startListening() {
     const teardownId = `td-${sessionId}`
 
@@ -469,8 +495,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
                 bytes[i] = binary.charCodeAt(i)
               }
               terminal.value.write(bytes, restore)
+              schedulePersistTerminalState()
             } else if (Array.isArray(event.payload.data)) {
               terminal.value.write(new Uint8Array(event.payload.data), restore)
+              schedulePersistTerminalState()
             }
           }
         }
@@ -516,23 +544,16 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     })
   }
 
-  function persistTerminalState() {
-    if (!terminal.value || !shouldPersistTerminalStateOnUnmount(spawnOptions, options)) return
-
-    saveCachedTerminalState(sessionId, {
-      serialized: serializeAddon.serialize(),
-      cols: terminal.value.cols,
-      rows: terminal.value.rows,
-      savedAt: Date.now(),
-    })
-  }
-
   function dispose() {
     if (!shouldRunTerminalDispose(disposed)) return
     disposed = true
     attached = false
     fileExistsCache.clear()
     if (fitRafId) cancelAnimationFrame(fitRafId)
+    if (persistTimer) {
+      clearTimeout(persistTimer)
+      persistTimer = null
+    }
     if (unlistenOutput) unlistenOutput()
     if (unlistenExit) unlistenExit()
     if (unlistenDaemonReady) unlistenDaemonReady()
