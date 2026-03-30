@@ -74,6 +74,14 @@ describe("useShortcutContext", () => {
       }
     });
 
+    it("includes keyboard shortcut help in new task context", () => {
+      const result = getContextShortcuts("newTask");
+      const actions = result.map((s) => s.action);
+      expect(actions).toContain("shortcuts.keyboardShortcuts");
+      expect(actions).toContain("shortcuts.dismiss");
+      expect(actions).not.toContain("shortcuts.commandPalette");
+    });
+
     it("excludes shortcuts tagged for other contexts", () => {
       const result = getContextShortcuts("diff");
       const actions = result.map((s) => s.action);
