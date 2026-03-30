@@ -3,7 +3,12 @@ import { ref, onMounted } from "vue";
 import { invoke } from "../invoke";
 import type { AgentProvider } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
+import { registerContextShortcuts } from "../composables/useShortcutContext";
 const { zIndex } = useModalZIndex();
+
+registerContextShortcuts("newTask", [
+  { label: "Switch agent", display: "⇧⌘[ / ⇧⌘]" },
+]);
 
 const props = defineProps<{
   defaultAgentProvider?: AgentProvider;
@@ -90,7 +95,9 @@ function handleKeydown(e: KeyboardEvent) {
     <div class="modal">
       <div class="modal-header">
         <h3>{{ $t('tasks.newTask') }}</h3>
-        <div class="agent-provider">{{ agentProvider === 'claude' ? 'Claude' : agentProvider === 'copilot' ? 'Copilot' : 'Codex' }}</div>
+        <button class="agent-provider" type="button" @mousedown.prevent @click="cycleProvider(1)">
+          {{ agentProvider === 'claude' ? 'Claude' : agentProvider === 'copilot' ? 'Copilot' : 'Codex' }}
+        </button>
       </div>
       <div class="modal-body">
         <textarea
@@ -175,9 +182,17 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .agent-provider {
+  padding: 0;
+  background: transparent;
+  border: none;
   font-size: 11px;
   font-weight: 600;
   color: #b8b8b8;
+  cursor: pointer;
+}
+
+.agent-provider:hover {
+  color: #d6d6d6;
 }
 
 .modal-body {
