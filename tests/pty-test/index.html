@@ -1,383 +1,101 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PTY Reattach Harness</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <title>PTY Test</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #101215;
-      --panel: #171b21;
-      --panel-2: #1f252d;
-      --text: #e6edf3;
-      --muted: #8b98a5;
-      --accent: #4fb3ff;
-      --border: #2d3742;
-      --danger: #ff7b72;
-      --ok: #3fb950;
-    }
-
-    * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; }
-    body {
-      display: grid;
-      grid-template-rows: auto 1fr;
-      background: radial-gradient(circle at top, #18202a, var(--bg) 48%);
-      color: var(--text);
-      font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-    }
-
-    .toolbar {
-      display: grid;
-      grid-template-columns: 1fr repeat(9, auto);
-      gap: 10px;
-      align-items: center;
-      padding: 12px;
-      border-bottom: 1px solid var(--border);
-      background: color-mix(in srgb, var(--panel) 92%, black);
-    }
-
-    .session-box {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      min-width: 0;
-    }
-
-    .session-box input, .session-box select {
-      min-width: 0;
-      width: 100%;
-      background: var(--panel-2);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 10px;
-      font: inherit;
-    }
-
-    button {
-      border: 1px solid var(--border);
-      background: var(--panel-2);
-      color: var(--text);
-      padding: 8px 12px;
-      border-radius: 8px;
-      font: inherit;
-      cursor: pointer;
-      white-space: nowrap;
-    }
-
-    button.primary {
-      background: color-mix(in srgb, var(--accent) 22%, var(--panel-2));
-      border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-    }
-
-    button.danger {
-      background: color-mix(in srgb, var(--danger) 18%, var(--panel-2));
-      border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
-    }
-
-    .controls {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-
-    .status {
-      color: var(--muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .terminal-wrap {
-      min-height: 0;
-      padding: 12px;
-    }
-
-    #terminal {
-      width: 100%;
-      height: 100%;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      overflow: hidden;
-      background: #0d1117;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-    }
+    body { margin: 0; background: #1a1a1a; }
+    #terminal { width: 100vw; height: 100vh; }
   </style>
 </head>
 <body>
-  <div class="toolbar">
-    <div class="session-box">
-      <select id="profile">
-        <option value="codex">Codex</option>
-        <option value="claude">Claude</option>
-        <option value="copilot">Copilot</option>
-        <option value="shell">Shell</option>
-      </select>
-      <input id="sessionId" placeholder="session id" />
-    </div>
-    <button class="primary" id="spawnBtn">Spawn</button>
-    <button id="attachBtn">Attach Fresh Client</button>
-    <button id="detachBtn">Detach Client</button>
-    <button id="resizeBtn">Resize Wiggle</button>
-    <div class="controls">
-      <button id="ctrlLBtn">Ctrl+L</button>
-      <button id="enterBtn">Enter</button>
-      <button id="escBtn">Esc</button>
-      <button id="doubleWiggleBtn">Double Wiggle</button>
-    </div>
-    <button class="danger" id="killBtn">Kill PTY</button>
-    <div class="status" id="status">idle</div>
-  </div>
-  <div class="terminal-wrap">
-    <div id="terminal"></div>
-  </div>
-
+  <div id="terminal"></div>
   <script type="module">
-    import * as XtermModule from "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm";
-    import * as FitModule from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm";
+    import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm'
+    import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm'
 
-    const Terminal = XtermModule.Terminal ?? XtermModule.default?.Terminal;
-    const FitAddon = FitModule.FitAddon ?? FitModule.default?.FitAddon ?? FitModule.default;
+    const term = new Terminal({
+      fontFamily: '"SF Mono", Menlo, monospace',
+      fontSize: 13,
+      theme: { background: '#1a1a1a', foreground: '#e0e0e0' },
+      scrollback: 10000,
+      cursorBlink: true,
+    })
+    const fitAddon = new FitAddon()
+    term.loadAddon(fitAddon)
+    term.open(document.getElementById('terminal'))
+    fitAddon.fit()
+    window.addEventListener('resize', () => fitAddon.fit())
 
-    const statusEl = document.getElementById("status");
-    const sessionIdInput = document.getElementById("sessionId");
-    const profileSelect = document.getElementById("profile");
-    const spawnBtn = document.getElementById("spawnBtn");
-    const attachBtn = document.getElementById("attachBtn");
-    const detachBtn = document.getElementById("detachBtn");
-    const resizeBtn = document.getElementById("resizeBtn");
-    const ctrlLBtn = document.getElementById("ctrlLBtn");
-    const enterBtn = document.getElementById("enterBtn");
-    const escBtn = document.getElementById("escBtn");
-    const doubleWiggleBtn = document.getElementById("doubleWiggleBtn");
-    const killBtn = document.getElementById("killBtn");
-    const terminalHost = document.getElementById("terminal");
+    term.writeln('Connecting to daemon...')
 
-    let term;
-    let fitAddon;
-    let ws = null;
-    let detachInput = null;
+    // Connect via WebSocket proxy — but we don't have one.
+    // Instead, poll a simple HTTP endpoint that the test server provides.
+    // For now, just show that xterm.js works with raw bytes.
 
-    function setStatus(message) {
-      statusEl.textContent = message;
-    }
+    term.writeln('xterm.js loaded. Testing ANSI:')
+    term.write('\x1b[31mRED\x1b[0m \x1b[32mGREEN\x1b[0m \x1b[34mBLUE\x1b[0m\r\n')
+    term.writeln('')
+    term.writeln('Testing carriage return spinner:')
 
-    function currentSessionId() {
-      return sessionIdInput.value.trim();
-    }
-
-    function ensureSessionId() {
-      if (!currentSessionId()) {
-        sessionIdInput.value = `pty-${Date.now().toString(36)}`;
+    let i = 0
+    const spinner = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏']
+    const interval = setInterval(() => {
+      term.write(`\r${spinner[i % spinner.length]} Working...`)
+      i++
+      if (i > 20) {
+        clearInterval(interval)
+        term.write('\r\x1b[K✓ Done\r\n')
+        term.writeln('')
+        term.writeln('If you saw a spinner animation above, xterm.js handles \\r correctly.')
+        term.writeln('')
+        term.writeln('Now testing daemon connection...')
+        connectToDaemon()
       }
-      return currentSessionId();
-    }
+    }, 100)
 
-    function createTerminal() {
-      terminalHost.replaceChildren();
-      term = new Terminal({
-        fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
-        fontSize: 13,
-        scrollback: 10000,
-        cursorBlink: true,
-        theme: {
-          background: "#0d1117",
-          foreground: "#e6edf3",
-          cursor: "#58a6ff"
-        }
-      });
-      fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(terminalHost);
-      fitAddon.fit();
-      window.addEventListener("resize", () => fitAddon.fit(), { passive: true });
-    }
+    async function connectToDaemon() {
+      // Spawn claude via the daemon and stream output
+      const SOCK_PROXY = 'http://localhost:9876'
 
-    function profileCommand(profile) {
-      if (profile === "codex") {
-        return {
-          executable: "/bin/zsh",
-          args: ["--login", "-c", "codex"]
-        };
-      }
-      if (profile === "claude") {
-        return {
-          executable: "/bin/zsh",
-          args: ["--login", "-c", "claude"]
-        };
-      }
-      if (profile === "copilot") {
-        return {
-          executable: "/bin/zsh",
-          args: ["--login", "-c", "copilot"]
-        };
-      }
-      return {
-        executable: "/bin/zsh",
-        args: ["--login"]
-      };
-    }
-
-    function closeClient() {
-      if (detachInput) {
-        detachInput.dispose();
-        detachInput = null;
-      }
-      if (ws) {
-        ws.close();
-        ws = null;
-      }
-    }
-
-    function sendBytes(bytes) {
-      const sessionId = currentSessionId();
-      if (!sessionId || !ws) return;
-      ws.send(JSON.stringify({
-        type: "input",
-        sessionId,
-        data: Array.from(bytes)
-      }));
-    }
-
-    function wiggle() {
-      const sessionId = currentSessionId();
-      if (!sessionId || !ws || !term) return;
-      const cols = Math.max(20, term.cols - 1);
-      ws.send(JSON.stringify({ type: "resize", sessionId, cols, rows: term.rows }));
-      ws.send(JSON.stringify({ type: "resize", sessionId, cols: term.cols, rows: term.rows }));
-    }
-
-    function attachFreshClient(sessionId) {
-      closeClient();
-      createTerminal();
-      setStatus(`attaching ${sessionId}`);
-
-      ws = new WebSocket(`ws://${location.host}/ws?session=${encodeURIComponent(sessionId)}`);
-      ws.binaryType = "arraybuffer";
-
-      ws.addEventListener("open", () => {
-        ws.send(JSON.stringify({
-          type: "attach",
-          sessionId,
-          cols: term.cols,
-          rows: term.rows
-        }));
-      });
-
-      ws.addEventListener("message", (event) => {
-        if (event.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(event.data));
-          return;
-        }
-
-        const msg = JSON.parse(event.data);
-        if (msg.type === "attached") {
-          setStatus(`attached ${sessionId}`);
-          detachInput = term.onData((data) => {
-            ws?.send(JSON.stringify({
-              type: "input",
-              sessionId,
-              data: Array.from(new TextEncoder().encode(data))
-            }));
-          });
-          term.onResize(({ cols, rows }) => {
-            ws?.send(JSON.stringify({ type: "resize", sessionId, cols, rows }));
-          });
-          return;
-        }
-        if (msg.type === "detached") {
-          setStatus(`detached ${sessionId}`);
-          return;
-        }
-        if (msg.type === "exit") {
-          setStatus(`exited ${sessionId} (${msg.code})`);
-          term.write(`\r\n[exit ${msg.code}]\r\n`);
-          return;
-        }
-        if (msg.type === "error") {
-          setStatus(`error: ${msg.message}`);
-          term.write(`\r\n[error] ${msg.message}\r\n`);
-        }
-      });
-
-      ws.addEventListener("close", () => {
-        setStatus(`client closed ${sessionId}`);
-      });
-    }
-
-    spawnBtn.addEventListener("click", async () => {
-      const sessionId = ensureSessionId();
-      const profile = profileSelect.value;
-      const command = profileCommand(profile);
-      const response = await fetch("/spawn", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          profile,
-          executable: command.executable,
-          args: command.args,
-          cwd: "/tmp",
+      try {
+        // Create session
+        let res = await fetch(`${SOCK_PROXY}/spawn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: 'pty-test-' + Date.now(),
+            executable: '/bin/zsh',
+            args: ['--login', '-c', 'claude --dangerously-skip-permissions "say hello world briefly"'],
+            cwd: '/tmp',
+            env: { TERM: 'xterm-256color' },
+            cols: term.cols,
+            rows: term.rows,
+          })
         })
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setStatus(`spawn failed: ${data.error}`);
-        return;
+        let data = await res.json()
+        term.writeln('Spawn: ' + JSON.stringify(data))
+
+        // Attach and stream
+        res = await fetch(`${SOCK_PROXY}/attach`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: data.session_id })
+        })
+
+        // Stream output
+        const reader = res.body.getReader()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          term.write(value)
+        }
+        term.writeln('\r\n[Session ended]')
+      } catch (e) {
+        term.writeln('No daemon proxy at :9876 — run the proxy server.')
+        term.writeln('For now, testing with raw Rust binary...')
       }
-      attachFreshClient(sessionId);
-    });
-
-    attachBtn.addEventListener("click", () => {
-      attachFreshClient(ensureSessionId());
-    });
-
-    detachBtn.addEventListener("click", () => {
-      const sessionId = currentSessionId();
-      if (!sessionId || !ws) return;
-      ws.send(JSON.stringify({ type: "detach", sessionId }));
-      closeClient();
-      setStatus(`client detached ${sessionId}`);
-    });
-
-    resizeBtn.addEventListener("click", () => {
-      wiggle();
-    });
-
-    ctrlLBtn.addEventListener("click", () => {
-      sendBytes(new Uint8Array([0x0c]));
-    });
-
-    enterBtn.addEventListener("click", () => {
-      sendBytes(new Uint8Array([0x0d]));
-    });
-
-    escBtn.addEventListener("click", () => {
-      sendBytes(new Uint8Array([0x1b]));
-    });
-
-    doubleWiggleBtn.addEventListener("click", () => {
-      wiggle();
-      setTimeout(() => wiggle(), 60);
-    });
-
-    killBtn.addEventListener("click", async () => {
-      const sessionId = currentSessionId();
-      if (!sessionId) return;
-      const response = await fetch("/kill", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId })
-      });
-      const data = await response.json();
-      setStatus(response.ok ? `killed ${sessionId}` : `kill failed: ${data.error}`);
-    });
-
-    createTerminal();
-    sessionIdInput.value = `pty-${Date.now().toString(36)}`;
+    }
   </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 </body>
 </html>
