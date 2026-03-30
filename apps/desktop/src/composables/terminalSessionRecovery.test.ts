@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   shouldDelayConnectUntilAfterInitialLayout,
   formatAttachFailureMessage,
+  getTaskTerminalEnv,
   getTerminalRecoveryMode,
   getReconnectRedrawPolicy,
+  shouldEnableKittyKeyboard,
+  shouldPushKittyKeyboardOnFreshAttach,
+  shouldSupportKittyKeyboard,
   shouldSkipReconnect,
   shouldForceDoubleResizeOnReconnect,
   shouldReattachOnDaemonReady,
@@ -106,6 +110,61 @@ describe("shouldDelayConnectUntilAfterInitialLayout", () => {
         undefined,
       )
     ).toBe(false);
+  });
+});
+
+describe("shouldEnableKittyKeyboard", () => {
+  it("enables kitty keyboard for Claude and Copilot task terminals", () => {
+    expect(shouldEnableKittyKeyboard({ agentProvider: "claude" })).toBe(true);
+    expect(shouldEnableKittyKeyboard({ agentProvider: "copilot" })).toBe(true);
+  });
+
+  it("disables kitty keyboard for Codex and unknown providers", () => {
+    expect(shouldEnableKittyKeyboard({ agentProvider: "codex" })).toBe(false);
+    expect(shouldEnableKittyKeyboard()).toBe(false);
+  });
+});
+
+describe("shouldSupportKittyKeyboard", () => {
+  it("enables kitty keyboard protocol support for all agent task terminals", () => {
+    expect(shouldSupportKittyKeyboard({ agentProvider: "claude" })).toBe(true);
+    expect(shouldSupportKittyKeyboard({ agentProvider: "copilot" })).toBe(true);
+    expect(shouldSupportKittyKeyboard({ agentProvider: "codex" })).toBe(true);
+  });
+
+  it("disables kitty keyboard protocol support when no provider is set", () => {
+    expect(shouldSupportKittyKeyboard()).toBe(false);
+  });
+});
+
+describe("shouldPushKittyKeyboardOnFreshAttach", () => {
+  it("pushes kitty keyboard mode for fresh Claude sessions", () => {
+    expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "claude" })).toBe(true);
+  });
+
+  it("does not push kitty keyboard mode for Copilot or Codex", () => {
+    expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "copilot" })).toBe(false);
+    expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "codex" })).toBe(false);
+    expect(shouldPushKittyKeyboardOnFreshAttach()).toBe(false);
+  });
+});
+
+describe("getTaskTerminalEnv", () => {
+  it("uses a plain xterm environment for Codex", () => {
+    expect(getTaskTerminalEnv("codex")).toEqual({
+      TERM: "xterm-256color",
+    });
+  });
+
+  it("keeps the vscode terminal program hint for other providers", () => {
+    expect(getTaskTerminalEnv("claude")).toEqual({
+      TERM: "xterm-256color",
+      TERM_PROGRAM: "vscode",
+    });
+    expect(getTaskTerminalEnv("copilot")).toEqual({
+      TERM: "xterm-256color",
+      TERM_PROGRAM: "vscode",
+    });
   });
 });
 

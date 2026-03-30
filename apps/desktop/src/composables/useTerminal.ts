@@ -13,6 +13,8 @@ import {
   formatAttachFailureMessage,
   getReconnectRedrawPolicy,
   getTerminalRecoveryMode,
+  shouldPushKittyKeyboardOnFreshAttach,
+  shouldSupportKittyKeyboard,
   shouldSkipReconnect,
   shouldForceDoubleResizeOnReconnect,
   shouldReattachOnDaemonReady,
@@ -113,7 +115,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       },
       scrollback: 10000,
       cursorBlink: false,
-      ...(options?.kittyKeyboard ? { vtExtensions: { kittyKeyboard: true } } : {}),
+      ...(shouldSupportKittyKeyboard(options) ? { vtExtensions: { kittyKeyboard: true } } : {}),
     })
     term.loadAddon(fitAddon)
     term.loadAddon(new WebLinksAddon(handleLinkActivate))
@@ -410,6 +412,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       // Now attach to the newly spawned session
       await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
       attached = true
+      if (terminal.value && shouldPushKittyKeyboardOnFreshAttach(options)) {
+        terminal.value.write("\x1b[>1u")
+      }
     }
   }
 

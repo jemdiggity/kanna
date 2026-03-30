@@ -12,6 +12,7 @@ import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-
 import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { PipelineDefinition, AgentDefinition, StageCompleteResult } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { createNavigationHistory } from "../composables/useNavigationHistory";
+import { getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
 import {
@@ -809,8 +810,8 @@ export const useKannaStore = defineStore("kanna", () => {
   }
 
   async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, options?: PtySpawnOptions) {
-
-    const env: Record<string, string> = { TERM: "xterm-256color", TERM_PROGRAM: "vscode" };
+    const provider = requireResolvedAgentProvider(options?.agentProvider);
+    const env: Record<string, string> = { ...getTaskTerminalEnv(provider) };
     let setupCmds: string[] = options?.setupCmds || [];
 
     // When options are provided (e.g. from createItem/startBlockedTask), use them directly
@@ -853,7 +854,6 @@ export const useKannaStore = defineStore("kanna", () => {
     } catch (e) {
       console.error("[store] failed to get pipeline socket path:", e);
     }
-    const provider = requireResolvedAgentProvider(options?.agentProvider);
     const escapedPrompt = prompt.replace(/'/g, "'\\''");
     let agentCmd: string;
 
