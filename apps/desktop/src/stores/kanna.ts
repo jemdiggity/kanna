@@ -14,6 +14,11 @@ import type { PipelineDefinition, AgentDefinition, StageCompleteResult } from ".
 import { createNavigationHistory } from "../composables/useNavigationHistory";
 import { getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
 import { clearCachedTerminalState } from "../composables/terminalStateCache";
+import {
+  closePipelineItemAndClearCachedTerminalState,
+  isTeardownSessionId,
+  shouldClearCachedTerminalStateOnSessionExit,
+} from "./kannaCleanup";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
 import {
@@ -1043,8 +1048,7 @@ export const useKannaStore = defineStore("kanna", () => {
           invoke("kill_session", { sessionId: `td-${item.id}` }).catch((e: unknown) =>
             console.error("[store] kill teardown session failed:", e)),
         ]);
-        await closePipelineItem(_db, item.id);
-        clearCachedTerminalState(item.id);
+        await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
         await checkUnblocked(item.id);
@@ -1057,8 +1061,7 @@ export const useKannaStore = defineStore("kanna", () => {
       // Blocked tasks never started — no teardown needed
       if (wasBlocked) {
         await removeAllBlockersForItem(_db, item.id);
-        await closePipelineItem(_db, item.id);
-        clearCachedTerminalState(item.id);
+        await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
         bump();
@@ -1110,8 +1113,7 @@ export const useKannaStore = defineStore("kanna", () => {
         invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
           console.error("[store] kill shell session failed:", e)),
       ]);
-      await closePipelineItem(_db, item.id);
-      clearCachedTerminalState(item.id);
+      await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
       if (opts?.selectNext !== false) selectNextItem(nextId);
       bump();
     } catch (e) {
@@ -1646,7 +1648,7 @@ export const useKannaStore = defineStore("kanna", () => {
         console.error("[store] worktree remove failed:", e)
       );
 
-      await closePipelineItem(_db, originalId);
+      await closePipelineItemAndClearCachedTerminalState(originalId, (id) => closePipelineItem(_db, id));
       // The original task being closed may unblock other tasks that
       // were waiting on it. We must check — suppressing this causes deadlocks
       // when two tasks block each other (A blocked by B, then B blocked by A').
@@ -1731,7 +1733,7 @@ export const useKannaStore = defineStore("kanna", () => {
         const exists = await invoke<boolean>("file_exists", { path: wtPath });
         if (!exists) {
           console.warn(`[store] closing orphaned task ${item.id}: worktree missing at ${wtPath}`);
-          await closePipelineItem(_db, item.id);
+          await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
           item.stage = "done";
         }
       }
@@ -1830,10 +1832,13 @@ export const useKannaStore = defineStore("kanna", () => {
       if (!sessionId) return;
 
       // Teardown session finished — already in torndown state, nothing extra needed
-      if (typeof sessionId === "string" && sessionId.startsWith("td-")) {
+      if (typeof sessionId === "string" && isTeardownSessionId(sessionId)) {
         return;
       }
 
+      if (shouldClearCachedTerminalStateOnSessionExit(sessionId)) {
+        clearCachedTerminalState(sessionId);
+      }
       _handleAgentFinished(sessionId);
     });
 
