@@ -155,7 +155,7 @@ This means the main Kanna app and a dev worktree can run simultaneously without 
 
 ### Launching the dev server
 
-Always use `./scripts/dev.sh` to start the dev server — never run `bun tauri dev` or `cargo tauri dev` directly. It auto-detects the worktree context, sets `KANNA_WORKTREE=1`, forwards all `KANNA_*` env vars, and runs in a background tmux session.
+Always use `./scripts/dev.sh` to start the dev server — never run `bun run dev`, `bun tauri dev`, or `cargo tauri dev` directly. `bun run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, forwards all `KANNA_*` env vars, and runs in a background tmux session.
 
 ```bash
 # Development (from repo root or worktree root)
@@ -180,7 +180,7 @@ cd crates/daemon && cargo test -- --test-threads=1
 cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignored --nocapture
 
 # E2E tests (needs app running with test DB)
-# Terminal 1: KANNA_DB_NAME=kanna-test.db bun tauri dev
+# Terminal 1: KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start -a
 # Terminal 2: cd apps/desktop && bun test:e2e
 ```
 
