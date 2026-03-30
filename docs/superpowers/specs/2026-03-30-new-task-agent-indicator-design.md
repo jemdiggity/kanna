@@ -10,12 +10,12 @@ The current modal renders available Agent CLIs as a segmented button group in th
 
 ## Decision
 
-Replace the clickable segmented control with a read-only status label that shows the currently selected Agent CLI.
+Replace the clickable segmented control with a read-only label that shows only the currently selected Agent CLI name.
 
 Example presentation:
 
-- `Agent CLI: Claude`
-- `Agent CLI: Codex`
+- `Claude`
+- `Codex`
 
 The modal will continue to support keyboard-only switching with the existing shortcuts:
 
@@ -42,16 +42,12 @@ Initial provider selection remains unchanged:
 
 Provider switching remains available through the existing keyboard cycling logic only. The status label is not clickable.
 
-### Shortcut hint
-
-The modal should show a concise hint near the status label indicating that the provider can be cycled with keyboard shortcuts. The hint should not compete visually with the task prompt input.
-
 ## UI Changes
 
 ### Header
 
 - Remove the segmented toggle buttons.
-- Show a compact read-only current-provider label instead.
+- Show a compact read-only current-provider label containing only the provider name.
 
 ### Visual treatment
 
