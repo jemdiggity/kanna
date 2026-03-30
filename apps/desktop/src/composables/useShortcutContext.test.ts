@@ -74,11 +74,11 @@ describe("useShortcutContext", () => {
       }
     });
 
-    it("includes keyboard shortcut help in new task context", () => {
+    it("excludes generic help and dismiss shortcuts from new task context", () => {
       const result = getContextShortcuts("newTask");
       const actions = result.map((s) => s.action);
-      expect(actions).toContain("shortcuts.keyboardShortcuts");
-      expect(actions).toContain("shortcuts.dismiss");
+      expect(actions).not.toContain("shortcuts.keyboardShortcuts");
+      expect(actions).not.toContain("shortcuts.dismiss");
       expect(actions).not.toContain("shortcuts.commandPalette");
     });
 

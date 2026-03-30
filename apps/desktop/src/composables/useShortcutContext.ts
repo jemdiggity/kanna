@@ -73,11 +73,16 @@ export function clearContextShortcuts(ctx?: ShortcutContext) {
  */
 export function getContextShortcuts(ctx: ShortcutContext): { keys: string; action: string }[] {
   const result: { keys: string; action: string }[] = [];
+  const hiddenGlobalActionsByContext: Partial<Record<ShortcutContext, string[]>> = {
+    newTask: ["showShortcuts", "dismiss"],
+  };
+  const hiddenGlobalActions = hiddenGlobalActionsByContext[ctx] ?? [];
 
   // Global shortcuts: include if explicitly tagged for this context.
   // Untagged shortcuts fall back to "main" context only.
   for (const def of shortcuts) {
     if (def.hidden) continue;
+    if (hiddenGlobalActions.includes(def.action)) continue;
     if (def.context && def.context.includes(ctx)) {
       result.push({ keys: def.display, action: def.labelKey });
     } else if (!def.context && ctx === "main") {
