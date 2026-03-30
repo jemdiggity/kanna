@@ -2,6 +2,7 @@
 import { ref, watch, nextTick, type ComponentPublicInstance } from "vue";
 import AgentView from "./AgentView.vue";
 import TerminalView from "./TerminalView.vue";
+import { shouldEnableKittyKeyboard } from "../composables/terminalSessionRecovery";
 
 const props = defineProps<{
   sessionId: string | null;
@@ -116,7 +117,7 @@ watch(
         prompt: config.prompt,
         spawnFn: spawnPtySession,
       } : undefined"
-      :kitty-keyboard="!!(spawnPtySession && config.worktreePath && config.prompt)"
+      :kitty-keyboard="!!(spawnPtySession && config.worktreePath && config.prompt) && shouldEnableKittyKeyboard({ agentProvider: config.agentProvider })"
       :agent-provider="config.agentProvider"
       :worktree-path="config.worktreePath"
     />

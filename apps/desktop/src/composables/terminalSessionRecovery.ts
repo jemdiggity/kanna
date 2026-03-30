@@ -7,6 +7,11 @@ export interface ReconnectRedrawPolicy {
   fallbackDelayMs: number;
 }
 
+export interface TaskTerminalEnv {
+  TERM: string;
+  TERM_PROGRAM?: string;
+}
+
 export function getTerminalRecoveryMode(
   spawnOptions?: SpawnOptions,
   options?: TerminalOptions,
@@ -27,6 +32,25 @@ export function shouldDelayConnectUntilAfterInitialLayout(
   options?: TerminalOptions,
 ): boolean {
   return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
+}
+
+export function shouldEnableKittyKeyboard(options?: TerminalOptions): boolean {
+  return !!options?.agentProvider && options.agentProvider !== "codex";
+}
+
+export function shouldSupportKittyKeyboard(options?: TerminalOptions): boolean {
+  return !!options?.agentProvider;
+}
+
+export function shouldPushKittyKeyboardOnFreshAttach(options?: TerminalOptions): boolean {
+  return options?.agentProvider === "claude";
+}
+
+export function getTaskTerminalEnv(agentProvider?: string): TaskTerminalEnv {
+  if (agentProvider === "codex") {
+    return { TERM: "xterm-256color" };
+  }
+  return { TERM: "xterm-256color", TERM_PROGRAM: "vscode" };
 }
 
 export function formatAttachFailureMessage(message: string): string {
