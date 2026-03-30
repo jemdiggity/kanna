@@ -103,7 +103,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "prevTab",    labelKey: "shortcuts.prevTab",       groupKey: "shortcuts.groupNavigation", key: ["[", "{"],                     meta: true, shift: true,  display: "⇧⌘[",     hidden: true },
   { action: "nextTab",    labelKey: "shortcuts.nextTab",       groupKey: "shortcuts.groupNavigation", key: ["]", "}"],                     meta: true, shift: true,  display: "⇧⌘]",     hidden: true },
   // Escape is special — no meta required
-  { action: "dismiss",    labelKey: "shortcuts.dismiss",       groupKey: "shortcuts.groupNavigation", key: "Escape",                                                 display: "Escape",   context: ["main", "diff", "file", "shell", "graph", "newTask"] },
+  { action: "dismiss",    labelKey: "shortcuts.dismiss",       groupKey: "shortcuts.groupNavigation", key: "Escape",                                                 display: "Escape",   context: ["main", "diff", "file", "graph", "newTask"] },
 ];
 
 function matches(def: ShortcutDef, e: KeyboardEvent): boolean {
