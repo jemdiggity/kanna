@@ -13,6 +13,7 @@ import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { PipelineDefinition, AgentDefinition, StageCompleteResult } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { createNavigationHistory } from "../composables/useNavigationHistory";
 import { getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
+import { clearCachedTerminalState } from "../composables/terminalStateCache";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
 import {
@@ -1043,6 +1044,7 @@ export const useKannaStore = defineStore("kanna", () => {
             console.error("[store] kill teardown session failed:", e)),
         ]);
         await closePipelineItem(_db, item.id);
+        clearCachedTerminalState(item.id);
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
         await checkUnblocked(item.id);
@@ -1056,6 +1058,7 @@ export const useKannaStore = defineStore("kanna", () => {
       if (wasBlocked) {
         await removeAllBlockersForItem(_db, item.id);
         await closePipelineItem(_db, item.id);
+        clearCachedTerminalState(item.id);
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
         bump();
@@ -1108,6 +1111,7 @@ export const useKannaStore = defineStore("kanna", () => {
           console.error("[store] kill shell session failed:", e)),
       ]);
       await closePipelineItem(_db, item.id);
+      clearCachedTerminalState(item.id);
       if (opts?.selectNext !== false) selectNextItem(nextId);
       bump();
     } catch (e) {
