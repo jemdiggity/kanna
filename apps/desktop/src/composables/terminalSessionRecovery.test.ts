@@ -159,6 +159,29 @@ describe("shouldPersistTerminalStateOnUnmount", () => {
   });
 });
 
+describe("task terminal mounting", () => {
+  it("keeps task terminals eligible for startup restore regardless of provider", () => {
+    expect(
+      shouldRestoreCachedTerminalState(
+        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
+        { agentProvider: "claude", worktreePath: "/tmp/task" },
+      )
+    ).toBe(true);
+    expect(
+      shouldRestoreCachedTerminalState(
+        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
+        { agentProvider: "copilot", worktreePath: "/tmp/task" },
+      )
+    ).toBe(true);
+    expect(
+      shouldRestoreCachedTerminalState(
+        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
+        { agentProvider: "codex", worktreePath: "/tmp/task" },
+      )
+    ).toBe(true);
+  });
+});
+
 describe("shouldRestoreCachedTerminalSnapshot", () => {
   it("restores cached content when fitted geometry matches", () => {
     expect(

@@ -2,7 +2,7 @@
 import { ref, watch, nextTick, type ComponentPublicInstance } from "vue";
 import AgentView from "./AgentView.vue";
 import TerminalView from "./TerminalView.vue";
-import { shouldEagerMountTaskTerminal, shouldEnableKittyKeyboard } from "../composables/terminalSessionRecovery";
+import { shouldEnableKittyKeyboard } from "../composables/terminalSessionRecovery";
 
 const props = defineProps<{
   sessionId: string | null;
@@ -44,9 +44,6 @@ watch(
   (sessions) => {
     if (!sessions) return;
     for (const session of sessions) {
-      if (!shouldEagerMountTaskTerminal(session.agentProvider) && session.sessionId !== props.sessionId) {
-        continue;
-      }
       visitedPtySessions.value.set(session.sessionId, {
         worktreePath: session.worktreePath,
         prompt: session.prompt,
