@@ -4,6 +4,7 @@ import { invoke } from "../invoke";
 import type { AgentProvider } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
 import { registerContextShortcuts } from "../composables/useShortcutContext";
+import { macOsTextInputAttrs } from "../utils/textInput";
 const { zIndex } = useModalZIndex();
 
 registerContextShortcuts("newTask", [
@@ -103,13 +104,10 @@ function handleKeydown(e: KeyboardEvent) {
         <textarea
           ref="textareaRef"
           v-model="prompt"
+          v-bind="macOsTextInputAttrs"
           class="prompt-input"
           :placeholder="$t('tasks.descriptionPlaceholder')"
           rows="6"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="off"
-          spellcheck="false"
           @keydown="handleKeydown"
         />
         <div class="pipeline-row">

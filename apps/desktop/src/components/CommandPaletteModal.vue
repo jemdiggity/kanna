@@ -3,6 +3,7 @@ import { ref, computed, onMounted, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { shortcuts, type ActionName } from "../composables/useKeyboardShortcuts";
 import { useModalZIndex } from "../composables/useModalZIndex";
+import { macOsTextInputAttrs } from "../utils/textInput";
 
 const { t } = useI18n();
 const { zIndex } = useModalZIndex();
@@ -146,6 +147,7 @@ onMounted(async () => {
       <input
         ref="inputRef"
         v-model="query"
+        v-bind="macOsTextInputAttrs"
         type="text"
         class="palette-input"
         :placeholder="t('commandPalette.placeholder')"

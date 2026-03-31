@@ -6,6 +6,7 @@ import { useLessScroll } from "../composables/useLessScroll";
 import { useShortcutContext, registerContextShortcuts } from "../composables/useShortcutContext";
 import { useInlineSearch } from "../composables/useInlineSearch";
 import { useModalZIndex } from "../composables/useModalZIndex";
+import { macOsTextInputAttrs } from "../utils/textInput";
 
 const { t } = useI18n();
 const { zIndex } = useModalZIndex();
@@ -373,6 +374,7 @@ onMounted(() => {
         <input
           ref="searchInputRef"
           v-model="searchQuery"
+          v-bind="macOsTextInputAttrs"
           class="search-input"
           :placeholder="$t('filePreview.searchPlaceholder')"
           @keydown="handleSearchInputKeydown"

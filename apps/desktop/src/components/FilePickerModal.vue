@@ -4,6 +4,7 @@ import { invoke } from "../invoke";
 import { fuzzyMatch, type FuzzyResult } from "../utils/fuzzyMatch";
 import { useModalZIndex } from "../composables/useModalZIndex";
 import { useToast } from "../composables/useToast";
+import { macOsTextInputAttrs } from "../utils/textInput";
 const { zIndex } = useModalZIndex();
 
 const props = defineProps<{
@@ -128,6 +129,7 @@ onMounted(async () => {
       <input
         ref="inputRef"
         v-model="query"
+        v-bind="macOsTextInputAttrs"
         type="text"
         class="picker-input"
         :placeholder="$t('filePicker.placeholder')"

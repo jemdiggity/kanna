@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
 import { fuzzyMatch } from "../utils/fuzzyMatch";
 import { useKannaStore } from "../stores/kanna";
+import { macOsTextInputAttrs } from "../utils/textInput";
 
 function hasTag(item: { tags: string }, tag: string): boolean {
   try { return (JSON.parse(item.tags) as string[]).includes(tag); }
@@ -299,6 +300,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
                   v-if="editingItemId === element.id"
                   class="rename-input"
                   v-model="editingValue"
+                  v-bind="macOsTextInputAttrs"
                   @keydown.enter="commitRename(element.id)"
                   @keydown.escape="cancelRename()"
                   @blur="commitRename(element.id)"
@@ -350,6 +352,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
                     v-if="editingItemId === element.id"
                     class="rename-input"
                     v-model="editingValue"
+                    v-bind="macOsTextInputAttrs"
                     @keydown.enter="commitRename(element.id)"
                     @keydown.escape="cancelRename()"
                     @blur="commitRename(element.id)"
@@ -385,6 +388,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
                 v-if="editingItemId === element.id"
                 class="rename-input"
                 v-model="editingValue"
+                v-bind="macOsTextInputAttrs"
                 @keydown.enter="commitRename(element.id)"
                 @keydown.escape="cancelRename()"
                 @blur="commitRename(element.id)"
@@ -414,6 +418,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
       <input
         ref="searchInputRef"
         v-model="searchQuery"
+        v-bind="macOsTextInputAttrs"
         type="text"
         class="search-input"
         :placeholder="$t('sidebar.searchPlaceholder')"

@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AgentProvider } from "@kanna/db"
 import { useModalZIndex } from '../composables/useModalZIndex'
+import { macOsTextInputAttrs } from '../utils/textInput'
 
 useI18n()
 const { zIndex } = useModalZIndex()
@@ -105,6 +106,7 @@ defineExpose({ cycleTab })
           <label>{{ $t('preferences.ideCommand') }}</label>
           <input
             type="text"
+            v-bind="macOsTextInputAttrs"
             :value="preferences.ideCommand"
             :placeholder="$t('preferences.idePlaceholder')"
             @change="emit('update', 'ideCommand', ($event.target as HTMLInputElement).value)"
