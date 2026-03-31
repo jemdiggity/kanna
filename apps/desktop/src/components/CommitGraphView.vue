@@ -204,8 +204,8 @@ onMounted(() => {
 </script>
 
 <template>
+  <div class="graph-wrapper">
   <div ref="scrollRef" class="graph-scroll" tabindex="-1" @scroll="onScroll">
-    <div class="mode-indicator">{{ mode.toUpperCase() }}</div>
     <div v-if="loading" class="graph-status">Loading commit graph&#x2026;</div>
     <div v-else-if="error" class="graph-status error">{{ error }}</div>
     <template v-else>
@@ -285,9 +285,19 @@ onMounted(() => {
       </div>
     </template>
   </div>
+  <div class="mode-indicator">{{ mode.toUpperCase() }}</div>
+  </div>
 </template>
 
 <style scoped>
+.graph-wrapper {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .graph-scroll {
   flex: 1;
   overflow-y: auto;
@@ -297,11 +307,9 @@ onMounted(() => {
 }
 
 .mode-indicator {
-  position: sticky;
+  position: absolute;
   top: 8px;
-  right: 0;
-  float: right;
-  margin-right: 12px;
+  right: 12px;
   font-size: 10px;
   font-weight: 600;
   color: #888;
