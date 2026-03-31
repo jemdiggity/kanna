@@ -6,6 +6,7 @@ import { invoke } from "../invoke";
 import { parseRepoInput } from "../utils/parseRepoInput";
 import type { ParsedInput } from "../utils/parseRepoInput";
 import { useModalZIndex } from "../composables/useModalZIndex";
+import { macOsTextInputAttrs } from "../utils/textInput";
 
 const { t } = useI18n();
 const { zIndex } = useModalZIndex();
@@ -255,6 +256,7 @@ function switchTab(tab: "create" | "import") {
         <input
           ref="inputRef"
           v-model="createName"
+          v-bind="macOsTextInputAttrs"
           class="text-input"
           type="text"
           :placeholder="$t('addRepo.namePlaceholder')"
@@ -270,6 +272,7 @@ function switchTab(tab: "create" | "import") {
           <input
             ref="inputRef"
             v-model="importInput"
+            v-bind="macOsTextInputAttrs"
             class="text-input"
             type="text"
             :placeholder="$t('addRepo.importPlaceholder')"
@@ -304,6 +307,7 @@ function switchTab(tab: "create" | "import") {
           <div v-if="localIsGitRepo && !localLoading" class="name-field">
             <input
               v-model="localRepoName"
+              v-bind="macOsTextInputAttrs"
               class="text-input"
               type="text"
               :placeholder="$t('addRepo.repoNamePlaceholder')"

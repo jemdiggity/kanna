@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import type { PipelineItem } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
+import { macOsTextInputAttrs } from "../utils/textInput";
 
 const { t } = useI18n();
 const { zIndex } = useModalZIndex();
@@ -137,6 +138,7 @@ onMounted(async () => {
         <input
           ref="inputRef"
           v-model="query"
+          v-bind="macOsTextInputAttrs"
           type="text"
           class="inline-input"
           :placeholder="selected.size === 0 ? $t('blockerSelect.searchPlaceholder') : ''"
