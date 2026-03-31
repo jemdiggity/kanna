@@ -581,7 +581,7 @@ export const useKannaStore = defineStore("kanna", () => {
         prompt: effectivePrompt,
         pipeline: pipelineName,
         stage: firstStageName,
-        tags: opts?.tags ?? ["in progress"],
+        tags: opts?.tags ?? [firstStageName],
         pr_number: null,
         pr_url: null,
         branch,

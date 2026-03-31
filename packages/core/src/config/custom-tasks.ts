@@ -4,6 +4,7 @@ export type Stage = "in_progress" | "pr" | "merge" | "done";
 export interface CustomTaskConfig {
   name: string;
   description?: string;
+  agent?: string;
   agentProvider?: "claude" | "copilot" | "codex";
   model?: string;
   permissionMode?: "dontAsk" | "acceptEdits" | "default";
@@ -27,15 +28,17 @@ export const NEW_CUSTOM_TASK_PROMPT = `You are helping the user define a custom 
 
 Custom tasks are reusable agent configurations stored at .kanna/tasks/<taskname>/agent.md.
 The file uses YAML frontmatter for configuration and markdown body for the agent prompt.
+If \`agent\` is set, the markdown body is optional.
 
 Guide the user through defining their custom task by asking about:
 1. What the task should do (name, description, purpose)
-2. What instructions the agent should follow (the prompt)
+2. Whether it should use an existing \`.kanna/agents/<name>/AGENT.md\` definition or an inline prompt
 3. Configuration options they want to set
 
 Available frontmatter fields (all optional, defaults shown):
 - name: Display name (default: derived from directory name)
 - description: Short description for the command palette
+- agent: name of an existing \`.kanna/agents/<name>/AGENT.md\` to run
 - agent_provider: "claude" | "copilot" | "codex" (optional)
 - model: null (uses Kanna default)
 - permission_mode: "dontAsk" | "acceptEdits" | "default" (default: dontAsk)
@@ -102,19 +105,21 @@ export function parseAgentMd(content: string, dirName: string): CustomTaskConfig
     return null;
   }
 
+  const fm = frontmatter ?? {};
   const prompt = body.trim();
+  const referencedAgent = typeof fm.agent === "string" && fm.agent.trim().length > 0
+    ? fm.agent.trim()
+    : undefined;
 
   // If there's no frontmatter and no meaningful prompt, return null
   if (!prompt && !frontmatter) {
     return null;
   }
 
-  // If we have frontmatter but no prompt after it, return null
-  if (!prompt) {
+  // If we have frontmatter but no prompt after it, require an agent reference.
+  if (!prompt && !referencedAgent) {
     return null;
   }
-
-  const fm = frontmatter ?? {};
 
   const config: CustomTaskConfig = {
     name: typeof fm.name === "string" ? fm.name : slugToDisplayName(dirName),
@@ -123,6 +128,10 @@ export function parseAgentMd(content: string, dirName: string): CustomTaskConfig
 
   if (typeof fm.description === "string") {
     config.description = fm.description;
+  }
+
+  if (referencedAgent) {
+    config.agent = referencedAgent;
   }
 
   if (typeof fm.model === "string") {

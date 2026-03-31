@@ -34,7 +34,8 @@
     ],
     "resources": {
       "../../../.kanna/agents/": ".kanna/agents/",
-      "../../../.kanna/pipelines/": ".kanna/pipelines/"
+      "../../../.kanna/pipelines/": ".kanna/pipelines/",
+      "../../../.kanna/tasks/": ".kanna/tasks/"
     },
     "icon": [
       "icons/32x32.png",

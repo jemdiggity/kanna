@@ -148,6 +148,21 @@ Use Codex for this task.
     expect(result!.prompt).toBe("Use Codex for this task.");
   });
 
+  it("accepts an agent-backed task with no prompt body", () => {
+    const content = `---
+name: Merge Master
+agent: merge
+stage: merge
+---
+`;
+    const result = parseAgentMd(content, "merge-master");
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe("Merge Master");
+    expect(result!.agent).toBe("merge");
+    expect(result!.stage).toBe("merge");
+    expect(result!.prompt).toBe("");
+  });
+
   it("falls back on type mismatches (bad stage)", () => {
     const content = `---
 stage: invalid-stage
@@ -313,6 +328,26 @@ description: Has frontmatter but no prompt
     const result = await scanCustomTasks(tmpDir);
     expect(result.tasks).toHaveLength(0);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it("accepts agent-backed agent.md with no prompt body", async () => {
+    const taskDir = join(tmpDir, ".kanna", "tasks", "merge-master");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(
+      join(taskDir, "agent.md"),
+      `---
+name: Merge Master
+agent: merge
+stage: merge
+---
+`,
+    );
+
+    const result = await scanCustomTasks(tmpDir);
+    expect(result.tasks).toHaveLength(1);
+    expect(result.errors).toHaveLength(0);
+    expect(result.tasks[0].agent).toBe("merge");
+    expect(result.tasks[0].stage).toBe("merge");
   });
 
   it("supports cancellation via AbortSignal (pre-aborted)", async () => {
