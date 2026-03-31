@@ -455,6 +455,26 @@ function onShellClose() {
 }
 
 // Keyboard shortcuts
+function selectTaskByActivity(mode: "oldest" | "newest", activity: "unread" | "read") {
+  const matches = store.sortedItemsForCurrentRepo.filter((item) =>
+    activity === "unread" ? item.activity === "unread" : item.activity !== "unread",
+  );
+  if (matches.length === 0) return;
+
+  const compare =
+    mode === "oldest"
+      ? (a: string, b: string) => a < b
+      : (a: string, b: string) => a > b;
+
+  const target = matches.reduce((selected, candidate) => {
+    const selectedAt = selected.created_at;
+    const candidateAt = candidate.created_at;
+    return compare(candidateAt, selectedAt) ? candidate : selected;
+  });
+
+  store.selectItem(target.id);
+}
+
 const keyboardActions = {
   newTask: () => { openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e)); },
   newWindow: async () => {
@@ -502,15 +522,10 @@ const keyboardActions = {
   undoClose: () => store.undoClose(),
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
-  goToOldestUnread: () => {
-    const repoItems = store.sortedItemsForCurrentRepo;
-    const unread = repoItems.filter((i) => i.activity === "unread");
-    if (unread.length === 0) return;
-    const oldest = unread.reduce((a, b) =>
-      (a.activity_changed_at ?? "") < (b.activity_changed_at ?? "") ? a : b,
-    );
-    store.selectItem(oldest.id);
-  },
+  goToOldestUnread: () => selectTaskByActivity("oldest", "unread"),
+  goToNewestUnread: () => selectTaskByActivity("newest", "unread"),
+  goToOldestRead: () => selectTaskByActivity("oldest", "read"),
+  goToNewestRead: () => selectTaskByActivity("newest", "read"),
   navigateRepoUp: () => navigateRepos(-1),
   navigateRepoDown: () => navigateRepos(1),
   toggleSidebar: () => { sidebarHidden.value = !sidebarHidden.value; },
