@@ -270,12 +270,24 @@ function openInIDE() {
   }).catch((e) => console.error("[openInIDE] failed:", e));
 }
 
+function handleSearchInputKeydown(e: KeyboardEvent) {
+  handleInputKeys(e);
+  if (e.key === "Enter") {
+    nextTick(() => modalRef.value?.focus());
+  }
+}
+
 useLessScroll(contentRef, {
   extraHandler(e) {
+    const isSearchFocusKey =
+      (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === "/") ||
+      ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key === "f");
+
     // Search keys first (disabled in rendered markdown mode)
     if (!(renderMarkdown.value && isMarkdownFile.value) && handleSearchKeys(e)) {
-      // Always re-focus the search input (the watcher only fires on false→true transition)
-      if (isSearching.value) nextTick(() => searchInputRef.value?.focus());
+      if (isSearchFocusKey) {
+        nextTick(() => searchInputRef.value?.focus());
+      }
       return true;
     }
 
@@ -363,7 +375,7 @@ onMounted(() => {
           v-model="searchQuery"
           class="search-input"
           :placeholder="$t('filePreview.searchPlaceholder')"
-          @keydown="handleInputKeys"
+          @keydown="handleSearchInputKeydown"
         />
         <span v-if="searchQuery" class="search-count">
           {{ searchMatchCount > 0
