@@ -54,10 +54,6 @@ export function shouldPersistTerminalStateOnUnmount(
   return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
 }
 
-export function shouldEagerMountTaskTerminal(agentProvider?: string): boolean {
-  return agentProvider !== "codex";
-}
-
 export function shouldRestoreCachedTerminalSnapshot(
   cached: CachedTerminalState | null | undefined,
   currentGeometry?: Partial<TerminalGeometry>,
