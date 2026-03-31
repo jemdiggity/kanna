@@ -7,23 +7,62 @@ interface PipelineItemRow {
   closed_at: string | null;
 }
 
+interface SchemaMigrationRow {
+  id: string;
+}
+
+function normalizeSql(query: string): string {
+  return query.replace(/\s+/g, " ").trim();
+}
+
 function createMigrationDb(initialRows: PipelineItemRow[]): DbHandle & {
   pipelineItems: PipelineItemRow[];
+  schemaMigrations: SchemaMigrationRow[];
+  activityLogDrops: number;
 } {
   const pipelineItems = initialRows.map((row) => ({ ...row }));
+  const schemaMigrations: SchemaMigrationRow[] = [];
+  let activityLogDrops = 0;
 
   return {
     pipelineItems,
-    async execute(query: string): Promise<{ rowsAffected: number }> {
-      const sql = query.replace(/\s+/g, " ").trim();
+    schemaMigrations,
+    get activityLogDrops() {
+      return activityLogDrops;
+    },
+    async execute(query: string, bindValues?: unknown[]): Promise<{ rowsAffected: number }> {
+      const sql = normalizeSql(query);
 
-      if (sql === `UPDATE pipeline_item SET stage = 'in_progress' WHERE stage = 'queued'`) {
+      if (sql.startsWith("INSERT INTO schema_migrations")) {
+        const [id] = bindValues as [string];
+        if (!schemaMigrations.some((migration) => migration.id === id)) {
+          schemaMigrations.push({ id });
+        }
+      } else if (sql === "DROP TABLE IF EXISTS activity_log") {
+        activityLogDrops++;
+      } else if (sql === `UPDATE pipeline_item SET stage = 'in_progress' WHERE stage = 'queued'`) {
         for (const item of pipelineItems) {
           if (item.stage === "queued") item.stage = "in_progress";
         }
       } else if (sql === `UPDATE pipeline_item SET stage = 'done' WHERE stage IN ('needs_review', 'merged', 'closed')`) {
         for (const item of pipelineItems) {
           if (["needs_review", "merged", "closed"].includes(item.stage)) item.stage = "done";
+        }
+      } else if (sql === `UPDATE pipeline_item SET tags = '["done"]' WHERE stage = 'done' AND tags = '[]'`) {
+        for (const item of pipelineItems) {
+          if (item.stage === "done" && item.tags === "[]") item.tags = `["done"]`;
+        }
+      } else if (sql === `UPDATE pipeline_item SET tags = '["pr"]' WHERE stage = 'pr' AND tags = '[]'`) {
+        for (const item of pipelineItems) {
+          if (item.stage === "pr" && item.tags === "[]") item.tags = `["pr"]`;
+        }
+      } else if (sql === `UPDATE pipeline_item SET tags = '["merge"]' WHERE stage = 'merge' AND tags = '[]'`) {
+        for (const item of pipelineItems) {
+          if (item.stage === "merge" && item.tags === "[]") item.tags = `["merge"]`;
+        }
+      } else if (sql === `UPDATE pipeline_item SET tags = '["blocked"]' WHERE stage = 'blocked' AND tags = '[]'`) {
+        for (const item of pipelineItems) {
+          if (item.stage === "blocked" && item.tags === "[]") item.tags = `["blocked"]`;
         }
       } else if (sql === `UPDATE pipeline_item SET stage = 'in progress' WHERE tags LIKE '%"in progress"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`) {
         for (const item of pipelineItems) {
@@ -49,13 +88,20 @@ function createMigrationDb(initialRows: PipelineItemRow[]): DbHandle & {
 
       return { rowsAffected: 1 };
     },
-    async select<T>(): Promise<T[]> {
+    async select<T>(query: string, bindValues?: unknown[]): Promise<T[]> {
+      const sql = normalizeSql(query).toUpperCase();
+
+      if (sql.startsWith("SELECT ID FROM SCHEMA_MIGRATIONS WHERE ID = ?")) {
+        const [id] = bindValues as [string];
+        return schemaMigrations.filter((migration) => migration.id === id) as unknown as T[];
+      }
+
       return [];
     },
   };
 }
 
-describe("runMigrations stage migration", () => {
+describe("runMigrations", () => {
   let runMigrations: typeof import("./db")["runMigrations"];
   let db: ReturnType<typeof createMigrationDb>;
 
@@ -66,6 +112,14 @@ describe("runMigrations stage migration", () => {
 
   beforeEach(() => {
     db = createMigrationDb([]);
+  });
+
+  it("records one-time data migrations so repeated startup does not reapply them", async () => {
+    await runMigrations(db);
+    await runMigrations(db);
+
+    expect(db.activityLogDrops).toBe(1);
+    expect(db.schemaMigrations.length).toBeGreaterThan(0);
   });
 
   it("does not overwrite a canonical pr stage from stale legacy tags", async () => {

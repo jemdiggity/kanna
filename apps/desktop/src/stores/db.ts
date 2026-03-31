@@ -3,6 +3,10 @@ import { invoke } from "../invoke";
 import { backupOnStartup } from "../composables/useBackup";
 import type { DbHandle } from "@kanna/db";
 
+interface AppliedMigrationRow {
+  id: string;
+}
+
 export async function resolveDbName(): Promise<string> {
   if (!isTauri) return "mock";
 
@@ -58,6 +62,10 @@ export async function runMigrations(db: DbHandle): Promise<void> {
   // Frequent small checkpoints keep the WAL too small for this race to matter.
   await db.execute("PRAGMA wal_autocheckpoint = 100");
 
+  await db.execute(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    id TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   await db.execute(`CREATE TABLE IF NOT EXISTS repo (
     id TEXT PRIMARY KEY, path TEXT NOT NULL, name TEXT NOT NULL,
     default_branch TEXT NOT NULL DEFAULT 'main',
@@ -89,89 +97,122 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     finished_at TEXT, error TEXT
   )`);
   await db.execute(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-  await db.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('suspendAfterMinutes', '5')`);
-  await db.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('killAfterMinutes', '30')`);
-  await db.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('ideCommand', 'code')`);
-  await db.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('locale', 'en')`);
+
+  const hasMigration = async (id: string): Promise<boolean> => {
+    const rows = await db.select<AppliedMigrationRow>(
+      "SELECT id FROM schema_migrations WHERE id = ?",
+      [id],
+    );
+    return rows.length > 0;
+  };
+
+  const recordMigration = async (id: string): Promise<void> => {
+    await db.execute(
+      "INSERT INTO schema_migrations (id) VALUES (?)",
+      [id],
+    );
+  };
+
+  const runMigration = async (id: string, migrate: () => Promise<void>): Promise<void> => {
+    if (await hasMigration(id)) return;
+    await migrate();
+    await recordMigration(id);
+  };
 
   const addColumn = async (table: string, col: string, def: string) => {
     try { await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); }
     catch { console.debug(`[db] column ${table}.${col} already exists`); }
   };
-  await addColumn("pipeline_item", "activity", "TEXT NOT NULL DEFAULT 'idle'");
-  await addColumn("pipeline_item", "activity_changed_at", "TEXT");
-  await addColumn("pipeline_item", "port_offset", "INTEGER");
-  await addColumn("pipeline_item", "port_env", "TEXT");
-  await addColumn("pipeline_item", "pinned", "INTEGER NOT NULL DEFAULT 0");
-  await addColumn("pipeline_item", "pin_order", "INTEGER");
-  await addColumn("pipeline_item", "display_name", "TEXT");
-  await addColumn("pipeline_item", "unread_at", "TEXT");
-  await addColumn("repo", "hidden", "INTEGER NOT NULL DEFAULT 0");
-  await addColumn("pipeline_item", "closed_at", "TEXT");
-  await addColumn("pipeline_item", "claude_session_id", "TEXT");
-  await addColumn("pipeline_item", "tags", "TEXT NOT NULL DEFAULT '[]'");
-  await addColumn("pipeline_item", "base_ref", "TEXT");
-  await addColumn("pipeline_item", "agent_provider", "TEXT NOT NULL DEFAULT 'claude'");
-  await addColumn("pipeline_item", "previous_stage", "TEXT");
 
-  // Legacy stage → tags migration
-  try {
-    await db.execute(`UPDATE pipeline_item SET stage = 'in_progress' WHERE stage = 'queued'`);
-    await db.execute(`UPDATE pipeline_item SET stage = 'done' WHERE stage IN ('needs_review', 'merged', 'closed')`);
-    // Populate tags from stage for items that haven't been migrated yet
-    await db.execute(`UPDATE pipeline_item SET tags = '["done"]' WHERE stage = 'done' AND tags = '[]'`);
-    await db.execute(`UPDATE pipeline_item SET tags = '["pr"]' WHERE stage = 'pr' AND tags = '[]'`);
-    await db.execute(`UPDATE pipeline_item SET tags = '["merge"]' WHERE stage = 'merge' AND tags = '[]'`);
-    await db.execute(`UPDATE pipeline_item SET tags = '["blocked"]' WHERE stage = 'blocked' AND tags = '[]'`);
-  } catch (e) { console.debug("[db] stage/tags migration:", e); }
+  await runMigration("001_default_settings", async () => {
+    await db.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('suspendAfterMinutes', '5')`);
+    await db.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('killAfterMinutes', '30')`);
+    await db.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('ideCommand', 'code')`);
+    await db.execute(`INSERT OR IGNORE INTO settings (key, value) VALUES ('locale', 'en')`);
+  });
 
-  // Activity log for analytics dashboard
-  await db.execute(`CREATE TABLE IF NOT EXISTS activity_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
-    activity TEXT NOT NULL,
-    started_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_activity_log_item ON activity_log(pipeline_item_id)`);
-  // Migrate activity_log from time-series to accumulator model
-  try {
-    await db.execute(`DROP TABLE IF EXISTS activity_log`);
-    await db.execute(`DROP INDEX IF EXISTS idx_activity_log_item`);
+  await runMigration("002_pipeline_item_metadata_columns", async () => {
+    await addColumn("pipeline_item", "activity", "TEXT NOT NULL DEFAULT 'idle'");
+    await addColumn("pipeline_item", "activity_changed_at", "TEXT");
+    await addColumn("pipeline_item", "port_offset", "INTEGER");
+    await addColumn("pipeline_item", "port_env", "TEXT");
+    await addColumn("pipeline_item", "pinned", "INTEGER NOT NULL DEFAULT 0");
+    await addColumn("pipeline_item", "pin_order", "INTEGER");
+    await addColumn("pipeline_item", "display_name", "TEXT");
+    await addColumn("pipeline_item", "unread_at", "TEXT");
+    await addColumn("repo", "hidden", "INTEGER NOT NULL DEFAULT 0");
+    await addColumn("pipeline_item", "closed_at", "TEXT");
+    await addColumn("pipeline_item", "claude_session_id", "TEXT");
+    await addColumn("pipeline_item", "tags", "TEXT NOT NULL DEFAULT '[]'");
+    await addColumn("pipeline_item", "base_ref", "TEXT");
+    await addColumn("pipeline_item", "agent_provider", "TEXT NOT NULL DEFAULT 'claude'");
+    await addColumn("pipeline_item", "previous_stage", "TEXT");
+  });
+
+  await runMigration("003_legacy_stage_to_tags_backfill", async () => {
+    try {
+      await db.execute(`UPDATE pipeline_item SET stage = 'in_progress' WHERE stage = 'queued'`);
+      await db.execute(`UPDATE pipeline_item SET stage = 'done' WHERE stage IN ('needs_review', 'merged', 'closed')`);
+      await db.execute(`UPDATE pipeline_item SET tags = '["done"]' WHERE stage = 'done' AND tags = '[]'`);
+      await db.execute(`UPDATE pipeline_item SET tags = '["pr"]' WHERE stage = 'pr' AND tags = '[]'`);
+      await db.execute(`UPDATE pipeline_item SET tags = '["merge"]' WHERE stage = 'merge' AND tags = '[]'`);
+      await db.execute(`UPDATE pipeline_item SET tags = '["blocked"]' WHERE stage = 'blocked' AND tags = '[]'`);
+    } catch (e) {
+      console.debug("[db] stage/tags migration:", e);
+    }
+  });
+
+  await runMigration("004_activity_log_accumulator", async () => {
     await db.execute(`CREATE TABLE IF NOT EXISTS activity_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
       activity TEXT NOT NULL,
-      seconds INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (pipeline_item_id, activity)
+      started_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
-  } catch (e) { console.debug("[db] activity_log accumulator migration:", e); }
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_activity_log_item ON activity_log(pipeline_item_id)`);
+    try {
+      await db.execute(`DROP TABLE IF EXISTS activity_log`);
+      await db.execute(`DROP INDEX IF EXISTS idx_activity_log_item`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS activity_log (
+        pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
+        activity TEXT NOT NULL,
+        seconds INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (pipeline_item_id, activity)
+      )`);
+    } catch (e) {
+      console.debug("[db] activity_log accumulator migration:", e);
+    }
+  });
 
-  // Task blocker junction table for blocked task dependencies
-  await db.execute(`CREATE TABLE IF NOT EXISTS task_blocker (
-    blocked_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
-    blocker_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
-    PRIMARY KEY (blocked_item_id, blocker_item_id)
-  )`);
+  await runMigration("005_task_blocker_table", async () => {
+    await db.execute(`CREATE TABLE IF NOT EXISTS task_blocker (
+      blocked_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
+      blocker_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
+      PRIMARY KEY (blocked_item_id, blocker_item_id)
+    )`);
+  });
 
-  // Operator telemetry event log
-  await db.execute(`CREATE TABLE IF NOT EXISTS operator_event (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type TEXT NOT NULL,
-    pipeline_item_id TEXT,
-    repo_id TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_operator_event_repo ON operator_event(repo_id, created_at)`);
+  await runMigration("006_operator_event_table", async () => {
+    await db.execute(`CREATE TABLE IF NOT EXISTS operator_event (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      pipeline_item_id TEXT,
+      repo_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_operator_event_repo ON operator_event(repo_id, created_at)`);
+  });
 
-  // Pipeline stage migration
-  await addColumn("pipeline_item", "pipeline", "TEXT NOT NULL DEFAULT 'default'");
-  await addColumn("pipeline_item", "stage_result", "TEXT");
+  await runMigration("007_pipeline_stage_columns", async () => {
+    await addColumn("pipeline_item", "pipeline", "TEXT NOT NULL DEFAULT 'default'");
+    await addColumn("pipeline_item", "stage_result", "TEXT");
+  });
 
-  // Migrate tags to stage values
-  await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE tags LIKE '%"in progress"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
-  await db.execute(`UPDATE pipeline_item SET stage = 'pr' WHERE tags LIKE '%"pr"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
-  await db.execute(`UPDATE pipeline_item SET stage = 'merge' WHERE tags LIKE '%"merge"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
-  // Catch-all: convert old 'in_progress' (underscored) default to 'in progress' (spaced)
-  await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE stage = 'in_progress'`);
-  // Convert legacy default to the new default
-  await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE stage = 'legacy'`);
+  await runMigration("008_tags_to_stage_backfill", async () => {
+    await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE tags LIKE '%"in progress"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
+    await db.execute(`UPDATE pipeline_item SET stage = 'pr' WHERE tags LIKE '%"pr"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
+    await db.execute(`UPDATE pipeline_item SET stage = 'merge' WHERE tags LIKE '%"merge"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
+    await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE stage = 'in_progress'`);
+    await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE stage = 'legacy'`);
+  });
 }
