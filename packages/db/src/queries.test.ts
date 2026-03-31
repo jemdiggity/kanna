@@ -194,14 +194,14 @@ function createMockDb(): DbHandle & {
       } else if (q.startsWith("SELECT * FROM REPO WHERE HIDDEN")) {
         return tables.repo.filter((r) => r.hidden === 0).sort(
           (a, b) =>
-            new Date(b.last_opened_at).getTime() -
-            new Date(a.last_opened_at).getTime()
+            new Date(a.created_at).getTime() -
+            new Date(b.created_at).getTime()
         ) as unknown as T[];
       } else if (q.startsWith("SELECT * FROM REPO")) {
         return [...tables.repo].sort(
           (a, b) =>
-            new Date(b.last_opened_at).getTime() -
-            new Date(a.last_opened_at).getTime()
+            new Date(a.created_at).getTime() -
+            new Date(b.created_at).getTime()
         ) as unknown as T[];
       } else if (q.startsWith("SELECT * FROM PIPELINE_ITEM WHERE REPO_ID")) {
         const [repoId] = bindValues as string[];
@@ -250,6 +250,26 @@ describe("repo queries", () => {
     expect(repos).toHaveLength(1);
     expect(repos[0].id).toBe("r1");
     expect(repos[0].name).toBe("project");
+  });
+
+  it("listRepos keeps newly added repos at the bottom", async () => {
+    await insertRepo(db, {
+      id: "r1",
+      path: "/home/user/project-a",
+      name: "project-a",
+      default_branch: "main",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await insertRepo(db, {
+      id: "r2",
+      path: "/home/user/project-b",
+      name: "project-b",
+      default_branch: "main",
+    });
+
+    const repos = await listRepos(db);
+
+    expect(repos.map((repo) => repo.id)).toEqual(["r1", "r2"]);
   });
 
   it("getRepo returns the correct repo", async () => {
