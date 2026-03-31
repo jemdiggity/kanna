@@ -33,6 +33,7 @@ import { useToast } from "./composables/useToast";
 import { useGc } from "./composables/useGc";
 import { useRestoreFocus } from "./composables/useRestoreFocus";
 import { isTopModal } from "./composables/useModalZIndex";
+import { selectTaskByActivity } from "./utils/selectTaskByActivity";
 import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
@@ -455,26 +456,6 @@ function onShellClose() {
 }
 
 // Keyboard shortcuts
-function selectTaskByActivity(mode: "oldest" | "newest", activity: "unread" | "read") {
-  const matches = store.sortedItemsForCurrentRepo.filter((item) =>
-    activity === "unread" ? item.activity === "unread" : item.activity !== "unread",
-  );
-  if (matches.length === 0) return;
-
-  const compare =
-    mode === "oldest"
-      ? (a: string, b: string) => a < b
-      : (a: string, b: string) => a > b;
-
-  const target = matches.reduce((selected, candidate) => {
-    const selectedAt = selected.created_at;
-    const candidateAt = candidate.created_at;
-    return compare(candidateAt, selectedAt) ? candidate : selected;
-  });
-
-  store.selectItem(target.id);
-}
-
 const keyboardActions = {
   newTask: () => { openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e)); },
   newWindow: async () => {
@@ -522,10 +503,22 @@ const keyboardActions = {
   undoClose: () => store.undoClose(),
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
-  goToOldestUnread: () => selectTaskByActivity("oldest", "unread"),
-  goToNewestUnread: () => selectTaskByActivity("newest", "unread"),
-  goToOldestRead: () => selectTaskByActivity("oldest", "read"),
-  goToNewestRead: () => selectTaskByActivity("newest", "read"),
+  goToOldestUnread: () => {
+    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "oldest", "unread");
+    if (target) store.selectItem(target.id);
+  },
+  goToNewestUnread: () => {
+    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "newest", "unread");
+    if (target) store.selectItem(target.id);
+  },
+  goToOldestRead: () => {
+    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "oldest", "read");
+    if (target) store.selectItem(target.id);
+  },
+  goToNewestRead: () => {
+    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "newest", "read");
+    if (target) store.selectItem(target.id);
+  },
   navigateRepoUp: () => navigateRepos(-1),
   navigateRepoDown: () => navigateRepos(1),
   toggleSidebar: () => { sidebarHidden.value = !sidebarHidden.value; },
