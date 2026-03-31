@@ -67,6 +67,9 @@
     "dismiss": "Dismiss",
     "treeExplorer": "Tree Explorer",
     "oldestUnread": "Oldest Unread Task",
+    "newestUnread": "Newest Unread Task",
+    "oldestRead": "Oldest Read Task",
+    "newestRead": "Newest Read Task",
     "focusSearch": "Focus Search"
   },
   "shortcutContexts": {

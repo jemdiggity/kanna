@@ -35,7 +35,10 @@ export type ActionName =
   | "prevTab"
   | "nextTab"
   | "focusSearch"
-  | "goToOldestUnread";
+  | "goToOldestUnread"
+  | "goToNewestUnread"
+  | "goToOldestRead"
+  | "goToNewestRead";
 
 export type KeyboardActions = Record<ActionName, () => void | boolean | Promise<void>>;
 
@@ -93,6 +96,9 @@ export const shortcuts: ShortcutDef[] = [
   { action: "goForward",    labelKey: "shortcuts.goForward",      groupKey: "shortcuts.groupNavigation", key: ["_", "-"],                     ctrl: true, shift: true,  display: "⌃⇧-",     context: ["main"] },
   { action: "toggleTreeExplorer", labelKey: "shortcuts.treeExplorer", groupKey: "shortcuts.groupNavigation", key: "e", meta: true, shift: true, display: "⇧⌘E", context: ["main", "diff", "shell", "file"] },
   { action: "goToOldestUnread", labelKey: "shortcuts.oldestUnread", groupKey: "shortcuts.groupNavigation", key: "u", meta: true, display: "⌘U", context: ["main"] },
+  { action: "goToNewestUnread", labelKey: "shortcuts.newestUnread", groupKey: "shortcuts.groupNavigation", key: ["U", "u"], meta: true, shift: true, display: "⇧⌘U", context: ["main"] },
+  { action: "goToOldestRead", labelKey: "shortcuts.oldestRead", groupKey: "shortcuts.groupNavigation", key: "r", meta: true, display: "⌘R", context: ["main"] },
+  { action: "goToNewestRead", labelKey: "shortcuts.newestRead", groupKey: "shortcuts.groupNavigation", key: ["R", "r"], meta: true, shift: true, display: "⇧⌘R", context: ["main"] },
   { action: "focusSearch", labelKey: "shortcuts.focusSearch", groupKey: "shortcuts.groupNavigation", key: "f", meta: true, display: "⌘F", context: ["main"] },
   // Settings
   { action: "openPreferences", labelKey: "shortcuts.preferences", groupKey: "shortcuts.groupHelp", key: ",",                            meta: true,               display: "⌘,",       context: ["main"] },
