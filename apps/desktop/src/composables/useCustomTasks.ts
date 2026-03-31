@@ -2,6 +2,16 @@ import { ref } from "vue";
 import { invoke } from "../invoke";
 import { parseAgentMd, type CustomTaskConfig } from "@kanna/core";
 
+async function readTaskConfig(path: string, dirName: string): Promise<CustomTaskConfig | null> {
+  const content = await invoke<string>("read_text_file", { path });
+  return parseAgentMd(content, dirName);
+}
+
+async function readBuiltinTaskConfig(relativePath: string, dirName: string): Promise<CustomTaskConfig | null> {
+  const content = await invoke<string>("read_builtin_resource", { relativePath });
+  return parseAgentMd(content, dirName);
+}
+
 export function useCustomTasks() {
   const tasks = ref<CustomTaskConfig[]>([]);
   const scanning = ref(false);
@@ -16,30 +26,49 @@ export function useCustomTasks() {
     currentController = controller;
     scanning.value = true;
     try {
-      const tasksDir = `${repoPath}/.kanna/tasks`;
-      let entries: string[];
+      const found = new Map<string, CustomTaskConfig>();
+
       try {
-        entries = await invoke<string[]>("list_dir", { path: tasksDir });
+        const builtinEntries = await invoke<string[]>("list_builtin_resources", {
+          relativePath: ".kanna/tasks",
+        });
+        if (controller.signal.aborted) return;
+        for (const entry of builtinEntries) {
+          if (controller.signal.aborted) return;
+          const agentMdPath = `.kanna/tasks/${entry}/agent.md`;
+          try {
+            const config = await readBuiltinTaskConfig(agentMdPath, entry);
+            if (config) found.set(entry, config);
+            else console.warn(`[useCustomTasks] Skipped malformed built-in ${agentMdPath}`);
+          } catch {
+            continue;
+          }
+        }
       } catch {
-        tasks.value = [];
-        return;
+        // No bundled tasks available in this runtime.
       }
-      if (controller.signal.aborted) return;
-      const found: CustomTaskConfig[] = [];
-      for (const entry of entries) {
+
+      const tasksDir = `${repoPath}/.kanna/tasks`;
+      try {
+        const entries = await invoke<string[]>("list_dir", { path: tasksDir });
         if (controller.signal.aborted) return;
-        const agentMdPath = `${tasksDir}/${entry}/agent.md`;
-        let content: string;
-        try {
-          content = await invoke<string>("read_text_file", { path: agentMdPath });
-        } catch { continue; }
-        if (controller.signal.aborted) return;
-        const config = parseAgentMd(content, entry);
-        if (config) found.push(config);
-        else console.warn(`[useCustomTasks] Skipped malformed ${agentMdPath}`);
+        for (const entry of entries) {
+          if (controller.signal.aborted) return;
+          const agentMdPath = `${tasksDir}/${entry}/agent.md`;
+          try {
+            const config = await readTaskConfig(agentMdPath, entry);
+            if (config) found.set(entry, config);
+            else console.warn(`[useCustomTasks] Skipped malformed ${agentMdPath}`);
+          } catch {
+            continue;
+          }
+        }
+      } catch {
+        // Repo has no custom tasks; keep bundled defaults.
       }
+
       if (!controller.signal.aborted) {
-        tasks.value = found;
+        tasks.value = Array.from(found.values());
       }
     } finally {
       if (currentController === controller) {

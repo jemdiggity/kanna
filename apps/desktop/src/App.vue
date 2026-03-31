@@ -297,7 +297,31 @@ async function handleLaunchCustomTask(task: CustomTaskConfig) {
   const repo = store.repos.find((r) => r.id === store.selectedRepoId);
   if (!repo) return;
   try {
-    await store.createItem(store.selectedRepoId, repo.path, task.prompt, "pty", { customTask: task });
+    let resolvedTask = task;
+    let requestedAgentProvider: AgentProvider | undefined;
+
+    if (task.agent) {
+      const agent = await store.loadAgent(repo.path, task.agent);
+      const firstProvider = (Array.isArray(agent.agent_provider) ? agent.agent_provider : [agent.agent_provider])
+        .find((provider): provider is AgentProvider =>
+          provider === "claude" || provider === "copilot" || provider === "codex"
+        );
+
+      resolvedTask = {
+        ...task,
+        prompt: task.prompt || agent.prompt,
+        model: task.model ?? agent.model,
+        permissionMode: task.permissionMode ?? agent.permission_mode,
+        allowedTools: task.allowedTools ?? agent.allowed_tools,
+      };
+      requestedAgentProvider = task.agentProvider ?? firstProvider;
+    }
+
+    await store.createItem(store.selectedRepoId, repo.path, resolvedTask.prompt, "pty", {
+      customTask: resolvedTask,
+      stage: task.stage,
+      agentProvider: requestedAgentProvider,
+    });
   } catch (e: any) {
     console.error("[App] custom task launch failed:", e);
     alert(`${t('app.customTaskLaunchFailed')}: ${e?.message || e}`);

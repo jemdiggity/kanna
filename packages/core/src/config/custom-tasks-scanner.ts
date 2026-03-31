@@ -1,9 +1,10 @@
 import { readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
-import { parseAgentMd, type CustomTaskScanResult } from "./custom-tasks.js";
+import { parseAgentMd, parseFrontmatter, type CustomTaskScanResult } from "./custom-tasks.js";
 
 /**
- * Returns true if the content has a non-whitespace prompt body.
+ * Returns true if the content has a non-whitespace prompt body
+ * or an agent reference in frontmatter.
  * Used by scanCustomTasks to distinguish "empty/no-body" (silent skip)
  * from "malformed YAML" (reported as error) when parseAgentMd returns null.
  */
@@ -12,15 +13,12 @@ function hasPromptBody(content: string): boolean {
     return false;
   }
 
-  // Check if content has frontmatter delimiters
-  const match = content.match(/^---[ \t]*\r?\n([\s\S]*?\r?\n)?---[ \t]*\r?\n?([\s\S]*)$/);
-  if (match) {
-    // Has frontmatter — check if body after closing delimiter has content
-    return !!(match[2] && match[2].trim());
+  const { frontmatter, body } = parseFrontmatter(content);
+  if (frontmatter === undefined) {
+    return true;
   }
 
-  // No frontmatter — the entire content is the body
-  return true;
+  return body.trim().length > 0 || (typeof frontmatter?.agent === "string" && frontmatter.agent.trim().length > 0);
 }
 
 export async function scanCustomTasks(
