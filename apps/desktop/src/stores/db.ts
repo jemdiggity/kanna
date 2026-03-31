@@ -167,9 +167,9 @@ export async function runMigrations(db: DbHandle): Promise<void> {
   await addColumn("pipeline_item", "stage_result", "TEXT");
 
   // Migrate tags to stage values
-  await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE tags LIKE '%"in progress"%' AND closed_at IS NULL`);
-  await db.execute(`UPDATE pipeline_item SET stage = 'pr' WHERE tags LIKE '%"pr"%' AND closed_at IS NULL`);
-  await db.execute(`UPDATE pipeline_item SET stage = 'merge' WHERE tags LIKE '%"merge"%' AND closed_at IS NULL`);
+  await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE tags LIKE '%"in progress"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
+  await db.execute(`UPDATE pipeline_item SET stage = 'pr' WHERE tags LIKE '%"pr"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
+  await db.execute(`UPDATE pipeline_item SET stage = 'merge' WHERE tags LIKE '%"merge"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
   // Catch-all: convert old 'in_progress' (underscored) default to 'in progress' (spaced)
   await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE stage = 'in_progress'`);
   // Convert legacy default to the new default
