@@ -601,21 +601,25 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
 
                 let sid = session_id.clone();
-                if let Err(error) = daemon_context
-                    .recovery_manager
-                    .start_session(&session_id, 80, 24)
-                    .await
-                {
-                    log::warn!(
-                        "[recovery] failed to start mirrored adopted session {}: {}",
-                        session_id,
-                        error
-                    );
-                }
                 let no_buffer: PreAttachBuffer = Arc::new(Mutex::new(None));
                 let daemon_context = daemon_context.clone();
+                let recovery_context = daemon_context.clone();
+                let session_id_for_recovery = session_id.clone();
                 tokio::task::spawn_blocking(move || {
                     stream_output(sid, pty_reader, no_buffer, daemon_context);
+                });
+                tokio::spawn(async move {
+                    if let Err(error) = recovery_context
+                        .recovery_manager
+                        .start_session(&session_id_for_recovery, 80, 24)
+                        .await
+                    {
+                        log::warn!(
+                            "[recovery] failed to start mirrored adopted session {}: {}",
+                            session_id_for_recovery,
+                            error
+                        );
+                    }
                 });
             }
         }
