@@ -95,6 +95,9 @@ impl DaemonHandle {
         std::fs::create_dir_all(&dir).unwrap();
 
         let socket_path = compute_socket_path(&dir);
+        let _ = std::fs::remove_file(&socket_path);
+        let pid_path = dir.join("daemon.pid");
+        let _ = std::fs::remove_file(&pid_path);
 
         let daemon_bin = PathBuf::from(env!("CARGO_BIN_EXE_kanna-daemon"));
 
@@ -103,17 +106,25 @@ impl DaemonHandle {
             .spawn()
             .expect("failed to start daemon");
 
-        // Wait for socket to appear
+        // Wait for this daemon instance to be ready, not merely for a stale socket path to exist.
         for _ in 0..50 {
-            if socket_path.exists() {
+            let pid_matches = std::fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|pid| pid.trim().parse::<u32>().ok())
+                == Some(child.id());
+            if pid_matches && UnixStream::connect(&socket_path).is_ok() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
 
         assert!(
-            socket_path.exists(),
-            "daemon socket not found at {:?}",
+            std::fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|pid| pid.trim().parse::<u32>().ok())
+                == Some(child.id())
+                && UnixStream::connect(&socket_path).is_ok(),
+            "daemon was not ready at {:?}",
             socket_path
         );
 
