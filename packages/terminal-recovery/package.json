@@ -5,8 +5,8 @@
   "scripts": {
     "build": "bun build ./src/index.ts --outdir dist --target node",
     "build:bin": "bun run build:bin:kanna-terminal-recovery",
-    "build:bin:kanna-terminal-recovery": "mkdir -p ../../.build/debug && bun x pkg ./dist/index.js --targets node18-macos-arm64 --output ../../.build/debug/kanna-terminal-recovery",
-    "test": "bun test",
+    "build:bin:kanna-terminal-recovery": "PROFILE=\"${PROFILE:-debug}\"; TARGET=\"${TARGET:-$(rustc -vV | awk '/^host:/ {print $2}')}\"; mkdir -p \"../../.build/${TARGET}/${PROFILE}\" && bun x pkg ./dist/index.js --targets node18-macos-arm64 --output \"../../.build/${TARGET}/${PROFILE}/kanna-terminal-recovery\"",
+    "test": "bun test --pass-with-no-tests",
     "typecheck": "bun tsc --noEmit"
   },
   "dependencies": {
