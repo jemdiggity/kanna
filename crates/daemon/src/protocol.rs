@@ -1,3 +1,4 @@
+use crate::recovery::RecoverySnapshot;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -43,6 +44,9 @@ pub enum Command {
     Unobserve {
         session_id: String,
     },
+    GetRecoverySnapshot {
+        session_id: String,
+    },
     Handoff {
         version: u32,
     },
@@ -57,6 +61,7 @@ pub enum Event {
     StatusChanged { session_id: String, status: String },
     SessionCreated { session_id: String },
     SessionList { sessions: Vec<SessionInfo> },
+    RecoverySnapshot { snapshot: Option<RecoverySnapshot> },
     Ok,
     Error { message: String },
     HandoffReady { sessions: Vec<SessionInfo> },
@@ -143,6 +148,19 @@ mod tests {
     }
 
     #[test]
+    fn test_command_get_recovery_snapshot_roundtrip() {
+        let cmd = Command::GetRecoverySnapshot {
+            session_id: "s1".to_string(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let decoded: Command = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Command::GetRecoverySnapshot { session_id } => assert_eq!(session_id, "s1"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
     fn test_event_output_roundtrip() {
         let evt = Event::Output {
             session_id: "s1".to_string(),
@@ -183,6 +201,33 @@ mod tests {
         assert!(json.contains("\"Ok\""));
         let decoded: Event = serde_json::from_str(&json).unwrap();
         assert!(matches!(decoded, Event::Ok));
+    }
+
+    #[test]
+    fn test_event_recovery_snapshot_roundtrip() {
+        let evt = Event::RecoverySnapshot {
+            snapshot: Some(RecoverySnapshot {
+                serialized: "cached".to_string(),
+                cols: 80,
+                rows: 24,
+                saved_at: 1,
+                sequence: 2,
+            }),
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        let decoded: Event = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Event::RecoverySnapshot {
+                snapshot: Some(snapshot),
+            } => {
+                assert_eq!(snapshot.serialized, "cached");
+                assert_eq!(snapshot.cols, 80);
+                assert_eq!(snapshot.rows, 24);
+                assert_eq!(snapshot.saved_at, 1);
+                assert_eq!(snapshot.sequence, 2);
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 
     #[test]

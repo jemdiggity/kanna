@@ -804,6 +804,18 @@ async fn handle_command(
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
 
+        Command::GetRecoverySnapshot { session_id } => {
+            let evt = match daemon_context
+                .recovery_manager
+                .get_snapshot(&session_id)
+                .await
+            {
+                Ok(snapshot) => Event::RecoverySnapshot { snapshot },
+                Err(error) => Event::Error { message: error },
+            };
+            let _ = write_event(&mut *writer.lock().await, &evt).await;
+        }
+
         Command::Handoff { .. } => {
             // Handled in handle_connection before dispatch
             let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
@@ -943,8 +955,8 @@ async fn handle_handoff(
         let _ = daemon_context.broadcast_tx.send(json);
     }
 
-    const HANDOFF_EXIT_DELAY_MS: u64 = 50;
-    const HANDOFF_SHUTDOWN_FLUSH_MS: u64 = 100;
+    const HANDOFF_EXIT_DELAY_MS: u64 = 500;
+    const HANDOFF_SHUTDOWN_FLUSH_MS: u64 = 600;
 
     log::info!(
         "[handoff] complete, exiting in {}ms (pid={})",
