@@ -9,7 +9,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kanna_daemon::protocol;
+use kanna_daemon::{protocol, recovery::RecoveryManager};
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, Mutex};
@@ -31,7 +31,19 @@ type SessionSizes = Arc<Mutex<HashMap<String, HashMap<usize, (u16, u16)>>>>;
 
 /// Map of session_id → list of passive observer writers.
 /// Observers receive Output/Exit events but don't claim the Attach writer.
-type SessionObservers = Arc<Mutex<HashMap<String, Vec<Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>>>>>;
+type SessionObservers =
+    Arc<Mutex<HashMap<String, Vec<Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>>>>>;
+
+#[derive(Clone)]
+struct DaemonContext {
+    sessions: Arc<Mutex<SessionManager>>,
+    broadcast_tx: broadcast::Sender<String>,
+    session_writers: SessionWriters,
+    pre_attach_buffers: PreAttachBuffers,
+    session_sizes: SessionSizes,
+    session_observers: SessionObservers,
+    recovery_manager: RecoveryManager,
+}
 
 use protocol::{Command, Event};
 use session::SessionManager;
@@ -99,6 +111,7 @@ async fn main() {
     let pre_attach_buffers: PreAttachBuffers = Arc::new(Mutex::new(HashMap::new()));
     let session_sizes: SessionSizes = Arc::new(Mutex::new(HashMap::new()));
     let session_observers: SessionObservers = Arc::new(Mutex::new(HashMap::new()));
+    let recovery_manager = RecoveryManager::start().await;
 
     // Adopt handed-off sessions
     if !adopted.is_empty() {
@@ -115,17 +128,26 @@ async fn main() {
     }
 
     let (broadcast_tx, _) = broadcast::channel::<String>(256);
+    let daemon_context = DaemonContext {
+        sessions: sessions.clone(),
+        broadcast_tx: broadcast_tx.clone(),
+        session_writers: session_writers.clone(),
+        pre_attach_buffers: pre_attach_buffers.clone(),
+        session_sizes: session_sizes.clone(),
+        session_observers: session_observers.clone(),
+        recovery_manager: recovery_manager.clone(),
+    };
 
     let pid_path_clone = pid_path.clone();
     let socket_path_clone = socket_path.clone();
     let sessions_shutdown = sessions.clone();
+    let recovery_shutdown = recovery_manager.clone();
     tokio::spawn(async move {
-        let mut sigterm = tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::terminate(),
-        )
-        .expect("failed to register SIGTERM handler");
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
         sigterm.recv().await;
         log::info!("kanna-daemon shutting down");
+        recovery_shutdown.flush_and_shutdown().await;
         sessions_shutdown.lock().await.kill_all();
         let _ = std::fs::remove_file(&pid_path_clone);
         let _ = std::fs::remove_file(&socket_path_clone);
@@ -135,23 +157,9 @@ async fn main() {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
-                let sessions_clone = sessions.clone();
-                let broadcast_tx_clone = broadcast_tx.clone();
-                let writers_clone = session_writers.clone();
-                let buffers_clone = pre_attach_buffers.clone();
-                let sizes_clone = session_sizes.clone();
-                let observers_clone = session_observers.clone();
+                let daemon_context = daemon_context.clone();
                 tokio::spawn(async move {
-                    handle_connection(
-                        stream,
-                        sessions_clone,
-                        broadcast_tx_clone,
-                        writers_clone,
-                        buffers_clone,
-                        sizes_clone,
-                        observers_clone,
-                    )
-                    .await;
+                    handle_connection(stream, daemon_context).await;
                 });
             }
             Err(e) => {
@@ -178,7 +186,10 @@ async fn attempt_handoff(
         Ok(s) => match s.trim().parse::<i32>() {
             Ok(pid) if unsafe { libc::kill(pid, 0) } == 0 => pid,
             Ok(pid) => {
-                log::info!("[handoff] pid file contains {} but process is not running", pid);
+                log::info!(
+                    "[handoff] pid file contains {} but process is not running",
+                    pid
+                );
                 return vec![];
             }
             _ => {
@@ -205,7 +216,11 @@ async fn attempt_handoff(
             s
         }
         Err(e) => {
-            log::info!("[handoff] failed to connect to old daemon at {:?}: {}", socket_path, e);
+            log::info!(
+                "[handoff] failed to connect to old daemon at {:?}: {}",
+                socket_path,
+                e
+            );
             return vec![];
         }
     };
@@ -225,7 +240,10 @@ async fn attempt_handoff(
         return vec![];
     }
     let _ = writer.flush().await;
-    log::info!("[handoff] sent Handoff command (version={})", HANDOFF_VERSION);
+    log::info!(
+        "[handoff] sent Handoff command (version={})",
+        HANDOFF_VERSION
+    );
 
     // Read response
     let mut line = String::new();
@@ -291,7 +309,11 @@ async fn attempt_handoff(
         );
     }
 
-    log::info!("[handoff] receiving {} fds via SCM_RIGHTS (raw_fd={})", session_infos.len(), raw_fd);
+    log::info!(
+        "[handoff] receiving {} fds via SCM_RIGHTS (raw_fd={})",
+        session_infos.len(),
+        raw_fd
+    );
 
     // Receive master fds via SCM_RIGHTS
     let fds = match fd_transfer::recv_fds(raw_fd, session_infos.len()) {
@@ -300,7 +322,11 @@ async fn attempt_handoff(
             fds
         }
         Err(e) => {
-            log::info!("[handoff] failed to receive fds: {} (kind={:?})", e, e.kind());
+            log::info!(
+                "[handoff] failed to receive fds: {} (kind={:?})",
+                e,
+                e.kind()
+            );
             return vec![];
         }
     };
@@ -334,16 +360,7 @@ async fn attempt_handoff(
     adopted
 }
 
-
-async fn handle_connection(
-    stream: UnixStream,
-    sessions: Arc<Mutex<SessionManager>>,
-    broadcast_tx: broadcast::Sender<String>,
-    session_writers: SessionWriters,
-    pre_attach_buffers: PreAttachBuffers,
-    session_sizes: SessionSizes,
-    session_observers: SessionObservers,
-) {
+async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
     // Keep the raw fd for SCM_RIGHTS (used by Handoff)
     let raw_fd = stream.as_raw_fd();
     let (read_half, write_half) = stream.into_split();
@@ -357,23 +374,13 @@ async fn handle_connection(
         match cmd {
             None => break,
             Some(Command::Handoff { version }) => {
-                handle_handoff(
-                    version,
-                    raw_fd,
-                    sessions.clone(),
-                    session_writers.clone(),
-                    session_sizes.clone(),
-                    session_observers.clone(),
-                    writer.clone(),
-                    broadcast_tx.clone(),
-                )
-                .await;
+                handle_handoff(version, raw_fd, writer.clone(), daemon_context.clone()).await;
                 break; // Connection ends after handoff
             }
             Some(Command::Subscribe) => {
                 if !subscribed.load(std::sync::atomic::Ordering::Relaxed) {
                     subscribed.store(true, std::sync::atomic::Ordering::Relaxed);
-                    let mut broadcast_rx = broadcast_tx.subscribe();
+                    let mut broadcast_rx = daemon_context.broadcast_tx.subscribe();
                     let writer_broadcast = writer.clone();
                     tokio::spawn(async move {
                         use tokio::io::AsyncWriteExt;
@@ -388,38 +395,36 @@ async fn handle_connection(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(Command::Observe { session_id }) => {
-                let mgr = sessions.lock().await;
+                let mgr = daemon_context.sessions.lock().await;
                 if !mgr.contains(&session_id) {
-                    let evt = Event::Error { message: format!("session not found: {}", session_id) };
+                    let evt = Event::Error {
+                        message: format!("session not found: {}", session_id),
+                    };
                     drop(mgr);
                     let _ = write_event(&mut *writer.lock().await, &evt).await;
                     continue;
                 }
                 drop(mgr);
-                let mut observers = session_observers.lock().await;
-                observers.entry(session_id.clone()).or_insert_with(Vec::new).push(writer.clone());
+                let mut observers = daemon_context.session_observers.lock().await;
+                observers
+                    .entry(session_id.clone())
+                    .or_insert_with(Vec::new)
+                    .push(writer.clone());
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(Command::Unobserve { session_id }) => {
-                let mut observers = session_observers.lock().await;
+                let mut observers = daemon_context.session_observers.lock().await;
                 if let Some(list) = observers.get_mut(&session_id) {
                     let writer_ptr = Arc::as_ptr(&writer);
                     list.retain(|w| Arc::as_ptr(w) != writer_ptr);
-                    if list.is_empty() { observers.remove(&session_id); }
+                    if list.is_empty() {
+                        observers.remove(&session_id);
+                    }
                 }
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(command) => {
-                handle_command(
-                    command,
-                    sessions.clone(),
-                    writer.clone(),
-                    session_writers.clone(),
-                    pre_attach_buffers.clone(),
-                    session_sizes.clone(),
-                    session_observers.clone(),
-                )
-                .await;
+                handle_command(command, writer.clone(), daemon_context.clone()).await;
             }
         }
     }
@@ -427,7 +432,7 @@ async fn handle_connection(
     // Connection dropped — clean up this client's entries from session_sizes
     // so stale dimensions don't cap future resize computations.
     let writer_id = Arc::as_ptr(&writer) as usize;
-    let mut sizes = session_sizes.lock().await;
+    let mut sizes = daemon_context.session_sizes.lock().await;
     for (_sid, client_sizes) in sizes.iter_mut() {
         client_sizes.remove(&writer_id);
     }
@@ -435,12 +440,8 @@ async fn handle_connection(
 
 async fn handle_command(
     command: Command,
-    sessions: Arc<Mutex<SessionManager>>,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
-    session_writers: SessionWriters,
-    pre_attach_buffers: PreAttachBuffers,
-    session_sizes: SessionSizes,
-    session_observers: SessionObservers,
+    daemon_context: DaemonContext,
 ) {
     match command {
         Command::Spawn {
@@ -452,8 +453,15 @@ async fn handle_command(
             cols,
             rows,
         } => {
-            log::info!("[spawn] session={} executable={} cwd={} cols={} rows={}", session_id, executable, cwd, cols, rows);
-            let mut mgr = sessions.lock().await;
+            log::info!(
+                "[spawn] session={} executable={} cwd={} cols={} rows={}",
+                session_id,
+                executable,
+                cwd,
+                cols,
+                rows
+            );
+            let mut mgr = daemon_context.sessions.lock().await;
             if mgr.contains(&session_id) {
                 log::warn!("[spawn] session already exists: {}", session_id);
                 let evt = Event::Error {
@@ -469,35 +477,38 @@ async fn handle_command(
                     mgr.insert(session_id.clone(), pty_session);
                     drop(mgr);
 
+                    if let Err(error) = daemon_context
+                        .recovery_manager
+                        .start_session(&session_id, cols, rows)
+                        .await
+                    {
+                        log::warn!(
+                            "[recovery] failed to start mirrored session {}: {}",
+                            session_id,
+                            error
+                        );
+                    }
+
                     // Start stream_output immediately so startup output
                     // (including kitty keyboard mode push) is captured.
                     if let Ok(reader) = pty_reader {
-                        session_writers
+                        daemon_context
+                            .session_writers
                             .lock()
                             .await
                             .insert(session_id.clone(), Vec::new());
 
                         let buffer: PreAttachBuffer = Arc::new(Mutex::new(Some(Vec::new())));
-                        pre_attach_buffers
+                        daemon_context
+                            .pre_attach_buffers
                             .lock()
                             .await
                             .insert(session_id.clone(), buffer.clone());
 
                         let sid = session_id.clone();
-                        let sessions_exit = sessions.clone();
-                        let writers_for_stream = session_writers.clone();
-                        let sizes_for_stream = session_sizes.clone();
-                        let observers_for_stream = session_observers.clone();
+                        let daemon_context = daemon_context.clone();
                         tokio::task::spawn_blocking(move || {
-                            stream_output(
-                                sid,
-                                reader,
-                                writers_for_stream,
-                                buffer,
-                                sessions_exit,
-                                sizes_for_stream,
-                                observers_for_stream,
-                            );
+                            stream_output(sid, reader, buffer, daemon_context);
                         });
                     }
 
@@ -517,7 +528,7 @@ async fn handle_command(
 
         Command::Attach { session_id } => {
             log::info!("[attach] session={}", session_id);
-            let mgr = sessions.lock().await;
+            let mgr = daemon_context.sessions.lock().await;
             if !mgr.contains(&session_id) {
                 let evt = Event::Error {
                     message: format!("session not found: {}", session_id),
@@ -527,12 +538,16 @@ async fn handle_command(
                 return;
             }
 
-            let is_streaming = session_writers.lock().await.contains_key(&session_id);
+            let is_streaming = daemon_context
+                .session_writers
+                .lock()
+                .await
+                .contains_key(&session_id);
             if is_streaming {
                 // stream_output already running (started at Spawn) — push writer to broadcast list
                 drop(mgr);
                 {
-                    let mut writers = session_writers.lock().await;
+                    let mut writers = daemon_context.session_writers.lock().await;
                     if let Some(vec) = writers.get_mut(&session_id) {
                         vec.push(writer.clone());
                     }
@@ -541,7 +556,12 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
 
                 // Flush pre-attach buffer (startup output including kitty keyboard push)
-                if let Some(buffer) = pre_attach_buffers.lock().await.remove(&session_id) {
+                if let Some(buffer) = daemon_context
+                    .pre_attach_buffers
+                    .lock()
+                    .await
+                    .remove(&session_id)
+                {
                     if let Some(data) = buffer.lock().await.take() {
                         if !data.is_empty() {
                             log::info!(
@@ -572,7 +592,8 @@ async fn handle_command(
                 };
                 drop(mgr);
 
-                session_writers
+                daemon_context
+                    .session_writers
                     .lock()
                     .await
                     .insert(session_id.clone(), vec![writer.clone()]);
@@ -580,29 +601,29 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
 
                 let sid = session_id.clone();
-                let sessions_exit = sessions.clone();
-                let writers_for_stream = session_writers.clone();
-                let sizes_for_stream = session_sizes.clone();
-                let observers_for_stream = session_observers.clone();
-                let no_buffer: PreAttachBuffer = Arc::new(Mutex::new(None));
-                tokio::task::spawn_blocking(move || {
-                    stream_output(
-                        sid,
-                        pty_reader,
-                        writers_for_stream,
-                        no_buffer,
-                        sessions_exit,
-                        sizes_for_stream,
-                        observers_for_stream,
+                if let Err(error) = daemon_context
+                    .recovery_manager
+                    .start_session(&session_id, 80, 24)
+                    .await
+                {
+                    log::warn!(
+                        "[recovery] failed to start mirrored adopted session {}: {}",
+                        session_id,
+                        error
                     );
+                }
+                let no_buffer: PreAttachBuffer = Arc::new(Mutex::new(None));
+                let daemon_context = daemon_context.clone();
+                tokio::task::spawn_blocking(move || {
+                    stream_output(sid, pty_reader, no_buffer, daemon_context);
                 });
             }
         }
 
         Command::Detach { session_id } => {
             log::info!("[detach] session={}", session_id);
-            let evt = if sessions.lock().await.contains(&session_id) {
-                let mut writers = session_writers.lock().await;
+            let evt = if daemon_context.sessions.lock().await.contains(&session_id) {
+                let mut writers = daemon_context.session_writers.lock().await;
                 if let Some(vec) = writers.get_mut(&session_id) {
                     let ptr = Arc::as_ptr(&writer) as usize;
                     vec.retain(|w| Arc::as_ptr(w) as usize != ptr);
@@ -611,7 +632,7 @@ async fn handle_command(
 
                 // Remove this client from the size registry and recompute
                 {
-                    let mut sizes = session_sizes.lock().await;
+                    let mut sizes = daemon_context.session_sizes.lock().await;
                     if let Some(client_sizes) = sizes.get_mut(&session_id) {
                         let writer_id = Arc::as_ptr(&writer) as usize;
                         client_sizes.remove(&writer_id);
@@ -621,7 +642,7 @@ async fn handle_command(
                             let min_rows =
                                 client_sizes.values().map(|(_, r)| *r).min().unwrap_or(24);
                             drop(sizes);
-                            let mgr = sessions.lock().await;
+                            let mgr = daemon_context.sessions.lock().await;
                             let _ = mgr.resize(&session_id, min_cols, min_rows);
                         }
                     }
@@ -637,7 +658,7 @@ async fn handle_command(
         }
 
         Command::Input { session_id, data } => {
-            let mut mgr = sessions.lock().await;
+            let mut mgr = daemon_context.sessions.lock().await;
             match mgr.get_mut(&session_id) {
                 Some(session) => match session.write_input(&data) {
                     Ok(_) => {
@@ -670,7 +691,7 @@ async fn handle_command(
             // Update this client's size and compute effective min across all attached clients
             let writer_id = Arc::as_ptr(&writer) as usize;
             let (eff_cols, eff_rows) = {
-                let mut sizes = session_sizes.lock().await;
+                let mut sizes = daemon_context.session_sizes.lock().await;
                 let client_sizes = sizes.entry(session_id.clone()).or_default();
                 client_sizes.insert(writer_id, (cols, rows));
                 let min_cols = client_sizes.values().map(|(c, _)| *c).min().unwrap_or(cols);
@@ -678,11 +699,17 @@ async fn handle_command(
                 (min_cols, min_rows)
             };
 
-            let mgr = sessions.lock().await;
+            let mgr = daemon_context.sessions.lock().await;
             let result = mgr.resize(&session_id, eff_cols, eff_rows);
             drop(mgr);
             let evt = match result {
-                Ok(_) => Event::Ok,
+                Ok(_) => {
+                    daemon_context
+                        .recovery_manager
+                        .resize_session(&session_id, eff_cols, eff_rows)
+                        .await;
+                    Event::Ok
+                }
                 Err(e) => Event::Error {
                     message: e.to_string(),
                 },
@@ -707,7 +734,7 @@ async fn handle_command(
                     return;
                 }
             };
-            let mgr = sessions.lock().await;
+            let mgr = daemon_context.sessions.lock().await;
             let result = mgr.signal(&session_id, sig);
             drop(mgr);
             let evt = match result {
@@ -721,7 +748,7 @@ async fn handle_command(
 
         Command::Kill { session_id } => {
             log::info!("[kill] session={}", session_id);
-            let mut mgr = sessions.lock().await;
+            let mut mgr = daemon_context.sessions.lock().await;
             let result = match mgr.get_mut(&session_id) {
                 Some(session) => session.kill(),
                 None => Err(std::io::Error::new(
@@ -733,9 +760,27 @@ async fn handle_command(
                 mgr.remove(&session_id);
             }
             drop(mgr);
-            session_writers.lock().await.remove(&session_id);
-            session_sizes.lock().await.remove(&session_id);
-            session_observers.lock().await.remove(&session_id);
+            daemon_context
+                .session_writers
+                .lock()
+                .await
+                .remove(&session_id);
+            daemon_context
+                .session_sizes
+                .lock()
+                .await
+                .remove(&session_id);
+            daemon_context
+                .session_observers
+                .lock()
+                .await
+                .remove(&session_id);
+            if result.is_ok() {
+                daemon_context
+                    .recovery_manager
+                    .end_session(&session_id)
+                    .await;
+            }
             let evt = match result {
                 Ok(_) => Event::Ok,
                 Err(e) => Event::Error {
@@ -746,7 +791,7 @@ async fn handle_command(
         }
 
         Command::List => {
-            let mut mgr = sessions.lock().await;
+            let mut mgr = daemon_context.sessions.lock().await;
             let sessions_list = mgr.list();
             drop(mgr);
             let evt = Event::SessionList {
@@ -779,12 +824,8 @@ const HANDOFF_VERSION: u32 = 1;
 async fn handle_handoff(
     version: u32,
     socket_fd: std::os::unix::io::RawFd,
-    sessions: Arc<Mutex<SessionManager>>,
-    session_writers: SessionWriters,
-    session_sizes: SessionSizes,
-    session_observers: SessionObservers,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
-    broadcast_tx: broadcast::Sender<String>,
+    daemon_context: DaemonContext,
 ) {
     log::info!(
         "[handoff] received Handoff request (version={}, our_version={})",
@@ -805,7 +846,7 @@ async fn handle_handoff(
     }
 
     // Collect live sessions and detach them
-    let mut mgr = sessions.lock().await;
+    let mut mgr = daemon_context.sessions.lock().await;
     let session_ids: Vec<String> = mgr.sessions.keys().cloned().collect();
     log::info!("[handoff] found {} sessions in manager", session_ids.len());
 
@@ -821,7 +862,10 @@ async fn handle_handoff(
                 let (fd, _, _) = session.detach_for_handoff();
                 log::info!(
                     "[handoff] detached session {} (pid={}, fd={}, cwd={})",
-                    id, pid, fd, cwd
+                    id,
+                    pid,
+                    fd,
+                    cwd
                 );
                 infos.push(protocol::SessionInfo {
                     session_id: id.clone(),
@@ -846,11 +890,14 @@ async fn handle_handoff(
     );
 
     // Clear all writer slots (stream_output tasks will exit on next read failure)
-    session_writers.lock().await.clear();
-    session_sizes.lock().await.clear();
-    session_observers.lock().await.clear();
+    daemon_context.session_writers.lock().await.clear();
+    daemon_context.session_sizes.lock().await.clear();
+    daemon_context.session_observers.lock().await.clear();
 
-    log::info!("[handoff] sending HandoffReady with {} sessions", infos.len());
+    log::info!(
+        "[handoff] sending HandoffReady with {} sessions",
+        infos.len()
+    );
 
     // Send HandoffReady with session metadata
     let evt = Event::HandoffReady { sessions: infos };
@@ -865,7 +912,12 @@ async fn handle_handoff(
 
     // Send master fds via SCM_RIGHTS
     if !fds.is_empty() {
-        log::info!("[handoff] sending {} fds via SCM_RIGHTS (socket_fd={}): {:?}", fds.len(), socket_fd, fds);
+        log::info!(
+            "[handoff] sending {} fds via SCM_RIGHTS (socket_fd={}): {:?}",
+            fds.len(),
+            socket_fd,
+            fds
+        );
         match fd_transfer::send_fds(socket_fd, &fds) {
             Ok(()) => log::info!("[handoff] fds sent successfully"),
             Err(e) => log::info!("[handoff] failed to send fds: {} (kind={:?})", e, e.kind()),
@@ -879,13 +931,18 @@ async fn handle_handoff(
         log::info!("[handoff] no fds to send");
     }
 
+    daemon_context.recovery_manager.flush_and_shutdown().await;
+
     // Broadcast ShuttingDown so subscribed clients know not to reconnect to this daemon.
     let shutdown_evt = Event::ShuttingDown;
     if let Ok(json) = serde_json::to_string(&shutdown_evt) {
-        let _ = broadcast_tx.send(json);
+        let _ = daemon_context.broadcast_tx.send(json);
     }
 
-    log::info!("[handoff] complete, exiting in 500ms (pid={})", std::process::id());
+    log::info!(
+        "[handoff] complete, exiting in 500ms (pid={})",
+        std::process::id()
+    );
     // Use a blocking thread to exit — std::process::exit from an async context
     // can hang if tokio tasks are still running.
     std::thread::spawn(|| {
@@ -909,11 +966,8 @@ const MAX_PRE_ATTACH_BUFFER: usize = 64 * 1024;
 fn stream_output(
     session_id: String,
     mut reader: Box<dyn Read + Send>,
-    session_writers: SessionWriters,
     pre_attach_buffer: PreAttachBuffer,
-    sessions: Arc<Mutex<SessionManager>>,
-    session_sizes: SessionSizes,
-    session_observers: SessionObservers,
+    daemon_context: DaemonContext,
 ) {
     let rt = tokio::runtime::Handle::current();
     let mut buf = [0u8; 4096];
@@ -923,6 +977,13 @@ fn stream_output(
             Ok(0) => break,
             Ok(n) => {
                 let data = buf[..n].to_vec();
+                let sequence = daemon_context.recovery_manager.next_sequence(&session_id);
+                rt.block_on(async {
+                    daemon_context
+                        .recovery_manager
+                        .write_output(&session_id, &data, sequence)
+                        .await;
+                });
 
                 // If pre-attach buffer is active (Some), append to it
                 let buffered = rt.block_on(async {
@@ -943,18 +1004,22 @@ fn stream_output(
 
                 // Check if observers exist before cloning data (avoids clone on hot path with zero observers)
                 let has_observers = rt.block_on(async {
-                    let guard = session_observers.lock().await;
-                    guard.get(&session_id).map_or(false, |list| !list.is_empty())
+                    let guard = daemon_context.session_observers.lock().await;
+                    guard.get(&session_id).is_some_and(|list| !list.is_empty())
                 });
 
-                let obs_data = if has_observers { Some(data.clone()) } else { None };
+                let obs_data = if has_observers {
+                    Some(data.clone())
+                } else {
+                    None
+                };
 
                 let evt = Event::Output {
                     session_id: session_id.clone(),
                     data,
                 };
                 rt.block_on(async {
-                    let mut writers = session_writers.lock().await;
+                    let mut writers = daemon_context.session_writers.lock().await;
                     if let Some(vec) = writers.get_mut(&session_id) {
                         let mut failed = Vec::new();
                         for (i, w) in vec.iter().enumerate() {
@@ -964,13 +1029,16 @@ fn stream_output(
                         }
                         if !failed.is_empty() {
                             // Collect writer_ids before removing so we can clean session_sizes
-                            let failed_ids: Vec<usize> = failed.iter().map(|&i| Arc::as_ptr(&vec[i]) as usize).collect();
+                            let failed_ids: Vec<usize> = failed
+                                .iter()
+                                .map(|&i| Arc::as_ptr(&vec[i]) as usize)
+                                .collect();
                             // Remove broken writers in reverse order to preserve indices
                             for i in failed.into_iter().rev() {
                                 vec.remove(i);
                             }
                             // Clean up stale size entries for broken writers
-                            let mut sizes = session_sizes.lock().await;
+                            let mut sizes = daemon_context.session_sizes.lock().await;
                             if let Some(client_sizes) = sizes.get_mut(&session_id) {
                                 for wid in &failed_ids {
                                     client_sizes.remove(wid);
@@ -983,19 +1051,20 @@ fn stream_output(
                 // Tee output to passive observers concurrently, removing dead ones
                 if let Some(obs_data) = obs_data {
                     rt.block_on(async {
-                        let mut observers_guard = session_observers.lock().await;
+                        let mut observers_guard = daemon_context.session_observers.lock().await;
                         if let Some(observer_list) = observers_guard.get_mut(&session_id) {
-                            let obs_evt = Event::Output { session_id: session_id.clone(), data: obs_data };
+                            let obs_evt = Event::Output {
+                                session_id: session_id.clone(),
+                                data: obs_data,
+                            };
                             // Write to all observers concurrently
-                            let results = futures::future::join_all(
-                                observer_list.iter().map(|obs| {
+                            let results =
+                                futures::future::join_all(observer_list.iter().map(|obs| {
                                     let evt = obs_evt.clone();
                                     let obs = obs.clone();
-                                    async move {
-                                        write_event(&mut *obs.lock().await, &evt).await
-                                    }
-                                })
-                            ).await;
+                                    async move { write_event(&mut *obs.lock().await, &evt).await }
+                                }))
+                                .await;
                             // Remove observers whose writes failed (dead connections)
                             let mut i = 0;
                             observer_list.retain(|_| {
@@ -1019,7 +1088,7 @@ fn stream_output(
     }
 
     let exit_code = {
-        let mut mgr = rt.block_on(sessions.lock());
+        let mut mgr = rt.block_on(daemon_context.sessions.lock());
         let code = match mgr.get_mut(&session_id) {
             Some(session) => session.try_wait().unwrap_or(0),
             None => 0,
@@ -1035,7 +1104,7 @@ fn stream_output(
     rt.block_on(async {
         // Broadcast Exit to all attached writers, then remove the session entry.
         // session_writers and writers_cleanup are the same Arc — use a single lock.
-        let mut writers = session_writers.lock().await;
+        let mut writers = daemon_context.session_writers.lock().await;
         if let Some(vec) = writers.get(&session_id) {
             for w in vec.iter() {
                 let _ = write_event(&mut *w.lock().await, &evt).await;
@@ -1043,21 +1112,31 @@ fn stream_output(
         }
         writers.remove(&session_id);
         drop(writers);
-        session_sizes.lock().await.remove(&session_id);
+        daemon_context
+            .session_sizes
+            .lock()
+            .await
+            .remove(&session_id);
 
         // Tee Exit event to passive observers concurrently, then clean up
-        let mut observers_guard = session_observers.lock().await;
+        let mut observers_guard = daemon_context.session_observers.lock().await;
         if let Some(observer_list) = observers_guard.remove(&session_id) {
-            let obs_evt = Event::Exit { session_id: session_id.clone(), code: exit_code };
-            futures::future::join_all(
-                observer_list.iter().map(|obs| {
-                    let evt = obs_evt.clone();
-                    let obs = obs.clone();
-                    async move {
-                        let _ = write_event(&mut *obs.lock().await, &evt).await;
-                    }
-                })
-            ).await;
+            let obs_evt = Event::Exit {
+                session_id: session_id.clone(),
+                code: exit_code,
+            };
+            futures::future::join_all(observer_list.iter().map(|obs| {
+                let evt = obs_evt.clone();
+                let obs = obs.clone();
+                async move {
+                    let _ = write_event(&mut *obs.lock().await, &evt).await;
+                }
+            }))
+            .await;
         }
+        daemon_context
+            .recovery_manager
+            .end_session(&session_id)
+            .await;
     });
 }

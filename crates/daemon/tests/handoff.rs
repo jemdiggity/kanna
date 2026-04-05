@@ -85,7 +85,6 @@ fn compute_socket_path(dir: &PathBuf) -> PathBuf {
 struct DaemonHandle {
     child: Child,
     socket_path: PathBuf,
-    dir: PathBuf,
 }
 
 impl DaemonHandle {
@@ -124,11 +123,7 @@ impl DaemonHandle {
             .unwrap_or(0);
         assert_eq!(actual_pid, expected_pid, "PID file should match our daemon");
 
-        DaemonHandle {
-            child,
-            socket_path,
-            dir: dir.clone(),
-        }
+        DaemonHandle { child, socket_path }
     }
 
     fn connect(&self) -> ClientConn {
@@ -140,14 +135,6 @@ impl DaemonHandle {
             reader: BufReader::new(stream.try_clone().unwrap()),
             writer: stream,
         }
-    }
-
-    fn pid(&self) -> u32 {
-        self.child.id()
-    }
-
-    fn is_alive(&self) -> bool {
-        unsafe { libc::kill(self.child.id() as i32, 0) == 0 }
     }
 }
 

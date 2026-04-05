@@ -37,8 +37,12 @@ pub enum Command {
     },
     List,
     Subscribe,
-    Observe { session_id: String },
-    Unobserve { session_id: String },
+    Observe {
+        session_id: String,
+    },
+    Unobserve {
+        session_id: String,
+    },
     Handoff {
         version: u32,
     },
@@ -48,31 +52,14 @@ pub enum Command {
 #[serde(tag = "type")]
 #[allow(clippy::enum_variant_names)]
 pub enum Event {
-    Output {
-        session_id: String,
-        data: Vec<u8>,
-    },
-    Exit {
-        session_id: String,
-        code: i32,
-    },
-    StatusChanged {
-        session_id: String,
-        status: String,
-    },
-    SessionCreated {
-        session_id: String,
-    },
-    SessionList {
-        sessions: Vec<SessionInfo>,
-    },
+    Output { session_id: String, data: Vec<u8> },
+    Exit { session_id: String, code: i32 },
+    StatusChanged { session_id: String, status: String },
+    SessionCreated { session_id: String },
+    SessionList { sessions: Vec<SessionInfo> },
     Ok,
-    Error {
-        message: String,
-    },
-    HandoffReady {
-        sessions: Vec<SessionInfo>,
-    },
+    Error { message: String },
+    HandoffReady { sessions: Vec<SessionInfo> },
     HandoffUnsupported,
     ShuttingDown,
 }
