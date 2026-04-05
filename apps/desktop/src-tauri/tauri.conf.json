@@ -30,7 +30,8 @@
     "targets": "all",
     "externalBin": [
       "binaries/kanna-daemon",
-      "binaries/kanna-cli"
+      "binaries/kanna-cli",
+      "binaries/kanna-terminal-recovery"
     ],
     "resources": {
       "../../../.kanna/agents/": ".kanna/agents/",

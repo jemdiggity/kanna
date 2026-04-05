@@ -1,7 +1,7 @@
 {
   "name": "kanna",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": ["apps/*", "packages/*", "packages/terminal-recovery"],
   "scripts": {
     "build": "turbo build",
     "dev": "cd apps/desktop && bun tauri dev",

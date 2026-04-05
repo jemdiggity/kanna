@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stage kanna-daemon binary for Tauri's externalBin bundling.
+# Stage sidecar binaries for Tauri's externalBin bundling.
 # Tauri expects binaries named with a target triple suffix, e.g.:
 #   binaries/kanna-daemon-aarch64-apple-darwin
 #
@@ -37,7 +37,7 @@ fi
 
 mkdir -p "$BINARIES_DIR"
 
-for BIN in kanna-daemon kanna-cli; do
+for BIN in kanna-daemon kanna-cli kanna-terminal-recovery; do
     SRC="$SRC_DIR/$BIN"
     DEST="$BINARIES_DIR/${BIN}-${TARGET}"
     if [[ ! -f "$SRC" ]]; then

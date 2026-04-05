@@ -1,0 +1,20 @@
+{
+  "name": "@kanna/terminal-recovery",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir dist --target node",
+    "build:bin": "bun run build:bin:kanna-terminal-recovery",
+    "build:bin:kanna-terminal-recovery": "mkdir -p ../../.build/debug && bun x pkg ./dist/index.js --targets node18-macos-arm64 --output ../../.build/debug/kanna-terminal-recovery",
+    "test": "bun test",
+    "typecheck": "bun tsc --noEmit"
+  },
+  "dependencies": {
+    "@xterm/addon-serialize": "0.15.0-beta.195",
+    "@xterm/headless": "6.1.0-beta.195"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1",
+    "typescript": "~5.6.2"
+  }
+}
