@@ -1,5 +1,4 @@
 import type { SpawnOptions, TerminalOptions } from "./useTerminal";
-import type { CachedTerminalState } from "./terminalStateCache";
 
 export type TerminalRecoveryMode = "attach-only" | "spawn-on-missing";
 export interface ReconnectRedrawPolicy {
@@ -40,40 +39,11 @@ export function shouldDelayConnectUntilAfterInitialLayout(
   return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
 }
 
-export function shouldRestoreCachedTerminalState(
+export function shouldRestoreRecoveryState(
   spawnOptions?: SpawnOptions,
   options?: TerminalOptions,
 ): boolean {
   return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
-}
-
-export function shouldPersistTerminalStateOnUnmount(
-  spawnOptions?: SpawnOptions,
-  options?: TerminalOptions,
-): boolean {
-  return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
-}
-
-export function shouldRestoreCachedTerminalSnapshot(
-  cached: CachedTerminalState | null | undefined,
-  currentGeometry?: Partial<TerminalGeometry>,
-): boolean {
-  if (!cached?.serialized) return false;
-  if (
-    currentGeometry?.cols &&
-    currentGeometry.cols > 0 &&
-    cached.cols !== currentGeometry.cols
-  ) {
-    return false;
-  }
-  if (
-    currentGeometry?.rows &&
-    currentGeometry.rows > 0 &&
-    cached.rows !== currentGeometry.rows
-  ) {
-    return false;
-  }
-  return true;
 }
 
 export function shouldRunTerminalDispose(alreadyDisposed: boolean): boolean {

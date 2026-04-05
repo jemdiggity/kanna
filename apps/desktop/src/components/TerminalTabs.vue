@@ -112,6 +112,7 @@ watch(
       :key="sid"
       :ref="(el: any) => setTermRef(sid, el)"
       :session-id="sid"
+      :active="sid === sessionId"
       :spawn-options="spawnPtySession && config.worktreePath && config.prompt ? {
         cwd: config.worktreePath,
         prompt: config.prompt,

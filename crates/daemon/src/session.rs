@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use kanna_daemon::protocol::{SessionInfo, SessionState};
 use crate::pty::PtySession;
+use kanna_daemon::protocol::{SessionInfo, SessionState};
 
 pub struct SessionManager {
     pub sessions: HashMap<String, PtySession>,

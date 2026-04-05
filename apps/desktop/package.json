@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "../../scripts/sync-version.sh && bun run build:sidecars && vite",
-    "build:sidecars": "cargo build --manifest-path ../../crates/daemon/Cargo.toml && cargo build --manifest-path ../../crates/kanna-cli/Cargo.toml && ../../scripts/stage-sidecars.sh",
+    "build:sidecars": "cargo build --manifest-path ../../crates/daemon/Cargo.toml && cargo build --manifest-path ../../crates/kanna-cli/Cargo.toml && cd ../../packages/terminal-recovery && bun run build && bun run build:bin:kanna-terminal-recovery && ../../scripts/stage-sidecars.sh",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "test": "bun test",
     "test:e2e": "cd tests/e2e && bun test mock/",
     "test:e2e:real": "cd tests/e2e && bun test real/",
     "test:e2e:all": "cd tests/e2e && bun test"

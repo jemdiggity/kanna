@@ -21,6 +21,16 @@ const CODEX_WORKING_INDICATOR: &str = "esc to interrupt";
 // Codex idle prompt character (›, U+203A). Present when waiting for input.
 const CODEX_IDLE_PROMPT: char = '\u{203A}';
 
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRecoveryState {
+    pub serialized: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub saved_at: u64,
+    pub sequence: u64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum AgentProvider {
     Claude,
@@ -162,6 +172,34 @@ fn parse_ack(response: &str) -> Result<(), String> {
 
 fn daemon_socket_path() -> PathBuf {
     crate::daemon_socket_path()
+}
+
+fn parse_recovery_snapshot(response: &str) -> Result<Option<SessionRecoveryState>, String> {
+    let event: serde_json::Value =
+        serde_json::from_str(response).map_err(|e| format!("bad response: {}", e))?;
+
+    match event.get("type").and_then(|t| t.as_str()) {
+        Some("RecoverySnapshot") => {
+            let snapshot = event
+                .get("snapshot")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| format!("bad recovery snapshot: {}", e))?;
+            Ok(snapshot)
+        }
+        Some("Error") => {
+            let msg = event
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error");
+            Err(msg.to_string())
+        }
+        _ => Err(format!(
+            "unexpected recovery snapshot response: {}",
+            response
+        )),
+    }
 }
 
 async fn ensure_connected(state: &DaemonState) -> Result<(), String> {
@@ -333,6 +371,24 @@ pub async fn list_sessions(
     }
 }
 
+#[tauri::command]
+pub async fn get_session_recovery_state(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+) -> Result<Option<SessionRecoveryState>, String> {
+    let cmd = serde_json::json!({
+        "type": "GetRecoverySnapshot",
+        "session_id": session_id,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = guard.as_mut().unwrap();
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+    parse_recovery_snapshot(&response)
+}
+
 pub async fn attach_session_inner(
     app: &tauri::AppHandle,
     session_id: String,
@@ -482,7 +538,11 @@ pub async fn attach_session_inner(
                             {
                                 use std::io::Write;
                                 let log_path = crate::daemon_data_dir().join("pty-scan.log");
-                                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+                                if let Ok(mut f) = std::fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(&log_path)
+                                {
                                     let _ = writeln!(f, "[pty-scan] sid={} {:?}", sid, text);
                                 }
                             }
@@ -550,4 +610,30 @@ pub async fn detach_session(
     client.send_command(&json).await?;
     let response = client.read_event().await?;
     parse_ack(&response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_recovery_snapshot, SessionRecoveryState};
+
+    #[test]
+    fn parses_missing_recovery_snapshot() {
+        let response = r#"{"type":"RecoverySnapshot","snapshot":null}"#;
+        assert_eq!(parse_recovery_snapshot(response).unwrap(), None);
+    }
+
+    #[test]
+    fn parses_present_recovery_snapshot() {
+        let response = r#"{"type":"RecoverySnapshot","snapshot":{"serialized":"cached","cols":80,"rows":24,"savedAt":1,"sequence":2}}"#;
+        assert_eq!(
+            parse_recovery_snapshot(response).unwrap(),
+            Some(SessionRecoveryState {
+                serialized: "cached".to_string(),
+                cols: 80,
+                rows: 24,
+                saved_at: 1,
+                sequence: 2,
+            })
+        );
+    }
 }

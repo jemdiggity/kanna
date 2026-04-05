@@ -612,6 +612,7 @@ pub fn run() {
             commands::daemon::signal_session,
             commands::daemon::kill_session,
             commands::daemon::list_sessions,
+            commands::daemon::get_session_recovery_state,
             commands::daemon::attach_session,
             commands::daemon::detach_session,
             // Git commands

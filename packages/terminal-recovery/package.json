@@ -1,0 +1,21 @@
+{
+  "name": "@kanna/terminal-recovery",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir dist --target node",
+    "build:bin": "bun run build:bin:kanna-terminal-recovery",
+    "build:bin:kanna-terminal-recovery": "PROFILE=\"${PROFILE:-debug}\"; TARGET=\"${TARGET:-$(rustc -vV | awk '/^host:/ {print $2}')}\"; case \"$TARGET\" in aarch64-apple-darwin) PKG_TARGET=\"node18-macos-arm64\" ;; x86_64-apple-darwin) PKG_TARGET=\"node18-macos-x64\" ;; *) echo \"Unsupported TARGET: $TARGET\" >&2; exit 1 ;; esac; if [ \"$PROFILE\" = \"release\" ]; then OUTDIR=\"../../.build/${TARGET}/release\"; else OUTDIR=\"../../.build/debug\"; fi; mkdir -p \"$OUTDIR\" && bun x pkg ./dist/index.js --targets \"$PKG_TARGET\" --output \"$OUTDIR/kanna-terminal-recovery\"",
+    "test": "bun test --pass-with-no-tests",
+    "typecheck": "bun tsc --noEmit"
+  },
+  "dependencies": {
+    "@xterm/addon-serialize": "0.15.0-beta.195",
+    "@xterm/headless": "6.1.0-beta.195"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "pkg": "^5.8.1",
+    "typescript": "~5.6.2"
+  }
+}

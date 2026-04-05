@@ -194,6 +194,7 @@ const invokeHandlers: Record<string, (...args: any[]) => any> = {
   spawn_session: () => ({}),
   attach_session: () => ({}),
   detach_session: () => ({}),
+  get_session_recovery_state: () => null,
   send_input: () => ({}),
   resize_session: () => ({}),
   signal_session: () => ({}),

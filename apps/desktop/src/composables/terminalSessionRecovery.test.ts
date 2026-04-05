@@ -6,11 +6,9 @@ import {
   getTerminalRecoveryMode,
   getReconnectRedrawPolicy,
   getReconnectKeyboardPush,
-  shouldPersistTerminalStateOnUnmount,
-  shouldRestoreCachedTerminalSnapshot,
   shouldEnableKittyKeyboard,
   shouldPushKittyKeyboardOnFreshAttach,
-  shouldRestoreCachedTerminalState,
+  shouldRestoreRecoveryState,
   shouldResetTerminalOnReconnect,
   shouldRunTerminalDispose,
   shouldSupportKittyKeyboard,
@@ -119,10 +117,10 @@ describe("shouldDelayConnectUntilAfterInitialLayout", () => {
   });
 });
 
-describe("shouldRestoreCachedTerminalState", () => {
+describe("shouldRestoreRecoveryState", () => {
   it("restores cached state for attach-only task terminals", () => {
     expect(
-      shouldRestoreCachedTerminalState(
+      shouldRestoreRecoveryState(
         { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
         { agentProvider: "codex", worktreePath: "/tmp/task" },
       )
@@ -131,27 +129,7 @@ describe("shouldRestoreCachedTerminalState", () => {
 
   it("does not restore cached state for shell terminals", () => {
     expect(
-      shouldRestoreCachedTerminalState(
-        { cwd: "/tmp/repo", prompt: "", spawnFn: async () => {} },
-        undefined,
-      )
-    ).toBe(false);
-  });
-});
-
-describe("shouldPersistTerminalStateOnUnmount", () => {
-  it("persists state for attach-only task terminals", () => {
-    expect(
-      shouldPersistTerminalStateOnUnmount(
-        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
-        { agentProvider: "claude", worktreePath: "/tmp/task" },
-      )
-    ).toBe(true);
-  });
-
-  it("does not persist state for shell terminals", () => {
-    expect(
-      shouldPersistTerminalStateOnUnmount(
+      shouldRestoreRecoveryState(
         { cwd: "/tmp/repo", prompt: "", spawnFn: async () => {} },
         undefined,
       )
@@ -162,56 +140,21 @@ describe("shouldPersistTerminalStateOnUnmount", () => {
 describe("task terminal mounting", () => {
   it("keeps task terminals eligible for startup restore regardless of provider", () => {
     expect(
-      shouldRestoreCachedTerminalState(
+      shouldRestoreRecoveryState(
         { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
         { agentProvider: "claude", worktreePath: "/tmp/task" },
       )
     ).toBe(true);
     expect(
-      shouldRestoreCachedTerminalState(
+      shouldRestoreRecoveryState(
         { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
         { agentProvider: "copilot", worktreePath: "/tmp/task" },
       )
     ).toBe(true);
     expect(
-      shouldRestoreCachedTerminalState(
+      shouldRestoreRecoveryState(
         { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
         { agentProvider: "codex", worktreePath: "/tmp/task" },
-      )
-    ).toBe(true);
-  });
-});
-
-describe("shouldRestoreCachedTerminalSnapshot", () => {
-  it("restores cached content when fitted geometry matches", () => {
-    expect(
-      shouldRestoreCachedTerminalSnapshot(
-        { serialized: "cached", cols: 80, rows: 24, savedAt: 123 },
-        { cols: 80, rows: 24 },
-      )
-    ).toBe(true);
-  });
-
-  it("skips restore when cached geometry mismatches the current terminal", () => {
-    expect(
-      shouldRestoreCachedTerminalSnapshot(
-        { serialized: "cached", cols: 120, rows: 24, savedAt: 123 },
-        { cols: 80, rows: 24 },
-      )
-    ).toBe(false);
-    expect(
-      shouldRestoreCachedTerminalSnapshot(
-        { serialized: "cached", cols: 80, rows: 40, savedAt: 123 },
-        { cols: 80, rows: 24 },
-      )
-    ).toBe(false);
-  });
-
-  it("allows restore before fitted geometry is available", () => {
-    expect(
-      shouldRestoreCachedTerminalSnapshot(
-        { serialized: "cached", cols: 80, rows: 24, savedAt: 123 },
-        { cols: 0, rows: 0 },
       )
     ).toBe(true);
   });
