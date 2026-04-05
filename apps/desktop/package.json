@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "../../scripts/sync-version.sh && bun run build:sidecars && vite",
+    "dev": "vite",
     "build:sidecars": "cargo build --manifest-path ../../crates/daemon/Cargo.toml && cargo build --manifest-path ../../crates/kanna-cli/Cargo.toml && cd ../../packages/terminal-recovery && bun run build && bun run build:bin:kanna-terminal-recovery && ../../scripts/stage-sidecars.sh",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
