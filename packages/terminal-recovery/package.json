@@ -5,7 +5,7 @@
   "scripts": {
     "build": "bun build ./src/index.ts --outdir dist --target node",
     "build:bin": "bun run build:bin:kanna-terminal-recovery",
-    "build:bin:kanna-terminal-recovery": "PROFILE=\"${PROFILE:-debug}\"; TARGET=\"${TARGET:-$(rustc -vV | awk '/^host:/ {print $2}')}\"; mkdir -p \"../../.build/${TARGET}/${PROFILE}\" && bun x pkg ./dist/index.js --targets node18-macos-arm64 --output \"../../.build/${TARGET}/${PROFILE}/kanna-terminal-recovery\"",
+    "build:bin:kanna-terminal-recovery": "PROFILE=\"${PROFILE:-debug}\"; TARGET=\"${TARGET:-$(rustc -vV | awk '/^host:/ {print $2}')}\"; if [ \"$PROFILE\" = \"release\" ]; then OUTDIR=\"../../.build/${TARGET}/release\"; else OUTDIR=\"../../.build/debug\"; fi; mkdir -p \"$OUTDIR\" && bun x pkg ./dist/index.js --targets node18-macos-arm64 --output \"$OUTDIR/kanna-terminal-recovery\"",
     "test": "bun test --pass-with-no-tests",
     "typecheck": "bun tsc --noEmit"
   },
