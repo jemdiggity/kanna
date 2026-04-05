@@ -270,4 +270,65 @@ describe("RecoveryServer", () => {
     expect(snapshot.rows).toBe(24);
     expect(snapshot.sequence).toBe(3);
   });
+
+  it("hydrates resumed sessions from the persisted snapshot on disk", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "kanna-terminal-recovery-"));
+    const store = new SnapshotStore(rootDir);
+    await store.write({
+      sessionId: "task-resume",
+      serialized: "\u001b[2Jpersisted\r\nsnapshot",
+      cols: 80,
+      rows: 24,
+      savedAt: 1,
+      sequence: 9,
+    });
+    const server = new RecoveryServer({
+      input: new PassThrough(),
+      output: new PassThrough(),
+      snapshotStore: store,
+      flushDebounceMs: 60_000,
+    });
+
+    expect(
+      await server.handleCommand({
+        type: "StartSession",
+        sessionId: "task-resume",
+        cols: 80,
+        rows: 24,
+        resumeFromDisk: true,
+      }),
+    ).toEqual({ type: "Ok" });
+
+    const snapshot = await server.handleCommand({ type: "GetSnapshot", sessionId: "task-resume" });
+    expect(snapshot.type).toBe("Snapshot");
+    if (snapshot.type !== "Snapshot") {
+      throw new Error("expected snapshot response");
+    }
+    expect(snapshot.serialized).toContain("persisted");
+    expect(snapshot.serialized).toContain("snapshot");
+    expect(snapshot.sequence).toBe(9);
+  });
+
+  it("errors when a resumed session has no persisted snapshot", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "kanna-terminal-recovery-"));
+    const server = new RecoveryServer({
+      input: new PassThrough(),
+      output: new PassThrough(),
+      snapshotStore: new SnapshotStore(rootDir),
+      flushDebounceMs: 60_000,
+    });
+
+    expect(
+      await server.handleCommand({
+        type: "StartSession",
+        sessionId: "task-missing",
+        cols: 80,
+        rows: 24,
+        resumeFromDisk: true,
+      }),
+    ).toEqual({
+      type: "Error",
+      message: "Missing persisted snapshot for resumed session: task-missing",
+    });
+  });
 });

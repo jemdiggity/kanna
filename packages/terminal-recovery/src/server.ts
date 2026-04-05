@@ -77,17 +77,14 @@ export class RecoveryServer {
             message: `Session already exists: ${command.sessionId}`,
           };
         }
-        this.sessions.set(command.sessionId, {
-          mirror: new SessionMirror({
-            sessionId: command.sessionId,
-            cols: command.cols,
-            rows: command.rows,
-          }),
-          dirty: false,
-          version: 0,
-          flushTimer: null,
-          flushPromise: null,
-        });
+        try {
+          this.sessions.set(command.sessionId, await this.createTrackedSession(command));
+        } catch (error) {
+          return {
+            type: "Error",
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
         return { type: "Ok" };
       case "WriteOutput": {
         const session = this.requireSession(command.sessionId);
@@ -131,6 +128,27 @@ export class RecoveryServer {
       throw new Error(`Unknown session: ${sessionId}`);
     }
     return session;
+  }
+
+  private async createTrackedSession(command: Extract<RecoveryCommand, { type: "StartSession" }>): Promise<TrackedSession> {
+    const mirror = new SessionMirror({
+      sessionId: command.sessionId,
+      cols: command.cols,
+      rows: command.rows,
+    });
+
+    if (command.resumeFromDisk) {
+      const snapshot = await this.options.snapshotStore.require(command.sessionId);
+      await mirror.restore(snapshot);
+    }
+
+    return {
+      mirror,
+      dirty: false,
+      version: 0,
+      flushTimer: null,
+      flushPromise: null,
+    };
   }
 
   private markDirty(sessionId: string, session: TrackedSession): void {

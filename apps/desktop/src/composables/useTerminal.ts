@@ -391,7 +391,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
               rows: terminal.value.rows,
             })
           ) {
-            terminal.value.write(snapshot.serialized)
+            await new Promise<void>((resolve) => terminal.value?.write(snapshot.serialized, resolve))
             restoredRecoveryState = true
           }
         } catch (error) {

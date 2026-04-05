@@ -127,6 +127,16 @@ export class SessionMirror {
     this.rows = rows;
   }
 
+  async restore(snapshot: RecoverySnapshot): Promise<void> {
+    this.cols = snapshot.cols;
+    this.rows = snapshot.rows;
+    this.terminal.resize(snapshot.cols, snapshot.rows);
+    this.sequence = snapshot.sequence;
+    await new Promise<void>((resolve) => {
+      this.terminal.write(snapshot.serialized, resolve);
+    });
+  }
+
   snapshot(): RecoverySnapshot {
     return {
       sessionId: this.sessionId,

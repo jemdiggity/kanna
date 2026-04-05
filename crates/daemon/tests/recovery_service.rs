@@ -29,7 +29,7 @@ async fn recovery_service_mirrors_live_output_and_geometry() {
         .expect("test recovery manager should start");
 
     manager
-        .start_session("task-live", 80, 24)
+        .start_session("task-live", 80, 24, false)
         .await
         .expect("start_session should succeed");
     manager.write_output("task-live", b"hello", 1).await;
@@ -57,7 +57,7 @@ async fn recovery_service_flushes_snapshot_before_shutdown() {
         .expect("test recovery manager should start");
 
     manager
-        .start_session("task-persisted", 80, 24)
+        .start_session("task-persisted", 80, 24, false)
         .await
         .expect("start_session should succeed");
     manager
@@ -71,4 +71,43 @@ async fn recovery_service_flushes_snapshot_before_shutdown() {
 
     assert!(serialized.contains("\"sequence\":1"));
     assert!(serialized.contains("persist me"));
+}
+
+#[tokio::test]
+async fn recovery_service_resumes_existing_session_from_disk_after_restart() {
+    let manager = RecoveryManager::new_for_test()
+        .await
+        .expect("test recovery manager should start");
+    let snapshot_path = manager.snapshot_file_for_test("task-resume");
+    let snapshot_dir = snapshot_path
+        .parent()
+        .expect("snapshot path should have a parent")
+        .to_path_buf();
+
+    manager
+        .start_session("task-resume", 80, 24, false)
+        .await
+        .expect("initial start_session should succeed");
+    manager.write_output("task-resume", b"persisted", 1).await;
+    manager.flush_and_shutdown().await;
+
+    let resumed_manager = RecoveryManager::new_for_test_with_snapshot_dir(snapshot_dir)
+        .await
+        .expect("replacement recovery manager should start");
+
+    resumed_manager
+        .start_session("task-resume", 80, 24, true)
+        .await
+        .expect("resumed start_session should succeed");
+
+    let snapshot = resumed_manager
+        .get_snapshot("task-resume")
+        .await
+        .expect("snapshot request should succeed")
+        .expect("resumed session snapshot should exist");
+
+    assert_eq!(snapshot.sequence, 1);
+    assert!(snapshot.serialized.contains("persisted"));
+
+    resumed_manager.flush_and_shutdown().await;
 }

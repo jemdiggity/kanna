@@ -12,6 +12,7 @@ export interface StartSessionCommand {
   sessionId: string;
   cols: number;
   rows: number;
+  resumeFromDisk?: boolean;
 }
 
 export interface WriteOutputCommand {
@@ -109,6 +110,7 @@ export function parseCommand(line: string): RecoveryCommand {
           sessionId: parsed.sessionId,
           cols: parsed.cols,
           rows: parsed.rows,
+          resumeFromDisk: parsed.resumeFromDisk === true,
         };
       }
       break;

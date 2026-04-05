@@ -479,7 +479,7 @@ async fn handle_command(
 
                     if let Err(error) = daemon_context
                         .recovery_manager
-                        .start_session(&session_id, cols, rows)
+                        .start_session(&session_id, cols, rows, false)
                         .await
                     {
                         log::warn!(
@@ -611,7 +611,7 @@ async fn handle_command(
                 tokio::spawn(async move {
                     if let Err(error) = recovery_context
                         .recovery_manager
-                        .start_session(&session_id_for_recovery, 80, 24)
+                        .start_session(&session_id_for_recovery, 80, 24, true)
                         .await
                     {
                         log::warn!(

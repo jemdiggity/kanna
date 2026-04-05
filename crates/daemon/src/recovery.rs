@@ -57,6 +57,8 @@ enum RecoveryCommand {
         session_id: String,
         cols: u16,
         rows: u16,
+        #[serde(rename = "resumeFromDisk")]
+        resume_from_disk: bool,
     },
     WriteOutput {
         #[serde(rename = "sessionId")]
@@ -124,6 +126,10 @@ impl RecoveryManager {
 
     pub async fn new_for_test() -> Result<Self, String> {
         let snapshot_dir = unique_test_snapshot_dir();
+        Self::new_for_test_with_snapshot_dir(snapshot_dir).await
+    }
+
+    pub async fn new_for_test_with_snapshot_dir(snapshot_dir: PathBuf) -> Result<Self, String> {
         std::fs::create_dir_all(&snapshot_dir).map_err(|error| {
             format!(
                 "failed to create test recovery snapshot dir {:?}: {}",
@@ -157,12 +163,14 @@ impl RecoveryManager {
         session_id: &str,
         cols: u16,
         rows: u16,
+        resume_from_disk: bool,
     ) -> Result<(), String> {
         match self
             .request(RecoveryCommand::StartSession {
                 session_id: session_id.to_string(),
                 cols,
                 rows,
+                resume_from_disk,
             })
             .await?
         {
@@ -428,6 +436,7 @@ impl RecoveryManager {
                     session_id,
                     cols: geometry.cols,
                     rows: geometry.rows,
+                    resume_from_disk: true,
                 },
             )
             .await

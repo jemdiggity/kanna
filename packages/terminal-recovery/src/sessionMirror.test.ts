@@ -56,4 +56,18 @@ describe("SessionMirror", () => {
     expect(snapshot.serialized).not.toContain("�");
     expect(snapshot.sequence).toBe(2);
   });
+
+  it("restores a serialized snapshot into a fresh mirror", async () => {
+    const original = new SessionMirror({ sessionId: "task-4", cols: 80, rows: 24 });
+    await original.write(new Uint8Array(Buffer.from("\u001b[2Jhello\r\nworld")), 4);
+    const snapshot = original.snapshot();
+
+    const restored = new SessionMirror({ sessionId: "task-4", cols: 80, rows: 24 });
+    await restored.restore(snapshot);
+
+    const restoredSnapshot = restored.snapshot();
+    expect(restoredSnapshot.serialized).toContain("hello");
+    expect(restoredSnapshot.serialized).toContain("world");
+    expect(restoredSnapshot.sequence).toBe(4);
+  });
 });

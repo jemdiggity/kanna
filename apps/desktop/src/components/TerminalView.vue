@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue"
+import { ref, onMounted, onUnmounted, watch } from "vue"
 import { useTerminal, type SpawnOptions } from "../composables/useTerminal"
 import { shouldDelayConnectUntilAfterInitialLayout } from "../composables/terminalSessionRecovery"
 import "@xterm/xterm/css/xterm.css"
@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css"
 const props = defineProps<{
   sessionId: string
   spawnOptions?: SpawnOptions
+  active?: boolean
   kittyKeyboard?: boolean
   agentProvider?: string
   worktreePath?: string
@@ -23,6 +24,19 @@ defineExpose({
 })
 
 let resizeObserver: ResizeObserver | null = null
+let started = false
+
+async function startWhenActive() {
+  if (!props.active || started || !containerRef.value) return
+  started = true
+  if (shouldDelayConnectUntilAfterInitialLayout(props.spawnOptions, {
+    agentProvider: props.agentProvider,
+    worktreePath: props.worktreePath,
+  })) {
+    await waitForStableLayout(containerRef.value)
+  }
+  await startListening()
+}
 
 async function waitForStableLayout(el: HTMLElement) {
   let last = { width: 0, height: 0 }
@@ -46,15 +60,16 @@ onMounted(async () => {
     init(containerRef.value)
     resizeObserver = new ResizeObserver(() => fitDeferred())
     resizeObserver.observe(containerRef.value)
-    if (shouldDelayConnectUntilAfterInitialLayout(props.spawnOptions, {
-      agentProvider: props.agentProvider,
-      worktreePath: props.worktreePath,
-    })) {
-      await waitForStableLayout(containerRef.value)
-    }
-    startListening()
+    await startWhenActive()
   }
 })
+
+watch(
+  () => props.active,
+  async () => {
+    await startWhenActive()
+  },
+)
 
 onUnmounted(() => {
   resizeObserver?.disconnect()

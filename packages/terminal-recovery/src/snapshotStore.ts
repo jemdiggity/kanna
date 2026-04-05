@@ -39,11 +39,35 @@ export class SnapshotStore {
 
   async read(sessionId: string): Promise<RecoverySnapshot | null> {
     try {
-      const contents = await readFile(this.filePath(sessionId), "utf8");
-      const parsed: unknown = JSON.parse(contents);
-      return isRecoverySnapshot(parsed) ? parsed : null;
+      return await this.require(sessionId);
     } catch {
       return null;
+    }
+  }
+
+  async require(sessionId: string): Promise<RecoverySnapshot> {
+    try {
+      const contents = await readFile(this.filePath(sessionId), "utf8");
+      const parsed: unknown = JSON.parse(contents);
+      if (!isRecoverySnapshot(parsed)) {
+        throw new Error(`Invalid persisted snapshot for resumed session: ${sessionId}`);
+      }
+      return parsed;
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        throw new Error(`Missing persisted snapshot for resumed session: ${sessionId}`);
+      }
+
+      if (error instanceof Error && error.message.startsWith("Invalid persisted snapshot")) {
+        throw error;
+      }
+
+      throw new Error(`Invalid persisted snapshot for resumed session: ${sessionId}`);
     }
   }
 
