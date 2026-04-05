@@ -234,13 +234,6 @@ for i in "${!ARCHS[@]}"; do
         cargo build --release --target "$ARCH" --manifest-path crates/daemon/Cargo.toml
         cargo build --release --target "$ARCH" --manifest-path crates/kanna-cli/Cargo.toml
     )
-    (
-        cd "$ROOT/packages/terminal-recovery"
-        export PROFILE="release"
-        export TARGET="$ARCH"
-        bun run build
-        bun run build:bin:kanna-terminal-recovery
-    )
     "$ROOT/scripts/stage-sidecars.sh" --release --target "$ARCH"
 
     echo "    Building app ($LABEL)..."
