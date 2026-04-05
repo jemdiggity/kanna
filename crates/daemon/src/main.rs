@@ -943,19 +943,23 @@ async fn handle_handoff(
         let _ = daemon_context.broadcast_tx.send(json);
     }
 
+    const HANDOFF_EXIT_DELAY_MS: u64 = 50;
+    const HANDOFF_SHUTDOWN_FLUSH_MS: u64 = 100;
+
     log::info!(
-        "[handoff] complete, exiting in 500ms (pid={})",
+        "[handoff] complete, exiting in {}ms (pid={})",
+        HANDOFF_EXIT_DELAY_MS,
         std::process::id()
     );
     // Use a blocking thread to exit — std::process::exit from an async context
     // can hang if tokio tasks are still running.
     std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        std::thread::sleep(std::time::Duration::from_millis(HANDOFF_EXIT_DELAY_MS));
         log::info!("[handoff] exiting now");
         std::process::exit(0);
     });
     // Give subscriber tasks time to flush the ShuttingDown event to their sockets.
-    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(HANDOFF_SHUTDOWN_FLUSH_MS)).await;
 }
 
 /// Maximum pre-attach buffer size (64 KB). Output before client attaches is
