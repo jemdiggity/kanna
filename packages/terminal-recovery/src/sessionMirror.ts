@@ -1,4 +1,3 @@
-import { Buffer } from "node:buffer";
 import type { RecoverySnapshot } from "./protocol";
 
 if (typeof globalThis.window === "undefined") {
@@ -118,7 +117,7 @@ export class SessionMirror {
     }
 
     await new Promise<void>((resolve) => {
-      this.terminal.write(Buffer.from(data).toString("utf8"), resolve);
+      this.terminal.write(data, resolve);
     });
   }
 

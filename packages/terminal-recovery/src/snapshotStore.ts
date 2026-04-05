@@ -2,6 +2,26 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RecoverySnapshot } from "./protocol";
 
+function isRecoverySnapshot(value: unknown): value is RecoverySnapshot {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.sessionId === "string" &&
+    typeof candidate.serialized === "string" &&
+    typeof candidate.cols === "number" &&
+    Number.isFinite(candidate.cols) &&
+    typeof candidate.rows === "number" &&
+    Number.isFinite(candidate.rows) &&
+    typeof candidate.savedAt === "number" &&
+    Number.isFinite(candidate.savedAt) &&
+    typeof candidate.sequence === "number" &&
+    Number.isFinite(candidate.sequence)
+  );
+}
+
 export class SnapshotStore {
   constructor(private readonly root: string) {}
 
@@ -20,7 +40,8 @@ export class SnapshotStore {
   async read(sessionId: string): Promise<RecoverySnapshot | null> {
     try {
       const contents = await readFile(this.filePath(sessionId), "utf8");
-      return JSON.parse(contents) as RecoverySnapshot;
+      const parsed: unknown = JSON.parse(contents);
+      return isRecoverySnapshot(parsed) ? parsed : null;
     } catch {
       return null;
     }

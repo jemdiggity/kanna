@@ -45,4 +45,24 @@ describe("SnapshotStore", () => {
 
     await expect(store.read("broken")).resolves.toBeNull();
   });
+
+  it("returns null for parseable but invalid snapshot payloads", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "kanna-terminal-recovery-"));
+    const store = new SnapshotStore(rootDir);
+
+    await writeFile(
+      join(rootDir, "invalid.json"),
+      JSON.stringify({
+        sessionId: "invalid",
+        serialized: 42,
+        cols: "80",
+        rows: 24,
+        savedAt: 1,
+        sequence: 7,
+      }),
+      "utf8",
+    );
+
+    await expect(store.read("invalid")).resolves.toBeNull();
+  });
 });

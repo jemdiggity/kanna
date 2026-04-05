@@ -42,4 +42,18 @@ describe("SessionMirror", () => {
     expect(snapshot.rows).toBe(30);
     expect(snapshot.sequence).toBe(11);
   });
+
+  it("preserves split multibyte utf-8 sequences across writes", async () => {
+    const mirror = new SessionMirror({ sessionId: "task-3", cols: 80, rows: 24 });
+    const bytes = new Uint8Array(Buffer.from("あ"));
+
+    await mirror.write(bytes.slice(0, 1), 1);
+    await mirror.write(bytes.slice(1), 2);
+
+    const snapshot = mirror.snapshot();
+
+    expect(snapshot.serialized).toContain("あ");
+    expect(snapshot.serialized).not.toContain("�");
+    expect(snapshot.sequence).toBe(2);
+  });
 });
