@@ -20,7 +20,9 @@ interface RecoveryServerOptions {
 interface TrackedSession {
   mirror: SessionMirror;
   dirty: boolean;
+  version: number;
   flushTimer: Timer | null;
+  flushPromise: Promise<void> | null;
 }
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -69,7 +71,12 @@ export class RecoveryServer {
   async handleCommand(command: RecoveryCommand): Promise<RecoveryResponse> {
     switch (command.type) {
       case "StartSession":
-        this.cancelFlush(command.sessionId);
+        if (this.sessions.has(command.sessionId)) {
+          return {
+            type: "Error",
+            message: `Session already exists: ${command.sessionId}`,
+          };
+        }
         this.sessions.set(command.sessionId, {
           mirror: new SessionMirror({
             sessionId: command.sessionId,
@@ -77,7 +84,9 @@ export class RecoveryServer {
             rows: command.rows,
           }),
           dirty: false,
+          version: 0,
           flushTimer: null,
+          flushPromise: null,
         });
         return { type: "Ok" };
       case "WriteOutput": {
@@ -126,7 +135,11 @@ export class RecoveryServer {
 
   private markDirty(sessionId: string, session: TrackedSession): void {
     session.dirty = true;
+    session.version += 1;
     this.cancelFlush(sessionId);
+    if (session.flushPromise) {
+      return;
+    }
     session.flushTimer = setTimeout(() => {
       void this.flushSession(sessionId);
     }, this.options.flushDebounceMs);
@@ -145,10 +158,43 @@ export class RecoveryServer {
     if (!session || !session.dirty) {
       return;
     }
+    if (session.flushPromise) {
+      await session.flushPromise;
+      return;
+    }
 
     this.cancelFlush(sessionId);
-    await this.options.snapshotStore.write(session.mirror.snapshot());
-    session.dirty = false;
+    session.flushPromise = this.flushUntilCurrent(sessionId, session);
+    try {
+      await session.flushPromise;
+    } finally {
+      const latestSession = this.sessions.get(sessionId);
+      if (latestSession) {
+        latestSession.flushPromise = null;
+        if (latestSession.dirty && !latestSession.flushTimer) {
+          latestSession.flushTimer = setTimeout(() => {
+            void this.flushSession(sessionId);
+          }, this.options.flushDebounceMs);
+        }
+      }
+    }
+  }
+
+  private async flushUntilCurrent(sessionId: string, session: TrackedSession): Promise<void> {
+    while (session.dirty) {
+      const snapshot = session.mirror.snapshot();
+      const versionAtSnapshot = session.version;
+      session.dirty = false;
+      await this.options.snapshotStore.write(snapshot);
+
+      const latestSession = this.sessions.get(sessionId);
+      if (!latestSession || latestSession !== session) {
+        return;
+      }
+      if (latestSession.version === versionAtSnapshot && !latestSession.dirty) {
+        return;
+      }
+    }
   }
 
   private async flushAll(): Promise<void> {
