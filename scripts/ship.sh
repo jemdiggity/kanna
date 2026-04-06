@@ -32,6 +32,10 @@ read_cargo_version() {
     sed -n '1,/^version = /s/^version = "\([^"]*\)"/\1/p' "$ROOT/apps/desktop/src-tauri/Cargo.toml" | head -1
 }
 
+read_release_url() {
+    gh release view "v$VERSION" --json url --jq '.url'
+}
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -264,6 +268,9 @@ if [[ "$RELEASE" = true && "$VERSION_ALREADY_SYNCED" = true ]]; then
         echo "    Local tag: $LOCAL_TAG_EXISTS"
         echo "    Remote tag: $REMOTE_TAG_EXISTS"
         echo "    GitHub release: $RELEASE_EXISTS"
+        if [[ "$RELEASE_EXISTS" = true ]]; then
+            echo "    $(read_release_url)"
+        fi
         exit 0
     fi
 
@@ -407,7 +414,7 @@ if [[ "$RELEASE" = true ]]; then
         --generate-notes
 
     echo "==> Shipped Kanna v$VERSION"
-    echo "    https://github.com/jemdiggity/kanna-tauri/releases/tag/v$VERSION"
+    echo "    $(read_release_url)"
 else
     echo "==> Built Kanna v$VERSION"
     for DMG in "${DMG_PATHS[@]}"; do
