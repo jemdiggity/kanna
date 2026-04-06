@@ -20,6 +20,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT/.build"
 NODE_RUNTIME_VERSION="${KANNA_NODE_RUNTIME_VERSION:-24.11.0}"
 
+read_current_version() {
+    tr -d '[:space:]' < "$ROOT/VERSION"
+}
+
+read_tauri_version() {
+    sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$ROOT/apps/desktop/src-tauri/tauri.conf.json" | head -1
+}
+
+read_cargo_version() {
+    sed -n '1,/^version = /s/^version = "\([^"]*\)"/\1/p' "$ROOT/apps/desktop/src-tauri/Cargo.toml" | head -1
+}
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -224,6 +236,40 @@ VERSION="$MAJOR.$MINOR.$PATCH"
 
 echo "==> Shipping Kanna v$LAST_VERSION → v$VERSION"
 
+CURRENT_VERSION=$(read_current_version)
+CURRENT_TAURI_VERSION=$(read_tauri_version)
+CURRENT_CARGO_VERSION=$(read_cargo_version)
+VERSION_ALREADY_SYNCED=false
+if [[ "$CURRENT_VERSION" = "$VERSION" && "$CURRENT_TAURI_VERSION" = "$VERSION" && "$CURRENT_CARGO_VERSION" = "$VERSION" ]]; then
+    VERSION_ALREADY_SYNCED=true
+fi
+
+if [[ "$RELEASE" = true && "$VERSION_ALREADY_SYNCED" = true ]]; then
+    LOCAL_TAG_EXISTS=false
+    REMOTE_TAG_EXISTS=false
+    RELEASE_EXISTS=false
+
+    if git -C "$ROOT" tag -l "v$VERSION" | grep -q "v$VERSION"; then
+        LOCAL_TAG_EXISTS=true
+    fi
+    if git -C "$ROOT" ls-remote --tags origin "refs/tags/v$VERSION" | grep -q "v$VERSION"; then
+        REMOTE_TAG_EXISTS=true
+    fi
+    if gh release view "v$VERSION" >/dev/null 2>&1; then
+        RELEASE_EXISTS=true
+    fi
+
+    if [[ "$REMOTE_TAG_EXISTS" = true || "$RELEASE_EXISTS" = true ]]; then
+        echo "==> Kanna v$VERSION is already released"
+        echo "    Local tag: $LOCAL_TAG_EXISTS"
+        echo "    Remote tag: $REMOTE_TAG_EXISTS"
+        echo "    GitHub release: $RELEASE_EXISTS"
+        exit 0
+    fi
+
+    echo "    Version files already match v$VERSION; continuing as a release retry"
+fi
+
 # --- Sync version files ---
 
 STEP="syncing version files"
@@ -324,7 +370,11 @@ if [[ "$RELEASE" = true ]]; then
     STEP="committing version bump"
     echo "    Committing version bump..."
     git -C "$ROOT" add -f VERSION apps/desktop/src-tauri/tauri.conf.json apps/desktop/src-tauri/Cargo.toml apps/desktop/src-tauri/Cargo.lock
-    git -C "$ROOT" commit -m "release: v$VERSION"
+    if git -C "$ROOT" diff --cached --quiet; then
+        echo "    No version file changes to commit; reusing existing HEAD for v$VERSION"
+    else
+        git -C "$ROOT" commit -m "release: v$VERSION"
+    fi
 
     STEP="tagging and pushing"
     echo "    Tagging v$VERSION..."
