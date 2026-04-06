@@ -12,14 +12,27 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 const RECOVERY_QUEUE_CAPACITY: usize = 1024;
 const RECOVERY_SHUTDOWN_TIMEOUT_MS: u64 = 2_000;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoverySnapshot {
     pub serialized: String,
     pub cols: u16,
     pub rows: u16,
+    pub cursor_row: u16,
+    pub cursor_col: u16,
+    pub cursor_visible: bool,
     pub saved_at: u64,
     pub sequence: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SeededRecoverySnapshot {
+    pub serialized: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub cursor_row: u16,
+    pub cursor_col: u16,
+    pub cursor_visible: bool,
 }
 
 #[derive(Clone)]
@@ -96,6 +109,12 @@ enum RecoveryResponse {
         serialized: String,
         cols: u16,
         rows: u16,
+        #[serde(rename = "cursorRow")]
+        cursor_row: u16,
+        #[serde(rename = "cursorCol")]
+        cursor_col: u16,
+        #[serde(rename = "cursorVisible")]
+        cursor_visible: bool,
         #[serde(rename = "savedAt")]
         saved_at: u64,
         sequence: u64,
@@ -109,6 +128,20 @@ enum WorkerMessage {
         command: RecoveryCommand,
         reply: oneshot::Sender<Result<RecoveryResponse, String>>,
     },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedRecoverySnapshot {
+    session_id: String,
+    serialized: String,
+    cols: u16,
+    rows: u16,
+    cursor_row: u16,
+    cursor_col: u16,
+    cursor_visible: bool,
+    saved_at: u64,
+    sequence: u64,
 }
 
 impl RecoveryManager {
@@ -148,7 +181,55 @@ impl RecoveryManager {
     }
 
     pub fn snapshot_file_for_test(&self, session_id: &str) -> PathBuf {
-        self.snapshot_dir.join(format!("{}.json", session_id))
+        self.snapshot_file(session_id)
+    }
+
+    pub fn has_persisted_snapshot(&self, session_id: &str) -> bool {
+        self.snapshot_file(session_id).exists()
+    }
+
+    pub fn seed_snapshot(
+        &self,
+        session_id: &str,
+        snapshot: &SeededRecoverySnapshot,
+    ) -> Result<(), String> {
+        std::fs::create_dir_all(&self.snapshot_dir).map_err(|error| {
+            format!(
+                "failed to create recovery snapshot dir {:?}: {}",
+                self.snapshot_dir, error
+            )
+        })?;
+
+        let snapshot = PersistedRecoverySnapshot {
+            session_id: session_id.to_string(),
+            serialized: snapshot.serialized.clone(),
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            cursor_row: snapshot.cursor_row,
+            cursor_col: snapshot.cursor_col,
+            cursor_visible: snapshot.cursor_visible,
+            saved_at: now_millis(),
+            sequence: 0,
+        };
+
+        let payload = serde_json::to_vec(&snapshot)
+            .map_err(|error| format!("failed to serialize seeded recovery snapshot: {}", error))?;
+        let path = self.snapshot_file(session_id);
+        let temp_path =
+            path.with_extension(format!("json.tmp-{}-{}", std::process::id(), now_millis()));
+        std::fs::write(&temp_path, payload).map_err(|error| {
+            format!(
+                "failed to write seeded recovery snapshot {:?}: {}",
+                temp_path, error
+            )
+        })?;
+        std::fs::rename(&temp_path, &path).map_err(|error| {
+            format!(
+                "failed to publish seeded recovery snapshot {:?}: {}",
+                path, error
+            )
+        })?;
+        Ok(())
     }
 
     pub fn next_sequence(&self, session_id: &str) -> u64 {
@@ -246,6 +327,9 @@ impl RecoveryManager {
                 serialized,
                 cols,
                 rows,
+                cursor_row,
+                cursor_col,
+                cursor_visible,
                 saved_at,
                 sequence,
             } => {
@@ -260,6 +344,9 @@ impl RecoveryManager {
                     serialized,
                     cols,
                     rows,
+                    cursor_row,
+                    cursor_col,
+                    cursor_visible,
                     saved_at,
                     sequence,
                 }))
@@ -312,7 +399,7 @@ impl RecoveryManager {
     }
 
     fn new(snapshot_dir: PathBuf, launcher: Option<RecoveryLauncher>) -> Self {
-        RecoveryManager {
+        Self {
             launcher,
             snapshot_dir,
             sequences: Arc::new(StdMutex::new(HashMap::new())),
@@ -430,13 +517,14 @@ impl RecoveryManager {
         };
 
         for (session_id, geometry) in tracked_sessions {
+            let resume_from_disk = self.has_persisted_snapshot(&session_id);
             if let Err(message) = send_request_via_sender(
                 &sender,
                 RecoveryCommand::StartSession {
                     session_id,
                     cols: geometry.cols,
                     rows: geometry.rows,
-                    resume_from_disk: true,
+                    resume_from_disk,
                 },
             )
             .await
@@ -458,6 +546,10 @@ impl RecoveryManager {
     async fn reset_sender(&self) {
         let mut state = self.state.lock().await;
         state.sender = None;
+    }
+
+    fn snapshot_file(&self, session_id: &str) -> PathBuf {
+        self.snapshot_dir.join(format!("{}.json", session_id))
     }
 }
 
@@ -506,7 +598,7 @@ async fn spawn_worker(
     let mut command = Command::new(&launcher.program);
     command
         .args(&launcher.args)
-        .arg(&snapshot_dir)
+        .env("KANNA_TERMINAL_RECOVERY_DIR", &snapshot_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -637,6 +729,13 @@ fn default_snapshot_dir() -> PathBuf {
     daemon_support_dir().join("terminal-recovery")
 }
 
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn daemon_support_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("KANNA_DAEMON_DIR") {
         return PathBuf::from(dir);
@@ -660,36 +759,45 @@ fn detect_launcher() -> Option<RecoveryLauncher> {
         }
     }
 
-    if cfg!(debug_assertions) {
-        if let Some(launcher) = workspace_script_launcher() {
-            return Some(launcher);
-        }
-    }
-
     if let Some(launcher) = bundled_runtime_launcher() {
         return Some(launcher);
     }
 
-    workspace_script_launcher()
+    if cfg!(debug_assertions) {
+        return workspace_binary_launcher();
+    }
+
+    None
 }
 
 fn detect_test_launcher() -> Option<RecoveryLauncher> {
-    if let Some(launcher) = workspace_script_launcher() {
+    if let Some(launcher) = workspace_binary_launcher() {
         return Some(launcher);
     }
-    detect_launcher()
+    cargo_manifest_launcher()
 }
 
-fn workspace_script_launcher() -> Option<RecoveryLauncher> {
-    let script = workspace_root()?.join("packages/terminal-recovery/src/index.ts");
-    if script.exists() {
-        let bun = find_in_path("bun")?;
-        return Some(RecoveryLauncher {
-            program: bun,
-            args: vec![script.to_string_lossy().into_owned()],
-        });
-    }
-    None
+fn workspace_binary_launcher() -> Option<RecoveryLauncher> {
+    let root = workspace_root()?;
+    let bin = root.join(".build/debug/kanna-terminal-recovery");
+    bin.exists().then_some(RecoveryLauncher {
+        program: bin,
+        args: Vec::new(),
+    })
+}
+
+fn cargo_manifest_launcher() -> Option<RecoveryLauncher> {
+    let cargo = find_in_path("cargo")?;
+    let manifest = workspace_root()?.join("packages/terminal-recovery/Cargo.toml");
+    manifest.exists().then_some(RecoveryLauncher {
+        program: cargo,
+        args: vec![
+            "run".to_string(),
+            "--quiet".to_string(),
+            "--manifest-path".to_string(),
+            manifest.to_string_lossy().into_owned(),
+        ],
+    })
 }
 
 fn bundled_runtime_launcher() -> Option<RecoveryLauncher> {
@@ -699,30 +807,22 @@ fn bundled_runtime_launcher() -> Option<RecoveryLauncher> {
 
 fn bundled_runtime_launcher_from_exe(exe: &Path) -> Option<RecoveryLauncher> {
     let exe_dir = exe.parent()?;
-    let node_candidates = [
-        exe_dir.join(format!("kanna-node-runtime-{}", current_target_triple())),
-        exe_dir.join("kanna-node-runtime"),
-        exe_dir.join("../Resources/kanna-node-runtime"),
+    let candidates = [
+        exe_dir.join(format!(
+            "kanna-terminal-recovery-{}",
+            current_target_triple()
+        )),
+        exe_dir.join("kanna-terminal-recovery"),
+        exe_dir.join("../Resources/kanna-terminal-recovery"),
     ];
-    let mut script_candidates = vec![exe_dir.join("../Resources/terminal-recovery/index.js")];
-    if let Some(root) = workspace_root() {
-        script_candidates.push(root.join(".build/tauri-resources/terminal-recovery/index.js"));
-    }
 
-    let node = node_candidates
+    candidates
         .into_iter()
-        .find(|candidate| candidate.exists())?;
-    let script = script_candidates
-        .into_iter()
-        .find(|candidate| candidate.exists())?;
-
-    Some(RecoveryLauncher {
-        program: node,
-        args: vec![
-            "--jitless".to_string(),
-            script.to_string_lossy().into_owned(),
-        ],
-    })
+        .find(|candidate| candidate.exists())
+        .map(|program| RecoveryLauncher {
+            program,
+            args: Vec::new(),
+        })
 }
 
 fn current_target_triple() -> &'static str {

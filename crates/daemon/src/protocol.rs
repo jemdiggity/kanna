@@ -1,6 +1,31 @@
-use crate::recovery::RecoverySnapshot;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+fn default_cursor_visible() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalSnapshot {
+    pub version: u32,
+    pub rows: u16,
+    pub cols: u16,
+    pub cursor_row: u16,
+    pub cursor_col: u16,
+    #[serde(default = "default_cursor_visible")]
+    pub cursor_visible: bool,
+    pub vt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandoffSession {
+    pub session_id: String,
+    pub pid: u32,
+    pub cwd: String,
+    pub rows: u16,
+    pub cols: u16,
+    pub snapshot: Option<TerminalSnapshot>,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -44,7 +69,7 @@ pub enum Command {
     Unobserve {
         session_id: String,
     },
-    GetRecoverySnapshot {
+    Snapshot {
         session_id: String,
     },
     Handoff {
@@ -56,15 +81,35 @@ pub enum Command {
 #[serde(tag = "type")]
 #[allow(clippy::enum_variant_names)]
 pub enum Event {
-    Output { session_id: String, data: Vec<u8> },
-    Exit { session_id: String, code: i32 },
-    StatusChanged { session_id: String, status: String },
-    SessionCreated { session_id: String },
-    SessionList { sessions: Vec<SessionInfo> },
-    RecoverySnapshot { snapshot: Option<RecoverySnapshot> },
+    Output {
+        session_id: String,
+        data: Vec<u8>,
+    },
+    Exit {
+        session_id: String,
+        code: i32,
+    },
+    StatusChanged {
+        session_id: String,
+        status: String,
+    },
+    SessionCreated {
+        session_id: String,
+    },
+    SessionList {
+        sessions: Vec<SessionInfo>,
+    },
     Ok,
-    Error { message: String },
-    HandoffReady { sessions: Vec<SessionInfo> },
+    Error {
+        message: String,
+    },
+    Snapshot {
+        session_id: String,
+        snapshot: TerminalSnapshot,
+    },
+    HandoffReady {
+        sessions: Vec<HandoffSession>,
+    },
     HandoffUnsupported,
     ShuttingDown,
 }
@@ -148,19 +193,6 @@ mod tests {
     }
 
     #[test]
-    fn test_command_get_recovery_snapshot_roundtrip() {
-        let cmd = Command::GetRecoverySnapshot {
-            session_id: "s1".to_string(),
-        };
-        let json = serde_json::to_string(&cmd).unwrap();
-        let decoded: Command = serde_json::from_str(&json).unwrap();
-        match decoded {
-            Command::GetRecoverySnapshot { session_id } => assert_eq!(session_id, "s1"),
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
     fn test_event_output_roundtrip() {
         let evt = Event::Output {
             session_id: "s1".to_string(),
@@ -204,30 +236,130 @@ mod tests {
     }
 
     #[test]
-    fn test_event_recovery_snapshot_roundtrip() {
-        let evt = Event::RecoverySnapshot {
-            snapshot: Some(RecoverySnapshot {
-                serialized: "cached".to_string(),
-                cols: 80,
+    fn test_command_snapshot_roundtrip() {
+        let cmd = Command::Snapshot {
+            session_id: "sess-1".to_string(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let decoded: Command = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Command::Snapshot { session_id } => assert_eq!(session_id, "sess-1"),
+            other => panic!("wrong variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_event_snapshot_roundtrip() {
+        let evt = Event::Snapshot {
+            session_id: "sess-1".to_string(),
+            snapshot: TerminalSnapshot {
+                version: 1,
                 rows: 24,
-                saved_at: 1,
-                sequence: 2,
-            }),
+                cols: 80,
+                cursor_row: 10,
+                cursor_col: 5,
+                cursor_visible: true,
+                vt: "hello".to_string(),
+            },
         };
         let json = serde_json::to_string(&evt).unwrap();
         let decoded: Event = serde_json::from_str(&json).unwrap();
         match decoded {
-            Event::RecoverySnapshot {
-                snapshot: Some(snapshot),
+            Event::Snapshot {
+                session_id,
+                snapshot,
             } => {
-                assert_eq!(snapshot.serialized, "cached");
-                assert_eq!(snapshot.cols, 80);
-                assert_eq!(snapshot.rows, 24);
-                assert_eq!(snapshot.saved_at, 1);
-                assert_eq!(snapshot.sequence, 2);
+                assert_eq!(session_id, "sess-1");
+                assert_eq!(snapshot.version, 1);
+                assert_eq!(snapshot.vt, "hello");
             }
-            _ => panic!("wrong variant"),
+            other => panic!("wrong variant: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_event_snapshot_defaults_cursor_visible_for_older_payloads() {
+        let json = r#"{
+            "type":"Snapshot",
+            "session_id":"sess-1",
+            "snapshot":{
+                "version":1,
+                "rows":24,
+                "cols":80,
+                "cursor_row":10,
+                "cursor_col":5,
+                "vt":"hello"
+            }
+        }"#;
+
+        let decoded: Event = serde_json::from_str(json).unwrap();
+        match decoded {
+            Event::Snapshot { snapshot, .. } => {
+                assert!(snapshot.cursor_visible);
+                assert_eq!(snapshot.vt, "hello");
+            }
+            other => panic!("wrong variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_handoff_ready_roundtrip_without_snapshot() {
+        let evt = Event::HandoffReady {
+            sessions: vec![HandoffSession {
+                session_id: "sess-1".to_string(),
+                pid: 42,
+                cwd: "/tmp".to_string(),
+                rows: 24,
+                cols: 80,
+                snapshot: None,
+            }],
+        };
+
+        let json = serde_json::to_string(&evt).unwrap();
+        let decoded: Event = serde_json::from_str(&json).unwrap();
+
+        match decoded {
+            Event::HandoffReady { sessions } => {
+                assert_eq!(sessions.len(), 1);
+                assert_eq!(sessions[0].session_id, "sess-1");
+                assert_eq!(sessions[0].rows, 24);
+                assert_eq!(sessions[0].cols, 80);
+                assert!(sessions[0].snapshot.is_none());
+            }
+            other => panic!("wrong variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_handoff_ready_v1_payload_without_geometry_is_rejected() {
+        let json = r#"{
+            "type":"HandoffReady",
+            "sessions":[
+                {
+                    "session_id":"sess-1",
+                    "pid":42,
+                    "cwd":"/tmp",
+                    "snapshot":{
+                        "version":1,
+                        "rows":24,
+                        "cols":80,
+                        "cursor_row":1,
+                        "cursor_col":0,
+                        "cursor_visible":true,
+                        "vt":"hello"
+                    }
+                }
+            ]
+        }"#;
+
+        let error = serde_json::from_str::<Event>(json)
+            .expect_err("older handoff payloads without geometry should be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains("rows") || message.contains("cols"),
+            "unexpected error: {}",
+            message
+        );
     }
 
     #[test]

@@ -10,6 +10,8 @@ pub struct PtySession {
     master_fd: OwnedFd,
     child_pid: libc::pid_t,
     pub cwd: String,
+    rows: u16,
+    cols: u16,
     pub last_active_at: Instant,
 }
 
@@ -118,6 +120,8 @@ impl PtySession {
             master_fd: master,
             child_pid: pid,
             cwd: cwd.to_string(),
+            rows,
+            cols,
             last_active_at: Instant::now(),
         })
     }
@@ -125,11 +129,19 @@ impl PtySession {
     /// Adopt a session from a transferred master fd (handoff).
     #[allow(dead_code)]
     /// The child process is not owned — use kill(pid, 0) to check liveness.
-    pub fn adopt(master_fd: OwnedFd, child_pid: libc::pid_t, cwd: String) -> Self {
+    pub fn adopt(
+        master_fd: OwnedFd,
+        child_pid: libc::pid_t,
+        cwd: String,
+        rows: u16,
+        cols: u16,
+    ) -> Self {
         PtySession {
             master_fd,
             child_pid,
             cwd,
+            rows,
+            cols,
             last_active_at: Instant::now(),
         }
     }
@@ -177,7 +189,7 @@ impl PtySession {
     }
 
     pub fn resize(
-        &self,
+        &mut self,
         cols: u16,
         rows: u16,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -191,11 +203,21 @@ impl PtySession {
         if ret != 0 {
             return Err(io::Error::last_os_error().into());
         }
+        self.rows = rows;
+        self.cols = cols;
         Ok(())
     }
 
     pub fn pid(&self) -> u32 {
         self.child_pid as u32
+    }
+
+    pub fn rows(&self) -> u16 {
+        self.rows
+    }
+
+    pub fn cols(&self) -> u16 {
+        self.cols
     }
 
     pub fn try_wait(&mut self) -> Option<i32> {
@@ -248,10 +270,12 @@ impl PtySession {
     /// Extract the master fd without closing it. Consumes the session.
     /// Used during handoff — the fd is transferred to the new daemon.
     #[allow(dead_code)]
-    pub fn detach_for_handoff(self) -> (RawFd, libc::pid_t, String) {
+    pub fn detach_for_handoff(self) -> (RawFd, libc::pid_t, String, u16, u16) {
         let fd = self.master_fd.as_raw_fd();
         // Prevent OwnedFd from closing the fd on drop
+        let rows = self.rows;
+        let cols = self.cols;
         std::mem::forget(self.master_fd);
-        (fd, self.child_pid, self.cwd)
+        (fd, self.child_pid, self.cwd, rows, cols)
     }
 }

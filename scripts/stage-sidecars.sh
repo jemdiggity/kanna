@@ -36,33 +36,26 @@ else
 fi
 
 mkdir -p "$BINARIES_DIR"
+stage_if_changed() {
+    local src="$1"
+    local dest="$2"
 
-for BIN in kanna-daemon kanna-cli; do
+    if [[ -f "$dest" ]] && cmp -s "$src" "$dest"; then
+        return 0
+    fi
+
+    cp "$src" "$dest"
+}
+
+for BIN in kanna-daemon kanna-cli kanna-terminal-recovery; do
     SRC="$SRC_DIR/$BIN"
     DEST="$BINARIES_DIR/${BIN}-${TARGET}"
     if [[ ! -f "$SRC" ]]; then
         echo "Error: $SRC not found. Build it first." >&2
         exit 1
     fi
-    cp "$SRC" "$DEST"
+    stage_if_changed "$SRC" "$DEST"
     chmod +x "$DEST"
 done
-
-NODE_DEST="$BINARIES_DIR/kanna-node-runtime-${TARGET}"
-if [[ "$PROFILE" = "release" ]]; then
-    NODE_SRC="$SRC_DIR/kanna-node-runtime"
-    if [[ ! -f "$NODE_SRC" ]]; then
-        echo "Error: $NODE_SRC not found. Build it first." >&2
-        exit 1
-    fi
-    cp "$NODE_SRC" "$NODE_DEST"
-else
-    cat > "$NODE_DEST" <<'EOF'
-#!/bin/sh
-echo "kanna-node-runtime is only bundled for release builds" >&2
-exit 1
-EOF
-fi
-chmod +x "$NODE_DEST"
 
 echo "    Staged sidecars for $TARGET ($PROFILE) → $BINARIES_DIR"

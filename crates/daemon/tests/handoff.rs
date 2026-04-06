@@ -39,6 +39,9 @@ enum Cmd {
         session_id: String,
         data: Vec<u8>,
     },
+    Snapshot {
+        session_id: String,
+    },
     List,
     Subscribe,
 }
@@ -61,6 +64,10 @@ enum Evt {
     SessionList {
         sessions: Vec<Value>,
     },
+    Snapshot {
+        session_id: String,
+        snapshot: SnapshotPayload,
+    },
     Ok,
     Error {
         message: String,
@@ -68,6 +75,17 @@ enum Evt {
     ShuttingDown,
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Deserialize)]
+struct SnapshotPayload {
+    version: u32,
+    rows: u16,
+    cols: u16,
+    cursor_row: u16,
+    cursor_col: u16,
+    cursor_visible: bool,
+    vt: String,
 }
 
 // ---- Test harness ----
@@ -241,6 +259,23 @@ fn send_input(conn: &mut ClientConn, id: &str, data: &[u8]) {
     }
 }
 
+fn request_snapshot(conn: &mut ClientConn, id: &str) -> SnapshotPayload {
+    conn.send(&Cmd::Snapshot {
+        session_id: id.to_string(),
+    });
+    match conn.recv() {
+        Evt::Snapshot {
+            session_id,
+            snapshot,
+        } => {
+            assert_eq!(session_id, id);
+            snapshot
+        }
+        Evt::Error { message } => panic!("snapshot failed: {}", message),
+        other => panic!("expected Snapshot, got: {:?}", other),
+    }
+}
+
 fn test_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "kanna-handoff-test-{}-{}",
@@ -289,6 +324,79 @@ fn test_handoff_transfers_session() {
     );
 
     drop(daemon_b);
+    cleanup(&dir);
+}
+
+/// If snapshot generation fails during handoff, the live PTY should still move
+/// to the new daemon and remain interactive.
+#[test]
+fn test_handoff_keeps_live_session_when_snapshot_fails() {
+    let dir = test_dir("snapshot-failure");
+
+    let daemon_a = DaemonHandle::start_in(&dir);
+    let mut conn_a = daemon_a.connect();
+
+    conn_a.send(&Cmd::Spawn {
+        session_id: "sess-degraded".to_string(),
+        executable: "/bin/sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            "printf '\\033[?2026h'; exec /bin/cat".to_string(),
+        ],
+        cwd: "/tmp".to_string(),
+        env: HashMap::new(),
+        cols: 80,
+        rows: 24,
+    });
+    match conn_a.recv() {
+        Evt::SessionCreated { .. } => {}
+        other => panic!("expected SessionCreated, got: {:?}", other),
+    }
+
+    attach(&mut conn_a, "sess-degraded");
+    conn_a.drain_output(Duration::from_millis(500));
+    drop(conn_a);
+
+    let daemon_b = DaemonHandle::start_in(&dir);
+    let mut conn_b = daemon_b.connect();
+    attach(&mut conn_b, "sess-degraded");
+    send_input(&mut conn_b, "sess-degraded", b"after-handoff\n");
+
+    let output = conn_b.collect_output(13);
+    let output_str = String::from_utf8_lossy(&output);
+    assert!(
+        output_str.contains("after-handoff"),
+        "degraded session should survive handoff, got: {:?}",
+        output_str
+    );
+
+    let snapshot = request_snapshot(&mut conn_b, "sess-degraded");
+    assert_eq!(snapshot.version, 1);
+    assert_eq!(snapshot.rows, 24);
+    assert_eq!(snapshot.cols, 80);
+    assert!(snapshot.cursor_visible);
+    assert!(
+        snapshot.vt.contains("after-handoff"),
+        "degraded session should start recovery mirroring after adoption, got: {:?}",
+        snapshot.vt
+    );
+    let _cursor = (snapshot.cursor_row, snapshot.cursor_col);
+
+    drop(conn_b);
+    let daemon_c = DaemonHandle::start_in(&dir);
+    let mut conn_c = daemon_c.connect();
+    attach(&mut conn_c, "sess-degraded");
+    send_input(&mut conn_c, "sess-degraded", b"after-second-handoff\n");
+
+    let output = conn_c.collect_output(20);
+    let output_str = String::from_utf8_lossy(&output);
+    assert!(
+        output_str.contains("after-second-handoff"),
+        "degraded session should remain live after adoption, got: {:?}",
+        output_str
+    );
+
+    drop(daemon_c);
     cleanup(&dir);
 }
 

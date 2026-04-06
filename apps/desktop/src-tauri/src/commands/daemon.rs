@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,6 +9,32 @@ use crate::daemon_client::DaemonClient;
 
 pub type DaemonState = Arc<Mutex<Option<DaemonClient>>>;
 pub type AttachedSessions = Arc<Mutex<HashSet<String>>>;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TerminalSnapshotPayload {
+    pub version: u32,
+    pub rows: u16,
+    pub cols: u16,
+    pub cursor_row: u16,
+    pub cursor_col: u16,
+    #[serde(default = "default_cursor_visible")]
+    pub cursor_visible: bool,
+    pub vt: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SessionRecoveryStatePayload {
+    pub serialized: String,
+    pub cols: u16,
+    pub rows: u16,
+    #[serde(rename = "savedAt")]
+    pub saved_at: u64,
+    pub sequence: u64,
+}
+
+fn default_cursor_visible() -> bool {
+    true
+}
 
 const SCAN_BUFFER_CAP: usize = 4096;
 const SCAN_FLUSH_MS: u64 = 150;
@@ -20,16 +47,6 @@ const CLAUDE_IDLE_PROMPT: char = '\u{276F}';
 const CODEX_WORKING_INDICATOR: &str = "esc to interrupt";
 // Codex idle prompt character (›, U+203A). Present when waiting for input.
 const CODEX_IDLE_PROMPT: char = '\u{203A}';
-
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionRecoveryState {
-    pub serialized: String,
-    pub cols: u16,
-    pub rows: u16,
-    pub saved_at: u64,
-    pub sequence: u64,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 enum AgentProvider {
@@ -170,25 +187,18 @@ fn parse_ack(response: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn daemon_socket_path() -> PathBuf {
-    crate::daemon_socket_path()
-}
-
-fn parse_recovery_snapshot(response: &str) -> Result<Option<SessionRecoveryState>, String> {
+fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, String> {
     let event: serde_json::Value =
-        serde_json::from_str(response).map_err(|e| format!("bad response: {}", e))?;
+        serde_json::from_str(response).map_err(|e| format!("failed to parse event: {}", e))?;
 
     match event.get("type").and_then(|t| t.as_str()) {
-        Some("RecoverySnapshot") => {
-            let snapshot = match event.get("snapshot") {
-                None | Some(serde_json::Value::Null) => None,
-                Some(value) => Some(
-                    serde_json::from_value(value.clone())
-                        .map_err(|e| format!("bad recovery snapshot: {}", e))?,
-                ),
-            };
-            Ok(snapshot)
-        }
+        Some("Snapshot") => serde_json::from_value(
+            event
+                .get("snapshot")
+                .cloned()
+                .ok_or_else(|| "snapshot response missing payload".to_string())?,
+        )
+        .map_err(|e| format!("failed to parse snapshot payload: {}", e)),
         Some("Error") => {
             let msg = event
                 .get("message")
@@ -196,11 +206,48 @@ fn parse_recovery_snapshot(response: &str) -> Result<Option<SessionRecoveryState
                 .unwrap_or("unknown error");
             Err(msg.to_string())
         }
-        _ => Err(format!(
-            "unexpected recovery snapshot response: {}",
-            response
-        )),
+        _ => Err(format!("unexpected event: {}", response)),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_snapshot_response, TerminalSnapshotPayload};
+
+    #[test]
+    fn parse_snapshot_response_defaults_cursor_visible_for_older_payloads() {
+        let response = r#"{
+            "type":"Snapshot",
+            "session_id":"sess-1",
+            "snapshot":{
+                "version":1,
+                "rows":24,
+                "cols":80,
+                "cursor_row":10,
+                "cursor_col":5,
+                "vt":"hello"
+            }
+        }"#;
+
+        let snapshot = parse_snapshot_response(response).expect("snapshot should parse");
+
+        assert_eq!(
+            snapshot,
+            TerminalSnapshotPayload {
+                version: 1,
+                rows: 24,
+                cols: 80,
+                cursor_row: 10,
+                cursor_col: 5,
+                cursor_visible: true,
+                vt: "hello".to_string(),
+            }
+        );
+    }
+}
+
+fn daemon_socket_path() -> PathBuf {
+    crate::daemon_socket_path()
 }
 
 async fn ensure_connected(state: &DaemonState) -> Result<(), String> {
@@ -214,6 +261,7 @@ async fn ensure_connected(state: &DaemonState) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_session(
     state: tauri::State<'_, DaemonState>,
     session_id: String,
@@ -258,6 +306,34 @@ pub async fn spawn_session(
 }
 
 #[tauri::command]
+pub async fn get_session_recovery_state(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+) -> Result<Option<SessionRecoveryStatePayload>, String> {
+    let cmd = serde_json::json!({
+        "type": "Snapshot",
+        "session_id": session_id,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = guard.as_mut().unwrap();
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+    match parse_snapshot_response(&response) {
+        Ok(snapshot) => Ok(Some(SessionRecoveryStatePayload {
+            serialized: snapshot.vt,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            saved_at: 0,
+            sequence: 0,
+        })),
+        Err(message) if message.contains("session not found") => Ok(None),
+        Err(message) => Err(message),
+    }
+}
+
+#[tauri::command]
 pub async fn send_input(
     state: tauri::State<'_, DaemonState>,
     session_id: String,
@@ -273,8 +349,8 @@ pub async fn send_input(
     let mut guard = state.lock().await;
     let client = guard.as_mut().unwrap();
     client.send_command(&json).await?;
-    let _ = client.read_event().await; // consume Ok
-    Ok(())
+    let response = client.read_event().await?;
+    parse_ack(&response)
 }
 
 #[tauri::command]
@@ -372,30 +448,16 @@ pub async fn list_sessions(
     }
 }
 
-#[tauri::command]
-pub async fn get_session_recovery_state(
-    state: tauri::State<'_, DaemonState>,
-    session_id: String,
-) -> Result<Option<SessionRecoveryState>, String> {
-    let cmd = serde_json::json!({
-        "type": "GetRecoverySnapshot",
-        "session_id": session_id,
-    });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
-    client.send_command(&json).await?;
-    let response = client.read_event().await?;
-    parse_recovery_snapshot(&response)
-}
-
 pub async fn attach_session_inner(
     app: &tauri::AppHandle,
     session_id: String,
     attached: &AttachedSessions,
     agent_provider: Option<String>,
 ) -> Result<(), String> {
+    eprintln!(
+        "[attach] start session={} provider={:?}",
+        session_id, agent_provider
+    );
     // Create a dedicated connection for this session's output streaming.
     // This avoids mixing Output events with command responses.
     let socket_path = daemon_socket_path();
@@ -415,11 +477,13 @@ pub async fn attach_session_inner(
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("attach failed");
+        eprintln!("[attach] rejected session={} error={}", session_id, msg);
         return Err(msg.to_string());
     }
 
     // Track this session as attached
     attached.lock().await.insert(session_id.clone());
+    eprintln!("[attach] acknowledged session={}", session_id);
 
     // Determine the agent provider for pattern matching
     let provider = match agent_provider.as_deref() {
@@ -436,6 +500,8 @@ pub async fn attach_session_inner(
     tauri::async_runtime::spawn(async move {
         let scan_state =
             std::sync::Arc::new(tokio::sync::Mutex::new(SessionScanState::new(provider)));
+        let mut exited_normally = false;
+        let mut output_event_count: usize = 0;
 
         // Spawn a flush timer task
         let scan_state_timer = scan_state.clone();
@@ -470,6 +536,18 @@ pub async fn attach_session_inner(
             };
             match event.get("type").and_then(|t| t.as_str()) {
                 Some("Output") => {
+                    output_event_count += 1;
+                    if output_event_count <= 5 {
+                        let byte_len = event
+                            .get("data")
+                            .and_then(|d| d.as_array())
+                            .map(|d| d.len())
+                            .unwrap_or(0);
+                        eprintln!(
+                            "[attach] output session={} chunk={} bytes={}",
+                            sid, output_event_count, byte_len
+                        );
+                    }
                     // Convert data array to base64 string for efficient transfer
                     // The raw number array can be large and slow to serialize
                     if let Some(data) = event.get("data").and_then(|d| d.as_array()) {
@@ -571,11 +649,22 @@ pub async fn attach_session_inner(
                     // Session exited normally — remove from tracked set
                     flush_handle.abort();
                     attached_clone.lock().await.remove(&sid);
+                    eprintln!("[attach] exit event session={}", sid);
                     let _ = app.emit("session_exit", &event);
+                    exited_normally = true;
                     break;
                 }
                 _ => {}
             }
+        }
+        flush_handle.abort();
+        attached_clone.lock().await.remove(&sid);
+        if !exited_normally {
+            let payload = serde_json::json!({
+                "session_id": &sid,
+            });
+            let _ = app.emit("session_stream_lost", &payload);
+            eprintln!("[attach] emitted session_stream_lost session={}", sid);
         }
         eprintln!("[attach] output stream ended for session {}", sid);
     });
@@ -611,30 +700,4 @@ pub async fn detach_session(
     client.send_command(&json).await?;
     let response = client.read_event().await?;
     parse_ack(&response)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{parse_recovery_snapshot, SessionRecoveryState};
-
-    #[test]
-    fn parses_missing_recovery_snapshot() {
-        let response = r#"{"type":"RecoverySnapshot","snapshot":null}"#;
-        assert_eq!(parse_recovery_snapshot(response).unwrap(), None);
-    }
-
-    #[test]
-    fn parses_present_recovery_snapshot() {
-        let response = r#"{"type":"RecoverySnapshot","snapshot":{"serialized":"cached","cols":80,"rows":24,"savedAt":1,"sequence":2}}"#;
-        assert_eq!(
-            parse_recovery_snapshot(response).unwrap(),
-            Some(SessionRecoveryState {
-                serialized: "cached".to_string(),
-                cols: 80,
-                rows: 24,
-                saved_at: 1,
-                sequence: 2,
-            })
-        );
-    }
 }

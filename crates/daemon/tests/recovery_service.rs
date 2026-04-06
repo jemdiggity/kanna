@@ -1,113 +1,355 @@
-use kanna_daemon::recovery::RecoveryManager;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
+use std::process::{Child, Command};
+use std::time::Duration;
+
+use kanna_daemon::recovery::{RecoveryManager, SeededRecoverySnapshot};
+use serde::{Deserialize, Serialize};
 
 #[tokio::test]
-async fn recovery_service_returns_none_when_snapshot_is_missing() {
-    let manager = RecoveryManager::disconnected();
-
-    let snapshot = manager
-        .get_snapshot("task-missing")
-        .await
-        .expect("disconnected manager should degrade to no snapshot");
-
-    assert!(snapshot.is_none());
-}
-
-#[tokio::test]
-async fn recovery_service_sequences_increment_per_session() {
-    let manager = RecoveryManager::disconnected();
-
-    assert_eq!(manager.next_sequence("task-1"), 1);
-    assert_eq!(manager.next_sequence("task-1"), 2);
-    assert_eq!(manager.next_sequence("task-2"), 1);
-    assert_eq!(manager.next_sequence("task-1"), 3);
-}
-
-#[tokio::test]
-async fn recovery_service_mirrors_live_output_and_geometry() {
-    let manager = RecoveryManager::new_for_test()
+async fn daemon_fetches_restore_snapshot_from_recovery_manager() {
+    let recovery = RecoveryManager::new_for_test()
         .await
         .expect("test recovery manager should start");
 
-    manager
-        .start_session("task-live", 80, 24, false)
+    recovery
+        .start_session("session-1", 80, 24, false)
         .await
         .expect("start_session should succeed");
-    manager.write_output("task-live", b"hello", 1).await;
-    manager.write_output("task-live", b" world", 2).await;
-    manager.resize_session("task-live", 100, 30).await;
-
-    let snapshot = manager
-        .get_snapshot("task-live")
-        .await
-        .expect("snapshot request should succeed")
-        .expect("live session snapshot should exist");
-
-    assert_eq!(snapshot.cols, 100);
-    assert_eq!(snapshot.rows, 30);
-    assert_eq!(snapshot.sequence, 2);
-    assert!(snapshot.serialized.contains("hello world"));
-
-    manager.flush_and_shutdown().await;
-}
-
-#[tokio::test]
-async fn recovery_service_flushes_snapshot_before_shutdown() {
-    let manager = RecoveryManager::new_for_test()
-        .await
-        .expect("test recovery manager should start");
-
-    manager
-        .start_session("task-persisted", 80, 24, false)
-        .await
-        .expect("start_session should succeed");
-    manager
-        .write_output("task-persisted", b"persist me", 1)
+    recovery
+        .write_output("session-1", b"hello from recovery\r\n", 1)
         .await;
-    manager.flush_and_shutdown().await;
 
-    let snapshot_path = manager.snapshot_file_for_test("task-persisted");
-    let serialized =
-        std::fs::read_to_string(snapshot_path).expect("flush should persist a snapshot file");
+    let snapshot = recovery
+        .get_snapshot("session-1")
+        .await
+        .expect("snapshot request should succeed")
+        .expect("snapshot should exist");
 
-    assert!(serialized.contains("\"sequence\":1"));
-    assert!(serialized.contains("persist me"));
+    assert!(snapshot.serialized.contains("hello from recovery"));
 }
 
 #[tokio::test]
-async fn recovery_service_resumes_existing_session_from_disk_after_restart() {
-    let manager = RecoveryManager::new_for_test()
+async fn recovery_end_session_removes_snapshot_artifact() {
+    let recovery = RecoveryManager::new_for_test()
         .await
         .expect("test recovery manager should start");
-    let snapshot_path = manager.snapshot_file_for_test("task-resume");
-    let snapshot_dir = snapshot_path
-        .parent()
-        .expect("snapshot path should have a parent")
-        .to_path_buf();
 
-    manager
-        .start_session("task-resume", 80, 24, false)
+    recovery
+        .start_session("session-2", 80, 24, false)
         .await
-        .expect("initial start_session should succeed");
-    manager.write_output("task-resume", b"persisted", 1).await;
-    manager.flush_and_shutdown().await;
+        .expect("start_session should succeed");
+    recovery.write_output("session-2", b"bye\r\n", 1).await;
 
-    let resumed_manager = RecoveryManager::new_for_test_with_snapshot_dir(snapshot_dir)
+    let snapshot_path = recovery.snapshot_file_for_test("session-2");
+    let mut persisted = false;
+    for _ in 0..20 {
+        if snapshot_path.exists() {
+            persisted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(persisted, "snapshot file should be persisted");
+
+    recovery.end_session("session-2").await;
+
+    let mut removed = false;
+    for _ in 0..20 {
+        if !snapshot_path.exists() {
+            removed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(removed, "ended sessions should not keep recovery artifacts");
+    assert!(
+        recovery
+            .get_snapshot("session-2")
+            .await
+            .expect("snapshot lookup should succeed")
+            .is_none(),
+        "ended sessions should not return snapshots"
+    );
+}
+
+#[tokio::test]
+async fn recovery_start_session_surfaces_invalid_snapshot_file() {
+    let recovery = RecoveryManager::new_for_test()
         .await
-        .expect("replacement recovery manager should start");
+        .expect("test recovery manager should start");
 
-    resumed_manager
-        .start_session("task-resume", 80, 24, true)
+    let path = recovery.snapshot_file_for_test("session-bad");
+    std::fs::write(&path, b"not valid json").expect("should seed invalid recovery file");
+
+    let error = recovery
+        .start_session("session-bad", 80, 24, true)
         .await
-        .expect("resumed start_session should succeed");
+        .expect_err("invalid recovery snapshots should fail session restore");
 
-    let snapshot = resumed_manager
-        .get_snapshot("task-resume")
+    assert!(error.contains("persisted snapshot"));
+}
+
+#[tokio::test]
+async fn recovery_seeded_snapshot_can_resume_adopted_session() {
+    let recovery = RecoveryManager::new_for_test()
+        .await
+        .expect("test recovery manager should start");
+
+    recovery
+        .seed_snapshot(
+            "adopted-session",
+            &SeededRecoverySnapshot {
+                serialized: "hello from handoff\r\n".to_string(),
+                cols: 120,
+                rows: 45,
+                cursor_row: 1,
+                cursor_col: 2,
+                cursor_visible: true,
+            },
+        )
+        .expect("should seed adopted recovery snapshot");
+
+    recovery
+        .start_session("adopted-session", 120, 45, true)
+        .await
+        .expect("seeded adopted session should resume from disk");
+
+    let snapshot = recovery
+        .get_snapshot("adopted-session")
         .await
         .expect("snapshot request should succeed")
-        .expect("resumed session snapshot should exist");
+        .expect("snapshot should exist");
 
-    assert_eq!(snapshot.sequence, 1);
-    assert!(snapshot.serialized.contains("persisted"));
+    assert!(snapshot.serialized.contains("hello from handoff"));
+    assert_eq!(snapshot.cols, 120);
+    assert_eq!(snapshot.rows, 45);
+}
 
-    resumed_manager.flush_and_shutdown().await;
+#[allow(dead_code)]
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum Cmd {
+    Spawn {
+        session_id: String,
+        executable: String,
+        args: Vec<String>,
+        cwd: String,
+        env: HashMap<String, String>,
+        cols: u16,
+        rows: u16,
+    },
+    Attach {
+        session_id: String,
+    },
+    Snapshot {
+        session_id: String,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum Evt {
+    Output {
+        session_id: String,
+        data: Vec<u8>,
+    },
+    Exit {
+        session_id: String,
+        code: i32,
+    },
+    SessionCreated {
+        session_id: String,
+    },
+    Snapshot {
+        session_id: String,
+        snapshot: SnapshotPayload,
+    },
+    Ok,
+    Error {
+        message: String,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotPayload {
+    version: u32,
+    rows: u16,
+    cols: u16,
+    cursor_row: u16,
+    cursor_col: u16,
+    cursor_visible: bool,
+    vt: String,
+}
+
+fn compute_socket_path(dir: &PathBuf) -> PathBuf {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    dir.hash(&mut hasher);
+    let hash = hasher.finish() as u32;
+    PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
+}
+
+struct DaemonHandle {
+    child: Child,
+    socket_path: PathBuf,
+    _dir: PathBuf,
+}
+
+impl DaemonHandle {
+    fn start() -> Self {
+        let dir = std::env::temp_dir().join(format!("kanna-recovery-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("should create test daemon dir");
+
+        let socket_path = compute_socket_path(&dir);
+        let _ = std::fs::remove_file(&socket_path);
+        let pid_path = dir.join("daemon.pid");
+        let _ = std::fs::remove_file(&pid_path);
+
+        let daemon_bin = PathBuf::from(env!("CARGO_BIN_EXE_kanna-daemon"));
+        let child = Command::new(&daemon_bin)
+            .env(
+                "KANNA_DAEMON_DIR",
+                dir.to_str().expect("temp path should be utf8"),
+            )
+            .spawn()
+            .expect("failed to start daemon");
+
+        for _ in 0..50 {
+            let pid_matches = std::fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|pid| pid.trim().parse::<u32>().ok())
+                == Some(child.id());
+            if pid_matches && UnixStream::connect(&socket_path).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        assert!(
+            std::fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|pid| pid.trim().parse::<u32>().ok())
+                == Some(child.id())
+                && UnixStream::connect(&socket_path).is_ok(),
+            "daemon was not ready at {:?}",
+            socket_path
+        );
+
+        Self {
+            child,
+            socket_path,
+            _dir: dir,
+        }
+    }
+
+    fn connect(&self) -> ClientConn {
+        let stream = UnixStream::connect(&self.socket_path).expect("failed to connect to daemon");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("should set read timeout");
+        ClientConn {
+            reader: BufReader::new(stream.try_clone().expect("should clone stream")),
+            writer: stream,
+        }
+    }
+}
+
+impl Drop for DaemonHandle {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self._dir);
+    }
+}
+
+struct ClientConn {
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
+}
+
+impl ClientConn {
+    fn send(&mut self, cmd: &Cmd) {
+        let mut json = serde_json::to_string(cmd).expect("should serialize command");
+        json.push('\n');
+        self.writer
+            .write_all(json.as_bytes())
+            .expect("should write command");
+        self.writer.flush().expect("should flush command");
+    }
+
+    fn recv(&mut self) -> Evt {
+        let mut line = String::new();
+        self.reader.read_line(&mut line).expect("read timed out");
+        serde_json::from_str(line.trim())
+            .unwrap_or_else(|error| panic!("failed to parse event: {} — {:?}", error, line.trim()))
+    }
+
+    fn recv_until_exit(&mut self, session_id: &str) -> i32 {
+        loop {
+            match self.recv() {
+                Evt::Exit {
+                    session_id: exited_id,
+                    code,
+                } if exited_id == session_id => return code,
+                Evt::Output { .. } => continue,
+                other => panic!("expected Exit for {}, got {:?}", session_id, other),
+            }
+        }
+    }
+}
+
+#[test]
+fn daemon_does_not_serve_snapshot_after_session_exit() {
+    let daemon = DaemonHandle::start();
+    let session_id = "exiting-session";
+    let mut conn = daemon.connect();
+
+    conn.send(&Cmd::Spawn {
+        session_id: session_id.to_string(),
+        executable: "/bin/sh".to_string(),
+        args: vec!["-lc".to_string(), "printf 'done\\n'".to_string()],
+        cwd: "/tmp".to_string(),
+        env: HashMap::new(),
+        cols: 80,
+        rows: 24,
+    });
+
+    match conn.recv() {
+        Evt::SessionCreated {
+            session_id: created,
+        } => assert_eq!(created, session_id),
+        other => panic!("expected SessionCreated, got {:?}", other),
+    }
+
+    conn.send(&Cmd::Attach {
+        session_id: session_id.to_string(),
+    });
+    match conn.recv() {
+        Evt::Ok => {}
+        other => panic!("expected Ok, got {:?}", other),
+    }
+
+    let exit_code = conn.recv_until_exit(session_id);
+    assert_eq!(exit_code, 0);
+
+    conn.send(&Cmd::Snapshot {
+        session_id: session_id.to_string(),
+    });
+    match conn.recv() {
+        Evt::Error { message } => assert!(
+            message.contains("session not found"),
+            "unexpected snapshot error: {}",
+            message
+        ),
+        other => panic!("expected snapshot error, got {:?}", other),
+    }
 }
