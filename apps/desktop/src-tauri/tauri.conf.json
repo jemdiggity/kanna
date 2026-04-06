@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "../../scripts/sync-version.sh && bun run build:sidecars && bun run build",
     "frontendDist": "../dist"
   },
   "app": {

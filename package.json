@@ -4,7 +4,7 @@
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "build": "turbo build",
-    "dev": "cd apps/desktop && bun tauri dev",
+    "dev": "./scripts/sync-version.sh && cd apps/desktop && bun run build:sidecars && bun tauri dev",
     "test": "turbo test",
     "lint": "turbo lint"
   },
