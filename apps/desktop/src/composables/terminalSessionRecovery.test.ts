@@ -113,7 +113,7 @@ describe("shouldReattachOnDaemonReady", () => {
         { cwd: "/tmp/repo", prompt: "", spawnFn },
         undefined,
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
@@ -175,13 +175,13 @@ describe("shouldRestoreRecoveryState", () => {
     ).toBe(true);
   });
 
-  it("does not restore cached state for shell terminals", () => {
+  it("restores cached state for shell terminals too", () => {
     expect(
       shouldRestoreRecoveryState(
         { cwd: "/tmp/repo", prompt: "", spawnFn: async () => {} },
         undefined,
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

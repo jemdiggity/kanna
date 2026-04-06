@@ -29,9 +29,9 @@ export function getTerminalRecoveryMode(
 
 export function shouldReattachOnDaemonReady(
   spawnOptions?: SpawnOptions,
-  options?: TerminalOptions,
+  _options?: TerminalOptions,
 ): boolean {
-  return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
+  return !!spawnOptions;
 }
 
 export function shouldDelayConnectUntilAfterInitialLayout(
@@ -43,9 +43,9 @@ export function shouldDelayConnectUntilAfterInitialLayout(
 
 export function shouldRestoreRecoveryState(
   spawnOptions?: SpawnOptions,
-  options?: TerminalOptions,
+  _options?: TerminalOptions,
 ): boolean {
-  return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
+  return !!spawnOptions;
 }
 
 export function shouldRunTerminalDispose(alreadyDisposed: boolean): boolean {
