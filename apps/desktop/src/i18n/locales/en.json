@@ -117,6 +117,8 @@
     "blockTaskFailed": "Failed to block task",
     "selectRepoFirst": "Select a repository first",
     "agentStartFailed": "Agent failed to start",
+    "daemonHandoffRespawned": "The previous terminal session could not be reattached after restart. A new session was started.",
+    "daemonHandoffRespawnedWithScrollback": "The previous terminal session could not be reattached after restart. Scrollback was restored and a new session was started.",
     "pipelineNotFound": "Pipeline definition not found",
     "taskAtFinalStage": "Task is at the final stage",
     "stageTeardownFailed": "Stage teardown script failed",

@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::process::Command;
 use std::sync::OnceLock;
+use serde::Serialize;
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -35,6 +36,24 @@ pub fn get_app_data_dir(app: AppHandle) -> Result<String, String> {
         .app_data_dir()
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| format!("failed to get app data dir: {}", e))
+}
+
+#[derive(Serialize)]
+pub struct AppBuildInfo {
+    pub version: String,
+    pub branch: String,
+    pub commit_hash: String,
+    pub worktree: String,
+}
+
+#[tauri::command]
+pub fn get_app_build_info() -> AppBuildInfo {
+    AppBuildInfo {
+        version: env!("KANNA_VERSION").to_string(),
+        branch: env!("KANNA_BUILD_BRANCH").to_string(),
+        commit_hash: env!("KANNA_BUILD_COMMIT").to_string(),
+        worktree: env!("KANNA_BUILD_WORKTREE").to_string(),
+    }
 }
 
 #[tauri::command]

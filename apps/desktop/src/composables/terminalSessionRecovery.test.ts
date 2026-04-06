@@ -4,8 +4,10 @@ import {
   formatAttachFailureMessage,
   getTaskTerminalEnv,
   getTerminalRecoveryMode,
+  isDaemonHandoffFailure,
   getReconnectRedrawPolicy,
   getReconnectKeyboardPush,
+  shouldRespawnAfterAttachFailure,
   shouldEnableKittyKeyboard,
   shouldPushKittyKeyboardOnFreshAttach,
   shouldRestoreRecoveryState,
@@ -47,6 +49,52 @@ describe("formatAttachFailureMessage", () => {
   });
 });
 
+describe("isDaemonHandoffFailure", () => {
+  it("recognizes explicit daemon handoff loss errors", () => {
+    expect(
+      isDaemonHandoffFailure("session lost during daemon handoff: failed to receive PTY fd")
+    ).toBe(true);
+  });
+
+  it("ignores generic attach failures", () => {
+    expect(isDaemonHandoffFailure("session not found")).toBe(false);
+  });
+});
+
+describe("shouldRespawnAfterAttachFailure", () => {
+  const spawnFn = async () => {};
+
+  it("respawns task terminals after explicit daemon handoff loss", () => {
+    expect(
+      shouldRespawnAfterAttachFailure(
+        "session lost during daemon handoff: failed to receive PTY fd",
+        { cwd: "/tmp/task", prompt: "do work", spawnFn },
+        { agentProvider: "claude", worktreePath: "/tmp/task" },
+      )
+    ).toBe(true);
+  });
+
+  it("does not respawn for generic reconnect failures", () => {
+    expect(
+      shouldRespawnAfterAttachFailure(
+        "session not found",
+        { cwd: "/tmp/task", prompt: "do work", spawnFn },
+        { agentProvider: "claude", worktreePath: "/tmp/task" },
+      )
+    ).toBe(false);
+  });
+
+  it("does not respawn shell terminals from attach failure fallback", () => {
+    expect(
+      shouldRespawnAfterAttachFailure(
+        "session lost during daemon handoff: failed to receive PTY fd",
+        { cwd: "/tmp/repo", prompt: "", spawnFn },
+        undefined,
+      )
+    ).toBe(false);
+  });
+});
+
 describe("shouldReattachOnDaemonReady", () => {
   const spawnFn = async () => {};
 
@@ -65,7 +113,7 @@ describe("shouldReattachOnDaemonReady", () => {
         { cwd: "/tmp/repo", prompt: "", spawnFn },
         undefined,
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
@@ -127,13 +175,13 @@ describe("shouldRestoreRecoveryState", () => {
     ).toBe(true);
   });
 
-  it("does not restore cached state for shell terminals", () => {
+  it("restores cached state for shell terminals too", () => {
     expect(
       shouldRestoreRecoveryState(
         { cwd: "/tmp/repo", prompt: "", spawnFn: async () => {} },
         undefined,
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

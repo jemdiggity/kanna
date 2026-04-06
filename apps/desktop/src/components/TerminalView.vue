@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch } from "vue"
 import { useTerminal, type SpawnOptions } from "../composables/useTerminal"
 import { shouldDelayConnectUntilAfterInitialLayout } from "../composables/terminalSessionRecovery"
+import { shouldStartTerminalSession } from "../composables/terminalVisibility"
 import "@xterm/xterm/css/xterm.css"
 
 const props = defineProps<{
@@ -27,7 +28,7 @@ let resizeObserver: ResizeObserver | null = null
 let started = false
 
 async function startWhenActive() {
-  if (!props.active || started || !containerRef.value) return
+  if (!shouldStartTerminalSession(props.active) || started || !containerRef.value) return
   started = true
   if (shouldDelayConnectUntilAfterInitialLayout(props.spawnOptions, {
     agentProvider: props.agentProvider,

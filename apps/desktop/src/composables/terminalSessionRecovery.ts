@@ -17,6 +17,8 @@ export interface TerminalGeometry {
   rows: number;
 }
 
+const DAEMON_HANDOFF_FAILURE_PREFIX = "session lost during daemon handoff:";
+
 export function getTerminalRecoveryMode(
   spawnOptions?: SpawnOptions,
   options?: TerminalOptions,
@@ -27,9 +29,9 @@ export function getTerminalRecoveryMode(
 
 export function shouldReattachOnDaemonReady(
   spawnOptions?: SpawnOptions,
-  options?: TerminalOptions,
+  _options?: TerminalOptions,
 ): boolean {
-  return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
+  return !!spawnOptions;
 }
 
 export function shouldDelayConnectUntilAfterInitialLayout(
@@ -41,9 +43,9 @@ export function shouldDelayConnectUntilAfterInitialLayout(
 
 export function shouldRestoreRecoveryState(
   spawnOptions?: SpawnOptions,
-  options?: TerminalOptions,
+  _options?: TerminalOptions,
 ): boolean {
-  return getTerminalRecoveryMode(spawnOptions, options) === "attach-only";
+  return !!spawnOptions;
 }
 
 export function shouldRunTerminalDispose(alreadyDisposed: boolean): boolean {
@@ -85,6 +87,21 @@ export function getTaskTerminalEnv(agentProvider?: string): TaskTerminalEnv {
 
 export function formatAttachFailureMessage(message: string): string {
   return `\r\n\x1b[31mFailed to reconnect to existing session: ${message}\x1b[0m\r\n`;
+}
+
+export function isDaemonHandoffFailure(message: string): boolean {
+  return message.startsWith(DAEMON_HANDOFF_FAILURE_PREFIX);
+}
+
+export function shouldRespawnAfterAttachFailure(
+  message: string,
+  spawnOptions?: SpawnOptions,
+  options?: TerminalOptions,
+): boolean {
+  return (
+    getTerminalRecoveryMode(spawnOptions, options) === "attach-only" &&
+    isDaemonHandoffFailure(message)
+  );
 }
 
 export function shouldForceDoubleResizeOnReconnect(_options?: TerminalOptions): boolean {

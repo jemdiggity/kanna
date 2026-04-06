@@ -33,6 +33,12 @@ type SessionSizes = Arc<Mutex<HashMap<String, HashMap<usize, (u16, u16)>>>>;
 /// Observers receive Output/Exit events but don't claim the Attach writer.
 type SessionObservers =
     Arc<Mutex<HashMap<String, Vec<Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>>>>>;
+type LostHandoffSessions = Arc<Mutex<HashMap<String, String>>>;
+
+struct HandoffResult {
+    adopted: Vec<(String, pty::PtySession)>,
+    lost: HashMap<String, String>,
+}
 
 #[derive(Clone)]
 struct DaemonContext {
@@ -42,6 +48,7 @@ struct DaemonContext {
     pre_attach_buffers: PreAttachBuffers,
     session_sizes: SessionSizes,
     session_observers: SessionObservers,
+    lost_handoff_sessions: LostHandoffSessions,
     recovery_manager: RecoveryManager,
 }
 
@@ -69,6 +76,10 @@ fn socket_path(dir: &PathBuf) -> PathBuf {
     PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
 }
 
+fn handoff_loss_message(reason: impl Into<String>) -> String {
+    format!("session lost during daemon handoff: {}", reason.into())
+}
+
 #[tokio::main]
 async fn main() {
     let dir = app_support_dir();
@@ -89,7 +100,7 @@ async fn main() {
     let socket_path = socket_path(&dir);
 
     // Attempt handoff from old daemon (if running)
-    let adopted = attempt_handoff(&pid_path, &socket_path).await;
+    let handoff_result = attempt_handoff(&pid_path, &socket_path).await;
 
     // Write our PID
     let pid = std::process::id();
@@ -111,12 +122,13 @@ async fn main() {
     let pre_attach_buffers: PreAttachBuffers = Arc::new(Mutex::new(HashMap::new()));
     let session_sizes: SessionSizes = Arc::new(Mutex::new(HashMap::new()));
     let session_observers: SessionObservers = Arc::new(Mutex::new(HashMap::new()));
+    let lost_handoff_sessions: LostHandoffSessions = Arc::new(Mutex::new(handoff_result.lost));
     let recovery_manager = RecoveryManager::start().await;
 
     // Adopt handed-off sessions
-    if !adopted.is_empty() {
+    if !handoff_result.adopted.is_empty() {
         let mut mgr = sessions.lock().await;
-        for (session_id, pty_session) in adopted {
+        for (session_id, pty_session) in handoff_result.adopted {
             log::info!(
                 "[handoff] adopted session {} (pid={})",
                 session_id,
@@ -135,6 +147,7 @@ async fn main() {
         pre_attach_buffers: pre_attach_buffers.clone(),
         session_sizes: session_sizes.clone(),
         session_observers: session_observers.clone(),
+        lost_handoff_sessions: lost_handoff_sessions.clone(),
         recovery_manager: recovery_manager.clone(),
     };
 
@@ -171,10 +184,7 @@ async fn main() {
 
 /// Try to take over sessions from an existing daemon.
 /// Returns adopted (session_id, PtySession) pairs.
-async fn attempt_handoff(
-    pid_path: &PathBuf,
-    socket_path: &PathBuf,
-) -> Vec<(String, pty::PtySession)> {
+async fn attempt_handoff(pid_path: &PathBuf, socket_path: &PathBuf) -> HandoffResult {
     log::info!(
         "[handoff] checking for old daemon: pid_path={:?}, socket_path={:?}",
         pid_path,
@@ -190,16 +200,25 @@ async fn attempt_handoff(
                     "[handoff] pid file contains {} but process is not running",
                     pid
                 );
-                return vec![];
+                return HandoffResult {
+                    adopted: vec![],
+                    lost: HashMap::new(),
+                };
             }
             _ => {
                 log::info!("[handoff] pid file has invalid content: {:?}", s.trim());
-                return vec![];
+                return HandoffResult {
+                    adopted: vec![],
+                    lost: HashMap::new(),
+                };
             }
         },
         Err(e) => {
             log::info!("[handoff] no pid file: {}", e);
-            return vec![];
+            return HandoffResult {
+                adopted: vec![],
+                lost: HashMap::new(),
+            };
         }
     };
 
@@ -221,7 +240,10 @@ async fn attempt_handoff(
                 socket_path,
                 e
             );
-            return vec![];
+            return HandoffResult {
+                adopted: vec![],
+                lost: HashMap::new(),
+            };
         }
     };
 
@@ -237,7 +259,10 @@ async fn attempt_handoff(
     use tokio::io::AsyncWriteExt;
     if let Err(e) = writer.write_all(json.as_bytes()).await {
         log::info!("[handoff] failed to send handoff command: {}", e);
-        return vec![];
+        return HandoffResult {
+            adopted: vec![],
+            lost: HashMap::new(),
+        };
     }
     let _ = writer.flush().await;
     log::info!(
@@ -257,7 +282,10 @@ async fn attempt_handoff(
         Ok(Ok(_)) => {}
         _ => {
             log::info!("[handoff] timeout or error reading handoff response");
-            return vec![];
+            return HandoffResult {
+                adopted: vec![],
+                lost: HashMap::new(),
+            };
         }
     }
 
@@ -265,7 +293,10 @@ async fn attempt_handoff(
         Ok(v) => v,
         Err(e) => {
             log::info!("[handoff] invalid response: {}", e);
-            return vec![];
+            return HandoffResult {
+                adopted: vec![],
+                lost: HashMap::new(),
+            };
         }
     };
 
@@ -279,11 +310,17 @@ async fn attempt_handoff(
                 .and_then(|m| m.as_str())
                 .unwrap_or("unknown");
             log::info!("[handoff] old daemon refused: {}", msg);
-            return vec![];
+            return HandoffResult {
+                adopted: vec![],
+                lost: HashMap::new(),
+            };
         }
         other => {
             log::info!("[handoff] unexpected response type: {:?}", other);
-            return vec![];
+            return HandoffResult {
+                adopted: vec![],
+                lost: HashMap::new(),
+            };
         }
     }
 
@@ -295,7 +332,10 @@ async fn attempt_handoff(
 
     if session_infos.is_empty() {
         log::info!("[handoff] no sessions to adopt");
-        return vec![];
+        return HandoffResult {
+            adopted: vec![],
+            lost: HashMap::new(),
+        };
     }
 
     for (i, info) in session_infos.iter().enumerate() {
@@ -322,22 +362,42 @@ async fn attempt_handoff(
             fds
         }
         Err(e) => {
+            let reason = handoff_loss_message(format!("failed to receive PTY fd: {}", e));
+            let lost = session_infos
+                .iter()
+                .map(|info| (info.session_id.clone(), reason.clone()))
+                .collect();
             log::info!(
                 "[handoff] failed to receive fds: {} (kind={:?})",
                 e,
                 e.kind()
             );
-            return vec![];
+            return HandoffResult {
+                adopted: vec![],
+                lost,
+            };
         }
     };
 
     if fds.len() != session_infos.len() {
+        let reason = handoff_loss_message(format!(
+            "fd count mismatch during handoff: expected {}, got {}",
+            session_infos.len(),
+            fds.len()
+        ));
+        let lost = session_infos
+            .iter()
+            .map(|info| (info.session_id.clone(), reason.clone()))
+            .collect();
         log::info!(
             "[handoff] fd count mismatch: got {}, expected {}",
             fds.len(),
             session_infos.len()
         );
-        return vec![];
+        return HandoffResult {
+            adopted: vec![],
+            lost,
+        };
     }
 
     // Build adopted sessions
@@ -357,7 +417,10 @@ async fn attempt_handoff(
     }
 
     log::info!("[handoff] complete, adopted {} sessions", adopted.len());
-    adopted
+    HandoffResult {
+        adopted,
+        lost: HashMap::new(),
+    }
 }
 
 async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
@@ -471,6 +534,12 @@ async fn handle_command(
                 return;
             }
 
+            daemon_context
+                .lost_handoff_sessions
+                .lock()
+                .await
+                .remove(&session_id);
+
             match pty::PtySession::spawn(&executable, &args, &cwd, &env, cols, rows) {
                 Ok(pty_session) => {
                     let pty_reader = pty_session.try_clone_reader();
@@ -530,8 +599,15 @@ async fn handle_command(
             log::info!("[attach] session={}", session_id);
             let mgr = daemon_context.sessions.lock().await;
             if !mgr.contains(&session_id) {
+                let lost_message = daemon_context
+                    .lost_handoff_sessions
+                    .lock()
+                    .await
+                    .get(&session_id)
+                    .cloned();
                 let evt = Event::Error {
-                    message: format!("session not found: {}", session_id),
+                    message: lost_message
+                        .unwrap_or_else(|| format!("session not found: {}", session_id)),
                 };
                 drop(mgr);
                 let _ = write_event(&mut *writer.lock().await, &evt).await;

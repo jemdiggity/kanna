@@ -180,12 +180,13 @@ fn parse_recovery_snapshot(response: &str) -> Result<Option<SessionRecoveryState
 
     match event.get("type").and_then(|t| t.as_str()) {
         Some("RecoverySnapshot") => {
-            let snapshot = event
-                .get("snapshot")
-                .cloned()
-                .map(serde_json::from_value)
-                .transpose()
-                .map_err(|e| format!("bad recovery snapshot: {}", e))?;
+            let snapshot = match event.get("snapshot") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(
+                    serde_json::from_value(value.clone())
+                        .map_err(|e| format!("bad recovery snapshot: {}", e))?,
+                ),
+            };
             Ok(snapshot)
         }
         Some("Error") => {

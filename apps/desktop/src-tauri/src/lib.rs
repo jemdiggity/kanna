@@ -641,6 +641,7 @@ pub fn run() {
             commands::fs::read_env_var,
             commands::fs::append_log,
             commands::fs::get_app_data_dir,
+            commands::fs::get_app_build_info,
             commands::fs::get_pipeline_socket_path,
             commands::fs::copy_file,
             commands::fs::remove_file,

@@ -18,6 +18,7 @@ import {
   getReconnectRedrawPolicy,
   getReconnectKeyboardPush,
   getTerminalRecoveryMode,
+  shouldRespawnAfterAttachFailure,
   shouldPushKittyKeyboardOnFreshAttach,
   shouldRestoreRecoveryState,
   shouldResetTerminalOnReconnect,
@@ -27,6 +28,8 @@ import {
   shouldForceDoubleResizeOnReconnect,
   shouldReattachOnDaemonReady,
 } from "./terminalSessionRecovery"
+import { useToast } from "./useToast"
+import i18n from "../i18n"
 
 export interface SpawnOptions {
   cwd: string
@@ -41,6 +44,7 @@ export interface TerminalOptions {
 }
 
 export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, options?: TerminalOptions) {
+  const toast = useToast()
   const terminal = ref<Terminal | null>(null)
   const fitAddon = new FitAddon()
   let unlistenOutput: (() => void) | null = null
@@ -425,10 +429,17 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       }
       return
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
       if (recoveryMode === "attach-only") {
-        const msg = e instanceof Error ? e.message : String(e)
         terminal.value?.write(formatAttachFailureMessage(msg))
-        return
+        if (shouldRespawnAfterAttachFailure(msg, spawnOptions, options)) {
+          const toastKey = restoredRecoveryState
+            ? "toasts.daemonHandoffRespawnedWithScrollback"
+            : "toasts.daemonHandoffRespawned"
+          toast.warning(i18n.global.t(toastKey))
+        } else {
+          return
+        }
       }
     } finally {
       connecting = false

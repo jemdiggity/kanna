@@ -18,8 +18,10 @@ import {
   closePipelineItemAndClearCachedTerminalState,
   isTeardownSessionId,
   reportCloseSessionError,
+  reportPrewarmSessionError,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
+import { formatAppWindowTitle, type AppBuildInfo } from "./windowTitle";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
 import {
@@ -420,7 +422,7 @@ export const useKannaStore = defineStore("kanna", () => {
     selectedRepoId.value = id;
     if (isTauri) {
       spawnShellSession(`shell-repo-${id}`, path, null, false)
-        .catch(e => console.error("[store] repo shell pre-warm failed:", e));
+        .catch(e => reportPrewarmSessionError("[store] repo shell pre-warm failed:", e));
     }
   }
 
@@ -443,7 +445,7 @@ export const useKannaStore = defineStore("kanna", () => {
     selectedRepoId.value = id;
     if (isTauri) {
       spawnShellSession(`shell-repo-${id}`, path, null, false)
-        .catch(e => console.error("[store] repo shell pre-warm failed:", e));
+        .catch(e => reportPrewarmSessionError("[store] repo shell pre-warm failed:", e));
     }
   }
 
@@ -457,7 +459,7 @@ export const useKannaStore = defineStore("kanna", () => {
     selectedRepoId.value = id;
     if (isTauri) {
       spawnShellSession(`shell-repo-${id}`, destination, null, false)
-        .catch(e => console.error("[store] repo shell pre-warm failed:", e));
+        .catch(e => reportPrewarmSessionError("[store] repo shell pre-warm failed:", e));
     }
   }
 
@@ -660,7 +662,7 @@ export const useKannaStore = defineStore("kanna", () => {
 
       // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
       spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv))
-        .catch(e => console.error("[store] shell pre-warm failed:", e));
+        .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
 
       s1 = performance.now();
       try {
@@ -1765,12 +1767,23 @@ export const useKannaStore = defineStore("kanna", () => {
     // Set window title for non-main branches
     if (isTauri) {
       try {
-        const info = await invoke<{ branch: string; commit_hash: string; version: string }>("git_app_info");
-        if (info.branch !== "main" && info.branch !== "master") {
+        const [branch, commitHash, worktree, gitInfo] = await Promise.all([
+          invoke<string>("read_env_var", { name: "KANNA_BUILD_BRANCH" }).catch(() => ""),
+          invoke<string>("read_env_var", { name: "KANNA_BUILD_COMMIT" }).catch(() => ""),
+          invoke<string>("read_env_var", { name: "KANNA_BUILD_WORKTREE" }).catch(() => ""),
+          invoke<{ version: string }>("git_app_info").catch(() => ({ version: "" })),
+        ]);
+        const title = formatAppWindowTitle({
+          branch,
+          commitHash,
+          worktree,
+          version: gitInfo.version,
+        } satisfies AppBuildInfo);
+        if (title) {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
-          await getCurrentWindow().setTitle(`Kanna — ${info.branch} (${info.version} @ ${info.commit_hash})`);
+          await getCurrentWindow().setTitle(title);
         }
-      } catch (e) { console.error("[store] git_app_info failed:", e); }
+      } catch (e) { console.error("[store] failed to set window title:", e); }
     }
 
     // Pre-warm shell sessions so ⌘J / ⇧⌘J are instant
@@ -1782,11 +1795,11 @@ export const useKannaStore = defineStore("kanna", () => {
         if (!repo) continue;
         const wtPath = `${repo.path}/.kanna-worktrees/${item.branch}`;
         spawnShellSession(`shell-wt-${item.id}`, wtPath, item.port_env, true)
-          .catch(e => console.error("[store] shell pre-warm failed:", e));
+          .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
       }
       for (const repo of eagerRepos) {
         spawnShellSession(`shell-repo-${repo.id}`, repo.path, null, false)
-          .catch(e => console.error("[store] repo shell pre-warm failed:", e));
+          .catch(e => reportPrewarmSessionError("[store] repo shell pre-warm failed:", e));
       }
     }
 
