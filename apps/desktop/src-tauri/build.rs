@@ -19,5 +19,20 @@ fn main() {
     }
     println!("cargo:rerun-if-changed={}", version_file.display());
 
+    let build_branch = std::env::var("KANNA_BUILD_BRANCH").unwrap_or_default();
+    let build_commit = std::env::var("KANNA_BUILD_COMMIT").unwrap_or_default();
+    let build_worktree = std::env::var("KANNA_BUILD_WORKTREE").unwrap_or_default();
+    let build_info = if build_branch.is_empty() {
+        String::new()
+    } else if build_worktree.is_empty() {
+        format!("{} @ {}", build_branch, build_commit)
+    } else {
+        format!("{} · {} @ {}", build_worktree, build_branch, build_commit)
+    };
+    println!("cargo:rustc-env=KANNA_BUILD_INFO={}", build_info);
+    println!("cargo:rerun-if-env-changed=KANNA_BUILD_BRANCH");
+    println!("cargo:rerun-if-env-changed=KANNA_BUILD_COMMIT");
+    println!("cargo:rerun-if-env-changed=KANNA_BUILD_WORKTREE");
+
     tauri_build::build()
 }

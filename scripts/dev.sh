@@ -16,13 +16,17 @@
 #   ./scripts/dev.sh start --seed # start + seed
 set -e
 ROOT="$(git rev-parse --show-toplevel)"
+export KANNA_BUILD_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+export KANNA_BUILD_COMMIT="$(git rev-parse --short HEAD)"
 
 # Auto-detect worktree by checking if we're inside .kanna-worktrees/
 if [ -n "$KANNA_WORKTREE" ] || echo "$ROOT" | grep -q '\.kanna-worktrees/'; then
   export KANNA_WORKTREE=1
   WORKTREE_NAME="$(basename "$ROOT")"
+  export KANNA_BUILD_WORKTREE="$WORKTREE_NAME"
   SESSION="kanna-${WORKTREE_NAME}"
 else
+  unset KANNA_BUILD_WORKTREE 2>/dev/null || true
   SESSION="kanna"
 fi
 
@@ -133,9 +137,9 @@ start() {
   # Forward all KANNA_* env vars into the tmux session
   EXPORTS="$(env | grep '^KANNA_' | sed "s/^\([^=]*\)=\(.*\)/export \1='\2'/" | tr '\n' ' ')"
 
-  # In worktrees, write a local Tauri config override with the isolated port
-  # (must exist before tauri dev parses --config)
-  DEV_CMD="bun dev"
+  # Build dev sidecars before tauri dev so externalBin inputs exist and are
+  # owned by the dev path instead of beforeBuildCommand.
+  DEV_CMD="cd apps/desktop && bun run build:sidecars && bun tauri dev"
   LOCAL_CONF="$ROOT/apps/desktop/src-tauri/tauri.conf.local.json"
   if [ -n "$KANNA_WORKTREE" ] && [ -n "$KANNA_DEV_PORT" ]; then
     cat > "$LOCAL_CONF" <<LOCALEOF
@@ -145,7 +149,7 @@ start() {
   }
 }
 LOCALEOF
-    DEV_CMD="bun dev -- --config $LOCAL_CONF"
+    DEV_CMD="cd apps/desktop && bun run build:sidecars && bun tauri dev --config $LOCAL_CONF"
   fi
 
   if [ -n "$EXPORTS" ]; then

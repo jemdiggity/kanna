@@ -5,6 +5,13 @@ import desktopPkg from "../package.json";
 import tauriConf from "../src-tauri/tauri.conf.json";
 
 describe("desktop sidecar packaging", () => {
+  it("keeps release builds free of dev-only version and sidecar staging hooks", () => {
+    expect(tauriConf.build.beforeBuildCommand).not.toContain("sync-version.sh");
+    expect(tauriConf.build.beforeBuildCommand).not.toContain("build:sidecars");
+    expect(desktopPkg.scripts?.dev).not.toContain("sync-version.sh");
+    expect(rootPkg.scripts?.dev).not.toContain("sync-version.sh");
+  });
+
   it("references the terminal recovery sidecar everywhere it needs to be staged", () => {
     const stageSidecarsScript = readFileSync(
       new URL("../../../scripts/stage-sidecars.sh", import.meta.url),
