@@ -18,6 +18,7 @@ trap cleanup ERR
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT/.build"
+NODE_RUNTIME_VERSION="${KANNA_NODE_RUNTIME_VERSION:-24.11.0}"
 
 usage() {
     cat <<EOF
@@ -52,6 +53,39 @@ Examples:
   ./scripts/ship.sh --dry-run         # Build and sign only (skip notarization)
 EOF
     exit 0
+}
+
+download_node_runtime() {
+    local target="$1"
+    local out_dir="$2"
+    local archive_target=""
+    case "$target" in
+        aarch64-apple-darwin) archive_target="darwin-arm64" ;;
+        x86_64-apple-darwin) archive_target="darwin-x64" ;;
+        *)
+            echo "Error: unsupported Node runtime target: $target" >&2
+            exit 1
+            ;;
+    esac
+
+    local cache_dir="$BUILD_DIR/node-runtime-cache"
+    local archive_name="node-v${NODE_RUNTIME_VERSION}-${archive_target}.tar.gz"
+    local archive_path="$cache_dir/$archive_name"
+    local extract_dir="$cache_dir/node-v${NODE_RUNTIME_VERSION}-${archive_target}"
+    mkdir -p "$cache_dir" "$out_dir"
+
+    if [[ ! -f "$archive_path" ]]; then
+        echo "    Downloading Node runtime v${NODE_RUNTIME_VERSION} ($archive_target)..."
+        curl -fsSL "https://nodejs.org/dist/v${NODE_RUNTIME_VERSION}/${archive_name}" -o "$archive_path"
+    fi
+
+    if [[ ! -x "$extract_dir/bin/node" ]]; then
+        rm -rf "$extract_dir"
+        tar -xzf "$archive_path" -C "$cache_dir"
+    fi
+
+    cp "$extract_dir/bin/node" "$out_dir/kanna-node-runtime"
+    chmod +x "$out_dir/kanna-node-runtime"
 }
 
 # Parse arguments
@@ -236,11 +270,10 @@ for i in "${!ARCHS[@]}"; do
     )
     (
         cd "$ROOT/packages/terminal-recovery"
-        export PROFILE="release"
-        export TARGET="$ARCH"
         bun run build
-        bun run build:bin:kanna-terminal-recovery
     )
+    download_node_runtime "$ARCH" "$ROOT/.build/$ARCH/release"
+    "$ROOT/scripts/stage-terminal-recovery-runtime.sh"
     "$ROOT/scripts/stage-sidecars.sh" --release --target "$ARCH"
 
     echo "    Building app ($LABEL)..."

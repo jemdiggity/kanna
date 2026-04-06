@@ -37,7 +37,7 @@ fi
 
 mkdir -p "$BINARIES_DIR"
 
-for BIN in kanna-daemon kanna-cli kanna-terminal-recovery; do
+for BIN in kanna-daemon kanna-cli; do
     SRC="$SRC_DIR/$BIN"
     DEST="$BINARIES_DIR/${BIN}-${TARGET}"
     if [[ ! -f "$SRC" ]]; then
@@ -47,5 +47,22 @@ for BIN in kanna-daemon kanna-cli kanna-terminal-recovery; do
     cp "$SRC" "$DEST"
     chmod +x "$DEST"
 done
+
+NODE_DEST="$BINARIES_DIR/kanna-node-runtime-${TARGET}"
+if [[ "$PROFILE" = "release" ]]; then
+    NODE_SRC="$SRC_DIR/kanna-node-runtime"
+    if [[ ! -f "$NODE_SRC" ]]; then
+        echo "Error: $NODE_SRC not found. Build it first." >&2
+        exit 1
+    fi
+    cp "$NODE_SRC" "$NODE_DEST"
+else
+    cat > "$NODE_DEST" <<'EOF'
+#!/bin/sh
+echo "kanna-node-runtime is only bundled for release builds" >&2
+exit 1
+EOF
+fi
+chmod +x "$NODE_DEST"
 
 echo "    Staged sidecars for $TARGET ($PROFILE) → $BINARIES_DIR"

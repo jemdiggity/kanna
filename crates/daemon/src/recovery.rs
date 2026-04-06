@@ -666,13 +666,8 @@ fn detect_launcher() -> Option<RecoveryLauncher> {
         }
     }
 
-    for candidate in compiled_sidecar_candidates() {
-        if candidate.exists() {
-            return Some(RecoveryLauncher {
-                program: candidate,
-                args: Vec::new(),
-            });
-        }
+    if let Some(launcher) = bundled_runtime_launcher() {
+        return Some(launcher);
     }
 
     workspace_script_launcher()
@@ -697,35 +692,35 @@ fn workspace_script_launcher() -> Option<RecoveryLauncher> {
     None
 }
 
-fn compiled_sidecar_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
+fn bundled_runtime_launcher() -> Option<RecoveryLauncher> {
+    let exe = std::env::current_exe().ok()?;
+    bundled_runtime_launcher_from_exe(&exe)
+}
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join(format!(
-                "kanna-terminal-recovery-{}",
-                current_target_triple()
-            )));
-            candidates.push(dir.join("kanna-terminal-recovery"));
-            candidates.push(dir.join("../Resources/kanna-terminal-recovery"));
-        }
-    }
-
+fn bundled_runtime_launcher_from_exe(exe: &Path) -> Option<RecoveryLauncher> {
+    let exe_dir = exe.parent()?;
+    let node_candidates = [
+        exe_dir.join(format!("kanna-node-runtime-{}", current_target_triple())),
+        exe_dir.join("kanna-node-runtime"),
+        exe_dir.join("../Resources/kanna-node-runtime"),
+    ];
+    let mut script_candidates = vec![exe_dir.join("../Resources/terminal-recovery/index.js")];
     if let Some(root) = workspace_root() {
-        candidates.push(
-            root.join(".build")
-                .join("debug")
-                .join("kanna-terminal-recovery"),
-        );
-        candidates.push(
-            root.join(".build")
-                .join(current_target_triple())
-                .join("release")
-                .join("kanna-terminal-recovery"),
-        );
+        script_candidates.push(root.join(".build/tauri-resources/terminal-recovery/index.js"));
     }
 
-    candidates
+    let node = node_candidates.into_iter().find(|candidate| candidate.exists())?;
+    let script = script_candidates
+        .into_iter()
+        .find(|candidate| candidate.exists())?;
+
+    Some(RecoveryLauncher {
+        program: node,
+        args: vec![
+            "--jitless".to_string(),
+            script.to_string_lossy().into_owned(),
+        ],
+    })
 }
 
 fn current_target_triple() -> &'static str {
@@ -772,4 +767,41 @@ fn unique_test_snapshot_dir() -> PathBuf {
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_runtime_launcher_prefers_node_sidecar_and_resource_script() {
+        let root = std::env::temp_dir().join(format!(
+            "kanna-recovery-launcher-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let exe_dir = root.join("Contents/MacOS");
+        let resources_dir = root.join("Contents/Resources/terminal-recovery");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(&resources_dir).unwrap();
+
+        let exe = exe_dir.join("kanna-daemon");
+        let node = exe_dir.join(format!("kanna-node-runtime-{}", current_target_triple()));
+        let script = resources_dir.join("index.js");
+
+        std::fs::write(&exe, "").unwrap();
+        std::fs::write(&node, "").unwrap();
+        std::fs::write(&script, "").unwrap();
+
+        let launcher = bundled_runtime_launcher_from_exe(&exe).unwrap();
+        assert_eq!(launcher.program, node);
+        assert_eq!(launcher.args[0], "--jitless");
+        assert_eq!(
+            PathBuf::from(&launcher.args[1]),
+            exe_dir.join("../Resources/terminal-recovery/index.js")
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

@@ -17,6 +17,7 @@ import { clearCachedTerminalState } from "../composables/terminalStateCache";
 import {
   closePipelineItemAndClearCachedTerminalState,
   isTeardownSessionId,
+  reportCloseSessionError,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
@@ -1042,11 +1043,11 @@ export const useKannaStore = defineStore("kanna", () => {
       if (item.stage === "torndown") {
         await Promise.all([
           invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
-            console.error("[store] kill agent session failed:", e)),
+            reportCloseSessionError("[store] kill agent session failed:", e)),
           invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
-            console.error("[store] kill shell session failed:", e)),
+            reportCloseSessionError("[store] kill shell session failed:", e)),
           invoke("kill_session", { sessionId: `td-${item.id}` }).catch((e: unknown) =>
-            console.error("[store] kill teardown session failed:", e)),
+            reportCloseSessionError("[store] kill teardown session failed:", e)),
         ]);
         await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
 
@@ -1067,14 +1068,14 @@ export const useKannaStore = defineStore("kanna", () => {
         bump();
         (async () => {
           await invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
-            console.error("[store] kill_session failed:", e));
+            reportCloseSessionError("[store] kill_session failed:", e));
         })();
         return;
       }
 
       // 1. Stop the agent CLI
       await invoke("signal_session", { sessionId: item.id, signal: "SIGINT" }).catch((e: unknown) =>
-        console.error("[store] signal_session failed:", e));
+        reportCloseSessionError("[store] signal_session failed:", e));
 
       // 2. Run teardown scripts if any
       const teardownCmds = await collectTeardownCommands(item, repo);
@@ -1109,9 +1110,9 @@ export const useKannaStore = defineStore("kanna", () => {
       // 4. No linger: kill sessions and close immediately
       await Promise.all([
         invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
-          console.error("[store] kill agent session failed:", e)),
+          reportCloseSessionError("[store] kill agent session failed:", e)),
         invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
-          console.error("[store] kill shell session failed:", e)),
+          reportCloseSessionError("[store] kill shell session failed:", e)),
       ]);
       await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
       if (opts?.selectNext !== false) selectNextItem(nextId);

@@ -12,22 +12,37 @@ describe("desktop sidecar packaging", () => {
     expect(rootPkg.scripts?.dev).not.toContain("sync-version.sh");
   });
 
-  it("references the terminal recovery sidecar everywhere it needs to be staged", () => {
+  it("packages terminal recovery as bundled runtime resources instead of a pkg sidecar", () => {
     const stageSidecarsScript = readFileSync(
       new URL("../../../scripts/stage-sidecars.sh", import.meta.url),
       "utf8",
     );
+    const stageRecoveryRuntimeScript = readFileSync(
+      new URL("../../../scripts/stage-terminal-recovery-runtime.sh", import.meta.url),
+      "utf8",
+    );
+    const recoveryPkg = readFileSync(
+      new URL("../../../packages/terminal-recovery/package.json", import.meta.url),
+      "utf8",
+    );
 
-    expect(desktopPkg.scripts?.["build:sidecars"]).toContain("kanna-terminal-recovery");
-    expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-terminal-recovery");
-    expect(stageSidecarsScript).toContain("kanna-terminal-recovery");
+    expect(desktopPkg.scripts?.["build:sidecars"]).toContain("stage-terminal-recovery-runtime.sh");
+    expect(tauriConf.bundle.externalBin).not.toContain("binaries/kanna-terminal-recovery");
+    expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-node-runtime");
+    expect(
+      tauriConf.bundle.resources["../../../.build/tauri-resources/terminal-recovery/"],
+    ).toBe("terminal-recovery/");
+    expect(stageSidecarsScript).not.toContain("kanna-terminal-recovery");
+    expect(stageSidecarsScript).toContain("kanna-node-runtime");
+    expect(stageRecoveryRuntimeScript).toContain("terminal-recovery/dist");
+    expect(recoveryPkg).not.toContain("pkg");
   });
 
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {
     expect(desktopPkg.scripts?.dev).not.toContain("build:sidecars");
     expect(desktopPkg.scripts?.dev).toContain("vite");
     expect(tauriConf.build.beforeDevCommand).toBe("bun run dev");
-    expect(tauriConf.build.beforeBuildCommand).toContain("build:sidecars");
-    expect(rootPkg.scripts?.dev).toContain("build:sidecars");
+    expect(tauriConf.build.beforeBuildCommand).toBe("bun run build");
+    expect(rootPkg.scripts?.dev).toBe("./scripts/dev.sh");
   });
 });

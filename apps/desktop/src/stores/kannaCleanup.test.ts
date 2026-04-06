@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import {
   closePipelineItemAndClearCachedTerminalState,
   isTeardownSessionId,
+  isMissingDaemonSessionError,
+  reportCloseSessionError,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
 
@@ -45,5 +47,26 @@ describe("kannaCleanup", () => {
     ).rejects.toThrow("boom");
 
     expect(calls).toEqual(["close:task-3"]);
+  });
+
+  it("treats missing daemon sessions as idempotent close errors", () => {
+    expect(isMissingDaemonSessionError(new Error("session not found: abc123"))).toBe(true);
+    expect(isMissingDaemonSessionError("session not found: abc123")).toBe(true);
+    expect(isMissingDaemonSessionError(new Error("permission denied"))).toBe(false);
+  });
+
+  it("suppresses logging for missing daemon sessions during close", () => {
+    const calls: unknown[][] = [];
+    const logger = (...args: unknown[]) => {
+      calls.push(args);
+    };
+
+    reportCloseSessionError("[store] kill agent session failed:", new Error("session not found: abc123"), logger);
+    reportCloseSessionError("[store] kill agent session failed:", new Error("permission denied"), logger);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe("[store] kill agent session failed:");
+    expect(calls[0]?.[1]).toBeInstanceOf(Error);
+    expect((calls[0]?.[1] as Error).message).toBe("permission denied");
   });
 });

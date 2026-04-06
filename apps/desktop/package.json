@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:sidecars": "cargo build --manifest-path ../../crates/daemon/Cargo.toml && cargo build --manifest-path ../../crates/kanna-cli/Cargo.toml && cd ../../packages/terminal-recovery && bun run build && bun run build:bin:kanna-terminal-recovery && ../../scripts/stage-sidecars.sh",
+    "build:sidecars": "cargo build --manifest-path ../../crates/daemon/Cargo.toml && cargo build --manifest-path ../../crates/kanna-cli/Cargo.toml && cd ../../packages/terminal-recovery && bun run build && ../../scripts/stage-terminal-recovery-runtime.sh && ../../scripts/stage-sidecars.sh",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
