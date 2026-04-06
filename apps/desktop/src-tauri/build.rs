@@ -22,6 +22,9 @@ fn main() {
     let build_branch = std::env::var("KANNA_BUILD_BRANCH").unwrap_or_default();
     let build_commit = std::env::var("KANNA_BUILD_COMMIT").unwrap_or_default();
     let build_worktree = std::env::var("KANNA_BUILD_WORKTREE").unwrap_or_default();
+    println!("cargo:rustc-env=KANNA_BUILD_BRANCH={}", build_branch);
+    println!("cargo:rustc-env=KANNA_BUILD_COMMIT={}", build_commit);
+    println!("cargo:rustc-env=KANNA_BUILD_WORKTREE={}", build_worktree);
     let build_info = if build_branch.is_empty() {
         String::new()
     } else if build_worktree.is_empty() {

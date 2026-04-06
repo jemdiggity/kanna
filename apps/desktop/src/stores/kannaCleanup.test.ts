@@ -3,7 +3,9 @@ import {
   closePipelineItemAndClearCachedTerminalState,
   isTeardownSessionId,
   isMissingDaemonSessionError,
+  isSessionAlreadyExistsError,
   reportCloseSessionError,
+  reportPrewarmSessionError,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
 
@@ -55,6 +57,12 @@ describe("kannaCleanup", () => {
     expect(isMissingDaemonSessionError(new Error("permission denied"))).toBe(false);
   });
 
+  it("treats existing sessions as idempotent prewarm errors", () => {
+    expect(isSessionAlreadyExistsError(new Error("session already exists: shell-wt-abc123"))).toBe(true);
+    expect(isSessionAlreadyExistsError("session already exists: shell-wt-abc123")).toBe(true);
+    expect(isSessionAlreadyExistsError(new Error("permission denied"))).toBe(false);
+  });
+
   it("suppresses logging for missing daemon sessions during close", () => {
     const calls: unknown[][] = [];
     const logger = (...args: unknown[]) => {
@@ -66,6 +74,21 @@ describe("kannaCleanup", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.[0]).toBe("[store] kill agent session failed:");
+    expect(calls[0]?.[1]).toBeInstanceOf(Error);
+    expect((calls[0]?.[1] as Error).message).toBe("permission denied");
+  });
+
+  it("suppresses logging for existing sessions during prewarm", () => {
+    const calls: unknown[][] = [];
+    const logger = (...args: unknown[]) => {
+      calls.push(args);
+    };
+
+    reportPrewarmSessionError("[store] shell pre-warm failed:", new Error("session already exists: shell-wt-abc123"), logger);
+    reportPrewarmSessionError("[store] shell pre-warm failed:", new Error("permission denied"), logger);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe("[store] shell pre-warm failed:");
     expect(calls[0]?.[1]).toBeInstanceOf(Error);
     expect((calls[0]?.[1] as Error).message).toBe("permission denied");
   });

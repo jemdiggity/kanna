@@ -709,7 +709,9 @@ fn bundled_runtime_launcher_from_exe(exe: &Path) -> Option<RecoveryLauncher> {
         script_candidates.push(root.join(".build/tauri-resources/terminal-recovery/index.js"));
     }
 
-    let node = node_candidates.into_iter().find(|candidate| candidate.exists())?;
+    let node = node_candidates
+        .into_iter()
+        .find(|candidate| candidate.exists())?;
     let script = script_candidates
         .into_iter()
         .find(|candidate| candidate.exists())?;

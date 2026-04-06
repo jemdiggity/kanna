@@ -7,6 +7,10 @@
 
 use std::io;
 use std::os::unix::io::RawFd;
+use std::time::{Duration, Instant};
+
+const RECV_FDS_RETRY_TIMEOUT: Duration = Duration::from_millis(250);
+const RECV_FDS_RETRY_INTERVAL: Duration = Duration::from_millis(5);
 
 /// Send file descriptors over a Unix socket.
 ///
@@ -90,10 +94,20 @@ pub fn recv_fds(socket: RawFd, count: usize) -> io::Result<Vec<RawFd>> {
     msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
     msg.msg_controllen = cmsg_space as _;
 
-    let ret = unsafe { libc::recvmsg(socket, &mut msg, 0) };
-    if ret < 0 {
-        return Err(io::Error::last_os_error());
-    }
+    let deadline = Instant::now() + RECV_FDS_RETRY_TIMEOUT;
+    let ret = loop {
+        let ret = unsafe { libc::recvmsg(socket, &mut msg, 0) };
+        if ret >= 0 {
+            break ret;
+        }
+
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::WouldBlock || Instant::now() >= deadline {
+            return Err(error);
+        }
+
+        std::thread::sleep(RECV_FDS_RETRY_INTERVAL);
+    };
     if ret == 0 {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
@@ -242,6 +256,49 @@ mod tests {
         unsafe {
             libc::close(s1);
             libc::close(s2);
+        }
+    }
+
+    #[test]
+    fn test_recv_fds_retries_would_block_until_fds_arrive() {
+        let (s1, s2) = socketpair();
+
+        let flags = unsafe { libc::fcntl(s2, libc::F_GETFL) };
+        assert!(flags >= 0, "failed to read socket flags");
+        let set_ret = unsafe { libc::fcntl(s2, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+        assert_eq!(set_ret, 0, "failed to enable nonblocking mode");
+
+        let mut pipe_fds = [0 as RawFd; 2];
+        let pipe_ret = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
+        assert_eq!(pipe_ret, 0, "pipe failed");
+        let (pipe_read, pipe_write) = (pipe_fds[0], pipe_fds[1]);
+
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            send_fds(s1, &[pipe_read]).unwrap();
+            unsafe {
+                libc::close(pipe_read);
+                libc::close(s1);
+            }
+        });
+
+        let received = recv_fds(s2, 1).unwrap();
+        assert_eq!(received.len(), 1);
+
+        let msg = b"retry";
+        unsafe { libc::write(pipe_write, msg.as_ptr() as *const _, msg.len()) };
+
+        let mut buf = [0u8; 5];
+        let n = unsafe { libc::read(received[0], buf.as_mut_ptr() as *mut _, buf.len()) };
+        assert_eq!(n, 5);
+        assert_eq!(&buf, b"retry");
+
+        sender.join().unwrap();
+
+        unsafe {
+            libc::close(s2);
+            libc::close(pipe_write);
+            libc::close(received[0]);
         }
     }
 }

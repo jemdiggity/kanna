@@ -48,6 +48,7 @@ async function spawnShell(sessionId: string, cwd: string, _prompt: string, _cols
         ref="termRef"
         :key="sessionId"
         :session-id="sessionId"
+        :active="true"
         :spawn-options="{ cwd, prompt: '', spawnFn: spawnShell }"
       />
     </div>

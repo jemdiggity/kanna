@@ -117,6 +117,8 @@
     "blockTaskFailed": "タスクのブロックに失敗しました",
     "selectRepoFirst": "リポジトリを先に選択してください",
     "agentStartFailed": "エージェントの開始に失敗しました",
+    "daemonHandoffRespawned": "再起動後に以前のターミナルセッションへ再接続できませんでした。新しいセッションを開始しました。",
+    "daemonHandoffRespawnedWithScrollback": "再起動後に以前のターミナルセッションへ再接続できませんでした。スクロールバックを復元し、新しいセッションを開始しました。",
     "pipelineNotFound": "パイプライン定義が見つかりません",
     "taskAtFinalStage": "タスクは最終ステージにあります",
     "stageTeardownFailed": "ステージのティアダウンスクリプトが失敗しました",

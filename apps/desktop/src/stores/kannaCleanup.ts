@@ -19,12 +19,35 @@ export function isMissingDaemonSessionError(error: unknown): boolean {
   return message.includes("session not found");
 }
 
+export function isSessionAlreadyExistsError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return message.includes("session already exists");
+}
+
 export function reportCloseSessionError(
   prefix: string,
   error: unknown,
   logger: (message?: unknown, ...optionalParams: unknown[]) => void = console.error,
 ): void {
   if (isMissingDaemonSessionError(error)) {
+    return;
+  }
+
+  logger(prefix, error);
+}
+
+export function reportPrewarmSessionError(
+  prefix: string,
+  error: unknown,
+  logger: (message?: unknown, ...optionalParams: unknown[]) => void = console.error,
+): void {
+  if (isSessionAlreadyExistsError(error)) {
     return;
   }
 
