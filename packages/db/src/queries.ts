@@ -10,7 +10,7 @@ export type DbHandle = {
 // ---------------------------------------------------------------------------
 
 export async function listRepos(db: DbHandle): Promise<Repo[]> {
-  return db.select<Repo>("SELECT * FROM repo WHERE hidden = 0 ORDER BY last_opened_at DESC");
+  return db.select<Repo>("SELECT * FROM repo WHERE hidden = 0 ORDER BY created_at ASC");
 }
 
 export async function getRepo(db: DbHandle, id: string): Promise<Repo | null> {
