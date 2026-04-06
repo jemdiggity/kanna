@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   shouldDelayConnectUntilAfterInitialLayout,
   formatAttachFailureMessage,
+  getReconnectResizeDelayMs,
+  getShellTerminalEnv,
   getTaskTerminalEnv,
   getTerminalRecoveryMode,
   isDaemonHandoffFailure,
@@ -10,13 +12,13 @@ import {
   shouldRespawnAfterAttachFailure,
   shouldEnableKittyKeyboard,
   shouldPushKittyKeyboardOnFreshAttach,
-  shouldRestoreRecoveryState,
   shouldResetTerminalOnReconnect,
   shouldRunTerminalDispose,
   shouldSupportKittyKeyboard,
   shouldSkipReconnect,
   shouldForceDoubleResizeOnReconnect,
   shouldReattachOnDaemonReady,
+  shouldRestoreRecoveryState,
 } from "./terminalSessionRecovery";
 
 describe("getTerminalRecoveryMode", () => {
@@ -74,14 +76,14 @@ describe("shouldRespawnAfterAttachFailure", () => {
     ).toBe(true);
   });
 
-  it("does not respawn for generic reconnect failures", () => {
+  it("respawns task terminals when the daemon no longer has the live session", () => {
     expect(
       shouldRespawnAfterAttachFailure(
         "session not found",
         { cwd: "/tmp/task", prompt: "do work", spawnFn },
         { agentProvider: "claude", worktreePath: "/tmp/task" },
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("does not respawn shell terminals from attach failure fallback", () => {
@@ -122,10 +124,25 @@ describe("shouldForceDoubleResizeOnReconnect", () => {
     expect(shouldForceDoubleResizeOnReconnect({ agentProvider: "claude" })).toBe(true);
   });
 
+  it("does not force double resize churn for Codex reconnects", () => {
+    expect(shouldForceDoubleResizeOnReconnect({ agentProvider: "codex" })).toBe(false);
+  });
+
   it("defaults to no forced double resize for other providers", () => {
     expect(shouldForceDoubleResizeOnReconnect({ agentProvider: "copilot" })).toBe(false);
-    expect(shouldForceDoubleResizeOnReconnect({ agentProvider: "codex" })).toBe(false);
     expect(shouldForceDoubleResizeOnReconnect()).toBe(false);
+  });
+});
+
+describe("getReconnectResizeDelayMs", () => {
+  it("does not delay reconnect resize churn for Codex", () => {
+    expect(getReconnectResizeDelayMs({ agentProvider: "codex" })).toBe(0);
+  });
+
+  it("does not delay reconnect resize churn for other providers", () => {
+    expect(getReconnectResizeDelayMs({ agentProvider: "claude" })).toBe(0);
+    expect(getReconnectResizeDelayMs({ agentProvider: "copilot" })).toBe(0);
+    expect(getReconnectResizeDelayMs()).toBe(0);
   });
 });
 
@@ -166,12 +183,12 @@ describe("shouldDelayConnectUntilAfterInitialLayout", () => {
 });
 
 describe("shouldRestoreRecoveryState", () => {
-  it("restores cached state for attach-only task terminals", () => {
+  it("restores cached state for task terminals", () => {
     expect(
       shouldRestoreRecoveryState(
         { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
-        { agentProvider: "codex", worktreePath: "/tmp/task" },
-      )
+        { agentProvider: "claude", worktreePath: "/tmp/task" },
+      ),
     ).toBe(true);
   });
 
@@ -180,30 +197,7 @@ describe("shouldRestoreRecoveryState", () => {
       shouldRestoreRecoveryState(
         { cwd: "/tmp/repo", prompt: "", spawnFn: async () => {} },
         undefined,
-      )
-    ).toBe(true);
-  });
-});
-
-describe("task terminal mounting", () => {
-  it("keeps task terminals eligible for startup restore regardless of provider", () => {
-    expect(
-      shouldRestoreRecoveryState(
-        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
-        { agentProvider: "claude", worktreePath: "/tmp/task" },
-      )
-    ).toBe(true);
-    expect(
-      shouldRestoreRecoveryState(
-        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
-        { agentProvider: "copilot", worktreePath: "/tmp/task" },
-      )
-    ).toBe(true);
-    expect(
-      shouldRestoreRecoveryState(
-        { cwd: "/tmp/task", prompt: "do work", spawnFn: async () => {} },
-        { agentProvider: "codex", worktreePath: "/tmp/task" },
-      )
+      ),
     ).toBe(true);
   });
 });
@@ -216,12 +210,13 @@ describe("shouldRunTerminalDispose", () => {
 });
 
 describe("shouldEnableKittyKeyboard", () => {
-  it("enables kitty keyboard for Claude and Copilot task terminals", () => {
+  it("enables kitty keyboard only for Claude task terminals", () => {
     expect(shouldEnableKittyKeyboard({ agentProvider: "claude" })).toBe(true);
-    expect(shouldEnableKittyKeyboard({ agentProvider: "copilot" })).toBe(true);
+    expect(shouldEnableKittyKeyboard({ agentProvider: "copilot" })).toBe(false);
   });
 
-  it("disables kitty keyboard for Codex and unknown providers", () => {
+  it("disables kitty keyboard for Copilot, Codex, and unknown providers", () => {
+    expect(shouldEnableKittyKeyboard({ agentProvider: "copilot" })).toBe(false);
     expect(shouldEnableKittyKeyboard({ agentProvider: "codex" })).toBe(false);
     expect(shouldEnableKittyKeyboard()).toBe(false);
   });
@@ -240,11 +235,8 @@ describe("shouldSupportKittyKeyboard", () => {
 });
 
 describe("shouldPushKittyKeyboardOnFreshAttach", () => {
-  it("pushes kitty keyboard mode for fresh Claude sessions", () => {
-    expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "claude" })).toBe(true);
-  });
-
-  it("does not push kitty keyboard mode for Copilot or Codex", () => {
+  it("does not push kitty keyboard mode for any provider", () => {
+    expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "claude" })).toBe(false);
     expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "copilot" })).toBe(false);
     expect(shouldPushKittyKeyboardOnFreshAttach({ agentProvider: "codex" })).toBe(false);
     expect(shouldPushKittyKeyboardOnFreshAttach()).toBe(false);
@@ -263,36 +255,44 @@ describe("shouldResetTerminalOnReconnect", () => {
 });
 
 describe("getReconnectKeyboardPush", () => {
-  it("re-pushes kitty keyboard mode for Codex reconnects", () => {
-    expect(getReconnectKeyboardPush({ agentProvider: "codex" })).toBe("\x1b[>1u");
-  });
-
-  it("re-pushes kitty keyboard mode when kitty keyboard is enabled", () => {
-    expect(getReconnectKeyboardPush({ agentProvider: "claude", kittyKeyboard: true })).toBe("\x1b[>1u");
-    expect(getReconnectKeyboardPush({ agentProvider: "copilot", kittyKeyboard: true })).toBe("\x1b[>1u");
-  });
-
-  it("does not push keyboard mode when not needed", () => {
+  it("does not push keyboard mode on reconnect for any provider", () => {
+    expect(getReconnectKeyboardPush({ agentProvider: "claude", kittyKeyboard: true })).toBe(null);
+    expect(getReconnectKeyboardPush({ agentProvider: "copilot", kittyKeyboard: true })).toBe(null);
     expect(getReconnectKeyboardPush({ agentProvider: "copilot", kittyKeyboard: false })).toBe(null);
+    expect(getReconnectKeyboardPush({ agentProvider: "codex" })).toBe(null);
     expect(getReconnectKeyboardPush()).toBe(null);
   });
 });
 
 describe("getTaskTerminalEnv", () => {
-  it("uses a plain xterm environment for Codex", () => {
+  it("uses a safe truecolor xterm environment for Codex", () => {
     expect(getTaskTerminalEnv("codex")).toEqual({
+      COLORTERM: "truecolor",
       TERM: "xterm-256color",
+      TERM_PROGRAM: "kanna",
     });
   });
 
-  it("keeps the vscode terminal program hint for other providers", () => {
+  it("uses the same safe terminal identity for other providers", () => {
     expect(getTaskTerminalEnv("claude")).toEqual({
+      COLORTERM: "truecolor",
       TERM: "xterm-256color",
-      TERM_PROGRAM: "vscode",
+      TERM_PROGRAM: "kanna",
     });
     expect(getTaskTerminalEnv("copilot")).toEqual({
+      COLORTERM: "truecolor",
       TERM: "xterm-256color",
-      TERM_PROGRAM: "vscode",
+      TERM_PROGRAM: "kanna",
+    });
+  });
+});
+
+describe("getShellTerminalEnv", () => {
+  it("uses the same safe terminal identity for shell sessions", () => {
+    expect(getShellTerminalEnv()).toEqual({
+      COLORTERM: "truecolor",
+      TERM: "xterm-256color",
+      TERM_PROGRAM: "kanna",
     });
   });
 });

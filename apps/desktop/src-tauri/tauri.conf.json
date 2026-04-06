@@ -31,13 +31,12 @@
     "externalBin": [
       "binaries/kanna-daemon",
       "binaries/kanna-cli",
-      "binaries/kanna-node-runtime"
+      "binaries/kanna-terminal-recovery"
     ],
     "resources": {
       "../../../.kanna/agents/": ".kanna/agents/",
       "../../../.kanna/pipelines/": ".kanna/pipelines/",
-      "../../../.kanna/tasks/": ".kanna/tasks/",
-      "../../../.build/tauri-resources/terminal-recovery/": "terminal-recovery/"
+      "../../../.kanna/tasks/": ".kanna/tasks/"
     },
     "icon": [
       "icons/32x32.png",

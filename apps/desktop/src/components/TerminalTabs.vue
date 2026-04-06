@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, type ComponentPublicInstance } from "vue";
+import type { AgentProvider } from "@kanna/db";
 import AgentView from "./AgentView.vue";
 import TerminalView from "./TerminalView.vue";
 import { shouldEnableKittyKeyboard } from "../composables/terminalSessionRecovery";
+import { buildTerminalSpawnOptions } from "../composables/terminalSpawnOptions";
 
 const props = defineProps<{
   sessionId: string | null;
@@ -18,7 +20,14 @@ const props = defineProps<{
   worktreePath?: string;
   repoPath?: string;
   prompt?: string;
-  spawnPtySession?: (sessionId: string, cwd: string, prompt: string, cols: number, rows: number) => Promise<void>;
+  spawnPtySession?: (
+    sessionId: string,
+    cwd: string,
+    prompt: string,
+    cols: number,
+    rows: number,
+    options?: { agentProvider?: AgentProvider },
+  ) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -29,7 +38,7 @@ const emit = defineEmits<{
 interface PtySessionConfig {
   worktreePath?: string;
   prompt?: string;
-  agentProvider?: string;
+  agentProvider?: AgentProvider;
 }
 interface TerminalViewInstance extends ComponentPublicInstance {
   fit?: () => void;
@@ -88,6 +97,10 @@ function setTermRef(sessionId: string, el: TerminalViewInstance | null) {
   termRefs.value[sessionId] = el;
 }
 
+function buildSpawnOptions(config: PtySessionConfig) {
+  return buildTerminalSpawnOptions(props.spawnPtySession, config);
+}
+
 // Prune terminals for sessions that are no longer active (closed/deleted tasks).
 // This unmounts the TerminalView so undo gets a fresh mount with proper attach.
 watch(
@@ -113,11 +126,7 @@ watch(
       :ref="(el: any) => setTermRef(sid, el)"
       :session-id="sid"
       :active="sid === sessionId"
-      :spawn-options="spawnPtySession && config.worktreePath && config.prompt ? {
-        cwd: config.worktreePath,
-        prompt: config.prompt,
-        spawnFn: spawnPtySession,
-      } : undefined"
+      :spawn-options="buildSpawnOptions(config)"
       :kitty-keyboard="!!(spawnPtySession && config.worktreePath && config.prompt) && shouldEnableKittyKeyboard({ agentProvider: config.agentProvider })"
       :agent-provider="config.agentProvider"
       :worktree-path="config.worktreePath"

@@ -1,6 +1,7 @@
 mod fd_transfer;
 mod pty;
 mod session;
+mod sidecar;
 mod socket;
 
 use std::collections::HashMap;
@@ -9,7 +10,11 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kanna_daemon::{protocol, recovery::RecoveryManager};
+use kanna_daemon::{
+    protocol,
+    recovery::{RecoveryManager, RecoverySnapshot, SeededRecoverySnapshot},
+};
+use serde::Serialize;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, Mutex};
@@ -36,25 +41,55 @@ type SessionObservers =
 type LostHandoffSessions = Arc<Mutex<HashMap<String, String>>>;
 
 struct HandoffResult {
-    adopted: Vec<(String, pty::PtySession)>,
+    adopted: Vec<(String, pty::PtySession, protocol::HandoffSession)>,
     lost: HashMap<String, String>,
 }
 
-#[derive(Clone)]
-struct DaemonContext {
-    sessions: Arc<Mutex<SessionManager>>,
-    broadcast_tx: broadcast::Sender<String>,
-    session_writers: SessionWriters,
-    pre_attach_buffers: PreAttachBuffers,
-    session_sizes: SessionSizes,
-    session_observers: SessionObservers,
-    lost_handoff_sessions: LostHandoffSessions,
-    recovery_manager: RecoveryManager,
+#[derive(Debug, Clone, Serialize)]
+struct HandoffSessionV1 {
+    session_id: String,
+    pid: u32,
+    cwd: String,
+    snapshot: protocol::TerminalSnapshot,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum HandoffEventV1 {
+    HandoffReady { sessions: Vec<HandoffSessionV1> },
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct HandoffSessionV1Wire {
+    session_id: String,
+    pid: u32,
+    cwd: String,
+    snapshot: protocol::TerminalSnapshot,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type")]
+enum HandoffEventCompat {
+    HandoffReady { sessions: Vec<HandoffSessionV1Wire> },
+    Error { message: String },
+}
 use protocol::{Command, Event};
-use session::SessionManager;
+use session::{SessionManager, SessionRecord, StreamControl};
 use socket::{bind_socket, read_command, write_event};
+
+fn recovery_snapshot_to_terminal_snapshot(
+    snapshot: RecoverySnapshot,
+) -> protocol::TerminalSnapshot {
+    protocol::TerminalSnapshot {
+        version: 1,
+        rows: snapshot.rows,
+        cols: snapshot.cols,
+        cursor_row: snapshot.cursor_row,
+        cursor_col: snapshot.cursor_col,
+        cursor_visible: snapshot.cursor_visible,
+        vt: snapshot.serialized,
+    }
+}
 
 fn app_support_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("KANNA_DAEMON_DIR") {
@@ -80,6 +115,106 @@ fn handoff_loss_message(reason: impl Into<String>) -> String {
     format!("session lost during daemon handoff: {}", reason.into())
 }
 
+fn parse_handoff_response(line: &str) -> Result<Vec<protocol::HandoffSession>, String> {
+    if let Ok(event) = serde_json::from_str::<Event>(line) {
+        return match event {
+            Event::HandoffReady { sessions } => Ok(sessions),
+            Event::Error { message } => Err(message),
+            other => Err(format!("unexpected response: {:?}", other)),
+        };
+    }
+
+    match serde_json::from_str::<HandoffEventCompat>(line) {
+        Ok(HandoffEventCompat::HandoffReady { sessions }) => Ok(sessions
+            .into_iter()
+            .map(|session| protocol::HandoffSession {
+                rows: session.snapshot.rows,
+                cols: session.snapshot.cols,
+                snapshot: Some(session.snapshot),
+                session_id: session.session_id,
+                pid: session.pid,
+                cwd: session.cwd,
+            })
+            .collect()),
+        Ok(HandoffEventCompat::Error { message }) => Err(message),
+        Err(error) => Err(format!("invalid response: {}", error)),
+    }
+}
+
+fn blank_snapshot(rows: u16, cols: u16) -> protocol::TerminalSnapshot {
+    protocol::TerminalSnapshot {
+        version: 1,
+        rows,
+        cols,
+        cursor_row: 0,
+        cursor_col: 0,
+        cursor_visible: true,
+        vt: String::new(),
+    }
+}
+
+async fn request_handoff(
+    socket_path: &PathBuf,
+    version: u32,
+) -> Result<(Vec<protocol::HandoffSession>, Vec<std::os::fd::RawFd>), String> {
+    let stream = tokio::net::UnixStream::connect(socket_path)
+        .await
+        .map_err(|e| {
+            format!(
+                "failed to connect to old daemon at {:?}: {}",
+                socket_path, e
+            )
+        })?;
+
+    log::info!("[handoff] connected to old daemon");
+
+    let raw_fd = stream.as_raw_fd();
+    let (read_half, write_half) = stream.into_split();
+    let mut reader = tokio::io::BufReader::new(read_half);
+    let mut writer = write_half;
+
+    let cmd = serde_json::json!({ "type": "Handoff", "version": version });
+    let mut json = serde_json::to_string(&cmd).unwrap();
+    json.push('\n');
+    use tokio::io::AsyncWriteExt;
+    writer
+        .write_all(json.as_bytes())
+        .await
+        .map_err(|e| format!("failed to send handoff command: {}", e))?;
+    writer
+        .flush()
+        .await
+        .map_err(|e| format!("failed to flush handoff command: {}", e))?;
+    log::info!("[handoff] sent Handoff command (version={})", version);
+
+    let mut line = String::new();
+    use tokio::io::AsyncBufReadExt;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        reader.read_line(&mut line),
+    )
+    .await
+    .map_err(|_| "timeout reading handoff response".to_string())?
+    .map_err(|e| format!("error reading handoff response: {}", e))?;
+
+    log::info!("[handoff] received response: {}", line.trim());
+    let session_infos = parse_handoff_response(line.trim())
+        .map_err(|message| format!("old daemon refused: {}", message))?;
+
+    if session_infos.is_empty() {
+        return Ok((vec![], vec![]));
+    }
+
+    log::info!(
+        "[handoff] receiving {} fds via SCM_RIGHTS (raw_fd={})",
+        session_infos.len(),
+        raw_fd
+    );
+    let fds = fd_transfer::recv_fds(raw_fd, session_infos.len())
+        .map_err(|e| format!("failed to receive PTY fd: {}", e))?;
+    Ok((session_infos, fds))
+}
+
 #[tokio::main]
 async fn main() {
     let dir = app_support_dir();
@@ -102,7 +237,82 @@ async fn main() {
     // Attempt handoff from old daemon (if running)
     let handoff_result = attempt_handoff(&pid_path, &socket_path).await;
 
-    // Write our PID
+    let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
+    let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
+    let pre_attach_buffers: PreAttachBuffers = Arc::new(Mutex::new(HashMap::new()));
+    let session_sizes: SessionSizes = Arc::new(Mutex::new(HashMap::new()));
+    let session_observers: SessionObservers = Arc::new(Mutex::new(HashMap::new()));
+    let lost_handoff_sessions: LostHandoffSessions = Arc::new(Mutex::new(handoff_result.lost));
+    let recovery_manager = RecoveryManager::start().await;
+
+    // Adopt handed-off sessions and persist their handed-off snapshots immediately so the
+    // recovery sidecar has durable state before any post-restart attach occurs.
+    if !handoff_result.adopted.is_empty() {
+        let mut mgr = sessions.lock().await;
+        for (session_id, pty_session, handoff) in handoff_result.adopted {
+            let sidecar = match handoff.snapshot.as_ref() {
+                Some(snapshot) => {
+                    log::info!(
+                        "[handoff] adopted session {} (pid={}) snapshot rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
+                        session_id,
+                        pty_session.pid(),
+                        snapshot.rows,
+                        snapshot.cols,
+                        snapshot.cursor_row,
+                        snapshot.cursor_col,
+                        snapshot.cursor_visible,
+                        snapshot.vt.len()
+                    );
+                    if let Err(error) = recovery_manager.seed_snapshot(
+                        &session_id,
+                        &SeededRecoverySnapshot {
+                            serialized: snapshot.vt.clone(),
+                            cols: snapshot.cols,
+                            rows: snapshot.rows,
+                            cursor_row: snapshot.cursor_row,
+                            cursor_col: snapshot.cursor_col,
+                            cursor_visible: snapshot.cursor_visible,
+                        },
+                    ) {
+                        log::warn!(
+                            "[recovery] failed to seed adopted snapshot for session {}: {}",
+                            session_id,
+                            error
+                        );
+                    }
+                    sidecar::TerminalSidecar::from_handoff(
+                        Some(snapshot),
+                        handoff.cols,
+                        handoff.rows,
+                        10_000,
+                    )
+                    .expect("failed to create terminal sidecar for adopted session")
+                }
+                None => {
+                    log::info!(
+                        "[handoff] adopted session {} (pid={}) without snapshot rows={} cols={}",
+                        session_id,
+                        pty_session.pid(),
+                        handoff.rows,
+                        handoff.cols
+                    );
+                    sidecar::TerminalSidecar::from_handoff(None, handoff.cols, handoff.rows, 10_000)
+                        .expect("failed to create terminal sidecar for adopted session")
+                }
+            };
+            mgr.insert(
+                session_id,
+                SessionRecord {
+                    pty: pty_session,
+                    sidecar,
+                    stream_control: None,
+                },
+            );
+            // Note: no stream_output started — client must Attach to start streaming
+        }
+    }
+
+    // Write our PID and publish the socket only after adopted sessions are restored.
     let pid = std::process::id();
     std::fs::write(&pid_path, pid.to_string()).expect("Failed to write PID file");
 
@@ -117,39 +327,7 @@ async fn main() {
         socket_path
     );
 
-    let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
-    let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
-    let pre_attach_buffers: PreAttachBuffers = Arc::new(Mutex::new(HashMap::new()));
-    let session_sizes: SessionSizes = Arc::new(Mutex::new(HashMap::new()));
-    let session_observers: SessionObservers = Arc::new(Mutex::new(HashMap::new()));
-    let lost_handoff_sessions: LostHandoffSessions = Arc::new(Mutex::new(handoff_result.lost));
-    let recovery_manager = RecoveryManager::start().await;
-
-    // Adopt handed-off sessions
-    if !handoff_result.adopted.is_empty() {
-        let mut mgr = sessions.lock().await;
-        for (session_id, pty_session) in handoff_result.adopted {
-            log::info!(
-                "[handoff] adopted session {} (pid={})",
-                session_id,
-                pty_session.pid()
-            );
-            mgr.insert(session_id, pty_session);
-            // Note: no stream_output started — client must Attach to start streaming
-        }
-    }
-
     let (broadcast_tx, _) = broadcast::channel::<String>(256);
-    let daemon_context = DaemonContext {
-        sessions: sessions.clone(),
-        broadcast_tx: broadcast_tx.clone(),
-        session_writers: session_writers.clone(),
-        pre_attach_buffers: pre_attach_buffers.clone(),
-        session_sizes: session_sizes.clone(),
-        session_observers: session_observers.clone(),
-        lost_handoff_sessions: lost_handoff_sessions.clone(),
-        recovery_manager: recovery_manager.clone(),
-    };
 
     let pid_path_clone = pid_path.clone();
     let socket_path_clone = socket_path.clone();
@@ -170,9 +348,27 @@ async fn main() {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
-                let daemon_context = daemon_context.clone();
+                let sessions_clone = sessions.clone();
+                let broadcast_tx_clone = broadcast_tx.clone();
+                let writers_clone = session_writers.clone();
+                let buffers_clone = pre_attach_buffers.clone();
+                let sizes_clone = session_sizes.clone();
+                let observers_clone = session_observers.clone();
+                let lost_handoff_clone = lost_handoff_sessions.clone();
+                let recovery_clone = recovery_manager.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, daemon_context).await;
+                    handle_connection(
+                        stream,
+                        sessions_clone,
+                        broadcast_tx_clone,
+                        writers_clone,
+                        buffers_clone,
+                        sizes_clone,
+                        observers_clone,
+                        lost_handoff_clone,
+                        recovery_clone,
+                    )
+                    .await;
                 });
             }
             Err(e) => {
@@ -183,7 +379,8 @@ async fn main() {
 }
 
 /// Try to take over sessions from an existing daemon.
-/// Returns adopted (session_id, PtySession) pairs.
+/// Returns adopted (session_id, PtySession, TerminalSnapshot) tuples plus any
+/// sessions that were lost during daemon handoff.
 async fn attempt_handoff(pid_path: &PathBuf, socket_path: &PathBuf) -> HandoffResult {
     log::info!(
         "[handoff] checking for old daemon: pid_path={:?}, socket_path={:?}",
@@ -228,107 +425,33 @@ async fn attempt_handoff(pid_path: &PathBuf, socket_path: &PathBuf) -> HandoffRe
         socket_path
     );
 
-    // Connect to old daemon
-    let stream = match tokio::net::UnixStream::connect(socket_path).await {
-        Ok(s) => {
-            log::info!("[handoff] connected to old daemon");
-            s
-        }
-        Err(e) => {
-            log::info!(
-                "[handoff] failed to connect to old daemon at {:?}: {}",
-                socket_path,
-                e
-            );
-            return HandoffResult {
-                adopted: vec![],
-                lost: HashMap::new(),
-            };
-        }
-    };
-
-    let raw_fd = stream.as_raw_fd();
-    let (read_half, write_half) = stream.into_split();
-    let mut reader = tokio::io::BufReader::new(read_half);
-    let mut writer = write_half;
-
-    // Send Handoff command
-    let cmd = serde_json::json!({ "type": "Handoff", "version": HANDOFF_VERSION });
-    let mut json = serde_json::to_string(&cmd).unwrap();
-    json.push('\n');
-    use tokio::io::AsyncWriteExt;
-    if let Err(e) = writer.write_all(json.as_bytes()).await {
-        log::info!("[handoff] failed to send handoff command: {}", e);
-        return HandoffResult {
-            adopted: vec![],
-            lost: HashMap::new(),
+    let (session_infos, fds, used_version) =
+        match request_handoff(socket_path, HANDOFF_VERSION).await {
+            Ok((session_infos, fds)) => (session_infos, fds, HANDOFF_VERSION),
+            Err(error) => {
+                log::info!("[handoff] version {} failed: {}", HANDOFF_VERSION, error);
+                match request_handoff(socket_path, HANDOFF_COMPAT_VERSION).await {
+                    Ok((session_infos, fds)) => {
+                        log::info!(
+                            "[handoff] fell back to compatible handoff version {}",
+                            HANDOFF_COMPAT_VERSION
+                        );
+                        (session_infos, fds, HANDOFF_COMPAT_VERSION)
+                    }
+                    Err(compat_error) => {
+                        log::info!(
+                            "[handoff] compatible handoff version {} also failed: {}",
+                            HANDOFF_COMPAT_VERSION,
+                            compat_error
+                        );
+                        return HandoffResult {
+                            adopted: vec![],
+                            lost: HashMap::new(),
+                        };
+                    }
+                }
+            }
         };
-    }
-    let _ = writer.flush().await;
-    log::info!(
-        "[handoff] sent Handoff command (version={})",
-        HANDOFF_VERSION
-    );
-
-    // Read response
-    let mut line = String::new();
-    use tokio::io::AsyncBufReadExt;
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        reader.read_line(&mut line),
-    )
-    .await
-    {
-        Ok(Ok(_)) => {}
-        _ => {
-            log::info!("[handoff] timeout or error reading handoff response");
-            return HandoffResult {
-                adopted: vec![],
-                lost: HashMap::new(),
-            };
-        }
-    }
-
-    let event: serde_json::Value = match serde_json::from_str(line.trim()) {
-        Ok(v) => v,
-        Err(e) => {
-            log::info!("[handoff] invalid response: {}", e);
-            return HandoffResult {
-                adopted: vec![],
-                lost: HashMap::new(),
-            };
-        }
-    };
-
-    log::info!("[handoff] received response: {}", line.trim());
-
-    match event.get("type").and_then(|t| t.as_str()) {
-        Some("HandoffReady") => {}
-        Some("Error") => {
-            let msg = event
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown");
-            log::info!("[handoff] old daemon refused: {}", msg);
-            return HandoffResult {
-                adopted: vec![],
-                lost: HashMap::new(),
-            };
-        }
-        other => {
-            log::info!("[handoff] unexpected response type: {:?}", other);
-            return HandoffResult {
-                adopted: vec![],
-                lost: HashMap::new(),
-            };
-        }
-    }
-
-    // Parse session metadata
-    let session_infos: Vec<protocol::SessionInfo> = match event.get("sessions") {
-        Some(s) => serde_json::from_value(s.clone()).unwrap_or_default(),
-        None => vec![],
-    };
 
     if session_infos.is_empty() {
         log::info!("[handoff] no sessions to adopt");
@@ -350,34 +473,11 @@ async fn attempt_handoff(pid_path: &PathBuf, socket_path: &PathBuf) -> HandoffRe
     }
 
     log::info!(
-        "[handoff] receiving {} fds via SCM_RIGHTS (raw_fd={})",
-        session_infos.len(),
-        raw_fd
+        "[handoff] received {} fds using handoff version {}: {:?}",
+        fds.len(),
+        used_version,
+        fds
     );
-
-    // Receive master fds via SCM_RIGHTS
-    let fds = match fd_transfer::recv_fds(raw_fd, session_infos.len()) {
-        Ok(fds) => {
-            log::info!("[handoff] received {} fds: {:?}", fds.len(), fds);
-            fds
-        }
-        Err(e) => {
-            let reason = handoff_loss_message(format!("failed to receive PTY fd: {}", e));
-            let lost = session_infos
-                .iter()
-                .map(|info| (info.session_id.clone(), reason.clone()))
-                .collect();
-            log::info!(
-                "[handoff] failed to receive fds: {} (kind={:?})",
-                e,
-                e.kind()
-            );
-            return HandoffResult {
-                adopted: vec![],
-                lost,
-            };
-        }
-    };
 
     if fds.len() != session_infos.len() {
         let reason = handoff_loss_message(format!(
@@ -403,17 +503,27 @@ async fn attempt_handoff(pid_path: &PathBuf, socket_path: &PathBuf) -> HandoffRe
     // Build adopted sessions
     let mut adopted = Vec::new();
     for (info, fd) in session_infos.into_iter().zip(fds) {
+        let session_id = info.session_id.clone();
         let alive = unsafe { libc::kill(info.pid as i32, 0) } == 0;
         log::info!(
-            "[handoff] adopting session {} (fd={}, child_pid={}, alive={})",
-            info.session_id,
+            "[handoff] adopting session {} (fd={}, child_pid={}, alive={}, rows={}, cols={}, snapshot={})",
+            session_id,
             fd,
             info.pid,
-            alive
+            alive,
+            info.rows,
+            info.cols,
+            info.snapshot.is_some()
         );
         let owned_fd = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) };
-        let session = pty::PtySession::adopt(owned_fd, info.pid as libc::pid_t, info.cwd);
-        adopted.push((info.session_id, session));
+        let session = pty::PtySession::adopt(
+            owned_fd,
+            info.pid as libc::pid_t,
+            info.cwd.clone(),
+            info.rows,
+            info.cols,
+        );
+        adopted.push((session_id, session, info));
     }
 
     log::info!("[handoff] complete, adopted {} sessions", adopted.len());
@@ -423,7 +533,18 @@ async fn attempt_handoff(pid_path: &PathBuf, socket_path: &PathBuf) -> HandoffRe
     }
 }
 
-async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
+#[allow(clippy::too_many_arguments)]
+async fn handle_connection(
+    stream: UnixStream,
+    sessions: Arc<Mutex<SessionManager>>,
+    broadcast_tx: broadcast::Sender<String>,
+    session_writers: SessionWriters,
+    pre_attach_buffers: PreAttachBuffers,
+    session_sizes: SessionSizes,
+    session_observers: SessionObservers,
+    lost_handoff_sessions: LostHandoffSessions,
+    recovery_manager: RecoveryManager,
+) {
     // Keep the raw fd for SCM_RIGHTS (used by Handoff)
     let raw_fd = stream.as_raw_fd();
     let (read_half, write_half) = stream.into_split();
@@ -437,13 +558,24 @@ async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
         match cmd {
             None => break,
             Some(Command::Handoff { version }) => {
-                handle_handoff(version, raw_fd, writer.clone(), daemon_context.clone()).await;
+                handle_handoff(
+                    version,
+                    raw_fd,
+                    sessions.clone(),
+                    session_writers.clone(),
+                    session_sizes.clone(),
+                    session_observers.clone(),
+                    writer.clone(),
+                    broadcast_tx.clone(),
+                    recovery_manager.clone(),
+                )
+                .await;
                 break; // Connection ends after handoff
             }
             Some(Command::Subscribe) => {
                 if !subscribed.load(std::sync::atomic::Ordering::Relaxed) {
                     subscribed.store(true, std::sync::atomic::Ordering::Relaxed);
-                    let mut broadcast_rx = daemon_context.broadcast_tx.subscribe();
+                    let mut broadcast_rx = broadcast_tx.subscribe();
                     let writer_broadcast = writer.clone();
                     tokio::spawn(async move {
                         use tokio::io::AsyncWriteExt;
@@ -458,7 +590,7 @@ async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(Command::Observe { session_id }) => {
-                let mgr = daemon_context.sessions.lock().await;
+                let mgr = sessions.lock().await;
                 if !mgr.contains(&session_id) {
                     let evt = Event::Error {
                         message: format!("session not found: {}", session_id),
@@ -468,7 +600,7 @@ async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
                     continue;
                 }
                 drop(mgr);
-                let mut observers = daemon_context.session_observers.lock().await;
+                let mut observers = session_observers.lock().await;
                 observers
                     .entry(session_id.clone())
                     .or_insert_with(Vec::new)
@@ -476,7 +608,7 @@ async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(Command::Unobserve { session_id }) => {
-                let mut observers = daemon_context.session_observers.lock().await;
+                let mut observers = session_observers.lock().await;
                 if let Some(list) = observers.get_mut(&session_id) {
                     let writer_ptr = Arc::as_ptr(&writer);
                     list.retain(|w| Arc::as_ptr(w) != writer_ptr);
@@ -487,7 +619,18 @@ async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
             }
             Some(command) => {
-                handle_command(command, writer.clone(), daemon_context.clone()).await;
+                handle_command(
+                    command,
+                    sessions.clone(),
+                    writer.clone(),
+                    session_writers.clone(),
+                    pre_attach_buffers.clone(),
+                    session_sizes.clone(),
+                    session_observers.clone(),
+                    lost_handoff_sessions.clone(),
+                    recovery_manager.clone(),
+                )
+                .await;
             }
         }
     }
@@ -495,16 +638,23 @@ async fn handle_connection(stream: UnixStream, daemon_context: DaemonContext) {
     // Connection dropped — clean up this client's entries from session_sizes
     // so stale dimensions don't cap future resize computations.
     let writer_id = Arc::as_ptr(&writer) as usize;
-    let mut sizes = daemon_context.session_sizes.lock().await;
+    let mut sizes = session_sizes.lock().await;
     for (_sid, client_sizes) in sizes.iter_mut() {
         client_sizes.remove(&writer_id);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_command(
     command: Command,
+    sessions: Arc<Mutex<SessionManager>>,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
-    daemon_context: DaemonContext,
+    session_writers: SessionWriters,
+    pre_attach_buffers: PreAttachBuffers,
+    session_sizes: SessionSizes,
+    session_observers: SessionObservers,
+    lost_handoff_sessions: LostHandoffSessions,
+    recovery_manager: RecoveryManager,
 ) {
     match command {
         Command::Spawn {
@@ -524,7 +674,7 @@ async fn handle_command(
                 cols,
                 rows
             );
-            let mut mgr = daemon_context.sessions.lock().await;
+            let mut mgr = sessions.lock().await;
             if mgr.contains(&session_id) {
                 log::warn!("[spawn] session already exists: {}", session_id);
                 let evt = Event::Error {
@@ -534,20 +684,33 @@ async fn handle_command(
                 return;
             }
 
-            daemon_context
-                .lost_handoff_sessions
-                .lock()
-                .await
-                .remove(&session_id);
+            lost_handoff_sessions.lock().await.remove(&session_id);
 
             match pty::PtySession::spawn(&executable, &args, &cwd, &env, cols, rows) {
                 Ok(pty_session) => {
                     let pty_reader = pty_session.try_clone_reader();
-                    mgr.insert(session_id.clone(), pty_session);
+                    let stream_control = StreamControl::new();
+                    let sidecar = match sidecar::TerminalSidecar::new(cols, rows, 10_000) {
+                        Ok(sidecar) => sidecar,
+                        Err(e) => {
+                            let evt = Event::Error {
+                                message: format!("failed to create terminal sidecar: {}", e),
+                            };
+                            let _ = write_event(&mut *writer.lock().await, &evt).await;
+                            return;
+                        }
+                    };
+                    mgr.insert(
+                        session_id.clone(),
+                        SessionRecord {
+                            pty: pty_session,
+                            sidecar,
+                            stream_control: Some(stream_control.clone()),
+                        },
+                    );
                     drop(mgr);
 
-                    if let Err(error) = daemon_context
-                        .recovery_manager
+                    if let Err(error) = recovery_manager
                         .start_session(&session_id, cols, rows, false)
                         .await
                     {
@@ -561,23 +724,35 @@ async fn handle_command(
                     // Start stream_output immediately so startup output
                     // (including kitty keyboard mode push) is captured.
                     if let Ok(reader) = pty_reader {
-                        daemon_context
-                            .session_writers
+                        session_writers
                             .lock()
                             .await
                             .insert(session_id.clone(), Vec::new());
 
                         let buffer: PreAttachBuffer = Arc::new(Mutex::new(Some(Vec::new())));
-                        daemon_context
-                            .pre_attach_buffers
+                        pre_attach_buffers
                             .lock()
                             .await
                             .insert(session_id.clone(), buffer.clone());
 
                         let sid = session_id.clone();
-                        let daemon_context = daemon_context.clone();
+                        let sessions_exit = sessions.clone();
+                        let writers_for_stream = session_writers.clone();
+                        let sizes_for_stream = session_sizes.clone();
+                        let observers_for_stream = session_observers.clone();
+                        let recovery_for_stream = recovery_manager.clone();
                         tokio::task::spawn_blocking(move || {
-                            stream_output(sid, reader, buffer, daemon_context);
+                            stream_output(
+                                sid,
+                                reader,
+                                stream_control,
+                                writers_for_stream,
+                                buffer,
+                                sessions_exit,
+                                sizes_for_stream,
+                                observers_for_stream,
+                                recovery_for_stream,
+                            );
                         });
                     }
 
@@ -597,14 +772,9 @@ async fn handle_command(
 
         Command::Attach { session_id } => {
             log::info!("[attach] session={}", session_id);
-            let mgr = daemon_context.sessions.lock().await;
+            let mut mgr = sessions.lock().await;
             if !mgr.contains(&session_id) {
-                let lost_message = daemon_context
-                    .lost_handoff_sessions
-                    .lock()
-                    .await
-                    .get(&session_id)
-                    .cloned();
+                let lost_message = lost_handoff_sessions.lock().await.get(&session_id).cloned();
                 let evt = Event::Error {
                     message: lost_message
                         .unwrap_or_else(|| format!("session not found: {}", session_id)),
@@ -614,16 +784,19 @@ async fn handle_command(
                 return;
             }
 
-            let is_streaming = daemon_context
-                .session_writers
-                .lock()
-                .await
-                .contains_key(&session_id);
+            let is_streaming = session_writers.lock().await.contains_key(&session_id);
+            let has_pre_attach_buffer = pre_attach_buffers.lock().await.contains_key(&session_id);
+            log::info!(
+                "[attach] state session={} is_streaming={} has_pre_attach_buffer={}",
+                session_id,
+                is_streaming,
+                has_pre_attach_buffer
+            );
             if is_streaming {
                 // stream_output already running (started at Spawn) — push writer to broadcast list
                 drop(mgr);
                 {
-                    let mut writers = daemon_context.session_writers.lock().await;
+                    let mut writers = session_writers.lock().await;
                     if let Some(vec) = writers.get_mut(&session_id) {
                         vec.push(writer.clone());
                     }
@@ -632,12 +805,7 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
 
                 // Flush pre-attach buffer (startup output including kitty keyboard push)
-                if let Some(buffer) = daemon_context
-                    .pre_attach_buffers
-                    .lock()
-                    .await
-                    .remove(&session_id)
-                {
+                if let Some(buffer) = pre_attach_buffers.lock().await.remove(&session_id) {
                     if let Some(data) = buffer.lock().await.take() {
                         if !data.is_empty() {
                             log::info!(
@@ -650,26 +818,63 @@ async fn handle_command(
                                 data,
                             };
                             let _ = write_event(&mut *writer.lock().await, &evt).await;
+                        } else {
+                            log::info!("[attach] pre-attach buffer empty for {}", session_id);
                         }
                     }
+                } else {
+                    log::info!("[attach] no pre-attach buffer found for {}", session_id);
                 }
             } else {
+                log::info!(
+                    "[attach] starting stream_output on first attach for adopted/non-streaming session {}",
+                    session_id
+                );
                 // No stream_output yet (adopted session from handoff) — start it now
-                let pty_reader = match mgr.sessions.get(&session_id).unwrap().try_clone_reader() {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let evt = Event::Error {
-                            message: format!("failed to clone PTY reader: {}", e),
-                        };
-                        drop(mgr);
-                        let _ = write_event(&mut *writer.lock().await, &evt).await;
-                        return;
-                    }
-                };
+                let (pty_reader, stream_control, recovery_cols, recovery_rows) =
+                    match mgr.sessions.get_mut(&session_id) {
+                        Some(session) => match session.pty.try_clone_reader() {
+                            Ok(reader) => {
+                                let stream_control = StreamControl::new();
+                                let recovery_cols = session.pty.cols();
+                                let recovery_rows = session.pty.rows();
+                                session.stream_control = Some(stream_control.clone());
+                                (reader, stream_control, recovery_cols, recovery_rows)
+                            }
+                            Err(e) => {
+                                let evt = Event::Error {
+                                    message: format!("failed to clone PTY reader: {}", e),
+                                };
+                                drop(mgr);
+                                let _ = write_event(&mut *writer.lock().await, &evt).await;
+                                return;
+                            }
+                        },
+                        None => {
+                            let evt = Event::Error {
+                                message: format!("session not found: {}", session_id),
+                            };
+                            drop(mgr);
+                            let _ = write_event(&mut *writer.lock().await, &evt).await;
+                            return;
+                        }
+                    };
                 drop(mgr);
 
-                daemon_context
-                    .session_writers
+                let resume_from_disk = recovery_manager.has_persisted_snapshot(&session_id);
+                if let Err(error) = recovery_manager
+                    .start_session(&session_id, recovery_cols, recovery_rows, resume_from_disk)
+                    .await
+                {
+                    log::warn!(
+                        "[recovery] failed to start mirrored adopted session {} (resume_from_disk={}): {}",
+                        session_id,
+                        resume_from_disk,
+                        error
+                    );
+                }
+
+                session_writers
                     .lock()
                     .await
                     .insert(session_id.clone(), vec![writer.clone()]);
@@ -677,33 +882,32 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
 
                 let sid = session_id.clone();
+                let sessions_exit = sessions.clone();
+                let writers_for_stream = session_writers.clone();
+                let sizes_for_stream = session_sizes.clone();
+                let observers_for_stream = session_observers.clone();
+                let recovery_for_stream = recovery_manager.clone();
                 let no_buffer: PreAttachBuffer = Arc::new(Mutex::new(None));
-                let daemon_context = daemon_context.clone();
-                let recovery_context = daemon_context.clone();
-                let session_id_for_recovery = session_id.clone();
                 tokio::task::spawn_blocking(move || {
-                    stream_output(sid, pty_reader, no_buffer, daemon_context);
-                });
-                tokio::spawn(async move {
-                    if let Err(error) = recovery_context
-                        .recovery_manager
-                        .start_session(&session_id_for_recovery, 80, 24, true)
-                        .await
-                    {
-                        log::warn!(
-                            "[recovery] failed to start mirrored adopted session {}: {}",
-                            session_id_for_recovery,
-                            error
-                        );
-                    }
+                    stream_output(
+                        sid,
+                        pty_reader,
+                        stream_control,
+                        writers_for_stream,
+                        no_buffer,
+                        sessions_exit,
+                        sizes_for_stream,
+                        observers_for_stream,
+                        recovery_for_stream,
+                    );
                 });
             }
         }
 
         Command::Detach { session_id } => {
             log::info!("[detach] session={}", session_id);
-            let evt = if daemon_context.sessions.lock().await.contains(&session_id) {
-                let mut writers = daemon_context.session_writers.lock().await;
+            let evt = if sessions.lock().await.contains(&session_id) {
+                let mut writers = session_writers.lock().await;
                 if let Some(vec) = writers.get_mut(&session_id) {
                     let ptr = Arc::as_ptr(&writer) as usize;
                     vec.retain(|w| Arc::as_ptr(w) as usize != ptr);
@@ -712,7 +916,7 @@ async fn handle_command(
 
                 // Remove this client from the size registry and recompute
                 {
-                    let mut sizes = daemon_context.session_sizes.lock().await;
+                    let mut sizes = session_sizes.lock().await;
                     if let Some(client_sizes) = sizes.get_mut(&session_id) {
                         let writer_id = Arc::as_ptr(&writer) as usize;
                         client_sizes.remove(&writer_id);
@@ -722,8 +926,14 @@ async fn handle_command(
                             let min_rows =
                                 client_sizes.values().map(|(_, r)| *r).min().unwrap_or(24);
                             drop(sizes);
-                            let mgr = daemon_context.sessions.lock().await;
-                            let _ = mgr.resize(&session_id, min_cols, min_rows);
+                            let mut mgr = sessions.lock().await;
+                            let resized = mgr.resize(&session_id, min_cols, min_rows).is_ok();
+                            drop(mgr);
+                            if resized {
+                                recovery_manager
+                                    .resize_session(&session_id, min_cols, min_rows)
+                                    .await;
+                            }
                         }
                     }
                 }
@@ -738,9 +948,9 @@ async fn handle_command(
         }
 
         Command::Input { session_id, data } => {
-            let mut mgr = daemon_context.sessions.lock().await;
+            let mut mgr = sessions.lock().await;
             match mgr.get_mut(&session_id) {
-                Some(session) => match session.write_input(&data) {
+                Some(session) => match session.pty.write_input(&data) {
                     Ok(_) => {
                         drop(mgr);
                         let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
@@ -771,7 +981,7 @@ async fn handle_command(
             // Update this client's size and compute effective min across all attached clients
             let writer_id = Arc::as_ptr(&writer) as usize;
             let (eff_cols, eff_rows) = {
-                let mut sizes = daemon_context.session_sizes.lock().await;
+                let mut sizes = session_sizes.lock().await;
                 let client_sizes = sizes.entry(session_id.clone()).or_default();
                 client_sizes.insert(writer_id, (cols, rows));
                 let min_cols = client_sizes.values().map(|(c, _)| *c).min().unwrap_or(cols);
@@ -779,21 +989,21 @@ async fn handle_command(
                 (min_cols, min_rows)
             };
 
-            let mgr = daemon_context.sessions.lock().await;
+            let mut mgr = sessions.lock().await;
             let result = mgr.resize(&session_id, eff_cols, eff_rows);
             drop(mgr);
+            let success = result.is_ok();
             let evt = match result {
-                Ok(_) => {
-                    daemon_context
-                        .recovery_manager
-                        .resize_session(&session_id, eff_cols, eff_rows)
-                        .await;
-                    Event::Ok
-                }
+                Ok(_) => Event::Ok,
                 Err(e) => Event::Error {
                     message: e.to_string(),
                 },
             };
+            if success {
+                recovery_manager
+                    .resize_session(&session_id, eff_cols, eff_rows)
+                    .await;
+            }
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
 
@@ -814,7 +1024,7 @@ async fn handle_command(
                     return;
                 }
             };
-            let mgr = daemon_context.sessions.lock().await;
+            let mgr = sessions.lock().await;
             let result = mgr.signal(&session_id, sig);
             drop(mgr);
             let evt = match result {
@@ -828,38 +1038,24 @@ async fn handle_command(
 
         Command::Kill { session_id } => {
             log::info!("[kill] session={}", session_id);
-            let mut mgr = daemon_context.sessions.lock().await;
+            let mut mgr = sessions.lock().await;
             let result = match mgr.get_mut(&session_id) {
-                Some(session) => session.kill(),
+                Some(session) => session.pty.kill(),
                 None => Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     format!("session not found: {}", session_id),
                 )),
             };
-            if result.is_ok() {
+            let success = result.is_ok();
+            if success {
                 mgr.remove(&session_id);
             }
             drop(mgr);
-            daemon_context
-                .session_writers
-                .lock()
-                .await
-                .remove(&session_id);
-            daemon_context
-                .session_sizes
-                .lock()
-                .await
-                .remove(&session_id);
-            daemon_context
-                .session_observers
-                .lock()
-                .await
-                .remove(&session_id);
-            if result.is_ok() {
-                daemon_context
-                    .recovery_manager
-                    .end_session(&session_id)
-                    .await;
+            session_writers.lock().await.remove(&session_id);
+            session_sizes.lock().await.remove(&session_id);
+            session_observers.lock().await.remove(&session_id);
+            if success {
+                recovery_manager.end_session(&session_id).await;
             }
             let evt = match result {
                 Ok(_) => Event::Ok,
@@ -871,7 +1067,7 @@ async fn handle_command(
         }
 
         Command::List => {
-            let mut mgr = daemon_context.sessions.lock().await;
+            let mut mgr = sessions.lock().await;
             let sessions_list = mgr.list();
             drop(mgr);
             let evt = Event::SessionList {
@@ -880,14 +1076,28 @@ async fn handle_command(
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
 
-        Command::GetRecoverySnapshot { session_id } => {
-            let evt = match daemon_context
-                .recovery_manager
-                .get_snapshot(&session_id)
-                .await
-            {
-                Ok(snapshot) => Event::RecoverySnapshot { snapshot },
-                Err(error) => Event::Error { message: error },
+        Command::Snapshot { session_id } => {
+            let evt = match recovery_manager.get_snapshot(&session_id).await {
+                Ok(Some(snapshot)) => {
+                    log::info!(
+                        "[snapshot] session={} rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
+                        session_id,
+                        snapshot.rows,
+                        snapshot.cols,
+                        snapshot.cursor_row,
+                        snapshot.cursor_col,
+                        snapshot.cursor_visible,
+                        snapshot.serialized.len()
+                    );
+                    Event::Snapshot {
+                        session_id,
+                        snapshot: recovery_snapshot_to_terminal_snapshot(snapshot),
+                    }
+                }
+                Ok(None) => Event::Error {
+                    message: format!("session not found: {}", session_id),
+                },
+                Err(e) => Event::Error { message: e },
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -909,15 +1119,22 @@ async fn handle_command(
 }
 
 /// Current handoff protocol version. Both sides must agree.
-const HANDOFF_VERSION: u32 = 1;
+const HANDOFF_VERSION: u32 = 2;
+const HANDOFF_COMPAT_VERSION: u32 = 1;
 
 /// Handle a handoff request from a new daemon.
 /// Collects all live sessions, sends metadata + master fds, then exits.
+#[allow(clippy::too_many_arguments)]
 async fn handle_handoff(
     version: u32,
     socket_fd: std::os::unix::io::RawFd,
+    sessions: Arc<Mutex<SessionManager>>,
+    session_writers: SessionWriters,
+    session_sizes: SessionSizes,
+    session_observers: SessionObservers,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
-    daemon_context: DaemonContext,
+    broadcast_tx: broadcast::Sender<String>,
+    recovery_manager: RecoveryManager,
 ) {
     log::info!(
         "[handoff] received Handoff request (version={}, our_version={})",
@@ -925,46 +1142,116 @@ async fn handle_handoff(
         HANDOFF_VERSION
     );
 
-    if version != HANDOFF_VERSION {
+    if version != HANDOFF_VERSION && version != HANDOFF_COMPAT_VERSION {
         log::info!("[handoff] version mismatch, rejecting");
         let evt = Event::Error {
             message: format!(
-                "handoff version mismatch: expected {}, got {}",
-                HANDOFF_VERSION, version
+                "handoff version mismatch: expected {} or {}, got {}",
+                HANDOFF_VERSION, HANDOFF_COMPAT_VERSION, version
             ),
         };
         let _ = write_event(&mut *writer.lock().await, &evt).await;
         return;
     }
 
-    // Collect live sessions and detach them
-    let mut mgr = daemon_context.sessions.lock().await;
+    // Ask live stream readers to stop before detaching sessions for transfer.
+    let mgr = sessions.lock().await;
     let session_ids: Vec<String> = mgr.sessions.keys().cloned().collect();
     log::info!("[handoff] found {} sessions in manager", session_ids.len());
+
+    let controls: Vec<StreamControl> = session_ids
+        .iter()
+        .filter_map(|id| {
+            mgr.sessions
+                .get(id)
+                .and_then(|session| session.stream_control.clone())
+        })
+        .collect();
+    for control in &controls {
+        control.request_stop();
+    }
+    drop(mgr);
+
+    let started = std::time::Instant::now();
+    while started.elapsed() < std::time::Duration::from_secs(2) {
+        if controls.iter().all(StreamControl::is_stopped) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // Collect live sessions and detach them
+    let mut mgr = sessions.lock().await;
 
     let mut infos = Vec::new();
     let mut fds = Vec::new();
     let mut dead_count = 0;
 
     for id in &session_ids {
-        if let Some(session) = mgr.remove(id) {
-            if session.is_alive() {
-                let pid = session.pid();
-                let cwd = session.cwd.clone();
-                let (fd, _, _) = session.detach_for_handoff();
+        if let Some(mut session) = mgr.remove(id) {
+            if session.pty.is_alive() {
+                let pid = session.pty.pid();
+                let cwd = session.pty.cwd.clone();
                 log::info!(
-                    "[handoff] detached session {} (pid={}, fd={}, cwd={})",
+                    "[handoff] snapshotting session {} (pid={}, cwd={})",
                     id,
                     pid,
-                    fd,
                     cwd
                 );
-                infos.push(protocol::SessionInfo {
+                let snapshot = match session.sidecar.snapshot() {
+                    Ok(snapshot) => {
+                        log::info!(
+                            "[handoff] snapshot session={} rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
+                            id,
+                            snapshot.rows,
+                            snapshot.cols,
+                            snapshot.cursor_row,
+                            snapshot.cursor_col,
+                            snapshot.cursor_visible,
+                            snapshot.vt.len()
+                        );
+                        Some(snapshot)
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "[handoff] failed to snapshot session {} (pid={}, cwd={}): {}",
+                            id,
+                            pid,
+                            cwd,
+                            error
+                        );
+                        None
+                    }
+                };
+                let (fd, _child_pid, _cwd, rows, cols) = session.pty.detach_for_handoff();
+                if snapshot.is_some() {
+                    log::info!(
+                        "[handoff] detached session {} (pid={}, fd={}, cwd={}, rows={}, cols={})",
+                        id,
+                        pid,
+                        fd,
+                        cwd,
+                        rows,
+                        cols
+                    );
+                } else {
+                    log::info!(
+                        "[handoff] detached degraded session {} (pid={}, fd={}, cwd={}, rows={}, cols={})",
+                        id,
+                        pid,
+                        fd,
+                        cwd,
+                        rows,
+                        cols
+                    );
+                }
+                infos.push(protocol::HandoffSession {
                     session_id: id.clone(),
                     pid,
                     cwd,
-                    state: protocol::SessionState::Active,
-                    idle_seconds: 0,
+                    rows,
+                    cols,
+                    snapshot,
                 });
                 fds.push(fd);
             } else {
@@ -982,18 +1269,39 @@ async fn handle_handoff(
     );
 
     // Clear all writer slots (stream_output tasks will exit on next read failure)
-    daemon_context.session_writers.lock().await.clear();
-    daemon_context.session_sizes.lock().await.clear();
-    daemon_context.session_observers.lock().await.clear();
+    session_writers.lock().await.clear();
+    session_sizes.lock().await.clear();
+    session_observers.lock().await.clear();
 
     log::info!(
         "[handoff] sending HandoffReady with {} sessions",
         infos.len()
     );
 
-    // Send HandoffReady with session metadata
-    let evt = Event::HandoffReady { sessions: infos };
-    let _ = write_event(&mut *writer.lock().await, &evt).await;
+    if version == HANDOFF_COMPAT_VERSION {
+        let compat_sessions = infos
+            .into_iter()
+            .map(|session| HandoffSessionV1 {
+                session_id: session.session_id,
+                pid: session.pid,
+                cwd: session.cwd,
+                snapshot: session
+                    .snapshot
+                    .unwrap_or_else(|| blank_snapshot(session.rows, session.cols)),
+            })
+            .collect();
+        let evt = HandoffEventV1::HandoffReady {
+            sessions: compat_sessions,
+        };
+        let mut compat_json = serde_json::to_string(&evt).unwrap();
+        compat_json.push('\n');
+        use tokio::io::AsyncWriteExt;
+        let _ = writer.lock().await.write_all(compat_json.as_bytes()).await;
+    } else {
+        // Send HandoffReady with session metadata
+        let evt = Event::HandoffReady { sessions: infos };
+        let _ = write_event(&mut *writer.lock().await, &evt).await;
+    }
 
     // Flush the writer before sending fds
     {
@@ -1023,31 +1331,27 @@ async fn handle_handoff(
         log::info!("[handoff] no fds to send");
     }
 
-    daemon_context.recovery_manager.flush_and_shutdown().await;
-
     // Broadcast ShuttingDown so subscribed clients know not to reconnect to this daemon.
     let shutdown_evt = Event::ShuttingDown;
     if let Ok(json) = serde_json::to_string(&shutdown_evt) {
-        let _ = daemon_context.broadcast_tx.send(json);
+        let _ = broadcast_tx.send(json);
     }
 
-    const HANDOFF_EXIT_DELAY_MS: u64 = 500;
-    const HANDOFF_SHUTDOWN_FLUSH_MS: u64 = 600;
+    recovery_manager.flush_and_shutdown().await;
 
     log::info!(
-        "[handoff] complete, exiting in {}ms (pid={})",
-        HANDOFF_EXIT_DELAY_MS,
+        "[handoff] complete, exiting in 500ms (pid={})",
         std::process::id()
     );
     // Use a blocking thread to exit — std::process::exit from an async context
     // can hang if tokio tasks are still running.
     std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(HANDOFF_EXIT_DELAY_MS));
+        std::thread::sleep(std::time::Duration::from_millis(500));
         log::info!("[handoff] exiting now");
         std::process::exit(0);
     });
     // Give subscriber tasks time to flush the ShuttingDown event to their sockets.
-    tokio::time::sleep(std::time::Duration::from_millis(HANDOFF_SHUTDOWN_FLUSH_MS)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
 }
 
 /// Maximum pre-attach buffer size (64 KB). Output before client attaches is
@@ -1059,24 +1363,67 @@ const MAX_PRE_ATTACH_BUFFER: usize = 64 * 1024;
 /// currently attached clients via the SessionWriters map.
 /// Buffers output before first Attach so startup sequences (like kitty
 /// keyboard mode push) are replayed to xterm.js on connect.
+#[allow(clippy::too_many_arguments)]
 fn stream_output(
     session_id: String,
     mut reader: Box<dyn Read + Send>,
+    stream_control: StreamControl,
+    session_writers: SessionWriters,
     pre_attach_buffer: PreAttachBuffer,
-    daemon_context: DaemonContext,
+    sessions: Arc<Mutex<SessionManager>>,
+    session_sizes: SessionSizes,
+    session_observers: SessionObservers,
+    recovery_manager: RecoveryManager,
 ) {
     let rt = tokio::runtime::Handle::current();
     let mut buf = [0u8; 4096];
+    let mut chunk_count: usize = 0;
+    log::info!("[stream] start session={}", session_id);
 
     loop {
+        if stream_control.stop_requested() {
+            log::info!("[stream] stop requested session={}", session_id);
+            stream_control.mark_stopped();
+            return;
+        }
         match reader.read(&mut buf) {
-            Ok(0) => break,
+            Ok(0) => {
+                log::info!("[stream] eof session={} chunks={}", session_id, chunk_count);
+                break;
+            }
             Ok(n) => {
+                if stream_control.stop_requested() {
+                    log::info!(
+                        "[stream] dropping late chunk after stop request session={} bytes={}",
+                        session_id,
+                        n
+                    );
+                    stream_control.mark_stopped();
+                    return;
+                }
+                chunk_count += 1;
+                if chunk_count <= 5 {
+                    log::info!(
+                        "[stream] chunk session={} chunk={} bytes={}",
+                        session_id,
+                        chunk_count,
+                        n
+                    );
+                }
                 let data = buf[..n].to_vec();
-                let sequence = daemon_context.recovery_manager.next_sequence(&session_id);
+                if let Err(e) = rt.block_on(async {
+                    let mut mgr = sessions.lock().await;
+                    mgr.mirror_output(&session_id, &data)
+                }) {
+                    log::error!(
+                        "failed to mirror PTY output into sidecar for session {}: {}",
+                        session_id,
+                        e
+                    );
+                }
+                let sequence = recovery_manager.next_sequence(&session_id);
                 rt.block_on(async {
-                    daemon_context
-                        .recovery_manager
+                    recovery_manager
                         .write_output(&session_id, &data, sequence)
                         .await;
                 });
@@ -1087,6 +1434,14 @@ fn stream_output(
                     if let Some(ref mut buffer) = *guard {
                         if buffer.len() + data.len() <= MAX_PRE_ATTACH_BUFFER {
                             buffer.extend_from_slice(&data);
+                        }
+                        if chunk_count <= 5 {
+                            log::info!(
+                                "[stream] buffered session={} bytes={} total_buffered={}",
+                                session_id,
+                                data.len(),
+                                buffer.len()
+                            );
                         }
                         true
                     } else {
@@ -1100,7 +1455,7 @@ fn stream_output(
 
                 // Check if observers exist before cloning data (avoids clone on hot path with zero observers)
                 let has_observers = rt.block_on(async {
-                    let guard = daemon_context.session_observers.lock().await;
+                    let guard = session_observers.lock().await;
                     guard.get(&session_id).is_some_and(|list| !list.is_empty())
                 });
 
@@ -1115,7 +1470,7 @@ fn stream_output(
                     data,
                 };
                 rt.block_on(async {
-                    let mut writers = daemon_context.session_writers.lock().await;
+                    let mut writers = session_writers.lock().await;
                     if let Some(vec) = writers.get_mut(&session_id) {
                         let mut failed = Vec::new();
                         for (i, w) in vec.iter().enumerate() {
@@ -1134,7 +1489,7 @@ fn stream_output(
                                 vec.remove(i);
                             }
                             // Clean up stale size entries for broken writers
-                            let mut sizes = daemon_context.session_sizes.lock().await;
+                            let mut sizes = session_sizes.lock().await;
                             if let Some(client_sizes) = sizes.get_mut(&session_id) {
                                 for wid in &failed_ids {
                                     client_sizes.remove(wid);
@@ -1147,7 +1502,7 @@ fn stream_output(
                 // Tee output to passive observers concurrently, removing dead ones
                 if let Some(obs_data) = obs_data {
                     rt.block_on(async {
-                        let mut observers_guard = daemon_context.session_observers.lock().await;
+                        let mut observers_guard = session_observers.lock().await;
                         if let Some(observer_list) = observers_guard.get_mut(&session_id) {
                             let obs_evt = Event::Output {
                                 session_id: session_id.clone(),
@@ -1177,6 +1532,16 @@ fn stream_output(
                 }
             }
             Err(e) => {
+                if e.kind() == std::io::ErrorKind::WouldBlock {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                log::info!(
+                    "[stream] read error session={} kind={:?} error={}",
+                    session_id,
+                    e.kind(),
+                    e
+                );
                 log::error!("PTY read error for session {}: {}", session_id, e);
                 break;
             }
@@ -1184,9 +1549,9 @@ fn stream_output(
     }
 
     let exit_code = {
-        let mut mgr = rt.block_on(daemon_context.sessions.lock());
+        let mut mgr = rt.block_on(sessions.lock());
         let code = match mgr.get_mut(&session_id) {
-            Some(session) => session.try_wait().unwrap_or(0),
+            Some(session) => session.pty.try_wait().unwrap_or(0),
             None => 0,
         };
         mgr.remove(&session_id);
@@ -1198,9 +1563,10 @@ fn stream_output(
         code: exit_code,
     };
     rt.block_on(async {
+        recovery_manager.end_session(&session_id).await;
         // Broadcast Exit to all attached writers, then remove the session entry.
         // session_writers and writers_cleanup are the same Arc — use a single lock.
-        let mut writers = daemon_context.session_writers.lock().await;
+        let mut writers = session_writers.lock().await;
         if let Some(vec) = writers.get(&session_id) {
             for w in vec.iter() {
                 let _ = write_event(&mut *w.lock().await, &evt).await;
@@ -1208,14 +1574,10 @@ fn stream_output(
         }
         writers.remove(&session_id);
         drop(writers);
-        daemon_context
-            .session_sizes
-            .lock()
-            .await
-            .remove(&session_id);
+        session_sizes.lock().await.remove(&session_id);
 
         // Tee Exit event to passive observers concurrently, then clean up
-        let mut observers_guard = daemon_context.session_observers.lock().await;
+        let mut observers_guard = session_observers.lock().await;
         if let Some(observer_list) = observers_guard.remove(&session_id) {
             let obs_evt = Event::Exit {
                 session_id: session_id.clone(),
@@ -1230,9 +1592,82 @@ fn stream_output(
             }))
             .await;
         }
-        daemon_context
-            .recovery_manager
-            .end_session(&session_id)
-            .await;
     });
+    log::info!(
+        "[stream] exit session={} code={} chunks={}",
+        session_id,
+        exit_code,
+        chunk_count
+    );
+    stream_control.mark_stopped();
+    log::info!("[stream] end session={} chunks={}", session_id, chunk_count);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_snapshot() -> protocol::TerminalSnapshot {
+        protocol::TerminalSnapshot {
+            version: 1,
+            rows: 24,
+            cols: 80,
+            cursor_row: 2,
+            cursor_col: 3,
+            cursor_visible: true,
+            vt: "hello".to_string(),
+        }
+    }
+
+    #[test]
+    fn parse_handoff_response_accepts_v2_payload() {
+        let line = serde_json::to_string(&Event::HandoffReady {
+            sessions: vec![protocol::HandoffSession {
+                session_id: "s1".to_string(),
+                pid: 42,
+                cwd: "/tmp".to_string(),
+                rows: 24,
+                cols: 80,
+                snapshot: None,
+            }],
+        })
+        .unwrap();
+
+        let sessions = parse_handoff_response(&line).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "s1");
+        assert!(sessions[0].snapshot.is_none());
+        assert_eq!(sessions[0].rows, 24);
+        assert_eq!(sessions[0].cols, 80);
+    }
+
+    #[test]
+    fn parse_handoff_response_accepts_v1_payload() {
+        let line = serde_json::to_string(&HandoffEventV1::HandoffReady {
+            sessions: vec![HandoffSessionV1 {
+                session_id: "s1".to_string(),
+                pid: 42,
+                cwd: "/tmp".to_string(),
+                snapshot: sample_snapshot(),
+            }],
+        })
+        .unwrap();
+
+        let sessions = parse_handoff_response(&line).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "s1");
+        assert_eq!(sessions[0].rows, 24);
+        assert_eq!(sessions[0].cols, 80);
+        assert_eq!(sessions[0].snapshot.as_ref().unwrap().vt, "hello");
+    }
+
+    #[test]
+    fn blank_snapshot_uses_dimensions_for_compat_handoff() {
+        let snapshot = blank_snapshot(45, 120);
+        assert_eq!(snapshot.rows, 45);
+        assert_eq!(snapshot.cols, 120);
+        assert_eq!(snapshot.cursor_row, 0);
+        assert_eq!(snapshot.cursor_col, 0);
+        assert!(snapshot.vt.is_empty());
+    }
 }

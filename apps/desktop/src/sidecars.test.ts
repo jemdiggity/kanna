@@ -12,30 +12,16 @@ describe("desktop sidecar packaging", () => {
     expect(rootPkg.scripts?.dev).not.toContain("sync-version.sh");
   });
 
-  it("packages terminal recovery as bundled runtime resources instead of a pkg sidecar", () => {
+  it("stages the daemon, cli, and terminal recovery sidecars", () => {
     const stageSidecarsScript = readFileSync(
       new URL("../../../scripts/stage-sidecars.sh", import.meta.url),
       "utf8",
     );
-    const stageRecoveryRuntimeScript = readFileSync(
-      new URL("../../../scripts/stage-terminal-recovery-runtime.sh", import.meta.url),
-      "utf8",
-    );
-    const recoveryPkg = readFileSync(
-      new URL("../../../packages/terminal-recovery/package.json", import.meta.url),
-      "utf8",
-    );
-
-    expect(desktopPkg.scripts?.["build:sidecars"]).toContain("stage-terminal-recovery-runtime.sh");
-    expect(tauriConf.bundle.externalBin).not.toContain("binaries/kanna-terminal-recovery");
-    expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-node-runtime");
-    expect(
-      tauriConf.bundle.resources["../../../.build/tauri-resources/terminal-recovery/"],
-    ).toBe("terminal-recovery/");
-    expect(stageSidecarsScript).not.toContain("kanna-terminal-recovery");
-    expect(stageSidecarsScript).toContain("kanna-node-runtime");
-    expect(stageRecoveryRuntimeScript).toContain("terminal-recovery/dist");
-    expect(recoveryPkg).not.toContain("pkg");
+    expect(desktopPkg.scripts?.["build:sidecars"]).toContain("packages/terminal-recovery/Cargo.toml");
+    expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-terminal-recovery");
+    expect(stageSidecarsScript).toContain("kanna-terminal-recovery");
+    expect(stageSidecarsScript).toContain("kanna-daemon");
+    expect(stageSidecarsScript).toContain("kanna-cli");
   });
 
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {

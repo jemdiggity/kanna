@@ -9,6 +9,7 @@ export interface ReconnectRedrawPolicy {
 
 export interface TaskTerminalEnv {
   TERM: string;
+  COLORTERM?: string;
   TERM_PROGRAM?: string;
 }
 
@@ -18,6 +19,10 @@ export interface TerminalGeometry {
 }
 
 const DAEMON_HANDOFF_FAILURE_PREFIX = "session lost during daemon handoff:";
+
+export function isMissingDaemonSessionFailure(message: string): boolean {
+  return message.includes("session not found");
+}
 
 export function getTerminalRecoveryMode(
   spawnOptions?: SpawnOptions,
@@ -53,36 +58,40 @@ export function shouldRunTerminalDispose(alreadyDisposed: boolean): boolean {
 }
 
 export function shouldEnableKittyKeyboard(options?: TerminalOptions): boolean {
-  return !!options?.agentProvider && options.agentProvider !== "codex";
+  return options?.agentProvider === "claude";
 }
 
 export function shouldSupportKittyKeyboard(options?: TerminalOptions): boolean {
   return !!options?.agentProvider;
 }
 
-export function shouldPushKittyKeyboardOnFreshAttach(options?: TerminalOptions): boolean {
-  return options?.agentProvider === "claude";
+export function shouldPushKittyKeyboardOnFreshAttach(_options?: TerminalOptions): boolean {
+  return false;
 }
 
 export function shouldResetTerminalOnReconnect(options?: TerminalOptions): boolean {
   return options?.agentProvider !== "codex";
 }
 
-export function getReconnectKeyboardPush(options?: TerminalOptions): string | null {
-  if (options?.agentProvider === "codex") {
-    return "\x1b[>1u";
-  }
-  if (options?.kittyKeyboard) {
-    return "\x1b[>1u";
-  }
+export function getReconnectKeyboardPush(_options?: TerminalOptions): string | null {
   return null;
 }
 
 export function getTaskTerminalEnv(agentProvider?: string): TaskTerminalEnv {
-  if (agentProvider === "codex") {
-    return { TERM: "xterm-256color" };
-  }
-  return { TERM: "xterm-256color", TERM_PROGRAM: "vscode" };
+  void agentProvider;
+  return {
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+    TERM_PROGRAM: "kanna",
+  };
+}
+
+export function getShellTerminalEnv(): TaskTerminalEnv {
+  return {
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+    TERM_PROGRAM: "kanna",
+  };
 }
 
 export function formatAttachFailureMessage(message: string): string {
@@ -100,10 +109,13 @@ export function shouldRespawnAfterAttachFailure(
 ): boolean {
   return (
     getTerminalRecoveryMode(spawnOptions, options) === "attach-only" &&
-    isDaemonHandoffFailure(message)
+    (isDaemonHandoffFailure(message) || isMissingDaemonSessionFailure(message))
   );
 }
 
+export function getReconnectResizeDelayMs(_options?: TerminalOptions): number {
+  return 0;
+}
 export function shouldForceDoubleResizeOnReconnect(_options?: TerminalOptions): boolean {
   return _options?.agentProvider === "claude";
 }

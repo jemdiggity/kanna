@@ -133,13 +133,14 @@ start() {
     echo "Session '$SESSION' already running. Use 'restart' or 'stop'."
     exit 1
   fi
-  tmux new-session -d -s "$SESSION" -n desktop -c "$ROOT"
+  local DESKTOP_CWD="$ROOT/apps/desktop"
+  tmux new-session -d -s "$SESSION" -n desktop -c "$DESKTOP_CWD"
   # Forward all KANNA_* env vars into the tmux session
   EXPORTS="$(env | grep '^KANNA_' | sed "s/^\([^=]*\)=\(.*\)/export \1='\2'/" | tr '\n' ' ')"
 
   # Build dev sidecars before tauri dev so externalBin inputs exist and are
   # owned by the dev path instead of beforeBuildCommand.
-  DEV_CMD="cd apps/desktop && bun run build:sidecars && bun tauri dev"
+  DEV_CMD="bun run build:sidecars && bun tauri dev"
   LOCAL_CONF="$ROOT/apps/desktop/src-tauri/tauri.conf.local.json"
   if [ -n "$KANNA_WORKTREE" ] && [ -n "$KANNA_DEV_PORT" ]; then
     cat > "$LOCAL_CONF" <<LOCALEOF
@@ -149,7 +150,7 @@ start() {
   }
 }
 LOCALEOF
-    DEV_CMD="cd apps/desktop && bun run build:sidecars && bun tauri dev --config $LOCAL_CONF"
+    DEV_CMD="bun run build:sidecars && bun tauri dev --config $LOCAL_CONF"
   fi
 
   if [ -n "$EXPORTS" ]; then
