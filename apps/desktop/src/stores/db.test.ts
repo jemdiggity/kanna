@@ -1,5 +1,21 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DbHandle } from "@kanna/db";
+
+const readEnvVarMock = vi.fn<(name: string) => Promise<string>>(async () => "");
+
+vi.mock("../tauri-mock", () => ({
+  isTauri: true,
+  getMockDatabase: vi.fn(),
+}));
+
+vi.mock("../invoke", () => ({
+  invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+    if (cmd === "read_env_var") {
+      return readEnvVarMock(String(args?.name ?? ""));
+    }
+    throw new Error(`unexpected invoke: ${cmd}`);
+  }),
+}));
 
 interface PipelineItemRow {
   stage: string;
@@ -103,15 +119,30 @@ function createMigrationDb(initialRows: PipelineItemRow[]): DbHandle & {
 
 describe("runMigrations", () => {
   let runMigrations: typeof import("./db")["runMigrations"];
+  let resolveDbName: typeof import("./db")["resolveDbName"];
   let db: ReturnType<typeof createMigrationDb>;
 
   beforeAll(async () => {
-    Object.assign(globalThis, { window: {} });
-    ({ runMigrations } = await import("./db"));
+    ({ runMigrations, resolveDbName } = await import("./db"));
   });
 
   beforeEach(() => {
     db = createMigrationDb([]);
+    readEnvVarMock.mockReset();
+    readEnvVarMock.mockResolvedValue("");
+  });
+
+  it("prefers explicit KANNA_DB_NAME over worktree-derived names", async () => {
+    readEnvVarMock.mockImplementation(async (name: string) => {
+      if (name === "KANNA_DB_NAME") return "kanna-handoff-shared.db";
+      return "";
+    });
+
+    await expect(resolveDbName()).resolves.toBe("kanna-handoff-shared.db");
+  });
+
+  it("falls back to the default database name when KANNA_DB_NAME is unset", async () => {
+    await expect(resolveDbName()).resolves.toBe("kanna-v2.db");
   });
 
   it("records one-time data migrations so repeated startup does not reapply them", async () => {

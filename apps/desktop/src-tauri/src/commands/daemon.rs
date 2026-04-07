@@ -212,7 +212,7 @@ fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, St
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_snapshot_response, TerminalSnapshotPayload};
+    use super::{parse_snapshot_response, require_option_mut, TerminalSnapshotPayload};
 
     #[test]
     fn parse_snapshot_response_defaults_cursor_visible_for_older_payloads() {
@@ -244,6 +244,14 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn require_option_mut_returns_error_when_missing() {
+        let mut value: Option<u8> = None;
+        let error = require_option_mut(&mut value, "daemon client")
+            .expect_err("missing option should return an error");
+        assert_eq!(error, "daemon client unavailable");
+    }
 }
 
 fn daemon_socket_path() -> PathBuf {
@@ -258,6 +266,12 @@ async fn ensure_connected(state: &DaemonState) -> Result<(), String> {
         *guard = Some(client);
     }
     Ok(())
+}
+
+fn require_option_mut<'a, T>(value: &'a mut Option<T>, context: &str) -> Result<&'a mut T, String> {
+    value
+        .as_mut()
+        .ok_or_else(|| format!("{context} unavailable"))
 }
 
 #[tauri::command]
@@ -285,7 +299,7 @@ pub async fn spawn_session(
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
     let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
+    let client = require_option_mut(&mut guard, "daemon client")?;
     client.send_command(&json).await?;
 
     // Read response — expect SessionCreated or Error
@@ -317,7 +331,7 @@ pub async fn get_session_recovery_state(
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
     let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
+    let client = require_option_mut(&mut guard, "daemon client")?;
     client.send_command(&json).await?;
     let response = client.read_event().await?;
     match parse_snapshot_response(&response) {
@@ -347,7 +361,7 @@ pub async fn send_input(
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
     let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
+    let client = require_option_mut(&mut guard, "daemon client")?;
     client.send_command(&json).await?;
     let response = client.read_event().await?;
     parse_ack(&response)
@@ -369,7 +383,7 @@ pub async fn resize_session(
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
     let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
+    let client = require_option_mut(&mut guard, "daemon client")?;
     client.send_command(&json).await?;
     let _ = client.read_event().await; // consume Ok
     Ok(())
@@ -389,7 +403,7 @@ pub async fn signal_session(
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
     let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
+    let client = require_option_mut(&mut guard, "daemon client")?;
     client.send_command(&json).await?;
     let response = client.read_event().await?;
     parse_ack(&response)
@@ -407,7 +421,7 @@ pub async fn kill_session(
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
     let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
+    let client = require_option_mut(&mut guard, "daemon client")?;
     client.send_command(&json).await?;
     let response = client.read_event().await?;
     parse_ack(&response)

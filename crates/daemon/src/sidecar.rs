@@ -17,6 +17,12 @@ pub struct TerminalSidecar {
 unsafe impl Send for TerminalSidecar {}
 
 impl TerminalSidecar {
+    fn normalize_dimensions(cols: u16, rows: u16) -> (u16, u16) {
+        let normalized_cols = if cols == 0 { 80 } else { cols };
+        let normalized_rows = if rows == 0 { 24 } else { rows };
+        (normalized_cols, normalized_rows)
+    }
+
     fn restore_vt(snapshot: &TerminalSnapshot) -> String {
         format!(
             "{}{}\x1b[{};{}H",
@@ -103,6 +109,7 @@ impl TerminalSidecar {
         rows: u16,
         scrollback: usize,
     ) -> SidecarResult<Self> {
+        let (cols, rows) = Self::normalize_dimensions(cols, rows);
         match snapshot {
             Some(snapshot) => match Self::from_snapshot(snapshot, scrollback) {
                 Ok(sidecar) => Ok(sidecar),
@@ -207,6 +214,17 @@ mod tests {
 
         assert_eq!(restored.cols, 120);
         assert_eq!(restored.rows, 45);
+        assert!(restored.vt.contains("hello"));
+    }
+
+    #[test]
+    fn handoff_without_snapshot_falls_back_to_default_dimensions() {
+        let mut sidecar = TerminalSidecar::from_handoff(None, 0, 0, 10_000).unwrap();
+        sidecar.write(b"hello");
+        let restored = sidecar.snapshot().unwrap();
+
+        assert_eq!(restored.cols, 80);
+        assert_eq!(restored.rows, 24);
         assert!(restored.vt.contains("hello"));
     }
 }

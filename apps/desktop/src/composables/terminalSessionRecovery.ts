@@ -104,9 +104,13 @@ export function isDaemonHandoffFailure(message: string): boolean {
 
 export function shouldRespawnAfterAttachFailure(
   message: string,
+  hasAttachedOnce: boolean,
   spawnOptions?: SpawnOptions,
   options?: TerminalOptions,
 ): boolean {
+  if (!hasAttachedOnce && isMissingDaemonSessionFailure(message)) {
+    return false;
+  }
   return (
     getTerminalRecoveryMode(spawnOptions, options) === "attach-only" &&
     (isDaemonHandoffFailure(message) || isMissingDaemonSessionFailure(message))
