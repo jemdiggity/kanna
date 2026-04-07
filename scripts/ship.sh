@@ -277,7 +277,7 @@ for i in "${!ARCHS[@]}"; do
     STEP="build ($LABEL)"
     echo "    Building sidecars ($LABEL)..."
 
-    # Build and stage kanna-daemon + kanna-hook for this target
+    # Build and stage all Tauri externalBin sidecars for this target.
     (
         cd "$ROOT"
         export RUSTC_WRAPPER=""
@@ -286,6 +286,7 @@ for i in "${!ARCHS[@]}"; do
         fi
         cargo build --release --target "$ARCH" --manifest-path crates/daemon/Cargo.toml
         cargo build --release --target "$ARCH" --manifest-path crates/kanna-cli/Cargo.toml
+        cargo build --release --target "$ARCH" --manifest-path packages/terminal-recovery/Cargo.toml
     )
     "$ROOT/scripts/stage-sidecars.sh" --release --target "$ARCH"
 
