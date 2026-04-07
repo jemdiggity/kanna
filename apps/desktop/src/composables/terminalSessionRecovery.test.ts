@@ -19,6 +19,7 @@ import {
   shouldForceDoubleResizeOnReconnect,
   shouldReattachOnDaemonReady,
   shouldRestoreRecoveryState,
+  buildTaskShellCommand,
 } from "./terminalSessionRecovery";
 
 describe("getTerminalRecoveryMode", () => {
@@ -308,6 +309,30 @@ describe("getShellTerminalEnv", () => {
       TERM: "xterm-256color",
       TERM_PROGRAM: "kanna",
     });
+  });
+});
+
+describe("buildTaskShellCommand", () => {
+  it("prepends the bundled kanna-cli directory before running the agent", () => {
+    const command = buildTaskShellCommand("claude 'merge it'", [], {
+      kannaCliPath: "/Applications/Kanna.app/Contents/MacOS/kanna-cli-aarch64-apple-darwin",
+    });
+
+    expect(command).toContain(
+      "export KANNA_CLI_PATH='/Applications/Kanna.app/Contents/MacOS/kanna-cli-aarch64-apple-darwin'",
+    );
+    expect(command).toContain(
+      "export PATH='/Applications/Kanna.app/Contents/MacOS':\"$PATH\"",
+    );
+    expect(command).toContain("claude 'merge it'");
+  });
+
+  it("keeps startup commands intact when no bundled kanna-cli path is available", () => {
+    const command = buildTaskShellCommand("codex 'ship it'", ["bun test"]);
+
+    expect(command).toContain("Running startup...");
+    expect(command).toContain("printf '\\033[2m$ %s\\033[0m\\n' 'bun test' && bun test");
+    expect(command).toContain("codex 'ship it'");
   });
 });
 
