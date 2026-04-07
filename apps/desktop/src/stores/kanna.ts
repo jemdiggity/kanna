@@ -12,7 +12,7 @@ import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-
 import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { PipelineDefinition, AgentDefinition, StageCompleteResult } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { createNavigationHistory } from "../composables/useNavigationHistory";
-import { getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
+import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
 import { clearCachedTerminalState } from "../composables/terminalStateCache";
 import {
   closePipelineItemAndClearCachedTerminalState,
@@ -32,6 +32,7 @@ import {
   type AgentProviderAvailability,
 } from "./agent-provider";
 import i18n from '../i18n';
+import { resolveDbName } from "./db";
 import {
   listRepos, insertRepo, findRepoByPath,
   hideRepo as hideRepoQuery, unhideRepo as unhideRepoQuery,
@@ -86,6 +87,7 @@ interface PreparedPtySession {
   env: Record<string, string>;
   setupCmds: string[];
   agentCmd: string;
+  kannaCliPath?: string;
 }
 // Module-level DB handle — set once by init(), never null after that.
 let _db: DbHandle;
@@ -838,7 +840,7 @@ export const useKannaStore = defineStore("kanna", () => {
                 console.warn("[store] failed to resolve default branch for bootstrap:", e);
                 return "main";
               });
-          const { env, setupCmds, agentCmd } = await preparePtySession(id, prompt, {
+          const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(id, prompt, {
             agentProvider,
             model: opts?.customTask?.model,
             permissionMode: opts?.customTask?.permissionMode,
@@ -850,6 +852,7 @@ export const useKannaStore = defineStore("kanna", () => {
             portEnv,
             setupCmds: repoConfig.setup || [],
           });
+          const bootstrapAgentCmd = buildTaskShellCommand(agentCmd, [], { kannaCliPath });
 
           const bootstrapCmd = buildTaskBootstrapCommand({
             repoPath,
@@ -857,7 +860,7 @@ export const useKannaStore = defineStore("kanna", () => {
             branch,
             baseBranch: opts?.baseBranch,
             setupCmds,
-            agentCmd,
+            agentCmd: bootstrapAgentCmd,
             defaultBranch,
           });
 
@@ -993,6 +996,7 @@ export const useKannaStore = defineStore("kanna", () => {
   ): Promise<PreparedPtySession> {
     const provider = requireResolvedAgentProvider(options?.agentProvider);
     const env: Record<string, string> = { ...getTaskTerminalEnv(provider) };
+    let kannaCliPath: string | undefined;
     let setupCmds: string[] = options?.setupCmds || [];
 
     // When options are provided (e.g. from createItem/startBlockedTask), use them directly
@@ -1029,6 +1033,21 @@ export const useKannaStore = defineStore("kanna", () => {
 
     // Pipeline env vars — passed to agent so kanna-cli can signal stage completion
     env.KANNA_TASK_ID = sessionId;
+    try {
+      kannaCliPath = await invoke<string>("which_binary", { name: "kanna-cli" });
+      env.KANNA_CLI_PATH = kannaCliPath;
+    } catch (e) {
+      console.error("[store] failed to resolve kanna-cli path:", e);
+    }
+    try {
+      const [appDataDir, dbName] = await Promise.all([
+        invoke<string>("get_app_data_dir"),
+        resolveDbName(),
+      ]);
+      env.KANNA_DB_PATH = `${appDataDir}/${dbName}`;
+    } catch (e) {
+      console.error("[store] failed to resolve database path for task env:", e);
+    }
     try {
       const socketPath = await invoke<string>("get_pipeline_socket_path");
       env.KANNA_SOCKET_PATH = socketPath;
@@ -1125,26 +1144,13 @@ export const useKannaStore = defineStore("kanna", () => {
       env,
       setupCmds: [...setupCmds, ...(options?.setupCmdsOverride || [])],
       agentCmd,
+      kannaCliPath,
     };
   }
 
-  function buildPtySessionCommand(agentCmd: string, setupCmds: string[]): string {
-    let fullCmd: string;
-    if (setupCmds.length > 0) {
-      const setupParts = setupCmds.map((cmd) => {
-        const escaped = cmd.replace(/'/g, "'\\''");
-        return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${cmd}`;
-      });
-      fullCmd = `printf '\\033[33mRunning startup...\\033[0m\\n' && ${setupParts.join(" && ")} && printf '\\n' && ${agentCmd}`;
-    } else {
-      fullCmd = agentCmd;
-    }
-    return fullCmd;
-  }
-
   async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, options?: PtySpawnOptions) {
-    const { env, setupCmds, agentCmd } = await preparePtySession(sessionId, prompt, options);
-    const fullCmd = buildPtySessionCommand(agentCmd, setupCmds);
+    const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(sessionId, prompt, options);
+    const fullCmd = buildTaskShellCommand(agentCmd, setupCmds, { kannaCliPath });
 
     await invoke("spawn_session", {
       sessionId,

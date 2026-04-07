@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildTaskBootstrapCommand } from "./taskBootstrap";
+import { buildTaskShellCommand } from "../composables/terminalSessionRecovery";
 
 describe("buildTaskBootstrapCommand", () => {
   it("renders visible git setup and repo setup before the agent command for new tasks", () => {
@@ -36,5 +37,26 @@ describe("buildTaskBootstrapCommand", () => {
     expect(command).toContain("cd '/repo/.kanna-worktrees/task-impl'");
     expect(command).toContain("git worktree add -b task-pr '/repo/.kanna-worktrees/task-pr' HEAD");
     expect(command).toContain("cd '/repo/.kanna-worktrees/task-pr'");
+  });
+
+  it("preserves the bundled kanna-cli prelude before the bootstrapped agent starts", () => {
+    const agentCmd = buildTaskShellCommand("claude --session-id abc", [], {
+      kannaCliPath: "/Applications/Kanna.app/Contents/MacOS/kanna-cli-aarch64-apple-darwin",
+    });
+    const command = buildTaskBootstrapCommand({
+      repoPath: "/repo",
+      worktreePath: "/repo/.kanna-worktrees/task-123",
+      branch: "task-123",
+      setupCmds: ["./scripts/setup-worktree.sh"],
+      agentCmd,
+      defaultBranch: "main",
+    });
+
+    expect(command).toContain(
+      "export KANNA_CLI_PATH='/Applications/Kanna.app/Contents/MacOS/kanna-cli-aarch64-apple-darwin'",
+    );
+    expect(command).toContain(
+      "export PATH='/Applications/Kanna.app/Contents/MacOS':\"$PATH\"",
+    );
   });
 });

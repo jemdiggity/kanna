@@ -13,6 +13,10 @@ export interface TaskTerminalEnv {
   TERM_PROGRAM?: string;
 }
 
+export interface TaskShellCommandOptions {
+  kannaCliPath?: string;
+}
+
 export interface TerminalGeometry {
   cols: number;
   rows: number;
@@ -92,6 +96,49 @@ export function getShellTerminalEnv(): TaskTerminalEnv {
     COLORTERM: "truecolor",
     TERM_PROGRAM: "kanna",
   };
+}
+
+function shellSingleQuote(value: string): string {
+  return value.replace(/'/g, "'\\''");
+}
+
+function directoryName(path: string): string | null {
+  const lastSlash = path.lastIndexOf("/");
+  if (lastSlash <= 0) return null;
+  return path.slice(0, lastSlash);
+}
+
+export function buildTaskShellCommand(
+  agentCmd: string,
+  setupCmds: string[],
+  options?: TaskShellCommandOptions,
+): string {
+  const preludeParts: string[] = [];
+  if (options?.kannaCliPath) {
+    const quotedCliPath = shellSingleQuote(options.kannaCliPath);
+    preludeParts.push(`export KANNA_CLI_PATH='${quotedCliPath}'`);
+
+    const cliDir = directoryName(options.kannaCliPath);
+    if (cliDir) {
+      preludeParts.push(`export PATH='${shellSingleQuote(cliDir)}':\"$PATH\"`);
+    }
+  }
+
+  const setupParts = setupCmds.map((cmd) => {
+    const escaped = shellSingleQuote(cmd);
+    return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${cmd}`;
+  });
+
+  const commandParts: string[] = [];
+  if (preludeParts.length > 0) {
+    commandParts.push(preludeParts.join(" && "));
+  }
+  if (setupParts.length > 0) {
+    commandParts.push(`printf '\\033[33mRunning startup...\\033[0m\\n' && ${setupParts.join(" && ")} && printf '\\n'`);
+  }
+  commandParts.push(agentCmd);
+
+  return commandParts.join(" && ");
 }
 
 export function formatAttachFailureMessage(message: string): string {
