@@ -29,6 +29,10 @@ if (isTauri) {
   window.addEventListener("unhandledrejection", (e) => {
     invoke("append_log", { message: `[UNHANDLED_REJECTION] ${e.reason}` }).catch(() => {});
   });
+
+  window.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+  });
 } else {
   console.log("[kanna] Running in browser mode with mock Tauri APIs");
 }
