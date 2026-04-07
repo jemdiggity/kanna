@@ -70,16 +70,29 @@ describe("shouldRespawnAfterAttachFailure", () => {
     expect(
       shouldRespawnAfterAttachFailure(
         "session lost during daemon handoff: failed to receive PTY fd",
+        false,
         { cwd: "/tmp/task", prompt: "do work", spawnFn },
         { agentProvider: "claude", worktreePath: "/tmp/task" },
       )
     ).toBe(true);
   });
 
-  it("respawns task terminals when the daemon no longer has the live session", () => {
+  it("does not respawn task terminals on the first attach when the session is still being created", () => {
     expect(
       shouldRespawnAfterAttachFailure(
         "session not found",
+        false,
+        { cwd: "/tmp/task", prompt: "do work", spawnFn },
+        { agentProvider: "claude", worktreePath: "/tmp/task" },
+      )
+    ).toBe(false);
+  });
+
+  it("respawns task terminals when a previously attached live session disappears", () => {
+    expect(
+      shouldRespawnAfterAttachFailure(
+        "session not found",
+        true,
         { cwd: "/tmp/task", prompt: "do work", spawnFn },
         { agentProvider: "claude", worktreePath: "/tmp/task" },
       )
@@ -90,6 +103,7 @@ describe("shouldRespawnAfterAttachFailure", () => {
     expect(
       shouldRespawnAfterAttachFailure(
         "session lost during daemon handoff: failed to receive PTY fd",
+        true,
         { cwd: "/tmp/repo", prompt: "", spawnFn },
         undefined,
       )

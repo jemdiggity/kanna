@@ -467,6 +467,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     let recoveryState = null as Awaited<ReturnType<typeof loadSessionRecoveryState>>
     let appliedRecoveryState = false
     let recoveryFetchFailed = false
+    let shouldSpawnRecoverySession = false
 
     try {
       if (
@@ -546,13 +547,33 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       })
       if (recoveryMode === "attach-only") {
         terminal.value?.write(formatAttachFailureMessage(msg))
-        if (shouldRespawnAfterAttachFailure(msg, spawnOptions, options)) {
+        if (shouldRespawnAfterAttachFailure(msg, hasAttachedOnce, spawnOptions, options)) {
           const toastKey = recoveryState
             ? "toasts.daemonHandoffRespawnedWithScrollback"
             : "toasts.daemonHandoffRespawned"
           toast.error(i18n.global.t(toastKey))
+          shouldSpawnRecoverySession = true
         } else {
           return
+        }
+      }
+      // No existing session — spawn a new one if we have spawn options
+      if (shouldSpawnRecoverySession && spawnOptions && terminal.value) {
+        await ensureFitted()
+        const { cols, rows } = terminal.value
+        try {
+          await spawnOptions.spawnFn(sessionId, spawnOptions.cwd, spawnOptions.prompt, cols, rows)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          console.error("[terminal] PTY spawn failed:", e)
+          terminal.value.write(`\r\n\x1b[31mFailed to start agent: ${msg}\x1b[0m\r\n`)
+          return
+        }
+        // Now attach to the newly spawned session
+        await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
+        attached = true
+        if (terminal.value && shouldPushKittyKeyboardOnFreshAttach(options)) {
+          terminal.value.write("\x1b[>1u")
         }
       }
     } finally {
@@ -563,26 +584,6 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         connecting,
         hasAttachedOnce,
       })
-    }
-
-    // No existing session — spawn a new one if we have spawn options
-    if (spawnOptions && terminal.value) {
-      await ensureFitted()
-      const { cols, rows } = terminal.value
-      try {
-        await spawnOptions.spawnFn(sessionId, spawnOptions.cwd, spawnOptions.prompt, cols, rows)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        console.error("[terminal] PTY spawn failed:", e)
-        terminal.value.write(`\r\n\x1b[31mFailed to start agent: ${msg}\x1b[0m\r\n`)
-        return
-      }
-      // Now attach to the newly spawned session
-      await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
-      attached = true
-      if (terminal.value && shouldPushKittyKeyboardOnFreshAttach(options)) {
-        terminal.value.write("\x1b[>1u")
-      }
     }
   }
 
