@@ -440,9 +440,15 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
 // Derive shortcut context from visible modals (more reliable than the global singleton
 // which can be stale if a KeepAlive deactivation resets it after a modal sets it).
 const currentShortcutContext = computed<ShortcutContext>(() => {
+  // The shortcuts modal is topmost and should own Escape/help toggles even when
+  // it is opened on top of a context like tree or shell that doesn't expose
+  // the generic dismiss shortcut.
+  if (showShortcutsModal.value) return "main";
   if (showNewTaskModal.value) return "newTask";
   if (showFilePreviewModal.value) return "file";
+  if (showTreeExplorer.value) return "tree";
   if (showShellModal.value) return "shell";
+  if (showCommitGraphModal.value) return "graph";
   if (showDiffModal.value) return "diff";
   return "main";
 });
