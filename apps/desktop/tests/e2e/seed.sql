@@ -34,6 +34,14 @@ CREATE TABLE IF NOT EXISTS pipeline_item (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS task_port (
+  port INTEGER PRIMARY KEY,
+  pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
+  env_name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(pipeline_item_id, env_name)
+);
+
 CREATE TABLE IF NOT EXISTS worktree (
   id TEXT PRIMARY KEY,
   pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
@@ -84,6 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_operator_event_repo ON operator_event(repo_id, cr
 -- ── Clear existing data (FK-safe order) ─────────────────────────────────────
 
 DELETE FROM activity_log;
+DELETE FROM task_port;
 DELETE FROM task_blocker;
 DELETE FROM operator_event;
 DELETE FROM terminal_session;
@@ -124,8 +133,11 @@ VALUES
   ('task-seed-auth-refactor', 'repo-seed-kanna', 42, 'Refactor auth middleware',
    'Refactor the auth middleware to use the new token validation library',
    'in_progress', '["in progress"]', 'task-seed-auth-refactor',
-   'claude', 'working', datetime('now', '-30 minutes'), 1, 1,
-   1, '{"KANNA_DEV_PORT":"1421"}', 'origin/main', datetime('now', '-3 days'), datetime('now', '-30 minutes'));
+  'claude', 'working', datetime('now', '-30 minutes'), 1, 1,
+  1, '{"KANNA_DEV_PORT":"1421"}', 'origin/main', datetime('now', '-3 days'), datetime('now', '-30 minutes'));
+
+INSERT INTO task_port (port, pipeline_item_id, env_name)
+VALUES (1421, 'task-seed-auth-refactor', 'KANNA_DEV_PORT');
 
 -- Dashboard: in progress, idle, pinned
 INSERT INTO pipeline_item
@@ -136,8 +148,11 @@ VALUES
   ('task-seed-dashboard', 'repo-seed-kanna', 51, 'Analytics dashboard',
    'Build the operator analytics dashboard with time-series charts',
    'in_progress', '["in progress"]', 'task-seed-dashboard',
-   'claude', 'idle', datetime('now', '-6 hours'), 1, 2,
-   2, '{"KANNA_DEV_PORT":"1422"}', 'origin/main', datetime('now', '-5 days'), datetime('now', '-6 hours'));
+  'claude', 'idle', datetime('now', '-6 hours'), 1, 2,
+  2, '{"KANNA_DEV_PORT":"1422"}', 'origin/main', datetime('now', '-5 days'), datetime('now', '-6 hours'));
+
+INSERT INTO task_port (port, pipeline_item_id, env_name)
+VALUES (1422, 'task-seed-dashboard', 'KANNA_DEV_PORT');
 
 -- Onboarding: in progress, unread
 INSERT INTO pipeline_item
@@ -173,7 +188,10 @@ VALUES
    'Implement full-text search across task prompts and issue titles',
    'in_progress', '["in progress"]', 'task-seed-search',
    'claude', 'working', datetime('now', '-1 hours'),
-   1, '{"KANNA_DEV_PORT":"1421"}', 'origin/main', datetime('now', '-4 days'), datetime('now', '-1 hours'));
+   3, '{"KANNA_DEV_PORT":"1423"}', 'origin/main', datetime('now', '-4 days'), datetime('now', '-1 hours'));
+
+INSERT INTO task_port (port, pipeline_item_id, env_name)
+VALUES (1423, 'task-seed-search', 'KANNA_DEV_PORT');
 
 -- Rate limiting: api repo, has PR
 INSERT INTO pipeline_item

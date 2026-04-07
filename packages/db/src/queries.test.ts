@@ -8,6 +8,9 @@ import {
   unhideRepo,
   findRepoByPath,
   listPipelineItems,
+  listTaskPorts,
+  listTaskPortsForItem,
+  deleteTaskPortsForItem,
   insertPipelineItem,
   updatePipelineItemStage,
   updatePipelineItemStageResult,
@@ -21,7 +24,7 @@ import {
   insertOperatorEvent,
   type DbHandle,
 } from "./queries.js";
-import type { Repo, PipelineItem, Setting, OperatorEvent } from "./schema.js";
+import type { Repo, PipelineItem, Setting, OperatorEvent, TaskPort } from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // In-memory DbHandle for testing
@@ -31,6 +34,7 @@ function createMockDb(): DbHandle & {
   tables: {
     repo: Repo[];
     pipeline_item: PipelineItem[];
+    task_port: TaskPort[];
     settings: Setting[];
     operator_event: Omit<OperatorEvent, "id" | "created_at">[];
   };
@@ -38,6 +42,7 @@ function createMockDb(): DbHandle & {
   const tables = {
     repo: [] as Repo[],
     pipeline_item: [] as PipelineItem[],
+    task_port: [] as TaskPort[],
     settings: [] as Setting[],
     operator_event: [] as Omit<OperatorEvent, "id" | "created_at">[],
   };
@@ -102,6 +107,20 @@ function createMockDb(): DbHandle & {
           pinned: 0,
           pin_order: null,
         } as PipelineItem);
+      } else if (q.startsWith("INSERT OR IGNORE INTO TASK_PORT")) {
+        const [port, pipeline_item_id, env_name] = bindValues as [number, string, string];
+        const existing = tables.task_port.find((p) => p.port === port);
+        if (!existing) {
+          tables.task_port.push({
+            port,
+            pipeline_item_id,
+            env_name,
+            created_at: new Date().toISOString(),
+          });
+        }
+      } else if (q.startsWith("DELETE FROM TASK_PORT WHERE PIPELINE_ITEM_ID")) {
+        const [itemId] = bindValues as [string];
+        tables.task_port = tables.task_port.filter((p) => p.pipeline_item_id !== itemId);
       } else if (q.startsWith("UPDATE PIPELINE_ITEM SET TAGS")) {
         const [newTags, id] = bindValues as string[];
         const item = tables.pipeline_item.find((p) => p.id === id);
@@ -203,11 +222,27 @@ function createMockDb(): DbHandle & {
             new Date(a.created_at).getTime() -
             new Date(b.created_at).getTime()
         ) as unknown as T[];
+      } else if (q.startsWith("SELECT * FROM PIPELINE_ITEM WHERE REPO_ID") && q.includes("STAGE != 'DONE'")) {
+        const [repoId] = bindValues as string[];
+        return tables.pipeline_item.filter(
+          (p) => p.repo_id === repoId && p.stage !== "done"
+        ) as unknown as T[];
       } else if (q.startsWith("SELECT * FROM PIPELINE_ITEM WHERE REPO_ID")) {
         const [repoId] = bindValues as string[];
         return tables.pipeline_item.filter(
           (p) => p.repo_id === repoId
         ) as unknown as T[];
+      } else if (q.startsWith("SELECT * FROM TASK_PORT WHERE PIPELINE_ITEM_ID")) {
+        const [itemId] = bindValues as [string];
+        return tables.task_port.filter(
+          (p) => p.pipeline_item_id === itemId
+        ) as unknown as T[];
+      } else if (q.startsWith("SELECT * FROM TASK_PORT")) {
+        return [...tables.task_port].sort((a, b) => a.port - b.port) as unknown as T[];
+      } else if (q.startsWith("SELECT PIPELINE_ITEM_ID FROM TASK_PORT WHERE PORT")) {
+        const [port] = bindValues as [number];
+        const row = tables.task_port.find((p) => p.port === port);
+        return row ? [{ pipeline_item_id: row.pipeline_item_id } as unknown as T] : [];
       } else if (q.startsWith("SELECT TAGS FROM PIPELINE_ITEM WHERE ID")) {
         const [id] = bindValues as string[];
         const item = tables.pipeline_item.find((p) => p.id === id);
@@ -385,6 +420,41 @@ describe("pipeline_item queries", () => {
     const items = await listPipelineItems(db, "r1");
     expect(items).toHaveLength(1);
     expect(items[0].tags).toBe("[]");
+  });
+
+  it("listTaskPorts returns ports in ascending order", async () => {
+    db.tables.task_port.push(
+      { port: 5174, pipeline_item_id: "pi2", env_name: "KANNA_DEV_PORT", created_at: new Date().toISOString() },
+      { port: 5173, pipeline_item_id: "pi1", env_name: "KANNA_DEV_PORT", created_at: new Date().toISOString() },
+    );
+
+    const ports = await listTaskPorts(db);
+
+    expect(ports.map((port) => port.port)).toEqual([5173, 5174]);
+  });
+
+  it("listTaskPortsForItem returns only rows for that item", async () => {
+    db.tables.task_port.push(
+      { port: 5173, pipeline_item_id: "pi1", env_name: "KANNA_DEV_PORT", created_at: new Date().toISOString() },
+      { port: 9080, pipeline_item_id: "pi1", env_name: "KANNA_RELAY_PORT", created_at: new Date().toISOString() },
+      { port: 5175, pipeline_item_id: "pi2", env_name: "KANNA_DEV_PORT", created_at: new Date().toISOString() },
+    );
+
+    const ports = await listTaskPortsForItem(db, "pi1");
+
+    expect(ports.map((port) => port.env_name)).toEqual(["KANNA_DEV_PORT", "KANNA_RELAY_PORT"]);
+  });
+
+  it("deleteTaskPortsForItem removes all ports for an item", async () => {
+    db.tables.task_port.push(
+      { port: 5173, pipeline_item_id: "pi1", env_name: "KANNA_DEV_PORT", created_at: new Date().toISOString() },
+      { port: 9080, pipeline_item_id: "pi1", env_name: "KANNA_RELAY_PORT", created_at: new Date().toISOString() },
+      { port: 5175, pipeline_item_id: "pi2", env_name: "KANNA_DEV_PORT", created_at: new Date().toISOString() },
+    );
+
+    await deleteTaskPortsForItem(db, "pi1");
+
+    expect(db.tables.task_port.map((port) => port.pipeline_item_id)).toEqual(["pi2"]);
   });
 
   it("throws when insertPipelineItem is called without an agent provider", async () => {

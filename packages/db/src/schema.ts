@@ -46,6 +46,13 @@ export interface TaskBlocker {
   blocker_item_id: string;
 }
 
+export interface TaskPort {
+  port: number;
+  pipeline_item_id: string;
+  env_name: string;
+  created_at: string;
+}
+
 export interface Worktree {
   id: string;
   pipeline_item_id: string;
