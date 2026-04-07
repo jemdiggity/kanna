@@ -1,4 +1,4 @@
-import { isTauri, getMockDatabase } from "../tauri-mock";
+import * as tauriMock from "../tauri-mock";
 import { invoke } from "../invoke";
 import { backupOnStartup } from "../composables/useBackup";
 import type { DbHandle } from "@kanna/db";
@@ -8,7 +8,7 @@ interface AppliedMigrationRow {
 }
 
 export async function resolveDbName(): Promise<string> {
-  if (!isTauri) return "mock";
+  if (!tauriMock.isTauri) return "mock";
 
   let dbName = "kanna-v2.db";
   try {
@@ -18,30 +18,14 @@ export async function resolveDbName(): Promise<string> {
     console.debug("[db] KANNA_DB_NAME not set:", e);
   }
 
-  try {
-    const wt = await invoke<string>("read_env_var", { name: "KANNA_WORKTREE" });
-    if (wt) {
-      const daemonDir = await invoke<string>("read_env_var", { name: "KANNA_DAEMON_DIR" }).catch(() => "");
-      let suffix = Date.now().toString();
-      if (daemonDir) {
-        const parts = daemonDir.split("/");
-        const idx = parts.indexOf(".kanna-daemon");
-        if (idx > 0) suffix = parts[idx - 1];
-      }
-      dbName = `kanna-wt-${suffix}.db`;
-    }
-  } catch (e) {
-    console.debug("[db] KANNA_WORKTREE not set:", e);
-  }
-
   return dbName;
 }
 
 export async function loadDatabase(): Promise<{ db: DbHandle; dbName: string }> {
   const dbName = await resolveDbName();
 
-  if (!isTauri) {
-    const db = getMockDatabase() as unknown as DbHandle;
+  if (!tauriMock.isTauri) {
+    const db = tauriMock.getMockDatabase() as unknown as DbHandle;
     return { db, dbName };
   }
 

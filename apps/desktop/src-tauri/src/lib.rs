@@ -145,24 +145,6 @@ fn fix_path_from_shell() {
     }
 }
 
-fn worktree_root() -> Option<PathBuf> {
-    // Walk up from exe path to find directory containing .kanna-worktrees
-    // (that's the main repo root — our worktree is a child of it)
-    // OR find a directory whose parent contains .kanna-worktrees (we ARE the worktree)
-    std::env::current_exe().ok().and_then(|exe| {
-        let mut dir = exe.parent()?;
-        loop {
-            // Check if this directory's name starts with "task-" and parent is .kanna-worktrees
-            if let Some(parent) = dir.parent() {
-                if parent.file_name().and_then(|n| n.to_str()) == Some(".kanna-worktrees") {
-                    return Some(dir.to_path_buf());
-                }
-            }
-            dir = dir.parent()?;
-        }
-    })
-}
-
 fn short_socket_path(dir: &PathBuf) -> PathBuf {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -177,11 +159,6 @@ pub fn daemon_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("KANNA_DAEMON_DIR") {
         return PathBuf::from(dir);
     }
-    if std::env::var("KANNA_WORKTREE").is_ok() {
-        if let Some(root) = worktree_root() {
-            return root.join(".kanna-daemon");
-        }
-    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home)
         .join("Library")
@@ -192,12 +169,6 @@ pub fn daemon_data_dir() -> PathBuf {
 pub fn daemon_socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("KANNA_DAEMON_DIR") {
         return short_socket_path(&PathBuf::from(dir));
-    }
-    if std::env::var("KANNA_WORKTREE").is_ok() {
-        if let Some(root) = worktree_root() {
-            let daemon_dir = root.join(".kanna-daemon");
-            return short_socket_path(&daemon_dir);
-        }
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let dir = PathBuf::from(home)
@@ -348,7 +319,6 @@ async fn ensure_daemon_running() {
         return;
     };
 
-    // Pass KANNA_WORKTREE through so the daemon isolates to {cwd}/.kanna-daemon
     let is_worktree = std::env::var("KANNA_WORKTREE").is_ok();
     eprintln!(
         "[daemon] spawning {:?} (worktree={})",
@@ -362,13 +332,9 @@ async fn ensure_daemon_running() {
         .stderr(std::process::Stdio::null());
     if is_worktree {
         cmd.env("KANNA_WORKTREE", "1");
-        if let Some(root) = worktree_root() {
-            let daemon_dir = root.join(".kanna-daemon");
-            let daemon_dir_str = daemon_dir.to_str().unwrap_or("/tmp");
-            cmd.env("KANNA_DAEMON_DIR", daemon_dir_str);
-            // Set on our own process too so daemon_socket_path() and DB naming work
-            std::env::set_var("KANNA_DAEMON_DIR", daemon_dir_str);
-        }
+    }
+    if let Ok(daemon_dir) = std::env::var("KANNA_DAEMON_DIR") {
+        cmd.env("KANNA_DAEMON_DIR", &daemon_dir);
     }
     match unsafe {
         cmd.pre_exec(|| {

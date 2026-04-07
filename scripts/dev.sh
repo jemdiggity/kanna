@@ -19,15 +19,19 @@ ROOT="$(git rev-parse --show-toplevel)"
 export KANNA_BUILD_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 export KANNA_BUILD_COMMIT="$(git rev-parse --short HEAD)"
 
+canonical_tmux_session_name() {
+  printf '%s' "$1" | tr '.' '_'
+}
+
 # Auto-detect worktree by checking if we're inside .kanna-worktrees/
 if [ -n "$KANNA_WORKTREE" ] || echo "$ROOT" | grep -q '\.kanna-worktrees/'; then
   export KANNA_WORKTREE=1
   WORKTREE_NAME="$(basename "$ROOT")"
   export KANNA_BUILD_WORKTREE="$WORKTREE_NAME"
-  SESSION="kanna-${WORKTREE_NAME}"
+  SESSION="$(canonical_tmux_session_name "kanna-${WORKTREE_NAME}")"
 else
   unset KANNA_BUILD_WORKTREE 2>/dev/null || true
-  SESSION="kanna"
+  SESSION="$(canonical_tmux_session_name "kanna")"
 fi
 
 # Read ports from .kanna/config.json
@@ -43,6 +47,41 @@ read_port() {
   fi
 }
 
+resolve_db_name() {
+  if [ -n "${KANNA_DB_NAME:-}" ]; then
+    printf '%s\n' "$KANNA_DB_NAME"
+  elif [ -n "${KANNA_WORKTREE:-}" ]; then
+    printf 'kanna-wt-%s.db\n' "$(basename "$ROOT")"
+  else
+    printf 'kanna-v2.db\n'
+  fi
+}
+
+resolve_db_path() {
+  if [ -n "${KANNA_DB_PATH:-}" ]; then
+    printf '%s\n' "$KANNA_DB_PATH"
+  else
+    printf '%s/Library/Application Support/com.kanna.app/%s\n' "$HOME" "$(resolve_db_name)"
+  fi
+}
+
+resolve_daemon_dir() {
+  if [ -n "${KANNA_DAEMON_DIR:-}" ]; then
+    printf '%s\n' "$KANNA_DAEMON_DIR"
+  elif [ -n "${KANNA_WORKTREE:-}" ]; then
+    printf '%s/.kanna-daemon\n' "$ROOT"
+  else
+    printf '%s/Library/Application Support/Kanna\n' "$HOME"
+  fi
+}
+
+RESOLVED_DB_PATH="$(resolve_db_path)"
+RESOLVED_DB_NAME="$(basename "$RESOLVED_DB_PATH")"
+RESOLVED_DAEMON_DIR="$(resolve_daemon_dir)"
+export KANNA_DB_NAME="$RESOLVED_DB_NAME"
+export KANNA_DB_PATH="$RESOLVED_DB_PATH"
+export KANNA_DAEMON_DIR="$RESOLVED_DAEMON_DIR"
+
 start_mobile() {
   local RELAY_PORT
   RELAY_PORT="$(read_port KANNA_RELAY_PORT 9080)"
@@ -51,10 +90,7 @@ start_mobile() {
   local CONFIG_DIR="$ROOT/.kanna-mobile"
   local SERVER_CONFIG="$CONFIG_DIR/server.toml"
   local DAEMON_DIR="$ROOT/.kanna-daemon"
-  # Use the worktree's DB, matching the logic in stores/db.ts
-  local WT_NAME
-  WT_NAME="$(basename "$ROOT")"
-  local DB_PATH="$HOME/Library/Application Support/com.kanna.app/kanna-wt-${WT_NAME}.db"
+  local DB_PATH="$KANNA_DB_PATH"
 
   # Install relay deps if needed
   if [ ! -d "$ROOT/services/relay/node_modules" ]; then
@@ -116,18 +152,11 @@ MEOF
 
 start() {
   # SAFETY: never run the dev server against the production database
-  local _db="${KANNA_DB_NAME:-kanna-v2.db}"
-  if [ -n "$KANNA_WORKTREE" ]; then
-    _db="kanna-wt-$(basename "$ROOT").db"
-  fi
-  if [ "$_db" = "kanna-v2.db" ]; then
+  if [ "$KANNA_DB_NAME" = "kanna-v2.db" ]; then
     echo "REFUSED: dev.sh will not start against the production database (kanna-v2.db)."
     echo "Run from a worktree, or set KANNA_DB_NAME to a non-production name."
     exit 1
   fi
-
-  # Export full DB path so it flows through to agent sessions via the daemon
-  export KANNA_DB_PATH="$HOME/Library/Application Support/com.kanna.app/$_db"
 
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session '$SESSION' already running. Use 'restart' or 'stop'."
@@ -210,22 +239,13 @@ log() {
 }
 
 seed() {
-  local APP_DATA_DIR="$HOME/Library/Application Support/com.kanna.app"
-
-  # Resolve DB name using the same logic as the app (db.ts)
-  local DB_NAME="${KANNA_DB_NAME:-kanna-v2.db}"
-  if [ -n "$KANNA_WORKTREE" ]; then
-    DB_NAME="kanna-wt-$(basename "$ROOT").db"
-  fi
-
   # SAFETY: never seed the production database
-  if [ "$DB_NAME" = "kanna-v2.db" ]; then
+  if [ "$KANNA_DB_NAME" = "kanna-v2.db" ]; then
     echo "REFUSED: will not seed production database (kanna-v2.db)."
     echo "Run from a worktree, or set KANNA_DB_NAME to a non-production name."
     exit 1
   fi
 
-  local DB_PATH="$APP_DATA_DIR/$DB_NAME"
   local SEED_SQL="$ROOT/apps/desktop/tests/e2e/seed.sql"
 
   if [ ! -f "$SEED_SQL" ]; then
@@ -233,9 +253,9 @@ seed() {
     exit 1
   fi
 
-  mkdir -p "$APP_DATA_DIR"
-  sqlite3 "$DB_PATH" < "$SEED_SQL"
-  echo "Seeded $DB_PATH"
+  mkdir -p "$(dirname "$KANNA_DB_PATH")"
+  sqlite3 "$KANNA_DB_PATH" < "$SEED_SQL"
+  echo "Seeded $KANNA_DB_PATH"
 }
 
 ATTACH=false
@@ -258,9 +278,27 @@ case "$CMD" in
 esac
 
 case "$CMD" in
-  start)   start; $SEED && seed; $ATTACH && tmux attach -t "$SESSION" ;;
+  start)
+    start
+    if $SEED; then
+      seed
+    fi
+    if $ATTACH; then
+      tmux attach -t "$SESSION"
+    fi
+    ;;
   stop)    stop ;;
-  restart) stop; sleep 1; start; $SEED && seed; $ATTACH && tmux attach -t "$SESSION" ;;
+  restart)
+    stop
+    sleep 1
+    start
+    if $SEED; then
+      seed
+    fi
+    if $ATTACH; then
+      tmux attach -t "$SESSION"
+    fi
+    ;;
   log)     log "$2" ;;
   seed)    seed ;;
   *)       echo "Usage: $0 {start|stop|restart|log [window]|seed} [--mobile] [--seed] [--attach] [--kill-daemon]" ;;
