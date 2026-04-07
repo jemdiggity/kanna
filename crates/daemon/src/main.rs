@@ -174,10 +174,12 @@ fn parse_handoff_response(line: &str) -> Result<Vec<protocol::HandoffSession>, S
 }
 
 fn blank_snapshot(rows: u16, cols: u16) -> protocol::TerminalSnapshot {
+    let normalized_rows = if rows == 0 { 24 } else { rows };
+    let normalized_cols = if cols == 0 { 80 } else { cols };
     protocol::TerminalSnapshot {
         version: 1,
-        rows,
-        cols,
+        rows: normalized_rows,
+        cols: normalized_cols,
         cursor_row: 0,
         cursor_col: 0,
         cursor_visible: true,
@@ -1723,6 +1725,16 @@ mod tests {
         let snapshot = blank_snapshot(45, 120);
         assert_eq!(snapshot.rows, 45);
         assert_eq!(snapshot.cols, 120);
+        assert_eq!(snapshot.cursor_row, 0);
+        assert_eq!(snapshot.cursor_col, 0);
+        assert!(snapshot.vt.is_empty());
+    }
+
+    #[test]
+    fn blank_snapshot_normalizes_zero_dimensions_for_compat_handoff() {
+        let snapshot = blank_snapshot(0, 0);
+        assert_eq!(snapshot.rows, 24);
+        assert_eq!(snapshot.cols, 80);
         assert_eq!(snapshot.cursor_row, 0);
         assert_eq!(snapshot.cursor_col, 0);
         assert!(snapshot.vt.is_empty());
