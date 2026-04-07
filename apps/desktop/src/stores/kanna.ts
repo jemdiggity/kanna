@@ -31,6 +31,10 @@ import {
   resolveAgentProvider,
   type AgentProviderAvailability,
 } from "./agent-provider";
+import {
+  formatTaskPortAllocationLog,
+  type PortAllocationLogEntry,
+} from "./portAllocationLog";
 import i18n from '../i18n';
 import { resolveDbName } from "./db";
 import {
@@ -156,6 +160,7 @@ async function claimTaskPorts(
   const portEnv: Record<string, string> = {};
   let firstPort: number | null = null;
   const claimedPorts: number[] = [];
+  const logEntries: PortAllocationLogEntry[] = [];
 
   try {
     const activeTaskPorts = await listTaskPorts(_db);
@@ -172,6 +177,12 @@ async function claimTaskPorts(
         occupiedPorts.add(existingPort);
         portEnv[envName] = String(existingPort);
         if (firstPort === null) firstPort = existingPort;
+        logEntries.push({
+          envName,
+          requestedPort: preferredPort,
+          assignedPort: existingPort,
+          reusedExisting: true,
+        });
         continue;
       }
 
@@ -179,6 +190,16 @@ async function claimTaskPorts(
       claimedPorts.push(assignedPort);
       portEnv[envName] = String(assignedPort);
       if (firstPort === null) firstPort = assignedPort;
+      logEntries.push({
+        envName,
+        requestedPort: preferredPort,
+        assignedPort,
+        reusedExisting: false,
+      });
+    }
+
+    if (logEntries.length > 0) {
+      console.log(formatTaskPortAllocationLog(itemId, logEntries));
     }
 
     return { portEnv, firstPort };
