@@ -117,6 +117,8 @@
     "blockTaskFailed": "Failed to block task",
     "selectRepoFirst": "Select a repository first",
     "agentStartFailed": "Agent failed to start",
+    "sessionRespawned": "The previous terminal session could not be reattached. A new session was started.",
+    "sessionRespawnedWithScrollback": "The previous terminal session could not be reattached. Scrollback was restored and a new session was started.",
     "daemonHandoffRespawned": "The previous terminal session could not be reattached after restart. A new session was started.",
     "daemonHandoffRespawnedWithScrollback": "The previous terminal session could not be reattached after restart. Scrollback was restored and a new session was started.",
     "pipelineNotFound": "Pipeline definition not found",

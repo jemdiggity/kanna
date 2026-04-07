@@ -164,6 +164,21 @@ export function shouldRespawnAfterAttachFailure(
   );
 }
 
+export function getRespawnToastKey(
+  message: string,
+  hasRecoveryState: boolean,
+): string {
+  if (isDaemonHandoffFailure(message)) {
+    return hasRecoveryState
+      ? "toasts.daemonHandoffRespawnedWithScrollback"
+      : "toasts.daemonHandoffRespawned";
+  }
+
+  return hasRecoveryState
+    ? "toasts.sessionRespawnedWithScrollback"
+    : "toasts.sessionRespawned";
+}
+
 export function getReconnectResizeDelayMs(_options?: TerminalOptions): number {
   return 0;
 }

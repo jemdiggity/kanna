@@ -422,6 +422,7 @@ describe("useTerminal", () => {
     }
 
     expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(errorToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
   });
 
   it("applies Copilot recovery before attach and only performs a single resize", async () => {
