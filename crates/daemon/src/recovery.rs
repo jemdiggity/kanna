@@ -876,7 +876,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_runtime_launcher_prefers_node_sidecar_and_resource_script() {
+    fn bundled_runtime_launcher_prefers_rust_sidecar_and_resource_binary() {
         let root = std::env::temp_dir().join(format!(
             "kanna-recovery-launcher-test-{}",
             std::process::id()
@@ -884,25 +884,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
 
         let exe_dir = root.join("Contents/MacOS");
-        let resources_dir = root.join("Contents/Resources/terminal-recovery");
+        let resources_dir = root.join("Contents/Resources");
         std::fs::create_dir_all(&exe_dir).unwrap();
         std::fs::create_dir_all(&resources_dir).unwrap();
 
         let exe = exe_dir.join("kanna-daemon");
-        let node = exe_dir.join(format!("kanna-node-runtime-{}", current_target_triple()));
-        let script = resources_dir.join("index.js");
+        let binary = exe_dir.join("kanna-terminal-recovery");
+        let resource_binary = resources_dir.join("kanna-terminal-recovery");
 
         std::fs::write(&exe, "").unwrap();
-        std::fs::write(&node, "").unwrap();
-        std::fs::write(&script, "").unwrap();
+        std::fs::write(&binary, "").unwrap();
+        std::fs::write(&resource_binary, "").unwrap();
 
         let launcher = bundled_runtime_launcher_from_exe(&exe).unwrap();
-        assert_eq!(launcher.program, node);
-        assert_eq!(launcher.args[0], "--jitless");
-        assert_eq!(
-            PathBuf::from(&launcher.args[1]),
-            exe_dir.join("../Resources/terminal-recovery/index.js")
-        );
+        assert_eq!(launcher.program, binary);
+        assert!(launcher.args.is_empty());
 
         let _ = std::fs::remove_dir_all(&root);
     }
