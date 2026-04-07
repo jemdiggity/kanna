@@ -44,6 +44,7 @@ import {
   insertTaskBlocker, removeTaskBlocker, removeAllBlockersForItem,
   listBlockersForItem, listBlockedByItem, getUnblockedItems,
   hasCircularDependency, insertOperatorEvent, updateClaudeSessionId,
+  listTaskPorts, listTaskPortsForItem, deleteTaskPortsForItem,
 } from "@kanna/db";
 
 /** Generate an 8-char hex ID (32 bits of randomness). */
@@ -81,6 +82,117 @@ export interface PtySpawnOptions {
 }
 // Module-level DB handle — set once by init(), never null after that.
 let _db: DbHandle;
+let portAllocationChain: Promise<void> = Promise.resolve();
+
+async function withPortAllocationLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = portAllocationChain.then(fn, fn);
+  portAllocationChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+interface AllocatedPorts {
+  portEnv: Record<string, string>;
+  firstPort: number | null;
+}
+
+function toPortAssignmentMap(taskPorts: Array<{ env_name: string; port: number }>): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const taskPort of taskPorts) {
+    map.set(taskPort.env_name, taskPort.port);
+  }
+  return map;
+}
+
+async function claimClosestPort(
+  itemId: string,
+  envName: string,
+  preferredPort: number,
+  occupiedPorts: Set<number>,
+): Promise<number> {
+  const existing = await listTaskPortsForItem(_db, itemId);
+  const existingPort = existing.find((taskPort) => taskPort.env_name === envName)?.port;
+  if (existingPort != null) {
+    occupiedPorts.add(existingPort);
+    return existingPort;
+  }
+
+  for (let candidate = preferredPort; candidate <= 65535; candidate++) {
+    if (!Number.isInteger(candidate) || candidate <= 0) continue;
+    if (occupiedPorts.has(candidate)) continue;
+    await _db.execute(
+      "INSERT OR IGNORE INTO task_port (port, pipeline_item_id, env_name) VALUES (?, ?, ?)",
+      [candidate, itemId, envName],
+    );
+    const owner = await _db.select<{ pipeline_item_id: string }>(
+      "SELECT pipeline_item_id FROM task_port WHERE port = ?",
+      [candidate],
+    );
+    if (owner[0]?.pipeline_item_id === itemId) {
+      occupiedPorts.add(candidate);
+      return candidate;
+    }
+  }
+
+  throw new Error(`No free port available near ${preferredPort} for ${envName}`);
+}
+
+async function claimTaskPorts(
+  itemId: string,
+  repoConfig: RepoConfig,
+): Promise<AllocatedPorts> {
+  const portEnv: Record<string, string> = {};
+  let firstPort: number | null = null;
+  const claimedPorts: number[] = [];
+
+  try {
+    const activeTaskPorts = await listTaskPorts(_db);
+    const occupiedPorts = new Set<number>(activeTaskPorts.map((taskPort) => taskPort.port));
+
+    if (!repoConfig.ports) return { portEnv, firstPort };
+
+    const existingTaskPorts = await listTaskPortsForItem(_db, itemId);
+    const existingAssignments = toPortAssignmentMap(existingTaskPorts);
+
+    for (const [envName, preferredPort] of Object.entries(repoConfig.ports)) {
+      const existingPort = existingAssignments.get(envName);
+      if (existingPort != null) {
+        occupiedPorts.add(existingPort);
+        portEnv[envName] = String(existingPort);
+        if (firstPort === null) firstPort = existingPort;
+        continue;
+      }
+
+      const assignedPort = await claimClosestPort(itemId, envName, preferredPort, occupiedPorts);
+      claimedPorts.push(assignedPort);
+      portEnv[envName] = String(assignedPort);
+      if (firstPort === null) firstPort = assignedPort;
+    }
+
+    return { portEnv, firstPort };
+  } catch (e) {
+    if (claimedPorts.length > 0) {
+      await deleteTaskPortsForItem(_db, itemId).catch((cleanupErr) =>
+        console.error("[store] failed to clean up partial port claims:", cleanupErr)
+      );
+    }
+    throw e;
+  }
+}
+
+async function releaseTaskPorts(itemId: string): Promise<void> {
+  await deleteTaskPortsForItem(_db, itemId);
+}
+
+async function closeTaskAndReleasePorts(
+  itemId: string,
+  closeFn: (id: string) => Promise<void>,
+): Promise<void> {
+  await closePipelineItemAndClearCachedTerminalState(itemId, closeFn);
+  await releaseTaskPorts(itemId);
+}
 
 function tt(key: string): string { return i18n.global.t(key); }
 
@@ -492,9 +604,10 @@ export const useKannaStore = defineStore("kanna", () => {
     // Resolve pipeline name: explicit > repo config > "default"
     let pipelineName = opts?.pipelineName;
     let t1 = performance.now();
+    let repoConfig: RepoConfig = {};
     if (!pipelineName) {
       try {
-        const repoConfig = await readRepoConfig(repoPath);
+        repoConfig = await readRepoConfig(repoPath);
         pipelineName = repoConfig.pipeline ?? "default";
       } catch {
         pipelineName = "default";
@@ -535,6 +648,14 @@ export const useKannaStore = defineStore("kanna", () => {
     }
     console.log(`[perf:createItem] loadPipeline+loadAgent: ${(performance.now() - t1).toFixed(1)}ms`);
 
+    if (Object.keys(repoConfig).length === 0) {
+      try {
+        repoConfig = await readRepoConfig(repoPath);
+      } catch {
+        repoConfig = {};
+      }
+    }
+
     let effectiveAgentProvider: AgentProvider;
     try {
       const candidates = getPreferredAgentProviders({
@@ -549,59 +670,73 @@ export const useKannaStore = defineStore("kanna", () => {
       throw e;
     }
 
-    // Assign port offset
-    const usedOffsets = new Set(
-      items.value.map((i) => i.port_offset).filter((o): o is number => o != null)
-    );
-    let portOffset = 1;
-    while (usedOffsets.has(portOffset)) portOffset++;
-
-    // Compute base_ref for merge-base diffing
-    t1 = performance.now();
+    let portOffset: number | null = null;
+    let portEnv: Record<string, string> = {};
     let baseRef: string | null = null;
-    try {
-      const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
-      // Prefer origin ref if remote exists
+    let pipelineItemInserted = false;
+    await withPortAllocationLock(async () => {
       try {
-        await invoke<string>("git_merge_base", { repoPath, refA: `origin/${defaultBranch}`, refB: "HEAD" });
-        baseRef = `origin/${defaultBranch}`;
-      } catch {
-        baseRef = defaultBranch;
-      }
-    } catch (e) {
-      console.warn("[store] failed to compute base_ref:", e);
-    }
-    console.log(`[perf:createItem] git base_ref: ${(performance.now() - t1).toFixed(1)}ms`);
+        // Compute base_ref for merge-base diffing
+        t1 = performance.now();
+        try {
+          const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
+          // Prefer origin ref if remote exists
+          try {
+            await invoke<string>("git_merge_base", { repoPath, refA: `origin/${defaultBranch}`, refB: "HEAD" });
+            baseRef = `origin/${defaultBranch}`;
+          } catch {
+            baseRef = defaultBranch;
+          }
+        } catch (e) {
+          console.warn("[store] failed to compute base_ref:", e);
+        }
+        console.log(`[perf:createItem] git base_ref: ${(performance.now() - t1).toFixed(1)}ms`);
 
-    // Insert DB record immediately so the UI updates without waiting on IO
-    t1 = performance.now();
-    try {
-      await insertPipelineItem(_db, {
-        id,
-        repo_id: repoId,
-        issue_number: null,
-        issue_title: null,
-        prompt: effectivePrompt,
-        pipeline: pipelineName,
-        stage: firstStageName,
-        tags: opts?.tags ?? [firstStageName],
-        pr_number: null,
-        pr_url: null,
-        branch,
-        agent_type: effectiveAgentType,
-        agent_provider: effectiveAgentProvider,
-        port_offset: portOffset,
-        port_env: null,
-        activity: "working",
-        display_name: displayName,
-        base_ref: baseRef,
-      });
-    } catch (e) {
-      console.error("[store] DB insert failed:", e);
-      toast.error(tt('toasts.dbInsertFailed'));
-      throw e;
-    }
-    console.log(`[perf:createItem] DB insert: ${(performance.now() - t1).toFixed(1)}ms`);
+        // Insert DB record immediately so the UI updates without waiting on IO
+        t1 = performance.now();
+        await insertPipelineItem(_db, {
+          id,
+          repo_id: repoId,
+          issue_number: null,
+          issue_title: null,
+          prompt: effectivePrompt,
+          pipeline: pipelineName,
+          stage: firstStageName,
+          tags: opts?.tags ?? [firstStageName],
+          pr_number: null,
+          pr_url: null,
+          branch,
+          agent_type: effectiveAgentType,
+          agent_provider: effectiveAgentProvider,
+          port_offset: portOffset,
+          port_env: Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null,
+          activity: "working",
+          display_name: displayName,
+          base_ref: baseRef,
+        });
+
+        pipelineItemInserted = true;
+
+        // Assign machine-wide ports only after the task row exists so the
+        // task_port foreign key can reference the new pipeline_item.
+        const allocated = await claimTaskPorts(id, repoConfig);
+        portOffset = allocated.firstPort;
+        portEnv = allocated.portEnv;
+        await _db.execute(
+          `UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?`,
+          [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
+        );
+      } catch (e) {
+        if (pipelineItemInserted) {
+          await _db.execute("DELETE FROM pipeline_item WHERE id = ?", [id]).catch(() => undefined);
+        }
+        await deleteTaskPortsForItem(_db, id).catch(() => undefined);
+        console.error("[store] task creation failed:", e);
+        toast.error(tt('toasts.dbInsertFailed'));
+        throw e;
+      }
+      console.log(`[perf:createItem] DB insert: ${(performance.now() - t1).toFixed(1)}ms`);
+    });
 
     pendingSetupIds.value = [...pendingSetupIds.value, id];
     pendingCreateVisibility.set(id, { bumpAt: performance.now() });
@@ -617,7 +752,7 @@ export const useKannaStore = defineStore("kanna", () => {
       repoPath,
       worktreePath,
       branch,
-      portOffset,
+      portEnv,
       pipelinePrompt,
       effectiveAgentType,
       effectiveAgentProvider,
@@ -628,7 +763,7 @@ export const useKannaStore = defineStore("kanna", () => {
   /** Background IO for createItem: read config, create worktree, spawn agent, then select. */
   async function setupWorktreeAndSpawn(
     id: string, repoPath: string, worktreePath: string,
-    branch: string, portOffset: number, prompt: string,
+    branch: string, portEnv: Record<string, string>, prompt: string,
     agentType: "pty" | "sdk",
     agentProvider: AgentProvider,
     opts?: { baseBranch?: string; tags?: string[]; pipelineName?: string; stage?: string; customTask?: CustomTaskConfig; agentProvider?: AgentProvider; model?: string; permissionMode?: string; allowedTools?: string[] },
@@ -650,15 +785,6 @@ export const useKannaStore = defineStore("kanna", () => {
         return;
       }
       console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
-
-      const portEnv = computePortEnv(repoConfig, portOffset);
-
-      if (Object.keys(portEnv).length > 0) {
-        await _db.execute(
-          "UPDATE pipeline_item SET port_env = ? WHERE id = ?",
-          [JSON.stringify(portEnv), id],
-        );
-      }
 
       // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
       spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv))
@@ -719,16 +845,6 @@ export const useKannaStore = defineStore("kanna", () => {
       console.debug("[store] no .kanna/config.json:", e);
       return {};
     }
-  }
-
-  function computePortEnv(repoConfig: RepoConfig, portOffset: number): Record<string, string> {
-    const portEnv: Record<string, string> = {};
-    if (repoConfig.ports) {
-      for (const [name, base] of Object.entries(repoConfig.ports)) {
-        portEnv[name] = String(base + portOffset);
-      }
-    }
-    return portEnv;
   }
 
   async function isAgentProviderAvailable(provider: AgentProvider): Promise<boolean> {
@@ -1051,7 +1167,7 @@ export const useKannaStore = defineStore("kanna", () => {
           invoke("kill_session", { sessionId: `td-${item.id}` }).catch((e: unknown) =>
             reportCloseSessionError("[store] kill teardown session failed:", e)),
         ]);
-        await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
+        await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
         await checkUnblocked(item.id);
@@ -1064,7 +1180,7 @@ export const useKannaStore = defineStore("kanna", () => {
       // Blocked tasks never started — no teardown needed
       if (wasBlocked) {
         await removeAllBlockersForItem(_db, item.id);
-        await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
+        await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
         bump();
@@ -1116,7 +1232,7 @@ export const useKannaStore = defineStore("kanna", () => {
         invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
           reportCloseSessionError("[store] kill shell session failed:", e)),
       ]);
-      await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
+      await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
       if (opts?.selectNext !== false) selectNextItem(nextId);
       bump();
     } catch (e) {
@@ -1142,9 +1258,29 @@ export const useKannaStore = defineStore("kanna", () => {
       const repo = repos.value.find((r) => r.id === item.repo_id);
       if (!repo) return;
       await reopenPipelineItem(_db, item.id);
+      let portEnv: Record<string, string> = {};
+      let portOffset: number | null = null;
+      let portAllocationFailed = false;
+      try {
+        const repoConfig = await readRepoConfig(repo.path);
+        await withPortAllocationLock(async () => {
+          const allocated = await claimTaskPorts(item.id, repoConfig);
+          portEnv = allocated.portEnv;
+          portOffset = allocated.firstPort;
+          await _db.execute(
+            `UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?`,
+          [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, item.id],
+          );
+        });
+      } catch (e) {
+        await releaseTaskPorts(item.id).catch(() => undefined);
+        portAllocationFailed = true;
+        console.error("[store] undo close port allocation failed:", e);
+        toast.error(`${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`);
+      }
       await selectItem(item.id);
       bump();
-      if (item.branch) {
+      if (item.branch && !portAllocationFailed) {
         const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
         try {
           const agentProvider = resolveAgentProvider(
@@ -1153,6 +1289,7 @@ export const useKannaStore = defineStore("kanna", () => {
           );
           await spawnPtySession(item.id, worktreePath, "", 80, 24, {
             agentProvider,
+            portEnv,
             ...(item.claude_session_id ? { resumeSessionId: item.claude_session_id } : {}),
           });
           await updatePipelineItemActivity(_db, item.id, "working");
@@ -1514,29 +1651,8 @@ export const useKannaStore = defineStore("kanna", () => {
       console.debug("[store] no .kanna/config.json:", e);
     }
 
-    // items.value may be empty during init() (computedAsync hasn't fired),
-    // so query DB directly for port offsets as a fallback.
-    let portItems = items.value;
-    if (portItems.length === 0) {
-      portItems = await _db.select<PipelineItem>(
-        "SELECT * FROM pipeline_item WHERE repo_id = ? AND stage != 'done'",
-        [item.repo_id],
-      );
-    }
-    const usedOffsets = new Set(
-      portItems.map((i) => i.port_offset).filter((o): o is number => o != null)
-    );
-    let portOffset = 1;
-    while (usedOffsets.has(portOffset)) portOffset++;
-
-    const portEnv: Record<string, string> = {};
-    if (repoConfig.ports) {
-      for (const [name, base] of Object.entries(repoConfig.ports)) {
-        portEnv[name] = String(base + portOffset);
-      }
-    }
-
     let agentProvider: AgentProvider;
+    let portEnv: Record<string, string> = {};
     try {
       agentProvider = resolveAgentProvider(
         item.agent_provider,
@@ -1549,15 +1665,26 @@ export const useKannaStore = defineStore("kanna", () => {
     }
 
     try {
-      await _db.execute(
-        `UPDATE pipeline_item
-         SET branch = ?, port_offset = ?, port_env = ?, base_ref = ?,
-             tags = '[]', activity = 'working',
-             activity_changed_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`,
-        [branch, portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, resolvedBaseRef, id],
-      );
-      bump();
+      await withPortAllocationLock(async () => {
+        try {
+          const allocated = await claimTaskPorts(id, repoConfig);
+          portEnv = allocated.portEnv;
+          const portOffset = allocated.firstPort;
+
+          await _db.execute(
+            `UPDATE pipeline_item
+             SET branch = ?, port_offset = ?, port_env = ?, base_ref = ?,
+                 tags = '[]', activity = 'working',
+                 activity_changed_at = datetime('now'), updated_at = datetime('now')
+             WHERE id = ?`,
+            [branch, portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, resolvedBaseRef, id],
+          );
+          bump();
+        } catch (e) {
+          await deleteTaskPortsForItem(_db, id).catch(() => undefined);
+          throw e;
+        }
+      });
 
       await spawnPtySession(id, worktreePath, augmentedPrompt, 80, 24, {
         agentProvider,
@@ -1736,7 +1863,7 @@ export const useKannaStore = defineStore("kanna", () => {
         const exists = await invoke<boolean>("file_exists", { path: wtPath });
         if (!exists) {
           console.warn(`[store] closing orphaned task ${item.id}: worktree missing at ${wtPath}`);
-          await closePipelineItemAndClearCachedTerminalState(item.id, (id) => closePipelineItem(_db, id));
+          await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
           item.stage = "done";
         }
       }

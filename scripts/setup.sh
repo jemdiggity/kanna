@@ -69,6 +69,14 @@ else
   fail "Git — install with: brew install git"
 fi
 
+# Zig (needed by libghostty-vt-sys during the Rust build)
+if command -v zig &>/dev/null; then
+  zig_ver="$(zig version)"
+  pass "Zig $zig_ver"
+else
+  fail "Zig — install from https://ziglang.org/download/ or with: brew install zig"
+fi
+
 # tmux (used by dev.sh)
 if command -v tmux &>/dev/null; then
   tmux_ver="$(tmux -V | awk '{print $2}')"

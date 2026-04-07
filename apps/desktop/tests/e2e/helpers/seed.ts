@@ -188,8 +188,24 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
       "Implement full-text search across task prompts and issue titles",
       "in_progress", '["in progress"]', "task-seed-search",
       "claude", "working", hoursAgo(1),
-      1, '{"KANNA_DEV_PORT":"1421"}', "origin/main", daysAgo(4), hoursAgo(1),
+      3, '{"KANNA_DEV_PORT":"1423"}', "origin/main", daysAgo(4), hoursAgo(1),
     ]
+  );
+
+  await execDb(
+    client,
+    `INSERT INTO task_port (port, pipeline_item_id, env_name) VALUES (?, ?, ?)`,
+    [1421, TASK_AUTH, "KANNA_DEV_PORT"],
+  );
+  await execDb(
+    client,
+    `INSERT INTO task_port (port, pipeline_item_id, env_name) VALUES (?, ?, ?)`,
+    [1422, TASK_DASH, "KANNA_DEV_PORT"],
+  );
+  await execDb(
+    client,
+    `INSERT INTO task_port (port, pipeline_item_id, env_name) VALUES (?, ?, ?)`,
+    [1423, TASK_SEARCH, "KANNA_DEV_PORT"],
   );
 
   // 6. Notifications — merged/done

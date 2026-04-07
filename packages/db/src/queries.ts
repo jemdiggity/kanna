@@ -1,4 +1,4 @@
-import type { Repo, PipelineItem, Setting, TaskBlocker } from "./schema.js";
+import type { Repo, PipelineItem, Setting, TaskBlocker, TaskPort } from "./schema.js";
 
 export type DbHandle = {
   execute(query: string, bindValues?: unknown[]): Promise<{ rowsAffected: number }>;
@@ -58,6 +58,27 @@ export async function listPipelineItems(
     "SELECT * FROM pipeline_item WHERE repo_id = ? ORDER BY created_at DESC",
     [repoId]
   );
+}
+
+export async function listTaskPorts(db: DbHandle): Promise<TaskPort[]> {
+  return db.select<TaskPort>("SELECT * FROM task_port ORDER BY port ASC");
+}
+
+export async function listTaskPortsForItem(
+  db: DbHandle,
+  itemId: string,
+): Promise<TaskPort[]> {
+  return db.select<TaskPort>(
+    "SELECT * FROM task_port WHERE pipeline_item_id = ? ORDER BY port ASC",
+    [itemId],
+  );
+}
+
+export async function deleteTaskPortsForItem(
+  db: DbHandle,
+  itemId: string,
+): Promise<void> {
+  await db.execute("DELETE FROM task_port WHERE pipeline_item_id = ?", [itemId]);
 }
 
 export async function insertPipelineItem(

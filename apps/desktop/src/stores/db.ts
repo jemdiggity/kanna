@@ -64,6 +64,13 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await db.execute(`CREATE TABLE IF NOT EXISTS task_port (
+    port INTEGER PRIMARY KEY,
+    pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
+    env_name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(pipeline_item_id, env_name)
+  )`);
   await db.execute(`CREATE TABLE IF NOT EXISTS worktree (
     id TEXT PRIMARY KEY, pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
     path TEXT NOT NULL, branch TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -198,5 +205,33 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     await db.execute(`UPDATE pipeline_item SET stage = 'merge' WHERE tags LIKE '%"merge"%' AND closed_at IS NULL AND stage IN ('in_progress', 'legacy')`);
     await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE stage = 'in_progress'`);
     await db.execute(`UPDATE pipeline_item SET stage = 'in progress' WHERE stage = 'legacy'`);
+  });
+
+  await runMigration("009_task_port_table", async () => {
+    await db.execute(`CREATE TABLE IF NOT EXISTS task_port (
+      port INTEGER PRIMARY KEY,
+      pipeline_item_id TEXT NOT NULL REFERENCES pipeline_item(id) ON DELETE CASCADE,
+      env_name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(pipeline_item_id, env_name)
+    )`);
+    const activeItems = await db.select<{ id: string; port_env: string | null }>(
+      "SELECT id, port_env FROM pipeline_item WHERE stage != 'done' AND port_env IS NOT NULL",
+    );
+    for (const item of activeItems) {
+      try {
+        const env = JSON.parse(item.port_env ?? "{}") as Record<string, string | number>;
+        for (const [envName, value] of Object.entries(env)) {
+          const port = typeof value === "number" ? value : parseInt(value, 10);
+          if (!Number.isInteger(port) || port <= 0) continue;
+          await db.execute(
+            "INSERT OR IGNORE INTO task_port (port, pipeline_item_id, env_name) VALUES (?, ?, ?)",
+            [port, item.id, envName],
+          );
+        }
+      } catch (e) {
+        console.debug("[db] task_port backfill failed:", e);
+      }
+    }
   });
 }
