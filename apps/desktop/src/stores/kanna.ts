@@ -83,6 +83,7 @@ export interface PtySpawnOptions {
 // Module-level DB handle — set once by init(), never null after that.
 let _db: DbHandle;
 let portAllocationChain: Promise<void> = Promise.resolve();
+const sessionExitWaiters = new Map<string, Array<() => void>>();
 
 async function withPortAllocationLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = portAllocationChain.then(fn, fn);
@@ -192,6 +193,14 @@ async function closeTaskAndReleasePorts(
 ): Promise<void> {
   await closePipelineItemAndClearCachedTerminalState(itemId, closeFn);
   await releaseTaskPorts(itemId);
+}
+
+async function waitForSessionExit(sessionId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const existing = sessionExitWaiters.get(sessionId) ?? [];
+    existing.push(resolve);
+    sessionExitWaiters.set(sessionId, existing);
+  });
 }
 
 function tt(key: string): string { return i18n.global.t(key); }
@@ -1197,6 +1206,7 @@ export const useKannaStore = defineStore("kanna", () => {
 
       // 2. Run teardown scripts if any
       const teardownCmds = await collectTeardownCommands(item, repo);
+      let teardownExit: Promise<void> | null = null;
       if (teardownCmds.length > 0) {
         const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
         const scriptParts = teardownCmds.map((cmd) => {
@@ -1205,6 +1215,7 @@ export const useKannaStore = defineStore("kanna", () => {
         });
         const fullCmd = `printf '\\033[33mRunning teardown...\\033[0m\\n' && ${scriptParts.join(" && ")} && printf '\\n'`;
         const tdSessionId = `td-${item.id}`;
+        teardownExit = waitForSessionExit(tdSessionId);
         await invoke("spawn_session", {
           sessionId: tdSessionId,
           cwd: worktreePath,
@@ -1223,6 +1234,10 @@ export const useKannaStore = defineStore("kanna", () => {
 
       if (devLingerTerminals.value) {
         return;
+      }
+
+      if (teardownExit) {
+        await teardownExit;
       }
 
       // 4. No linger: kill sessions and close immediately
@@ -1971,6 +1986,12 @@ export const useKannaStore = defineStore("kanna", () => {
       const payload = event.payload || event;
       const sessionId = payload.session_id;
       if (!sessionId) return;
+
+      const waiters = sessionExitWaiters.get(sessionId);
+      if (waiters) {
+        sessionExitWaiters.delete(sessionId);
+        for (const resolve of waiters) resolve();
+      }
 
       // Teardown session finished — already in torndown state, nothing extra needed
       if (typeof sessionId === "string" && isTeardownSessionId(sessionId)) {
