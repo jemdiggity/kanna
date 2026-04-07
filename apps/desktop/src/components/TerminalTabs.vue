@@ -13,10 +13,10 @@ const props = defineProps<{
     sessionId: string;
     worktreePath?: string;
     prompt?: string;
-    agentProvider?: string;
+    agentProvider?: AgentProvider;
   }>;
   agentType?: string;
-  agentProvider?: string;
+  agentProvider?: AgentProvider;
   worktreePath?: string;
   repoPath?: string;
   prompt?: string;
