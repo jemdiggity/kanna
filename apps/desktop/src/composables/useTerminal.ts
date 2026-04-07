@@ -15,6 +15,7 @@ import {
 import { isAppShortcut } from "./useKeyboardShortcuts"
 import {
   formatAttachFailureMessage,
+  getRespawnToastKey,
   getReconnectRedrawPolicy,
   getReconnectResizeDelayMs,
   getReconnectKeyboardPush,
@@ -548,10 +549,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       if (recoveryMode === "attach-only") {
         terminal.value?.write(formatAttachFailureMessage(msg))
         if (shouldRespawnAfterAttachFailure(msg, hasAttachedOnce, spawnOptions, options)) {
-          const toastKey = recoveryState
-            ? "toasts.daemonHandoffRespawnedWithScrollback"
-            : "toasts.daemonHandoffRespawned"
-          toast.error(i18n.global.t(toastKey))
+          toast.error(i18n.global.t(getRespawnToastKey(msg, recoveryState != null)))
           shouldSpawnRecoverySession = true
         } else {
           return

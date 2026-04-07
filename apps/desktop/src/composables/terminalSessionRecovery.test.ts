@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   shouldDelayConnectUntilAfterInitialLayout,
   formatAttachFailureMessage,
+  getRespawnToastKey,
   getReconnectResizeDelayMs,
   getShellTerminalEnv,
   getTaskTerminalEnv,
@@ -108,6 +109,27 @@ describe("shouldRespawnAfterAttachFailure", () => {
         undefined,
       )
     ).toBe(false);
+  });
+});
+
+describe("getRespawnToastKey", () => {
+  it("uses restart-specific copy for explicit daemon handoff loss", () => {
+    expect(
+      getRespawnToastKey(
+        "session lost during daemon handoff: failed to receive PTY fd",
+        false,
+      ),
+    ).toBe("toasts.daemonHandoffRespawned");
+  });
+
+  it("uses generic copy when a previously attached session is simply missing", () => {
+    expect(getRespawnToastKey("session not found", false)).toBe("toasts.sessionRespawned");
+  });
+
+  it("keeps the scrollback variant for generic respawns", () => {
+    expect(getRespawnToastKey("session not found", true)).toBe(
+      "toasts.sessionRespawnedWithScrollback",
+    );
   });
 });
 

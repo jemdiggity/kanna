@@ -117,6 +117,8 @@
     "blockTaskFailed": "작업 차단 실패",
     "selectRepoFirst": "먼저 저장소를 선택하세요",
     "agentStartFailed": "에이전트 시작 실패",
+    "sessionRespawned": "이전 터미널 세션에 다시 연결할 수 없었습니다. 새 세션을 시작했습니다.",
+    "sessionRespawnedWithScrollback": "이전 터미널 세션에 다시 연결할 수 없었습니다. 스크롤백을 복원하고 새 세션을 시작했습니다.",
     "daemonHandoffRespawned": "재시작 후 이전 터미널 세션에 다시 연결할 수 없었습니다. 새 세션을 시작했습니다.",
     "daemonHandoffRespawnedWithScrollback": "재시작 후 이전 터미널 세션에 다시 연결할 수 없었습니다. 스크롤백을 복원하고 새 세션을 시작했습니다.",
     "pipelineNotFound": "파이프라인 정의를 찾을 수 없습니다",
