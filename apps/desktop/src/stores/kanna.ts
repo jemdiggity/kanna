@@ -24,6 +24,7 @@ import {
 import { formatAppWindowTitle, type AppBuildInfo } from "./windowTitle";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
+import { buildTaskBootstrapCommand } from "../utils/taskBootstrap";
 import {
   getPreferredAgentProviders,
   requireResolvedAgentProvider,
@@ -79,6 +80,12 @@ export interface PtySpawnOptions {
   portEnv?: Record<string, string>;
   setupCmds?: string[];
   resumeSessionId?: string;
+}
+
+interface PreparedPtySession {
+  env: Record<string, string>;
+  setupCmds: string[];
+  agentCmd: string;
 }
 // Module-level DB handle — set once by init(), never null after that.
 let _db: DbHandle;
@@ -779,29 +786,39 @@ export const useKannaStore = defineStore("kanna", () => {
   ) {
     const s0 = performance.now();
     try {
-      // Read config and create worktree concurrently — they're independent.
       let s1 = performance.now();
       let repoConfig: RepoConfig;
-      try {
-        const [config] = await Promise.all([
-          readRepoConfig(repoPath),
-          createWorktree(repoPath, branch, worktreePath, opts?.baseBranch),
-        ]);
-        repoConfig = config;
-      } catch (e) {
-        console.error("[store] git_worktree_add failed:", e);
-        toast.error(tt('toasts.worktreeFailed'));
-        return;
+      if (agentType === "pty") {
+        try {
+          repoConfig = await readRepoConfig(repoPath);
+        } catch (e) {
+          console.error("[store] failed to read repo config:", e);
+          toast.error(tt('toasts.worktreeFailed'));
+          return;
+        }
+        console.log(`[perf:setup] readConfig: ${(performance.now() - s1).toFixed(1)}ms`);
+      } else {
+        try {
+          const [config] = await Promise.all([
+            readRepoConfig(repoPath),
+            createWorktree(repoPath, branch, worktreePath, opts?.baseBranch),
+          ]);
+          repoConfig = config;
+        } catch (e) {
+          console.error("[store] git_worktree_add failed:", e);
+          toast.error(tt('toasts.worktreeFailed'));
+          return;
+        }
+        console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
       }
-      console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
-
-      // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
-      spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv))
-        .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
 
       s1 = performance.now();
       try {
         if (agentType !== "pty") {
+          // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
+          spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv))
+            .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
+
           await invoke("create_agent_session", {
             sessionId: id,
             cwd: worktreePath,
@@ -815,7 +832,13 @@ export const useKannaStore = defineStore("kanna", () => {
             maxBudgetUsd: opts?.customTask?.maxBudgetUsd ?? null,
           });
         } else {
-          await spawnPtySession(id, worktreePath, prompt, 80, 24, {
+          const defaultBranch = opts?.baseBranch
+            ? null
+            : await invoke<string>("git_default_branch", { repoPath }).catch((e) => {
+                console.warn("[store] failed to resolve default branch for bootstrap:", e);
+                return "main";
+              });
+          const { env, setupCmds, agentCmd } = await preparePtySession(id, prompt, {
             agentProvider,
             model: opts?.customTask?.model,
             permissionMode: opts?.customTask?.permissionMode,
@@ -826,6 +849,26 @@ export const useKannaStore = defineStore("kanna", () => {
             setupCmdsOverride: opts?.customTask?.setup,
             portEnv,
             setupCmds: repoConfig.setup || [],
+          });
+
+          const bootstrapCmd = buildTaskBootstrapCommand({
+            repoPath,
+            worktreePath,
+            branch,
+            baseBranch: opts?.baseBranch,
+            setupCmds,
+            agentCmd,
+            defaultBranch,
+          });
+
+          await invoke("spawn_session", {
+            sessionId: id,
+            cwd: opts?.baseBranch ? `${repoPath}/.kanna-worktrees/${opts.baseBranch}` : repoPath,
+            executable: "/bin/zsh",
+            args: ["--login", "-i", "-c", bootstrapCmd],
+            env,
+            cols: 80,
+            rows: 24,
           });
         }
       } catch (e) {
@@ -943,7 +986,11 @@ export const useKannaStore = defineStore("kanna", () => {
     });
   }
 
-  async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, options?: PtySpawnOptions) {
+  async function preparePtySession(
+    sessionId: string,
+    prompt: string,
+    options?: PtySpawnOptions,
+  ): Promise<PreparedPtySession> {
     const provider = requireResolvedAgentProvider(options?.agentProvider);
     const env: Record<string, string> = { ...getTaskTerminalEnv(provider) };
     let setupCmds: string[] = options?.setupCmds || [];
@@ -1074,10 +1121,17 @@ export const useKannaStore = defineStore("kanna", () => {
       }
     }
 
-    const allSetupCmds = [...setupCmds, ...(options?.setupCmdsOverride || [])];
+    return {
+      env,
+      setupCmds: [...setupCmds, ...(options?.setupCmdsOverride || [])],
+      agentCmd,
+    };
+  }
+
+  function buildPtySessionCommand(agentCmd: string, setupCmds: string[]): string {
     let fullCmd: string;
-    if (allSetupCmds.length > 0) {
-      const setupParts = allSetupCmds.map((cmd) => {
+    if (setupCmds.length > 0) {
+      const setupParts = setupCmds.map((cmd) => {
         const escaped = cmd.replace(/'/g, "'\\''");
         return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${cmd}`;
       });
@@ -1085,6 +1139,12 @@ export const useKannaStore = defineStore("kanna", () => {
     } else {
       fullCmd = agentCmd;
     }
+    return fullCmd;
+  }
+
+  async function spawnPtySession(sessionId: string, cwd: string, prompt: string, cols = 80, rows = 24, options?: PtySpawnOptions) {
+    const { env, setupCmds, agentCmd } = await preparePtySession(sessionId, prompt, options);
+    const fullCmd = buildPtySessionCommand(agentCmd, setupCmds);
 
     await invoke("spawn_session", {
       sessionId,
