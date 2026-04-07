@@ -17,11 +17,16 @@ describe("desktop sidecar packaging", () => {
       new URL("../../../scripts/stage-sidecars.sh", import.meta.url),
       "utf8",
     );
+    const shipScript = readFileSync(
+      new URL("../../../scripts/ship.sh", import.meta.url),
+      "utf8",
+    );
     expect(desktopPkg.scripts?.["build:sidecars"]).toContain("packages/terminal-recovery/Cargo.toml");
     expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-terminal-recovery");
     expect(stageSidecarsScript).toContain("kanna-terminal-recovery");
     expect(stageSidecarsScript).toContain("kanna-daemon");
     expect(stageSidecarsScript).toContain("kanna-cli");
+    expect(shipScript).toContain("packages/terminal-recovery/Cargo.toml");
   });
 
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {

@@ -73,6 +73,24 @@ enum HandoffEventCompat {
     HandoffReady { sessions: Vec<HandoffSessionV1Wire> },
     Error { message: String },
 }
+
+#[derive(Debug, serde::Deserialize)]
+struct HandoffSessionLegacyWire {
+    session_id: String,
+    pid: u32,
+    cwd: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type")]
+enum HandoffEventLegacy {
+    HandoffReady {
+        sessions: Vec<HandoffSessionLegacyWire>,
+    },
+    Error {
+        message: String,
+    },
+}
 use protocol::{Command, Event};
 use session::{SessionManager, SessionRecord, StreamControl};
 use socket::{bind_socket, read_command, write_event};
@@ -137,7 +155,21 @@ fn parse_handoff_response(line: &str) -> Result<Vec<protocol::HandoffSession>, S
             })
             .collect()),
         Ok(HandoffEventCompat::Error { message }) => Err(message),
-        Err(error) => Err(format!("invalid response: {}", error)),
+        Err(compat_error) => match serde_json::from_str::<HandoffEventLegacy>(line) {
+            Ok(HandoffEventLegacy::HandoffReady { sessions }) => Ok(sessions
+                .into_iter()
+                .map(|session| protocol::HandoffSession {
+                    session_id: session.session_id,
+                    pid: session.pid,
+                    cwd: session.cwd,
+                    rows: 0,
+                    cols: 0,
+                    snapshot: None,
+                })
+                .collect()),
+            Ok(HandoffEventLegacy::Error { message }) => Err(message),
+            Err(_) => Err(format!("invalid response: {}", compat_error)),
+        },
     }
 }
 
@@ -1659,6 +1691,31 @@ mod tests {
         assert_eq!(sessions[0].rows, 24);
         assert_eq!(sessions[0].cols, 80);
         assert_eq!(sessions[0].snapshot.as_ref().unwrap().vt, "hello");
+    }
+
+    #[test]
+    fn parse_handoff_response_accepts_v0_0_30_session_info_payload() {
+        // Kanna 0.0.30 sent protocol::SessionInfo entries for handoff version 1.
+        let line = serde_json::json!({
+            "type": "HandoffReady",
+            "sessions": [{
+                "session_id": "s1",
+                "pid": 42,
+                "cwd": "/tmp",
+                "state": "Active",
+                "idle_seconds": 0
+            }]
+        })
+        .to_string();
+
+        let sessions = parse_handoff_response(&line).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "s1");
+        assert_eq!(sessions[0].pid, 42);
+        assert_eq!(sessions[0].cwd, "/tmp");
+        assert_eq!(sessions[0].rows, 0);
+        assert_eq!(sessions[0].cols, 0);
+        assert!(sessions[0].snapshot.is_none());
     }
 
     #[test]
