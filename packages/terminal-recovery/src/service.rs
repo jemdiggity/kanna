@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Duration;
 
 use crate::protocol::{RecoveryCommand, RecoveryResponse};
 use crate::session_mirror::SessionMirror;
@@ -7,27 +9,74 @@ use crate::snapshot_store::SnapshotStore;
 
 pub struct RecoveryService {
     snapshot_store: SnapshotStore,
-    sessions: HashMap<String, SessionMirror>,
+    sessions: HashMap<String, TrackedSession>,
+    persist_debounce_ms: u64,
     stopping: bool,
 }
 
+struct TrackedSession {
+    mirror: SessionMirror,
+    dirty_since: Option<u64>,
+}
+
+const DEFAULT_PERSIST_DEBOUNCE_MS: u64 = 2_500;
+
 impl RecoveryService {
     pub fn new(snapshot_store: SnapshotStore) -> Self {
+        Self::new_with_persist_debounce_ms(snapshot_store, DEFAULT_PERSIST_DEBOUNCE_MS)
+    }
+
+    pub fn new_with_persist_debounce_ms(
+        snapshot_store: SnapshotStore,
+        persist_debounce_ms: u64,
+    ) -> Self {
         Self {
             snapshot_store,
             sessions: HashMap::new(),
+            persist_debounce_ms,
             stopping: false,
         }
     }
 
-    pub fn run<R: Read, W: Write>(
+    pub fn run<R: Read + Send + 'static, W: Write>(
         &mut self,
         input: R,
         mut output: W,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let reader = BufReader::new(input);
-        for line in reader.lines() {
-            let line = line?;
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(input);
+            for line in reader.lines() {
+                let _ = tx.send(line);
+            }
+        });
+
+        loop {
+            let next_flush_delay = self.next_flush_delay();
+            let received = match next_flush_delay {
+                Some(delay) => Some(match rx.recv_timeout(delay) {
+                    Ok(line) => line?,
+                    Err(RecvTimeoutError::Timeout) => {
+                        self.flush_due_sessions();
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        self.flush_all_dirty_sessions();
+                        break;
+                    }
+                }),
+                None => match rx.recv() {
+                    Ok(line) => Some(line?),
+                    Err(_) => {
+                        self.flush_all_dirty_sessions();
+                        break;
+                    }
+                },
+            };
+
+            let Some(line) = received else {
+                continue;
+            };
             if line.trim().is_empty() {
                 continue;
             }
@@ -46,6 +95,9 @@ impl RecoveryService {
 
             if self.stopping {
                 break;
+            }
+            if next_flush_delay.is_some() {
+                self.flush_due_sessions();
             }
         }
 
@@ -106,45 +158,58 @@ impl RecoveryService {
             return RecoveryResponse::Error { message };
         }
 
-        self.sessions.insert(session_id, mirror);
+        self.sessions.insert(
+            session_id,
+            TrackedSession {
+                mirror,
+                dirty_since: None,
+            },
+        );
         RecoveryResponse::Ok
     }
 
     fn write_output(&mut self, session_id: String, data: &[u8], sequence: u64) -> RecoveryResponse {
-        let Some(mirror) = self.sessions.get_mut(&session_id) else {
-            return RecoveryResponse::Error {
-                message: format!("Unknown session: {}", session_id),
-            };
+        let dirty_since = match self.sessions.get_mut(&session_id) {
+            Some(session) => {
+                session.mirror.write_output(data, sequence);
+                session.dirty_since = Some(now_millis());
+                session.dirty_since
+            }
+            None => {
+                return RecoveryResponse::Error {
+                    message: format!("Unknown session: {}", session_id),
+                };
+            }
         };
 
-        mirror.write_output(data, sequence);
-        match mirror.snapshot() {
-            Ok(snapshot) => match self.snapshot_store.write(&snapshot) {
-                Ok(()) => RecoveryResponse::Ok,
-                Err(message) => RecoveryResponse::Error { message },
-            },
-            Err(message) => RecoveryResponse::Error { message },
+        if self.should_persist_now(dirty_since) {
+            return self.persist_session(&session_id);
         }
+
+        RecoveryResponse::Ok
     }
 
     fn resize_session(&mut self, session_id: String, cols: u16, rows: u16) -> RecoveryResponse {
-        let Some(mirror) = self.sessions.get_mut(&session_id) else {
-            return RecoveryResponse::Error {
-                message: format!("Unknown session: {}", session_id),
-            };
+        let dirty_since = match self.sessions.get_mut(&session_id) {
+            Some(session) => {
+                if let Err(message) = session.mirror.resize(cols, rows) {
+                    return RecoveryResponse::Error { message };
+                }
+                session.dirty_since = Some(now_millis());
+                session.dirty_since
+            }
+            None => {
+                return RecoveryResponse::Error {
+                    message: format!("Unknown session: {}", session_id),
+                };
+            }
         };
 
-        if let Err(message) = mirror.resize(cols, rows) {
-            return RecoveryResponse::Error { message };
+        if self.should_persist_now(dirty_since) {
+            return self.persist_session(&session_id);
         }
 
-        match mirror.snapshot() {
-            Ok(snapshot) => match self.snapshot_store.write(&snapshot) {
-                Ok(()) => RecoveryResponse::Ok,
-                Err(message) => RecoveryResponse::Error { message },
-            },
-            Err(message) => RecoveryResponse::Error { message },
-        }
+        RecoveryResponse::Ok
     }
 
     fn end_session(&mut self, session_id: String) -> RecoveryResponse {
@@ -156,8 +221,8 @@ impl RecoveryService {
     }
 
     fn get_snapshot(&mut self, session_id: String) -> RecoveryResponse {
-        if let Some(mirror) = self.sessions.get_mut(&session_id) {
-            return match mirror.snapshot() {
+        if let Some(session) = self.sessions.get_mut(&session_id) {
+            return match session.mirror.snapshot() {
                 Ok(snapshot) => RecoveryResponse::from_snapshot(snapshot),
                 Err(message) => RecoveryResponse::Error { message },
             };
@@ -171,16 +236,112 @@ impl RecoveryService {
     }
 
     fn flush_and_shutdown(&mut self) -> RecoveryResponse {
-        for mirror in self.sessions.values_mut() {
-            let snapshot = match mirror.snapshot() {
-                Ok(snapshot) => snapshot,
-                Err(message) => return RecoveryResponse::Error { message },
-            };
-            if let Err(message) = self.snapshot_store.write(&snapshot) {
+        let session_ids: Vec<String> = self.sessions.keys().cloned().collect();
+        for session_id in session_ids {
+            if let RecoveryResponse::Error { message } = self.persist_session(&session_id) {
                 return RecoveryResponse::Error { message };
             }
         }
         self.stopping = true;
         RecoveryResponse::Ok
     }
+
+    fn should_persist_now(&self, dirty_since: Option<u64>) -> bool {
+        if self.persist_debounce_ms == 0 {
+            return true;
+        }
+
+        match dirty_since {
+            None => false,
+            Some(saved_at) => now_millis().saturating_sub(saved_at) >= self.persist_debounce_ms,
+        }
+    }
+
+    fn persist_session(&mut self, session_id: &str) -> RecoveryResponse {
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return RecoveryResponse::Error {
+                message: format!("Unknown session: {}", session_id),
+            };
+        };
+
+        if session.dirty_since.is_none() {
+            return RecoveryResponse::Ok;
+        }
+
+        let snapshot = match session.mirror.snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(message) => return RecoveryResponse::Error { message },
+        };
+
+        match self.snapshot_store.write(&snapshot) {
+            Ok(()) => {
+                session.dirty_since = None;
+                RecoveryResponse::Ok
+            }
+            Err(message) => RecoveryResponse::Error { message },
+        }
+    }
+
+    fn next_flush_delay(&self) -> Option<Duration> {
+        if self.persist_debounce_ms == 0 {
+            return Some(Duration::from_millis(0));
+        }
+
+        let now = now_millis();
+        self.sessions
+            .values()
+            .filter_map(|session| {
+                session.dirty_since.map(|dirty_since| {
+                    let elapsed = now.saturating_sub(dirty_since);
+                    Duration::from_millis(self.persist_debounce_ms.saturating_sub(elapsed))
+                })
+            })
+            .min()
+    }
+
+    fn flush_due_sessions(&mut self) {
+        let now = now_millis();
+        let session_ids: Vec<String> = self
+            .sessions
+            .iter()
+            .filter_map(|(session_id, session)| {
+                session.dirty_since.and_then(|dirty_since| {
+                    if now.saturating_sub(dirty_since) >= self.persist_debounce_ms {
+                        Some(session_id.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for session_id in session_ids {
+            let _ = self.persist_session(&session_id);
+        }
+    }
+
+    fn flush_all_dirty_sessions(&mut self) {
+        let session_ids: Vec<String> = self
+            .sessions
+            .iter()
+            .filter_map(|(session_id, session)| {
+                if session.dirty_since.is_some() {
+                    Some(session_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for session_id in session_ids {
+            let _ = self.persist_session(&session_id);
+        }
+    }
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }

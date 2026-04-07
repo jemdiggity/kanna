@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let snapshot_dir = snapshot_dir();
     let snapshot_store = SnapshotStore::new(snapshot_dir);
     let mut service = RecoveryService::new(snapshot_store);
-    service.run(std::io::stdin().lock(), std::io::stdout().lock())
+    service.run(std::io::stdin(), std::io::stdout().lock())
 }
 
 fn snapshot_dir() -> PathBuf {
