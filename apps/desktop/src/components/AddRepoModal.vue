@@ -37,8 +37,10 @@ const selectedLocalPath = ref<string | null>(null);
 const localRepoName = ref("");
 const localBranch = ref("main");
 const localRemote = ref("");
+const localPathExists = ref(false);
 const localIsGitRepo = ref(false);
 const localLoading = ref(false);
+const localInspectVersion = ref(0);
 
 // ── Shared state ──
 const error = ref<string | null>(null);
@@ -121,11 +123,30 @@ const displayCloneDestination = computed(() => {
   return full;
 });
 
+const manualLocalPath = computed(() => {
+  const localPath = parsed.value.type === "local" ? parsed.value.localPath : null;
+  if (!localPath) return null;
+  return normalizeLocalPath(localPath);
+});
+
+const activeLocalPath = computed(() => selectedLocalPath.value ?? manualLocalPath.value);
+
 const importDisabled = computed(() => {
   if (props.cloning) return true;
-  if (selectedLocalPath.value) return false;
-  return parsed.value.type === "unknown";
+  if (activeLocalPath.value) {
+    return localLoading.value || !localPathExists.value || !localIsGitRepo.value || !localRepoName.value.trim();
+  }
+  return parsed.value.type !== "clone";
 });
+
+watch(manualLocalPath, async (path) => {
+  if (selectedLocalPath.value) return;
+  if (!path) {
+    resetLocalRepoState();
+    return;
+  }
+  await inspectLocalPath(path);
+}, { immediate: true });
 
 // ── Shared helpers ──
 async function findAvailableName(parentDir: string, baseName: string): Promise<string> {
@@ -140,6 +161,70 @@ async function findAvailableName(parentDir: string, baseName: string): Promise<s
     return `${baseName}-${Date.now()}`;
   } catch {
     return baseName;
+  }
+}
+
+function normalizeLocalPath(path: string): string {
+  if (path === "~") return homeDir.value.slice(0, -1) || path;
+  if (path.startsWith("~/") && homeDir.value) return `${homeDir.value}${path.slice(2)}`;
+  return path;
+}
+
+function resetLocalRepoState() {
+  localRepoName.value = "";
+  localBranch.value = "main";
+  localRemote.value = "";
+  localPathExists.value = false;
+  localIsGitRepo.value = false;
+  localLoading.value = false;
+}
+
+function deriveRepoName(path: string): string {
+  const trimmedPath = path.replace(/\/+$/, "");
+  const parts = trimmedPath.split("/");
+  return parts[parts.length - 1] || "repo";
+}
+
+async function inspectLocalPath(dirPath: string) {
+  const inspectionId = ++localInspectVersion.value;
+  localLoading.value = true;
+  localRepoName.value = deriveRepoName(dirPath);
+
+  try {
+    const exists = await invoke<boolean>("file_exists", { path: dirPath });
+    if (inspectionId !== localInspectVersion.value) return;
+
+    localPathExists.value = exists;
+    if (!exists) {
+      localIsGitRepo.value = false;
+      localBranch.value = "main";
+      localRemote.value = "";
+      return;
+    }
+
+    try {
+      const branch = await invoke<string>("git_default_branch", { repoPath: dirPath });
+      if (inspectionId !== localInspectVersion.value) return;
+      localBranch.value = branch || "main";
+      localIsGitRepo.value = true;
+      try {
+        const remote = await invoke<string>("git_remote_url", { repoPath: dirPath });
+        if (inspectionId !== localInspectVersion.value) return;
+        localRemote.value = remote;
+      } catch {
+        if (inspectionId !== localInspectVersion.value) return;
+        localRemote.value = "";
+      }
+    } catch {
+      if (inspectionId !== localInspectVersion.value) return;
+      localIsGitRepo.value = false;
+      localBranch.value = "main";
+      localRemote.value = "";
+    }
+  } finally {
+    if (inspectionId === localInspectVersion.value) {
+      localLoading.value = false;
+    }
   }
 }
 
@@ -166,26 +251,7 @@ async function handleChooseLocalFolder() {
 
   selectedLocalPath.value = dirPath;
   importInput.value = dirPath;
-  const parts = dirPath.split("/");
-  localRepoName.value = parts[parts.length - 1] || "repo";
-
-  localLoading.value = true;
-  try {
-    const branch = await invoke<string>("git_default_branch", { repoPath: dirPath });
-    localBranch.value = branch || "main";
-    localIsGitRepo.value = true;
-    try {
-      const remote = await invoke<string>("git_remote_url", { repoPath: dirPath });
-      localRemote.value = remote;
-    } catch {
-      localRemote.value = "";
-    }
-  } catch {
-    localIsGitRepo.value = false;
-    localBranch.value = "main";
-    localRemote.value = "";
-  }
-  localLoading.value = false;
+  await inspectLocalPath(dirPath);
 }
 
 function handleSubmit() {
@@ -196,8 +262,8 @@ function handleSubmit() {
     emit("create", name, path);
   } else {
     if (importDisabled.value) return;
-    if (selectedLocalPath.value) {
-      emit("import", selectedLocalPath.value, localRepoName.value, localBranch.value);
+    if (activeLocalPath.value && localIsGitRepo.value) {
+      emit("import", activeLocalPath.value, localRepoName.value.trim(), localBranch.value);
     } else if (parsed.value.type === "clone" && parsed.value.cloneUrl) {
       emit("clone", parsed.value.cloneUrl, cloneDestination.value);
     }
@@ -283,6 +349,27 @@ function switchTab(tab: "create" | "import") {
             <div class="path-hint">
               <span class="path-text">{{ displayCloneDestination }}</span>
               <a class="change-link" @click="handleChangeCloneDir">{{ $t('addRepo.change') }}</a>
+            </div>
+          </template>
+          <template v-else-if="manualLocalPath">
+            <div class="selected-path-row">
+              <div class="selected-path">{{ manualLocalPath }}</div>
+            </div>
+            <div v-if="localLoading" class="path-hint">{{ $t('addRepo.detecting') }}</div>
+            <div v-else-if="localIsGitRepo" class="resolved-url">
+              {{ $t('addRepo.gitRepoConfirmed') }} {{ localBranch }}<template v-if="localRemote"> · {{ localRemote }}</template>
+            </div>
+            <div v-else-if="localPathExists" class="error-inline">
+              {{ $t('addRepo.notAGitRepo') }}
+            </div>
+            <div v-if="localIsGitRepo && !localLoading" class="name-field">
+              <input
+                v-model="localRepoName"
+                v-bind="macOsTextInputAttrs"
+                class="text-input"
+                type="text"
+                :placeholder="$t('addRepo.repoNamePlaceholder')"
+              />
             </div>
           </template>
           <template v-else>
