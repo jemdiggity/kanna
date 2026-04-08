@@ -51,11 +51,12 @@ async function flushPromises() {
   await nextTick();
 }
 
-function mountModal() {
+function mountModal(initialTab: "create" | "import" = "import") {
   return mount(AddRepoModal, {
     props: {
-      initialTab: "import",
+      initialTab,
     },
+    attachTo: document.body,
     global: {
       mocks: {
         $t: (key: string) => key,
@@ -100,5 +101,47 @@ describe("AddRepoModal", () => {
     expect(wrapper.emitted("import")).toEqual([
       ["/Users/me/code/project", "project", "main"],
     ]);
+  });
+
+  it("keeps focus on the active text input when switching tabs with the mouse", async () => {
+    const wrapper = mountModal("create");
+
+    await flushPromises();
+
+    const createInput = wrapper.get('input[placeholder="addRepo.namePlaceholder"]');
+    const tabs = wrapper.findAll("button.tab");
+    const createTab = tabs[0];
+    const importTab = tabs[1];
+
+    createInput.element.focus();
+    await flushPromises();
+    expect(document.activeElement).toBe(createInput.element);
+
+    const importMouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    importTab.element.dispatchEvent(importMouseDown);
+    expect(importMouseDown.defaultPrevented).toBe(true);
+
+    await importTab.trigger("click");
+    await flushPromises();
+
+    const importInput = wrapper.get('input[placeholder="addRepo.importPlaceholder"]');
+    expect(document.activeElement).toBe(importInput.element);
+
+    await importInput.setValue("/Users/me/code/project");
+    await flushPromises();
+
+    const repoNameInput = wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]');
+    expect(document.activeElement).toBe(repoNameInput.element);
+
+    const createMouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    createTab.element.dispatchEvent(createMouseDown);
+    expect(createMouseDown.defaultPrevented).toBe(true);
+
+    await createTab.trigger("click");
+    await flushPromises();
+
+    expect(document.activeElement).toBe(wrapper.get('input[placeholder="addRepo.namePlaceholder"]').element);
+
+    wrapper.unmount();
   });
 });

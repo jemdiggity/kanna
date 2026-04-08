@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import { open } from "../dialog";
 import { invoke } from "../invoke";
@@ -24,7 +24,10 @@ const emit = defineEmits<{
 }>();
 
 const activeTab = ref<"create" | "import">(props.initialTab);
-watch(() => props.initialTab, (tab) => { activeTab.value = tab; });
+watch(() => props.initialTab, (tab) => {
+  activeTab.value = tab;
+  focusActiveInput();
+});
 
 // ── Create New tab state ──
 const createName = ref("");
@@ -44,7 +47,25 @@ const localInspectVersion = ref(0);
 
 // ── Shared state ──
 const error = ref<string | null>(null);
-const inputRef = ref<HTMLInputElement>();
+const createInputRef = ref<HTMLInputElement>();
+const importInputRef = ref<HTMLInputElement>();
+const localRepoNameInputRef = ref<HTMLInputElement>();
+
+function focusActiveInput() {
+  void nextTick(() => {
+    if (activeTab.value === "create") {
+      createInputRef.value?.focus();
+      return;
+    }
+
+    if (shouldFocusLocalRepoName.value) {
+      localRepoNameInputRef.value?.focus();
+      return;
+    }
+
+    importInputRef.value?.focus();
+  });
+}
 
 onMounted(async () => {
   try {
@@ -55,7 +76,7 @@ onMounted(async () => {
     homeDir.value = "/Users/unknown/";
   }
   createParentDir.value = `${homeDir.value}.kanna/repos`;
-  inputRef.value?.focus();
+  focusActiveInput();
   window.addEventListener("keydown", handleKeydown);
 });
 
@@ -130,6 +151,12 @@ const manualLocalPath = computed(() => {
 });
 
 const activeLocalPath = computed(() => selectedLocalPath.value ?? manualLocalPath.value);
+const shouldFocusLocalRepoName = computed(() =>
+  activeTab.value === "import" &&
+  !!activeLocalPath.value &&
+  localIsGitRepo.value &&
+  !localLoading.value,
+);
 
 const importDisabled = computed(() => {
   if (props.cloning) return true;
@@ -147,6 +174,12 @@ watch(manualLocalPath, async (path) => {
   }
   await inspectLocalPath(path);
 }, { immediate: true });
+
+watch([activeLocalPath, localIsGitRepo, localLoading], () => {
+  if (shouldFocusLocalRepoName.value) {
+    focusActiveInput();
+  }
+});
 
 // ── Shared helpers ──
 async function findAvailableName(parentDir: string, baseName: string): Promise<string> {
@@ -295,6 +328,7 @@ function switchTab(tab: "create" | "import") {
   if (tab === "create") {
     selectedLocalPath.value = null;
   }
+  focusActiveInput();
 }
 </script>
 
@@ -303,15 +337,19 @@ function switchTab(tab: "create" | "import") {
     <div class="modal">
       <div class="tabs">
         <button
+          type="button"
           class="tab"
           :class="{ active: activeTab === 'create' }"
+          @mousedown.prevent
           @click="switchTab('create')"
         >
           {{ $t('addRepo.tabCreate') }}
         </button>
         <button
+          type="button"
           class="tab"
           :class="{ active: activeTab === 'import' }"
+          @mousedown.prevent
           @click="switchTab('import')"
         >
           {{ $t('addRepo.tabImport') }}
@@ -320,7 +358,7 @@ function switchTab(tab: "create" | "import") {
 
       <div v-if="activeTab === 'create'" class="modal-body">
         <input
-          ref="inputRef"
+          ref="createInputRef"
           v-model="createName"
           v-bind="macOsTextInputAttrs"
           class="text-input"
@@ -336,7 +374,7 @@ function switchTab(tab: "create" | "import") {
       <div v-if="activeTab === 'import'" class="modal-body">
         <template v-if="!selectedLocalPath">
           <input
-            ref="inputRef"
+            ref="importInputRef"
             v-model="importInput"
             v-bind="macOsTextInputAttrs"
             class="text-input"
@@ -364,6 +402,7 @@ function switchTab(tab: "create" | "import") {
             </div>
             <div v-if="localIsGitRepo && !localLoading" class="name-field">
               <input
+                ref="localRepoNameInputRef"
                 v-model="localRepoName"
                 v-bind="macOsTextInputAttrs"
                 class="text-input"
@@ -393,6 +432,7 @@ function switchTab(tab: "create" | "import") {
           </div>
           <div v-if="localIsGitRepo && !localLoading" class="name-field">
             <input
+              ref="localRepoNameInputRef"
               v-model="localRepoName"
               v-bind="macOsTextInputAttrs"
               class="text-input"
