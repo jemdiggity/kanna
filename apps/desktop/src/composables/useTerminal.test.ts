@@ -303,6 +303,55 @@ describe("useTerminal", () => {
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
   });
 
+  it("spawns a shell terminal when no pre-warmed session exists", async () => {
+    const spawnFn = vi.fn(async () => {});
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "attach_session") {
+        if (spawnFn.mock.calls.length === 0) {
+          throw new Error("session not found: shell-wt-1");
+        }
+        return null;
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "shell-wt-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "",
+            spawnFn,
+          },
+          undefined,
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    await wrapper.vm.startListening();
+
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(spawnFn).toHaveBeenCalledWith("shell-wt-1", "/tmp/task", "", 80, 24);
+    expect(errorToastMock).not.toHaveBeenCalled();
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(2);
+  });
+
   it("respawns once when a previously attached task session disappears and daemon_ready fires", async () => {
     let attachCount = 0;
     let resolveSpawn: (() => void) | null = null;

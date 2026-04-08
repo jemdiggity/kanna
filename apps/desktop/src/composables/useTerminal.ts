@@ -554,6 +554,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         } else {
           return
         }
+      } else {
+        shouldSpawnRecoverySession = true
       }
       // No existing session — spawn a new one if we have spawn options
       if (shouldSpawnRecoverySession && spawnOptions && terminal.value) {
