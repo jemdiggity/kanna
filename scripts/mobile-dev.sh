@@ -28,6 +28,28 @@ CONFIG_DIR="$ROOT/.kanna-mobile"
 SERVER_CONFIG="$CONFIG_DIR/server.toml"
 DAEMON_DIR="$ROOT/.kanna-daemon"
 
+desktop_bundle_identifier() {
+  local conf="$ROOT/apps/desktop/src-tauri/tauri.conf.json"
+  if [ -f "$conf" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      jq -r '.identifier // "build.kanna"' "$conf" 2>/dev/null || echo "build.kanna"
+      return
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - "$conf" 2>/dev/null <<'PY' || echo "build.kanna"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    print(json.load(fh).get("identifier", "build.kanna"))
+PY
+      return
+    fi
+  fi
+
+  echo "build.kanna"
+}
+
 # Read ports from .kanna/config.json
 read_port() {
   local key="$1"
@@ -43,11 +65,12 @@ read_port() {
 
 RELAY_PORT="$(read_port KANNA_RELAY_PORT 9080)"
 MOBILE_PORT="$(read_port KANNA_MOBILE_PORT 1421)"
+DESKTOP_BUNDLE_IDENTIFIER="$(desktop_bundle_identifier)"
 
 # DB path — same as what the desktop Tauri app uses
 # Use the worktree's DB, matching the logic in stores/db.ts
 WT_NAME="$(basename "$ROOT")"
-DB_PATH="$HOME/Library/Application Support/com.kanna.app/kanna-wt-${WT_NAME}.db"
+DB_PATH="$HOME/Library/Application Support/${DESKTOP_BUNDLE_IDENTIFIER}/kanna-wt-${WT_NAME}.db"
 
 generate_server_config() {
   mkdir -p "$CONFIG_DIR"

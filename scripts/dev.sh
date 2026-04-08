@@ -19,6 +19,30 @@ ROOT="$(git rev-parse --show-toplevel)"
 export KANNA_BUILD_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 export KANNA_BUILD_COMMIT="$(git rev-parse --short HEAD)"
 
+desktop_bundle_identifier() {
+  local conf="$ROOT/apps/desktop/src-tauri/tauri.conf.json"
+  if [ -f "$conf" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      jq -r '.identifier // "build.kanna"' "$conf" 2>/dev/null || echo "build.kanna"
+      return
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - "$conf" 2>/dev/null <<'PY' || echo "build.kanna"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    print(json.load(fh).get("identifier", "build.kanna"))
+PY
+      return
+    fi
+  fi
+
+  echo "build.kanna"
+}
+
+DESKTOP_BUNDLE_IDENTIFIER="$(desktop_bundle_identifier)"
+
 canonical_tmux_session_name() {
   printf '%s' "$1" | tr '.' '_'
 }
@@ -61,7 +85,7 @@ resolve_db_path() {
   if [ -n "${KANNA_DB_PATH:-}" ]; then
     printf '%s\n' "$KANNA_DB_PATH"
   else
-    printf '%s/Library/Application Support/com.kanna.app/%s\n' "$HOME" "$(resolve_db_name)"
+    printf '%s/Library/Application Support/%s/%s\n' "$HOME" "$DESKTOP_BUNDLE_IDENTIFIER" "$(resolve_db_name)"
   fi
 }
 
