@@ -1,3 +1,4 @@
+use crate::config::canonical_db_path;
 use std::path::PathBuf;
 
 pub async fn register(relay_url: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -18,11 +19,7 @@ db_path = "{}"
         relay_url,
         device_token,
         config_dir.to_string_lossy(),
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("com.kanna.app")
-            .join("kanna-v2.db")
-            .to_string_lossy(),
+        canonical_db_path().to_string_lossy(),
     );
 
     std::fs::write(&config_path, &config_content)?;
@@ -47,5 +44,8 @@ fn generate_device_token() -> String {
         .expect("failed to open /dev/urandom")
         .read_exact(&mut bytes)
         .expect("failed to read random bytes");
-    bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+    bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>()
 }

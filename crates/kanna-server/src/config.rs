@@ -1,6 +1,9 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+const DESKTOP_BUNDLE_IDENTIFIER: &str = "build.kanna";
+const LEGACY_DESKTOP_BUNDLE_IDENTIFIER: &str = "com.kanna.app";
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub relay_url: String,
@@ -19,13 +22,49 @@ fn default_daemon_dir() -> String {
         .to_string()
 }
 
-fn default_db_path() -> String {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.kanna.app")
+fn app_data_dir() -> PathBuf {
+    dirs::data_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
+pub fn canonical_db_path() -> PathBuf {
+    app_data_dir()
+        .join(DESKTOP_BUNDLE_IDENTIFIER)
         .join("kanna-v2.db")
-        .to_string_lossy()
-        .to_string()
+}
+
+fn legacy_db_path() -> PathBuf {
+    app_data_dir()
+        .join(LEGACY_DESKTOP_BUNDLE_IDENTIFIER)
+        .join("kanna-v2.db")
+}
+
+fn preferred_db_path() -> PathBuf {
+    let canonical = canonical_db_path();
+    if canonical.exists() {
+        return canonical;
+    }
+
+    let legacy = legacy_db_path();
+    if legacy.exists() {
+        return legacy;
+    }
+
+    canonical
+}
+
+pub fn default_db_path() -> String {
+    preferred_db_path().to_string_lossy().to_string()
+}
+
+fn normalize_db_path(path: &str) -> String {
+    let configured = PathBuf::from(path);
+    let canonical = canonical_db_path();
+    let legacy = legacy_db_path();
+    if configured == canonical || configured == legacy {
+        return preferred_db_path().to_string_lossy().to_string();
+    }
+
+    path.to_string()
 }
 
 impl Config {
@@ -44,7 +83,8 @@ impl Config {
                 e
             )
         })?;
-        let config: Config = toml::from_str(&content)?;
+        let mut config: Config = toml::from_str(&content)?;
+        config.db_path = normalize_db_path(&config.db_path);
         Ok(config)
     }
 }

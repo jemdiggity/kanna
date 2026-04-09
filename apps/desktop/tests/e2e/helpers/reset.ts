@@ -2,23 +2,29 @@
  * Test reset helpers — clean DB state and worktrees between test files.
  */
 import { join } from "path";
-import { homedir } from "os";
 import { copyFile, access } from "fs/promises";
 import { WebDriverClient } from "./webdriver";
 import { execDb, callVueMethod, getVueState, tauriInvoke } from "./vue";
 
-const APP_DATA_DIR = join(homedir(), "Library", "Application Support", "com.kanna.app");
-
 /** Back up the SQLite DB file before wiping. Best-effort — logs but never throws. */
-async function backupDatabase(dbFileName: string): Promise<void> {
-  const src = join(APP_DATA_DIR, dbFileName);
+async function getAppDataDir(client: WebDriverClient): Promise<string> {
+  const appDataDir = await tauriInvoke(client, "get_app_data_dir");
+  if (typeof appDataDir !== "string") {
+    throw new Error(`Unexpected app data dir: ${JSON.stringify(appDataDir)}`);
+  }
+  return appDataDir;
+}
+
+async function backupDatabase(client: WebDriverClient, dbFileName: string): Promise<void> {
+  const appDataDir = await getAppDataDir(client);
+  const src = join(appDataDir, dbFileName);
   try {
     await access(src);
   } catch {
     return; // DB file doesn't exist yet — nothing to back up
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dest = join(APP_DATA_DIR, `${dbFileName}.backup-${timestamp}`);
+  const dest = join(appDataDir, `${dbFileName}.backup-${timestamp}`);
   try {
     await copyFile(src, dest);
     console.log(`[reset] backed up ${dbFileName} → ${dest}`);
@@ -39,7 +45,7 @@ export async function resetDatabase(client: WebDriverClient): Promise<void> {
   }
 
   // Back up the DB file before wiping
-  await backupDatabase(currentDb);
+  await backupDatabase(client, currentDb);
 
   // Delete in FK-safe order (children before parents)
   await execDb(client, "DELETE FROM terminal_session");

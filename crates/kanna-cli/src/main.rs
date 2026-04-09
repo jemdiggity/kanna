@@ -2,9 +2,13 @@ use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 use serde_json::Value;
 use std::env;
+use std::path::PathBuf;
 use std::process;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
+
+const DESKTOP_BUNDLE_IDENTIFIER: &str = "build.kanna";
+const LEGACY_DESKTOP_BUNDLE_IDENTIFIER: &str = "com.kanna.app";
 
 #[derive(Parser)]
 #[command(name = "kanna-cli")]
@@ -84,6 +88,28 @@ async fn notify_socket(socket_path: &str, task_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn default_db_path() -> String {
+    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let app_support_dir = PathBuf::from(home)
+        .join("Library")
+        .join("Application Support");
+    let canonical = app_support_dir
+        .join(DESKTOP_BUNDLE_IDENTIFIER)
+        .join("kanna-v2.db");
+    if canonical.exists() {
+        return canonical.to_string_lossy().to_string();
+    }
+
+    let legacy = app_support_dir
+        .join(LEGACY_DESKTOP_BUNDLE_IDENTIFIER)
+        .join("kanna-v2.db");
+    if legacy.exists() {
+        return legacy.to_string_lossy().to_string();
+    }
+
+    canonical.to_string_lossy().to_string()
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cli = Cli::parse();
@@ -132,10 +158,7 @@ async fn main() {
             });
 
             // Step 1: Write to DB (critical path)
-            let db_path = env::var("KANNA_DB_PATH").unwrap_or_else(|_| {
-                let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                format!("{home}/Library/Application Support/com.kanna.app/kanna-v2.db")
-            });
+            let db_path = env::var("KANNA_DB_PATH").unwrap_or_else(|_| default_db_path());
 
             if let Err(e) = write_stage_result_to_db(&db_path, &task_id, &stage_result_str) {
                 eprintln!("Error: {e}");

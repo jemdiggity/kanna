@@ -139,11 +139,16 @@ run_dev_sh() {
   local output
   output="$(
     PATH="$FAKE_BIN:/usr/bin:/bin" \
-    KANNA_WORKTREE=1 \
-    KANNA_DEV_PORT=1452 \
     HOME="$TMPDIR_ROOT/home" \
-    "$@" \
-    bash "$SCRIPT" "$cmd" 2>&1
+    env \
+      -u KANNA_DB_PATH \
+      -u KANNA_DB_NAME \
+      -u KANNA_DAEMON_DIR \
+      KANNA_WORKTREE=1 \
+      KANNA_DEV_PORT=1452 \
+      HOME="$TMPDIR_ROOT/home" \
+      "$@" \
+      bash "$SCRIPT" "$cmd" 2>&1
   )"
   local status=$?
   set -e
@@ -172,7 +177,7 @@ if ! grep -Fq "send-keys -t kanna-v0_0_30:desktop" "$TMUX_LOG"; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/com.kanna.app/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
   printf 'expected default worktree db path in tmux command, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
@@ -225,7 +230,7 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/com.kanna.app/shared.db'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/shared.db'" "$TMUX_LOG"; then
   printf 'expected explicit KANNA_DB_NAME to win, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
@@ -270,7 +275,7 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/com.kanna.app/shared.db" "$SQLITE_LOG"; then
+if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/shared.db" "$SQLITE_LOG"; then
   printf 'expected seed to use explicit KANNA_DB_NAME, got:\n' >&2
   cat "$SQLITE_LOG" >&2
   exit 1

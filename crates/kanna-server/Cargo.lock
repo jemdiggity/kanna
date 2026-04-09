@@ -452,6 +452,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ghostty-xterm-compat-serialize"
+version = "0.1.0"
+source = "git+https://github.com/jemdiggity/ghostty-xterm-compat-serialize.git?rev=135f988f408de703d5c4f6ae45de6902f3403f7c#135f988f408de703d5c4f6ae45de6902f3403f7c"
+dependencies = [
+ "libghostty-vt",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -540,6 +550,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "int-enum"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e366a1634cccc76b4cfd3e7580de9b605e4d93f1edac48d786c1f867c0def495"
+dependencies = [
+ "proc-macro2",
+ "proc-macro2-diagnostics",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -591,7 +613,9 @@ version = "0.1.0"
 dependencies = [
  "flexi_logger",
  "futures",
+ "ghostty-xterm-compat-serialize",
  "libc",
+ "libghostty-vt",
  "log",
  "serde",
  "serde_json",
@@ -627,6 +651,21 @@ name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
+
+[[package]]
+name = "libghostty-vt"
+version = "0.1.1"
+source = "git+https://github.com/jemdiggity/libghostty-rs.git?rev=61ae57d7b42821e1b19ad325abc7ff49c80fc880#61ae57d7b42821e1b19ad325abc7ff49c80fc880"
+dependencies = [
+ "bitflags",
+ "int-enum",
+ "libghostty-vt-sys",
+]
+
+[[package]]
+name = "libghostty-vt-sys"
+version = "0.1.1"
+source = "git+https://github.com/jemdiggity/libghostty-rs.git?rev=61ae57d7b42821e1b19ad325abc7ff49c80fc880#61ae57d7b42821e1b19ad325abc7ff49c80fc880"
 
 [[package]]
 name = "libredox"
@@ -859,6 +898,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "version_check",
 ]
 
 [[package]]
