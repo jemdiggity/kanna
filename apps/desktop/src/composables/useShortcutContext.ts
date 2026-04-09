@@ -75,6 +75,7 @@ export function getContextShortcuts(ctx: ShortcutContext): { keys: string; actio
   const result: { keys: string; action: string }[] = [];
   const hiddenGlobalActionsByContext: Partial<Record<ShortcutContext, string[]>> = {
     newTask: ["showShortcuts", "dismiss"],
+    tree: ["showShortcuts"],
   };
   const hiddenGlobalActions = hiddenGlobalActionsByContext[ctx] ?? [];
 

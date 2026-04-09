@@ -65,13 +65,30 @@ describe("useShortcutContext", () => {
     });
 
     it("excludes command palette from modal contexts but allows keyboard shortcuts", () => {
-      for (const ctx of ["diff", "file", "shell"] as ShortcutContext[]) {
+      for (const ctx of ["diff", "file", "shell", "tree", "graph"] as ShortcutContext[]) {
         const result = getContextShortcuts(ctx);
         const actions = result.map((s) => s.action);
-        expect(actions).toContain("shortcuts.keyboardShortcuts");
         expect(actions).not.toContain("shortcuts.commandPalette");
-        expect(actions).toContain("shortcuts.dismiss");
+        if (ctx === "tree") {
+          expect(actions).not.toContain("shortcuts.keyboardShortcuts");
+          expect(actions).not.toContain("shortcuts.dismiss");
+        } else if (ctx === "shell") {
+          expect(actions).toContain("shortcuts.keyboardShortcuts");
+          expect(actions).not.toContain("shortcuts.dismiss");
+        } else {
+          expect(actions).toContain("shortcuts.keyboardShortcuts");
+          expect(actions).toContain("shortcuts.dismiss");
+        }
       }
+    });
+
+    it("includes tree-specific supplementary shortcuts in tree context", () => {
+      register("tree", [{ label: "Yank path", display: "y" }]);
+      const result = getContextShortcuts("tree");
+      const actions = result.map((s) => s.action);
+      expect(actions).toContain("Yank path");
+      expect(actions).not.toContain("shortcuts.treeExplorer");
+      expect(actions).not.toContain("shortcuts.keyboardShortcuts");
     });
 
     it("excludes generic help and dismiss shortcuts from new task context", () => {
