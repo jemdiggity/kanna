@@ -19,17 +19,17 @@ describe("action bar", () => {
     const repoId = await getVueState(client, "selectedRepoId") as string;
     await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
-       const ctx = document.getElementById("app").__vue_app__._instance.setupState;
+       const ctx = window.__KANNA_E2E__.setupState;
        const db = ctx.db.value || ctx.db;
        var id = crypto.randomUUID();
        db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)",
-         [id, "${repoId}", "Say OK", "in_progress", "sdk"])
+         [id, "${repoId}", "Say OK", "in progress", "sdk"])
          .then(function() { return ctx.loadItems("${repoId}"); })
          .then(function() { ctx.handleSelectItem(id); return ctx.refreshAllItems(); })
          .then(function() { cb("ok"); })
          .catch(function(e) { cb("err:" + e); });`
     );
-    await client.waitForText(".sidebar", "In Progress");
+    await client.waitForText(".sidebar", "Say OK");
   });
 
   afterAll(async () => {
@@ -37,16 +37,16 @@ describe("action bar", () => {
     await client.deleteSession();
   });
 
-  it("shows Make PR button for in_progress task", async () => {
-    const el = await client.waitForText(".action-bar", "Make PR");
+  it("shows the selected task header", async () => {
+    const el = await client.waitForText(".task-header", "Say OK");
     expect(el).toBeTruthy();
   });
 
-  it("does not show Make PR for done task", async () => {
+  it("hides the task after it is marked done", async () => {
     // Transition to done
     await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
-       const ctx = document.getElementById("app").__vue_app__._instance.setupState;
+       const ctx = window.__KANNA_E2E__.setupState;
        const db = ctx.db.value || ctx.db;
        const item = ctx.selectedItem();
        db.execute("UPDATE pipeline_item SET stage = 'done' WHERE id = ?", [item.id])
@@ -56,8 +56,9 @@ describe("action bar", () => {
          .catch(function(e) { cb("err:" + e); });`
     );
     await Bun.sleep(300);
-    const actionBar = await client.findElement(".action-bar");
-    const text = await client.getText(actionBar);
-    expect(text).not.toContain("Make PR");
+    const sidebarText = await client.executeSync<string>(
+      `return document.querySelector(".sidebar")?.textContent || "";`
+    );
+    expect(sidebarText).not.toContain("Say OK");
   });
 });

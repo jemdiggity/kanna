@@ -23,31 +23,22 @@ describe("app launch", () => {
   });
 
   it("shows empty sidebar message", async () => {
-    const el = await client.waitForText(".sidebar-content", "No repos imported");
+    const el = await client.waitForText(".sidebar", "No repos yet.");
     expect(el).toBeTruthy();
   });
 
-  it("shows no repo imported in main panel", async () => {
-    const el = await client.waitForText(".main-panel", "No repo imported");
+  it("shows onboarding guidance in main panel", async () => {
+    const el = await client.waitForText(".main-panel", "Press ⇧⌘J to open a shell");
     expect(el).toBeTruthy();
   });
 
-  it("has Import Repo button", async () => {
-    const buttons = await client.findElements("button");
-    const texts: string[] = [];
-    for (const id of buttons) {
-      texts.push(await client.getText(id));
-    }
-    expect(texts.some((t) => t.includes("Import Repo"))).toBe(true);
+  it("shows repo creation shortcut hint", async () => {
+    const bodyText = await client.executeSync<string>("return document.body.innerText;");
+    expect(bodyText).toContain("Press ⌘I to create one.");
   });
 
-  it("has settings button", async () => {
-    const buttons = await client.findElements("button");
-    const texts: string[] = [];
-    for (const id of buttons) {
-      texts.push(await client.getText(id));
-    }
-    // Settings button shows a gear icon
-    expect(buttons.length).toBeGreaterThanOrEqual(3); // +, Import Repo, settings
+  it("shows keyboard shortcuts reference", async () => {
+    const bodyText = await client.executeSync<string>("return document.body.innerText;");
+    expect(bodyText).toContain("Keyboard Shortcuts");
   });
 });

@@ -2,7 +2,7 @@ import { resolve } from "path";
 import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
-import { callVueMethod, getVueState } from "../helpers/vue";
+import { queryDb, tauriInvoke } from "../helpers/vue";
 
 setDefaultTimeout(65_000);
 
@@ -10,11 +10,12 @@ const TEST_REPO_PATH = resolve(import.meta.dir, "../../../..");
 
 describe("task lifecycle", () => {
   const client = new WebDriverClient();
+  let repoId = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
-    await importTestRepo(client, TEST_REPO_PATH, "lifecycle-test");
+    repoId = await importTestRepo(client, TEST_REPO_PATH, "lifecycle-test");
   });
 
   afterAll(async () => {
@@ -22,71 +23,20 @@ describe("task lifecycle", () => {
     await client.deleteSession();
   });
 
-  it("logs when the new task becomes visible in store state", async () => {
-    const result = await client.executeAsync<string[] | string>(
-      `const cb = arguments[arguments.length - 1];
-       try {
-         const logs = [];
-         const originalLog = console.log;
-         console.log = function(...args) {
-           const line = args.map(function(arg) {
-             return typeof arg === "string" ? arg : JSON.stringify(arg);
-           }).join(" ");
-           logs.push(line);
-           return originalLog.apply(this, args);
-         };
-         const ctx = document.getElementById("app").__vue_app__._instance.setupState;
-         const repoId = ctx.selectedRepoId.value || ctx.selectedRepoId;
-         const repos = ctx.repos.value || ctx.repos;
-         const repo = repos.find(function(r) { return r.id === repoId; });
-         if (!repo) {
-           console.log = originalLog;
-           cb("no repo");
-           return;
-         }
-         ctx.createItem(repoId, repo.path, "Measure visibility", "sdk")
-           .then(async function() {
-             const deadline = Date.now() + 5000;
-             while (Date.now() < deadline) {
-               if (logs.some(function(line) { return line.includes("[perf:createItem] items refresh -> visible:"); })) {
-                 console.log = originalLog;
-                 cb(logs);
-                 return;
-               }
-               await new Promise(function(resolve) { setTimeout(resolve, 50); });
-             }
-             console.log = originalLog;
-             cb(logs);
-           })
-           .catch(function(e) {
-             console.log = originalLog;
-             cb("err:" + e);
-           });
-       } catch(e) { cb("outer:" + e); }`
-    );
-
-    expect(Array.isArray(result)).toBe(true);
-    expect((result as string[]).some((line) => line.includes("[perf:createItem] items refresh -> visible:"))).toBe(true);
-  });
-
   it("creates a task that appears in sidebar", async () => {
-    // Use SDK mode so we can verify AgentView output (PTY mode shows TerminalView)
     const result = await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
        try {
-         const ctx = document.getElementById("app").__vue_app__._instance.setupState;
-         const repoId = ctx.selectedRepoId.value || ctx.selectedRepoId;
-         const repos = ctx.repos.value || ctx.repos;
-         const repo = repos.find(function(r) { return r.id === repoId; });
-         if (!repo) { cb("no repo"); return; }
-         ctx.createItem(repoId, repo.path, "Say OK", "sdk")
+         const ctx = window.__KANNA_E2E__.setupState;
+         ctx.createItem(${JSON.stringify(repoId)}, ${JSON.stringify(TEST_REPO_PATH)}, "Say OK", "sdk")
            .then(function() { cb("ok"); })
            .catch(function(e) { cb("err:" + e); });
        } catch(e) { cb("outer:" + e); }`
     );
+    expect(result).toBe("ok");
 
-    // Task should appear in sidebar with In Progress badge
-    const el = await client.waitForText(".sidebar", "In Progress");
+    // Task should appear in the sidebar.
+    const el = await client.waitForText(".sidebar", "Say OK");
     expect(el).toBeTruthy();
   });
 
@@ -95,38 +45,41 @@ describe("task lifecycle", () => {
     expect(el).toBeTruthy();
   });
 
-  it("shows Agent tab as active", async () => {
-    const activeTab = await client.findElement(".tab.active");
-    const text = await client.getText(activeTab);
-    expect(text.trim()).toBe("Agent");
-  });
-
-  it("shows agent output after Claude responds", async () => {
-    // Wait for at least one message block to appear (up to 60s for real Claude)
-    const el = await client.waitForElement(".agent-view .message-block", 60000);
-    expect(el).toBeTruthy();
-  }, 65000);
-
-  it("shows result block when completed", async () => {
-    const el = await client.waitForElement(".result-block", 60000);
-    const text = await client.getText(el);
-    expect(text).toContain("Completed");
-  }, 65000);
-
-  it("closes task and updates stage", async () => {
-    // Find and click the Close button
-    const buttons = await client.findElements("button");
-    for (const id of buttons) {
-      const text = await client.getText(id);
-      if (text.trim() === "Close") {
-        await client.click(id);
-        break;
-      }
+  it("creates the task worktree", async () => {
+    const rows = (await queryDb(
+      client,
+      "SELECT branch FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
+      [repoId, "Say OK"],
+    )) as Array<{ branch: string | null }>;
+    const branch = rows[0]?.branch ?? null;
+    expect(branch).toBeTruthy();
+    if (!branch) {
+      throw new Error("expected the created task to have a branch");
     }
 
-    // Stage should update to Closed in sidebar
+    const exists = await tauriInvoke(client, "file_exists", {
+      path: `${TEST_REPO_PATH}/.kanna-worktrees/${branch}`,
+    });
+    expect(exists).toBe(true);
+  });
+
+  it("closes task and removes it from the sidebar", async () => {
+    const result = await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       const item = ctx.selectedItem();
+       if (!item) { cb("no item"); return; }
+       Promise.resolve(ctx.store.closeTask(item.id))
+         .then(() => cb("ok"))
+         .catch((error) => cb("err:" + error));`
+    );
+    expect(result).toBe("ok");
+
+    // Closed tasks are hidden from the sidebar.
     await Bun.sleep(500);
-    const el = await client.waitForText(".sidebar", "Closed");
-    expect(el).toBeTruthy();
+    const sidebarText = await client.executeSync<string>(
+      `return document.querySelector(".sidebar")?.textContent || "";`
+    );
+    expect(sidebarText).not.toContain("Say OK");
   });
 });

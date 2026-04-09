@@ -93,15 +93,13 @@ pub fn git_worktree_list(repo_path: String) -> Result<Vec<WorktreeInfo>, String>
         path: main_path,
     });
 
-    for name_opt in names.iter() {
-        if let Some(name_str) = name_opt {
-            if let Ok(wt) = repo.find_worktree(name_str) {
-                let path = wt.path().to_string_lossy().to_string();
-                result.push(WorktreeInfo {
-                    name: name_str.to_string(),
-                    path,
-                });
-            }
+    for name_str in names.iter().flatten() {
+        if let Ok(wt) = repo.find_worktree(name_str) {
+            let path = wt.path().to_string_lossy().to_string();
+            result.push(WorktreeInfo {
+                name: name_str.to_string(),
+                path,
+            });
         }
     }
 

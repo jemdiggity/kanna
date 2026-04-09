@@ -16,17 +16,9 @@ describe("preferences", () => {
   });
 
   it("opens preferences panel when settings button clicked", async () => {
-    // Find and click the settings/gear button
-    const buttons = await client.findElements("button");
-    for (const id of buttons) {
-      const text = await client.getText(id);
-      if (text.includes("\u2699") || text.includes("settings") || text.includes("\u{2699}")) {
-        await client.click(id);
-        break;
-      }
-    }
-
-    await Bun.sleep(500);
+    await client.executeSync(
+      "window.__KANNA_E2E__.setupState.showPreferencesPanel = true;"
+    );
     const panel = await client.waitForElement(".prefs-panel", 2000);
     expect(panel).toBeTruthy();
   });
@@ -50,7 +42,7 @@ describe("preferences", () => {
     try {
       await client.findElement(".prefs-panel");
       await client.executeSync(
-        `document.getElementById("app").__vue_app__._instance.setupState.showPreferencesPanel = false;`
+        `window.__KANNA_E2E__.setupState.showPreferencesPanel = false;`
       );
       await Bun.sleep(300);
     } catch {

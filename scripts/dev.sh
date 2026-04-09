@@ -53,9 +53,15 @@ if [ -n "$KANNA_WORKTREE" ] || echo "$ROOT" | grep -q '\.kanna-worktrees/'; then
   export KANNA_WORKTREE=1
   WORKTREE_NAME="$(basename "$ROOT")"
   export KANNA_BUILD_WORKTREE="$WORKTREE_NAME"
-  SESSION="$(canonical_tmux_session_name "kanna-${WORKTREE_NAME}")"
 else
   unset KANNA_BUILD_WORKTREE 2>/dev/null || true
+fi
+
+if [ -n "${KANNA_TMUX_SESSION:-}" ]; then
+  SESSION="$(canonical_tmux_session_name "$KANNA_TMUX_SESSION")"
+elif [ -n "${KANNA_WORKTREE:-}" ]; then
+  SESSION="$(canonical_tmux_session_name "kanna-${WORKTREE_NAME}")"
+else
   SESSION="$(canonical_tmux_session_name "kanna")"
 fi
 
@@ -73,6 +79,10 @@ read_port() {
 }
 
 resolve_db_name() {
+  if [ -n "${KANNA_DB_NAME:-}" ]; then
+    printf '%s\n' "$KANNA_DB_NAME"
+    return
+  fi
   if [ -n "${KANNA_WORKTREE:-}" ]; then
     printf 'kanna-wt-%s.db\n' "$(basename "$ROOT")"
   else
@@ -81,10 +91,18 @@ resolve_db_name() {
 }
 
 resolve_db_path() {
+  if [ -n "${KANNA_DB_PATH:-}" ]; then
+    printf '%s\n' "$KANNA_DB_PATH"
+    return
+  fi
   printf '%s/Library/Application Support/%s/%s\n' "$HOME" "$DESKTOP_BUNDLE_IDENTIFIER" "$(resolve_db_name)"
 }
 
 resolve_daemon_dir() {
+  if [ -n "${KANNA_DAEMON_DIR:-}" ]; then
+    printf '%s\n' "$KANNA_DAEMON_DIR"
+    return
+  fi
   if [ -n "${KANNA_WORKTREE:-}" ]; then
     printf '%s/.kanna-daemon\n' "$ROOT"
   else
@@ -182,7 +200,7 @@ start() {
   local DESKTOP_CWD="$ROOT/apps/desktop"
   tmux new-session -d -s "$SESSION" -n desktop -c "$DESKTOP_CWD"
   # Forward all KANNA_* env vars into the tmux session
-  EXPORTS="$(env | grep '^KANNA_' | sed "s/^\([^=]*\)=\(.*\)/export \1='\2'/" | tr '\n' ' ')"
+  EXPORTS="$(env | grep -E '^(KANNA_|TAURI_WEBDRIVER_PORT=)' | sed "s/^\([^=]*\)=\(.*\)/export \1='\2'/" | tr '\n' ' ')"
 
   # Build dev sidecars before tauri dev so externalBin inputs exist and are
   # owned by the dev path instead of beforeBuildCommand.

@@ -157,11 +157,9 @@ impl SessionScanState {
                 }
             }
             AgentProvider::Copilot => {
-                if text.contains("Esc to cancel") {
-                    if self.state != AgentState::Working {
-                        self.state = AgentState::Working;
-                        events.push("CopilotThinking");
-                    }
+                if text.contains("Esc to cancel") && self.state != AgentState::Working {
+                    self.state = AgentState::Working;
+                    events.push("CopilotThinking");
                 }
                 if text.contains("Operation cancelled") {
                     events.push("Interrupted");

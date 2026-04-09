@@ -154,6 +154,24 @@ fn short_socket_path(dir: &PathBuf) -> PathBuf {
     PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
 }
 
+#[cfg(debug_assertions)]
+fn webdriver_port() -> u16 {
+    if let Ok(port) = std::env::var(tauri_plugin_webdriver::PORT_ENV_VAR) {
+        if let Ok(parsed) = port.parse::<u16>() {
+            return parsed;
+        }
+    }
+
+    if let Ok(dev_port) = std::env::var("KANNA_DEV_PORT") {
+        if let Ok(parsed) = dev_port.parse::<u16>() {
+            return parsed
+                .saturating_add(tauri_plugin_webdriver::DEFAULT_PORT.saturating_sub(1420));
+        }
+    }
+
+    tauri_plugin_webdriver::DEFAULT_PORT
+}
+
 /// Directory where daemon stores PID file and logs.
 pub fn daemon_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("KANNA_DAEMON_DIR") {
@@ -354,11 +372,9 @@ async fn ensure_daemon_running() {
             for _ in 0..20 {
                 tokio::time::sleep(delay).await;
                 if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-                    if pid_str.trim() == expected_pid {
-                        if try_connect_daemon().await.is_some() {
-                            eprintln!("[daemon] spawned and connected (pid={})", expected_pid);
-                            return;
-                        }
+                    if pid_str.trim() == expected_pid && try_connect_daemon().await.is_some() {
+                        eprintln!("[daemon] spawned and connected (pid={})", expected_pid);
+                        return;
                     }
                 }
                 delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(1));
@@ -470,7 +486,7 @@ fn spawn_event_bridge(app: tauri::AppHandle, daemon_state: DaemonState) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
@@ -479,10 +495,7 @@ pub fn run() {
 
     #[cfg(debug_assertions)]
     {
-        // Skip webdriver in worktree instances — port 4445 conflicts with main app
-        if std::env::var("KANNA_WORKTREE").is_err() {
-            builder = builder.plugin(tauri_plugin_webdriver::init());
-        }
+        builder = builder.plugin(tauri_plugin_webdriver::init_with_port(webdriver_port()));
     }
 
     builder
