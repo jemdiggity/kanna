@@ -184,9 +184,9 @@ kanna-cli stage-complete --task-id <id> --status failure --summary "Tests failed
 |----------|-------------|
 | `KANNA_TASK_ID` | Task ID for the `kanna-cli` call |
 | `KANNA_SOCKET_PATH` | Path to the app's Unix socket (respects worktree isolation) |
-| `KANNA_DB_PATH` | Path to the SQLite DB file |
+| `KANNA_CLI_DB_PATH` | Private path to the SQLite DB file for `kanna-cli` |
 
-These are set when the agent is spawned. The socket and DB paths vary depending on whether the app is running as the main instance or in a worktree, ensuring worktree isolation.
+These are set when the agent is spawned. The socket and DB paths vary depending on whether the app is running as the main instance or in a worktree, ensuring worktree isolation. `KANNA_CLI_DB_PATH` is internal to Kanna CLI tooling and should not be treated as a general shell contract.
 
 ## App Socket: kanna.sock
 

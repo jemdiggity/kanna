@@ -10,8 +10,8 @@ End-to-end test suite for the Kanna Tauri desktop app. Tests drive the real WKWe
 
 ## Constraints
 
-- **Dev builds only.** Tests use `__vue_app__._instance.setupState` to access Vue internals, which is only available in development mode. Tests must run against `bun tauri dev`, never a release build.
-- **App must be running.** Tests do not launch the app. The developer starts `KANNA_DB_NAME=kanna-test.db bun tauri dev` in a separate terminal.
+- **Dev builds only.** Tests use `__vue_app__._instance.setupState` to access Vue internals, which is only available in development mode. Tests must run against `./scripts/dev.sh`, never a release build.
+- **App must be running.** Tests do not launch the app. The developer starts a worktree dev instance in a separate terminal.
 - **Claude CLI required for real suite.** The `tests/e2e/real/` tests need `claude` in PATH with valid auth.
 
 ## Tech Stack
@@ -57,13 +57,13 @@ apps/desktop/
 The app must not use the production database during tests. A separate SQLite database is used:
 
 - **Env var:** `KANNA_DB_NAME` — defaults to `kanna-v2.db` in production.
-- **Test mode:** App launched with `KANNA_DB_NAME=kanna-test.db bun tauri dev`.
+- **Test mode:** App launched from a worktree with `./scripts/dev.sh start -a`.
 - **App changes required (must be implemented before tests work):**
   1. `App.vue` reads the env var via `invoke("read_env_var", { name: "KANNA_DB_NAME" })` and passes it to `Database.load()`. Falls back to `kanna-v2.db` if unset.
   2. `tauri.conf.json` — remove the `"preload"` key from the SQL plugin config entirely. The app handles DB loading in `App.vue`'s `onMounted`, so preloading is unnecessary and causes the production DB file to be created even in test mode.
 - **Reset:** Each test file's `beforeAll` resets the DB via `executeSync`. Tables are deleted in FK-safe order: `terminal_session`, `worktree`, `pipeline_item`, `agent_run`, `repo`. Then `settings` is wiped and defaults re-inserted.
 - **Cleanup:** `afterAll` removes any git worktrees created during the test via `invoke("git_worktree_remove", { repoPath, path })`.
-- **File cleanup:** The test DB file (`kanna-test.db`) can be deleted between full runs for a guaranteed clean slate.
+- **File cleanup:** The active worktree DB file can be deleted between full runs for a guaranteed clean slate.
 
 ## Global Preload
 
@@ -74,7 +74,7 @@ The app must not use the production database during tests. A separate SQLite dat
 const resp = await fetch("http://127.0.0.1:4445/status").catch(() => null)
 if (!resp?.ok) {
   console.error("WebDriver not available on port 4445. Start the app with:")
-  console.error("  KANNA_DB_NAME=kanna-test.db bun tauri dev")
+  console.error("  cd .kanna-worktrees/task-<id> && ./scripts/dev.sh start -a")
   process.exit(1)
 }
 
@@ -314,7 +314,7 @@ Calls `tauriInvoke(client, "git_worktree_list", { repoPath })`, filters to test-
 
 **Prerequisite:** Start the app in test mode in a separate terminal:
 ```bash
-KANNA_DB_NAME=kanna-test.db bun tauri dev
+cd .kanna-worktrees/task-<id> && ./scripts/dev.sh start -a
 ```
 
 Wait for the Tauri window to appear before running tests.

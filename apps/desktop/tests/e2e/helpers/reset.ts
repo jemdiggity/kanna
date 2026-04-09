@@ -35,12 +35,12 @@ async function backupDatabase(client: WebDriverClient, dbFileName: string): Prom
 
 /** Reset all DB tables to a clean state with default settings. */
 export async function resetDatabase(client: WebDriverClient): Promise<void> {
-  // Safety: refuse to wipe a non-test database
+  // Safety: refuse to wipe the production database
   const currentDb = await getVueState(client, "dbName") as string;
-  if (!currentDb || !currentDb.includes("test")) {
+  if (!currentDb || currentDb === "kanna-v2.db") {
     throw new Error(
-      `REFUSING to wipe database "${currentDb}" — not a test DB!\n` +
-      `Start the app with: KANNA_DB_NAME=kanna-test.db bun tauri dev`
+      `REFUSING to wipe database "${currentDb}" — production DB is not allowed.\n` +
+      `Start the app from a worktree with: ./scripts/dev.sh start -a`
     );
   }
 

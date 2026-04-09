@@ -2,13 +2,9 @@ use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 use serde_json::Value;
 use std::env;
-use std::path::PathBuf;
 use std::process;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
-
-const DESKTOP_BUNDLE_IDENTIFIER: &str = "build.kanna";
-const LEGACY_DESKTOP_BUNDLE_IDENTIFIER: &str = "com.kanna.app";
 
 #[derive(Parser)]
 #[command(name = "kanna-cli")]
@@ -88,28 +84,28 @@ async fn notify_socket(socket_path: &str, task_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn default_db_path() -> String {
-    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let app_support_dir = PathBuf::from(home)
-        .join("Library")
-        .join("Application Support");
-    let canonical = app_support_dir
-        .join(DESKTOP_BUNDLE_IDENTIFIER)
-        .join("kanna-v2.db");
-    if canonical.exists() {
-        return canonical.to_string_lossy().to_string();
-    }
-
-    let legacy = app_support_dir
-        .join(LEGACY_DESKTOP_BUNDLE_IDENTIFIER)
-        .join("kanna-v2.db");
-    if legacy.exists() {
-        return legacy.to_string_lossy().to_string();
-    }
-
-    canonical.to_string_lossy().to_string()
+fn env_var_from_pairs(env_pairs: &[(&str, &str)], key: &str) -> Option<String> {
+    env_pairs
+        .iter()
+        .find_map(|(candidate, value)| (*candidate == key).then(|| (*value).to_string()))
 }
 
+fn resolve_stage_db_path(env_pairs: &[(&str, &str)]) -> Result<String, String> {
+    if let Some(db_path) = env_var_from_pairs(env_pairs, "KANNA_CLI_DB_PATH") {
+        return Ok(db_path);
+    }
+
+    Err("KANNA_CLI_DB_PATH environment variable is not set".to_string())
+}
+
+fn resolve_stage_db_path_from_env() -> Result<String, String> {
+    let env_pairs = env::vars().collect::<Vec<_>>();
+    let borrowed_pairs = env_pairs
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    resolve_stage_db_path(&borrowed_pairs)
+}
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cli = Cli::parse();
@@ -158,7 +154,10 @@ async fn main() {
             });
 
             // Step 1: Write to DB (critical path)
-            let db_path = env::var("KANNA_DB_PATH").unwrap_or_else(|_| default_db_path());
+            let db_path = resolve_stage_db_path_from_env().unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            });
 
             if let Err(e) = write_stage_result_to_db(&db_path, &task_id, &stage_result_str) {
                 eprintln!("Error: {e}");
@@ -178,5 +177,28 @@ async fn main() {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_stage_db_path;
+
+    #[test]
+    fn prefers_cli_specific_db_path() {
+        let env = [
+            ("KANNA_CLI_DB_PATH", "/tmp/worktree.db"),
+        ];
+
+        assert_eq!(resolve_stage_db_path(&env), Ok("/tmp/worktree.db".to_string()));
+    }
+
+    #[test]
+    fn errors_when_cli_path_missing() {
+        let env: [(&str, &str); 0] = [];
+        assert_eq!(
+            resolve_stage_db_path(&env),
+            Err("KANNA_CLI_DB_PATH environment variable is not set".to_string())
+        );
     }
 }
