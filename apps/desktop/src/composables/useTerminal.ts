@@ -50,6 +50,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   const toast = useToast()
   const terminal = ref<Terminal | null>(null)
   const fitAddon = new FitAddon()
+  const instanceId = Math.random().toString(36).slice(2, 10)
   interface RecoverySnapshotFetchResult {
     snapshot: Awaited<ReturnType<typeof loadSessionRecoveryState>>
     failed: boolean
@@ -108,6 +109,12 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
   function init(el: HTMLElement) {
     container = el
+    console.warn("[terminal][instance] init", {
+      sessionId,
+      instanceId,
+      worktreePath: options?.worktreePath ?? null,
+      agentProvider: options?.agentProvider ?? null,
+    })
     const term = new Terminal({
       fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
       fontSize: 13,
@@ -461,6 +468,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       attached,
       connecting,
       hasAttachedOnce,
+      instanceId,
       skipInitialReconnectEffects: options?.skipInitialReconnectEffects ?? false,
       shouldApplyReconnectEffects,
       agentProvider: options?.agentProvider ?? null,
@@ -491,6 +499,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       hasAttachedOnce = true
       console.warn("[terminal][connect] attach:ok", {
         sessionId,
+        instanceId,
         hasSnapshot: recoveryState != null,
         shouldApplyReconnectEffects,
       })
@@ -504,6 +513,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         ) {
           console.warn("[terminal][connect] terminal:reset", {
             sessionId,
+            instanceId,
             reason: "reconnect_without_snapshot",
           })
           terminal.value.reset()
@@ -523,6 +533,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           if (shouldForceDoubleResizeOnReconnect(options)) {
             console.warn("[terminal][connect] resize:double", {
               sessionId,
+              instanceId,
               cols,
               rows,
             })
@@ -531,6 +542,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           } else {
             console.warn("[terminal][connect] resize:single", {
               sessionId,
+              instanceId,
               cols,
               rows,
             })
@@ -543,6 +555,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       const msg = e instanceof Error ? e.message : String(e)
       console.warn("[terminal][connect] attach:error", {
         sessionId,
+        instanceId,
         recoveryMode,
         error: msg,
       })
@@ -581,12 +594,25 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         attached,
         connecting,
         hasAttachedOnce,
+        instanceId,
       })
     }
   }
 
   async function startListening() {
     const teardownId = `td-${sessionId}`
+    console.warn("[terminal][instance] startListening", {
+      sessionId,
+      teardownId,
+      instanceId,
+      hasOutputListener: unlistenOutput != null,
+      hasExitListener: unlistenExit != null,
+      hasDaemonReadyListener: unlistenDaemonReady != null,
+      hasStreamLostListener: unlistenStreamLost != null,
+      attached,
+      connecting,
+      hasAttachedOnce,
+    })
 
     if (!unlistenOutput) {
       let outputChunkCount = 0
@@ -612,6 +638,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
               if (outputChunkCount <= 5) {
                 console.warn("[terminal][output] chunk", {
                   sessionId,
+                  instanceId,
                   chunk: outputChunkCount,
                   byteLength: bytes.length,
                 })
@@ -621,6 +648,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
               if (outputChunkCount <= 5) {
                 console.warn("[terminal][output] chunk", {
                   sessionId,
+                  instanceId,
                   chunk: outputChunkCount,
                   byteLength: event.payload.data.length,
                 })
@@ -630,6 +658,11 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           }
         }
       )
+      console.warn("[terminal][instance] listener:add", {
+        sessionId,
+        instanceId,
+        event: "terminal_output",
+      })
     }
 
     if (!unlistenExit) {
@@ -644,12 +677,18 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           }
         }
       )
+      console.warn("[terminal][instance] listener:add", {
+        sessionId,
+        instanceId,
+        event: "session_exit",
+      })
     }
 
     if (!unlistenDaemonReady && shouldReattachOnDaemonReady(spawnOptions, options)) {
       unlistenDaemonReady = await listen("daemon_ready", () => {
         console.warn("[terminal][event] daemon_ready", {
           sessionId,
+          instanceId,
           attached,
           connecting,
           hasAttachedOnce,
@@ -658,6 +697,11 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         connectSession().catch((e) =>
           console.error("[terminal] daemon_ready re-attach failed:", e)
         )
+      })
+      console.warn("[terminal][instance] listener:add", {
+        sessionId,
+        instanceId,
+        event: "daemon_ready",
       })
     }
 
@@ -668,6 +712,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           attached = false
           console.warn("[terminal][event] session_stream_lost", {
             sessionId,
+            instanceId,
             attached,
             connecting,
             hasAttachedOnce,
@@ -678,6 +723,11 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
             )
           }
         }
+      })
+      console.warn("[terminal][instance] listener:add", {
+        sessionId,
+        instanceId,
+        event: "session_stream_lost",
       })
     }
 
@@ -700,14 +750,53 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
   function dispose() {
     if (!shouldRunTerminalDispose(disposed)) return
+    console.warn("[terminal][instance] dispose:start", {
+      sessionId,
+      instanceId,
+      attached,
+      connecting,
+      hasAttachedOnce,
+      hasOutputListener: unlistenOutput != null,
+      hasExitListener: unlistenExit != null,
+      hasDaemonReadyListener: unlistenDaemonReady != null,
+      hasStreamLostListener: unlistenStreamLost != null,
+    })
     disposed = true
     attached = false
     fileExistsCache.clear()
     if (fitRafId) cancelAnimationFrame(fitRafId)
-    if (unlistenOutput) unlistenOutput()
-    if (unlistenExit) unlistenExit()
-    if (unlistenDaemonReady) unlistenDaemonReady()
-    if (unlistenStreamLost) unlistenStreamLost()
+    if (unlistenOutput) {
+      unlistenOutput()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "terminal_output",
+      })
+    }
+    if (unlistenExit) {
+      unlistenExit()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "session_exit",
+      })
+    }
+    if (unlistenDaemonReady) {
+      unlistenDaemonReady()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "daemon_ready",
+      })
+    }
+    if (unlistenStreamLost) {
+      unlistenStreamLost()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "session_stream_lost",
+      })
+    }
     terminal.value?.dispose()
     terminal.value = null
     unlistenOutput = null
@@ -715,6 +804,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     unlistenDaemonReady = null
     unlistenStreamLost = null
     container = null
+    console.warn("[terminal][instance] dispose:end", {
+      sessionId,
+      instanceId,
+    })
   }
 
   onUnmounted(() => {
