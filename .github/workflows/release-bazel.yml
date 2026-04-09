@@ -11,6 +11,9 @@ jobs:
   release-apps:
     name: Release Apps
     runs-on: macos-14
+    env:
+      BAZEL_DISK_CACHE: ~/.cache/kanna-bazel/disk
+      BAZEL_REPOSITORY_CACHE: ~/.cache/kanna-bazel/repository
 
     steps:
       - uses: actions/checkout@v4
@@ -26,11 +29,21 @@ jobs:
       - name: Install Bazel and Zig
         run: brew install bazelisk zig
 
+      - name: Restore Bazel caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/kanna-bazel
+          key: ${{ runner.os }}-bazel-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'apps/desktop/src-tauri/Cargo.lock', 'crates/daemon/Cargo.lock', 'crates/kanna-cli/Cargo.lock', 'packages/terminal-recovery/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bazel-
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Build unsigned release apps
-        run: bazel build -c opt //:release_apps
+        run: bazel build -c opt --disk_cache="$BAZEL_DISK_CACHE" --repository_cache="$BAZEL_REPOSITORY_CACHE" //:release_apps
 
       - name: Analyze signed DMG graph
-        run: bazel build --nobuild -c opt //:release_signed_dmgs
+        run: bazel build --nobuild -c opt --disk_cache="$BAZEL_DISK_CACHE" --repository_cache="$BAZEL_REPOSITORY_CACHE" //:release_signed_dmgs
