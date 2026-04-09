@@ -119,6 +119,10 @@ def _host_tools_impl(_module_ctx):
         name = "kanna_host_bun",
         binary_name = "bun",
     )
+    _binary_repo(
+        name = "kanna_host_node",
+        binary_name = "node",
+    )
     _zig_repo(
         name = "kanna_host_zig",
     )

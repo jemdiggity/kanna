@@ -226,7 +226,7 @@
   "moduleExtensions": {
     "//tools/bazel:extensions.bzl%host_tools": {
       "general": {
-        "bzlTransitiveDigest": "QjEfdSmRDjedbIJIwFmNTlQuqfa+W/fhgtLzwpmW7hI=",
+        "bzlTransitiveDigest": "oKrrSyXZVcAavnX/HIpUgcBQx7lwmEdW0YINCxDLLMg=",
         "usagesDigest": "OCCgWanzUmuCFoatGMOP73/dDkJxaM6nSxDZdAl0ZNM=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
@@ -234,6 +234,12 @@
             "repoRuleId": "@@//tools/bazel:extensions.bzl%_binary_repo",
             "attributes": {
               "binary_name": "bun"
+            }
+          },
+          "kanna_host_node": {
+            "repoRuleId": "@@//tools/bazel:extensions.bzl%_binary_repo",
+            "attributes": {
+              "binary_name": "node"
             }
           },
           "kanna_host_zig": {
