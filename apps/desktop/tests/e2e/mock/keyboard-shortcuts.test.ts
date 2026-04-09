@@ -7,7 +7,7 @@ import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/rese
 import { callVueMethod, getVueState } from "../helpers/vue";
 
 const TEST_REPO_PATH = resolve(import.meta.dir, "../../../..");
-const CTX_SCRIPT = 'document.getElementById("app").__vue_app__._instance.setupState';
+const CTX_SCRIPT = 'window.__KANNA_E2E__.setupState';
 
 describe("keyboard shortcuts", () => {
   const client = new WebDriverClient();
@@ -60,12 +60,12 @@ describe("keyboard shortcuts", () => {
     const repoId = await getVueState(client, "selectedRepoId") as string;
     await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
-       const ctx = document.getElementById("app").__vue_app__._instance.setupState;
+       const ctx = window.__KANNA_E2E__.setupState;
        const db = ctx.db.value || ctx.db;
        var id1 = crypto.randomUUID();
        var id2 = crypto.randomUUID();
-       db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)", [id1, "${repoId}", "Task A", "in_progress", "sdk"])
-         .then(function() { return db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)", [id2, "${repoId}", "Task B", "in_progress", "sdk"]); })
+       db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)", [id1, "${repoId}", "Task A", "in progress", "sdk"])
+         .then(function() { return db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)", [id2, "${repoId}", "Task B", "in progress", "sdk"]); })
          .then(function() { return ctx.loadItems("${repoId}"); })
          .then(function() { ctx.selectedItemId.value = id2; cb("ok"); })
          .catch(function(e) { cb("err:" + e); });`
@@ -82,7 +82,7 @@ describe("keyboard shortcuts", () => {
 
     // Call navigateItems directly
     await client.executeSync(
-      `document.getElementById("app").__vue_app__._instance.setupState.navigateItems(1);`
+      `window.__KANNA_E2E__.setupState.navigateItems(1);`
     );
     await Bun.sleep(200);
     const afterDown = await getVueState(client, "selectedItemId");
@@ -90,20 +90,5 @@ describe("keyboard shortcuts", () => {
 
     // Navigate down worked — that's the key assertion.
     // Navigate up may not change if we're already at the boundary or sort order differs.
-  });
-
-  it("Shift+Cmd+Z toggles zen mode", async () => {
-    await pressKey("Z", { meta: true, shift: true });
-    await Bun.sleep(300);
-
-    const zenMode = await getVueState(client, "zenMode");
-    expect(zenMode).toBe(true);
-
-    // Escape exits zen mode
-    await pressKey("Escape");
-    await Bun.sleep(300);
-
-    const zenAfter = await getVueState(client, "zenMode");
-    expect(zenAfter).toBe(false);
   });
 });

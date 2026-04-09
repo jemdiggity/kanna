@@ -1,10 +1,10 @@
 /**
  * Vue state helpers — access App.vue's setupState via WebDriver JS execution.
- * Only works in dev builds where Vue exposes __vue_app__._instance.setupState.
+ * Only works in dev builds where Kanna exposes window.__KANNA_E2E__.
  */
 import { WebDriverClient } from "./webdriver";
 
-const CTX = 'document.getElementById("app").__vue_app__._instance.setupState';
+const CTX = 'window.__KANNA_E2E__.setupState';
 
 /** Read a setupState property, auto-unwrapping Vue refs. */
 export async function getVueState(
@@ -13,7 +13,7 @@ export async function getVueState(
 ): Promise<unknown> {
   return client.executeSync(
     `const ctx = ${CTX};
-     const val = ctx.${prop};
+     const val = ctx.${prop} ?? (ctx.store ? ctx.store[${JSON.stringify(prop)}] : undefined);
      const unwrapped = val && val.__v_isRef ? val.value : val;
      // JSON round-trip to strip Vue reactive proxies
      try { return JSON.parse(JSON.stringify(unwrapped)); } catch { return unwrapped; }`
@@ -30,7 +30,25 @@ export async function callVueMethod(
   return client.executeAsync(
     `const cb = arguments[arguments.length - 1];
      const ctx = ${CTX};
-     Promise.resolve(ctx.${method}(...${argsJson}))
+     const resolveMethod = (root, path) => {
+       const parts = path.split(".");
+       let parent = root;
+       let value = root;
+       for (const part of parts) {
+         parent = value;
+         value = value?.[part];
+       }
+       if (typeof value === "function") return value.bind(parent);
+       return value;
+     };
+     const target =
+       resolveMethod(ctx, ${JSON.stringify(method)}) ??
+       resolveMethod(ctx.store ?? {}, ${JSON.stringify(method)});
+     if (typeof target !== "function") {
+       cb({ __error: "Method not found: " + ${JSON.stringify(method)} });
+       return;
+     }
+     Promise.resolve(target(...${argsJson}))
        .then(r => cb(r))
        .catch(e => cb({ __error: e.message || String(e) }));`
   );

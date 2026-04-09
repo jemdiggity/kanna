@@ -12,9 +12,9 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "test": "bun test",
-    "test:e2e": "cd tests/e2e && bun test mock/",
-    "test:e2e:real": "cd tests/e2e && bun test real/",
-    "test:e2e:all": "cd tests/e2e && bun test"
+    "test:e2e": "bun run tests/e2e/run.ts mock/",
+    "test:e2e:real": "bun run tests/e2e/run.ts real/",
+    "test:e2e:all": "bun run tests/e2e/run.ts"
   },
   "dependencies": {
     "@pierre/diffs": "^1.1.0",

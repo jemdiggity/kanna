@@ -2,10 +2,11 @@ import { resolve } from "path";
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
-import { getVueState, callVueMethod } from "../helpers/vue";
+import { callVueMethod } from "../helpers/vue";
 
 // Use the kanna-tauri repo itself as a test fixture
 const TEST_REPO_PATH = resolve(import.meta.dir, "../../../..");
+const SECOND_REPO_PATH = resolve(TEST_REPO_PATH, "..", "..");
 
 describe("import repo", () => {
   const client = new WebDriverClient();
@@ -23,7 +24,7 @@ describe("import repo", () => {
     await importTestRepo(client, TEST_REPO_PATH, "kanna-tauri");
 
     // Repo should appear in sidebar
-    const el = await client.waitForText(".sidebar", "kanna-tauri");
+    const el = await client.waitForText(".repo-header", "kanna-tauri");
     expect(el).toBeTruthy();
   });
 
@@ -45,8 +46,8 @@ describe("import repo", () => {
   });
 
   it("can import a second repo", async () => {
-    // Import with a different name (same path is fine for DB purposes)
-    await callVueMethod(client, "handleImportRepo", TEST_REPO_PATH, "second-repo", "main");
+    await callVueMethod(client, "handleImportRepo", SECOND_REPO_PATH, "second-repo", "main");
+    await client.waitForText(".sidebar", "second-repo", 10000);
     const text = await client.executeSync<string>(
       `return document.querySelector(".sidebar").textContent;`
     );
@@ -55,15 +56,24 @@ describe("import repo", () => {
   });
 
   it("can select between repos", async () => {
-    const repos = (await getVueState(client, "repos")) as Array<{ id: string; name: string }>;
-    expect(repos.length).toBe(2);
+    const headers = await client.findElements(".repo-header");
+    let firstHeader: string | null = null;
+    let secondHeader: string | null = null;
+    for (const header of headers) {
+      const text = await client.getText(header);
+      if (text.includes("kanna-tauri")) firstHeader = header;
+      if (text.includes("second-repo")) secondHeader = header;
+    }
+    expect(firstHeader).toBeTruthy();
+    expect(secondHeader).toBeTruthy();
+    if (!firstHeader || !secondHeader) {
+      throw new Error("expected both imported repos to be visible");
+    }
 
-    await callVueMethod(client, "handleSelectRepo", repos[0].id);
-    const sel1 = await getVueState(client, "selectedRepoId");
-    expect(sel1).toBe(repos[0].id);
+    await client.click(firstHeader);
+    await client.waitForText(".repo-header.selected", "kanna-tauri");
 
-    await callVueMethod(client, "handleSelectRepo", repos[1].id);
-    const sel2 = await getVueState(client, "selectedRepoId");
-    expect(sel2).toBe(repos[1].id);
+    await client.click(secondHeader);
+    await client.waitForText(".repo-header.selected", "second-repo");
   });
 });

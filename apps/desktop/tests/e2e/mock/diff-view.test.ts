@@ -32,16 +32,16 @@ describe("diff view", () => {
     // Insert task into DB
     await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
-       const ctx = document.getElementById("app").__vue_app__._instance.setupState;
+       const ctx = window.__KANNA_E2E__.setupState;
        const db = ctx.db.value || ctx.db;
        db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, branch, agent_type) VALUES (?, ?, ?, ?, ?, ?)",
-         ["${id}", "${repoId}", "Say OK", "in_progress", "${branch}", "sdk"])
+         ["${id}", "${repoId}", "Say OK", "in progress", "${branch}", "sdk"])
          .then(function() { return ctx.loadItems("${repoId}"); })
          .then(function() { ctx.handleSelectItem("${id}"); return ctx.refreshAllItems(); })
          .then(function() { cb("ok"); })
          .catch(function(e) { cb("err:" + e); });`
     );
-    await client.waitForText(".sidebar", "In Progress");
+    await client.waitForText(".sidebar", "Say OK");
   });
 
   afterAll(async () => {
@@ -50,19 +50,18 @@ describe("diff view", () => {
     await client.deleteSession();
   });
 
-  it("shows diff tab", async () => {
-    const tabs = await client.findElements(".tab");
-    const texts: string[] = [];
-    for (const id of tabs) {
-      texts.push(await client.getText(id));
-    }
-    expect(texts.some((t) => t.trim() === "Diff")).toBe(true);
+  it("opens the diff modal", async () => {
+    await client.executeSync(
+      "window.__KANNA_E2E__.setupState.showDiffModal = true;"
+    );
+    const diffView = await client.waitForElement(".diff-view", 5000);
+    expect(diffView).toBeTruthy();
   });
 
-  it("shows diff content after writing a file", async () => {
+  it("loads diff content after editing a tracked file", async () => {
     // Get the worktree path from the selected item
     const branch = await client.executeSync<string | null>(
-      `const ctx = document.getElementById("app").__vue_app__._instance.setupState;
+      `const ctx = window.__KANNA_E2E__.setupState;
        const item = ctx.selectedItem();
        return item ? (item.branch?.value || item.branch) : null;`
     );
@@ -73,28 +72,22 @@ describe("diff view", () => {
 
     const worktreePath = `${TEST_REPO_PATH}/.kanna-worktrees/${branch}`;
 
-    // Write a test file into the worktree
+    // Modify a tracked file in the worktree so the working diff is guaranteed to pick it up.
     await tauriInvoke(client, "run_script", {
-      script: "echo 'diff test content' > diff-test-file.txt",
+      script: "printf '\\n# diff test marker\\n' >> VERSION",
       cwd: worktreePath,
       env: {},
     });
 
-    // Click the Diff tab
-    const tabs = await client.findElements(".tab");
-    for (const id of tabs) {
-      const text = await client.getText(id);
-      if (text.trim() === "Diff") {
-        await client.click(id);
-        break;
-      }
-    }
+    await client.executeSync(
+      "window.__KANNA_E2E__.setupState.showDiffModal = true;"
+    );
 
-    // Wait for diff to render (not "No changes")
-    await Bun.sleep(2000);
-    const diffView = await client.findElement(".diff-view");
-    const text = await client.getText(diffView);
-    // Should either show diff content or at least not be stuck on "Loading..."
-    expect(text).not.toContain("Loading diff");
+    const patch = await tauriInvoke(client, "git_diff", {
+      repoPath: worktreePath,
+      mode: "all",
+    });
+    expect(typeof patch).toBe("string");
+    expect(String(patch)).toContain("# diff test marker");
   });
 });

@@ -139,11 +139,9 @@ impl SessionScanState {
                 }
             }
             AgentProvider::Copilot => {
-                if text.contains("Esc to cancel") {
-                    if self.state != AgentState::Working {
-                        self.state = AgentState::Working;
-                        events.push("CopilotThinking");
-                    }
+                if text.contains("Esc to cancel") && self.state != AgentState::Working {
+                    self.state = AgentState::Working;
+                    events.push("CopilotThinking");
                 }
                 if text.contains("Operation cancelled") {
                     events.push("Interrupted");
@@ -610,10 +608,8 @@ pub async fn attach_session_inner(
                                         if i < bytes.len() && bytes[i] == b'\\' {
                                             i += 1;
                                         }
-                                    } else {
-                                        if i < bytes.len() {
-                                            i += 1;
-                                        }
+                                    } else if i < bytes.len() {
+                                        i += 1;
                                     }
                                 } else if bytes[i] >= 0x20 || bytes[i] == b'\n' {
                                     out.push(bytes[i]);

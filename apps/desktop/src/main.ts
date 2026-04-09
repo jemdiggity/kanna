@@ -5,6 +5,12 @@ import { isTauri } from "./tauri-mock";
 import { loadDatabase, runMigrations } from "./stores/db";
 import App from "./App.vue";
 
+interface AppWithSetupState {
+  _instance?: {
+    setupState?: Record<string, unknown>;
+  };
+}
+
 if (isTauri) {
   const { invoke } = await import("@tauri-apps/api/core");
 
@@ -47,6 +53,56 @@ try {
   app.provide("db", db);
   app.provide("dbName", dbName);
   app.mount("#app");
+
+  if (import.meta.env.DEV) {
+    const appWithSetupState = app as typeof app & AppWithSetupState;
+    window.__KANNA_E2E__ = {
+      get setupState() {
+        const setupState = appWithSetupState._instance?.setupState;
+        if (!setupState) return null;
+        setupState.db ??= db;
+        setupState.dbName ??= dbName;
+        const storeState = setupState.store as Record<string, unknown> | undefined;
+        if (storeState) {
+          setupState.selectedRepoId ??= storeState.selectedRepoId;
+          setupState.selectedItemId ??= storeState.selectedItemId;
+          setupState.items ??= storeState.items;
+          setupState.repos ??= storeState.repos;
+          setupState.createItem ??= storeState.createItem;
+          setupState.handleSelectRepo ??= storeState.selectRepo;
+          setupState.refreshRepos ??= async () => {
+            const init = storeState.init;
+            if (typeof init === "function") {
+              return await (init as (dbArg: unknown) => Promise<unknown>)(db);
+            }
+            return null;
+          };
+          setupState.loadItems ??= async () => {
+            const init = storeState.init;
+            if (typeof init === "function") {
+              await (init as (dbArg: unknown) => Promise<unknown>)(db);
+            }
+            return storeState.items ?? null;
+          };
+          setupState.refreshAllItems ??= async () => {
+            const init = storeState.init;
+            if (typeof init === "function") {
+              await (init as (dbArg: unknown) => Promise<unknown>)(db);
+            }
+            return storeState.items ?? null;
+          };
+          setupState.selectedItem ??= () => {
+            const currentItem = storeState.currentItem as { value?: unknown } | undefined;
+            return currentItem && "value" in currentItem ? currentItem.value ?? null : currentItem ?? null;
+          };
+        }
+        return setupState;
+      },
+      get dbName() {
+        return dbName;
+      },
+    };
+  }
 } catch (e) {
   console.error("[init] fatal:", e);
   const el = document.getElementById("app");

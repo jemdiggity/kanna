@@ -4,7 +4,7 @@
 import { join } from "path";
 import { copyFile, access } from "fs/promises";
 import { WebDriverClient } from "./webdriver";
-import { execDb, callVueMethod, getVueState, tauriInvoke } from "./vue";
+import { execDb, callVueMethod, getVueState, queryDb, tauriInvoke } from "./vue";
 
 /** Back up the SQLite DB file before wiping. Best-effort — logs but never throws. */
 async function getAppDataDir(client: WebDriverClient): Promise<string> {
@@ -103,12 +103,13 @@ export async function importTestRepo(
   branch = "main"
 ): Promise<string> {
   await callVueMethod(client, "handleImportRepo", repoPath, name, branch);
-  // Get the repo ID from Vue state
-  const repos = (await client.executeSync(
-    `const ctx = document.getElementById("app").__vue_app__._instance.setupState;
-     const r = ctx.repos; return (r.value || r).map(r => ({ id: r.id, name: r.name }));`
+  await client.waitForText(".repo-header", name);
+  const rows = (await queryDb(
+    client,
+    "SELECT id, name FROM repo WHERE path = ?",
+    [repoPath],
   )) as Array<{ id: string; name: string }>;
-  const repo = repos.find((r) => r.name === name);
+  const repo = rows.find((entry) => entry.name === name) ?? rows[0];
   if (!repo) throw new Error(`Repo "${name}" not found after import`);
 
   // Select it

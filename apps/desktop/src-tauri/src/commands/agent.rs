@@ -20,6 +20,7 @@ pub type AgentState = Arc<DashMap<String, BufferedSession>>;
 /// and pushes them into the session's buffer. The frontend polls the buffer
 /// via `agent_next_message`.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_agent_session(
     state: State<'_, AgentState>,
     session_id: String,

@@ -1,6 +1,8 @@
 /**
- * W3C WebDriver HTTP client for tauri-plugin-webdriver on port 4445.
+ * W3C WebDriver HTTP client for tauri-plugin-webdriver.
  */
+
+import { getWebDriverPort } from "./config";
 
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
 
@@ -8,7 +10,7 @@ export class WebDriverClient {
   private baseUrl: string;
   private sessionId: string | null = null;
 
-  constructor(port = 4445) {
+  constructor(port = getWebDriverPort()) {
     this.baseUrl = `http://127.0.0.1:${port}`;
   }
 
@@ -17,6 +19,7 @@ export class WebDriverClient {
   async createSession(): Promise<string> {
     const res = await this.post("/session", { capabilities: {} });
     this.sessionId = res.value.sessionId;
+    await this.waitForAppReady();
     return this.sessionId;
   }
 
@@ -152,6 +155,22 @@ export class WebDriverClient {
     throw new Error(
       `waitForNoElement("${css}") — element still exists after ${timeoutMs}ms`
     );
+  }
+
+  async waitForAppReady(timeoutMs = 15000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const ready = await this.executeSync<boolean>(
+          "return Boolean(window.__KANNA_E2E__ && window.__KANNA_E2E__.setupState);"
+        );
+        if (ready) return;
+      } catch {
+        // The window may still be booting.
+      }
+      await Bun.sleep(200);
+    }
+    throw new Error(`waitForAppReady timed out after ${timeoutMs}ms`);
   }
 
   // ── Internal HTTP helpers ─────────────────────────────────────────
