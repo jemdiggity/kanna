@@ -18,6 +18,7 @@ describe("selectTaskByActivity", () => {
     makeTask("idle-old", "2026-03-31T00:00:00.000Z", "idle"),
     makeTask("unread-old", "2026-03-31T01:00:00.000Z", "unread"),
     makeTask("working-mid", "2026-03-31T02:00:00.000Z", "working"),
+    makeTask("idle-new", "2026-03-31T02:30:00.000Z", "idle"),
     makeTask("unread-new", "2026-03-31T03:00:00.000Z", "unread"),
   ];
 
@@ -29,9 +30,13 @@ describe("selectTaskByActivity", () => {
     expect(selectTaskByActivity(tasks, "newest", "unread")?.id).toBe("unread-new");
   });
 
-  it("treats any non-unread task as read for shortcut navigation", () => {
-    expect(selectTaskByActivity(tasks, "oldest", "read")?.id).toBe("idle-old");
-    expect(selectTaskByActivity(tasks, "newest", "read")?.id).toBe("working-mid");
+  it("selects idle tasks for read shortcut navigation", () => {
+    expect(selectTaskByActivity(tasks, "oldest", "idle")?.id).toBe("idle-old");
+    expect(selectTaskByActivity(tasks, "newest", "idle")?.id).toBe("idle-new");
+  });
+
+  it("can select working tasks without mixing them into idle shortcuts", () => {
+    expect(selectTaskByActivity(tasks, "newest", "working")?.id).toBe("working-mid");
   });
 
   it("returns null when there is no matching task", () => {
@@ -39,7 +44,7 @@ describe("selectTaskByActivity", () => {
       selectTaskByActivity(
         [makeTask("only-unread", "2026-03-31T01:00:00.000Z", "unread")],
         "oldest",
-        "read",
+        "idle",
       ),
     ).toBeNull();
     expect(selectTaskByActivity([], "newest", "unread")).toBeNull();

@@ -518,11 +518,11 @@ const keyboardActions = {
     if (target) store.selectItem(target.id);
   },
   goToOldestRead: () => {
-    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "oldest", "read");
+    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "oldest", "idle");
     if (target) store.selectItem(target.id);
   },
   goToNewestRead: () => {
-    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "newest", "read");
+    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "newest", "idle");
     if (target) store.selectItem(target.id);
   },
   navigateRepoUp: () => navigateRepos(-1),

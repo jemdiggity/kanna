@@ -1,20 +1,18 @@
 export interface SelectableTask {
   id: string;
-  activity: string | null;
+  activity: "working" | "unread" | "idle" | null;
   created_at: string;
 }
 
 export type TaskSelectionMode = "oldest" | "newest";
-export type TaskSelectionActivity = "unread" | "read";
+export type TaskSelectionActivity = NonNullable<SelectableTask["activity"]>;
 
 export function selectTaskByActivity(
   items: readonly SelectableTask[],
   mode: TaskSelectionMode,
   activity: TaskSelectionActivity,
 ): SelectableTask | null {
-  const matches = items.filter((item) =>
-    activity === "unread" ? item.activity === "unread" : item.activity !== "unread",
-  );
+  const matches = items.filter((item) => item.activity === activity);
   if (matches.length === 0) return null;
 
   const compare =
