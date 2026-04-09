@@ -61,6 +61,25 @@ else
   fail "Bun — install from https://bun.sh"
 fi
 
+# Bazelisk / Bazel
+if command -v bazelisk &>/dev/null; then
+  bazel_ver="$(bazelisk version | sed -n 's/^Build label: //p' | head -1)"
+  if [ -n "$bazel_ver" ]; then
+    pass "Bazelisk/Bazel $bazel_ver"
+  else
+    pass "Bazelisk"
+  fi
+elif command -v bazel &>/dev/null; then
+  bazel_ver="$(bazel version | sed -n 's/^Build label: //p' | head -1)"
+  if [ -n "$bazel_ver" ]; then
+    pass "Bazel $bazel_ver"
+  else
+    pass "Bazel"
+  fi
+else
+  fail "Bazelisk/Bazel — install with: brew install bazelisk"
+fi
+
 # Git
 if command -v git &>/dev/null; then
   git_ver="$(git --version | awk '{print $3}')"

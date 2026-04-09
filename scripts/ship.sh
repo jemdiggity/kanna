@@ -35,11 +35,52 @@ read_release_url() {
     gh release view "v$VERSION" --json url --jq '.url'
 }
 
+github_release_exists() {
+    gh release view "v$VERSION" >/dev/null 2>&1
+}
+
+installer_arch_suffix() {
+    case "$1" in
+        arm64) echo "arm64" ;;
+        x86_64) echo "x86_64" ;;
+        *) echo "unknown architecture label: $1" >&2; exit 1 ;;
+    esac
+}
+
+bazel_target_for_label() {
+    local label="$1"
+    if [[ "$DRY_RUN" = true ]]; then
+        echo "//:kanna_signed_dmg_release_${label}"
+    else
+        echo "//:kanna_notarized_dmg_release_${label}"
+    fi
+}
+
+bazel_output_for_label() {
+    local label="$1"
+    if [[ "$DRY_RUN" = true ]]; then
+        echo "Kanna-${label}-signed.dmg"
+    else
+        echo "Kanna-${label}-notarized.dmg"
+    fi
+}
+
+release_asset_name() {
+    local label="$1"
+    local suffix
+    suffix="$(installer_arch_suffix "$label")"
+    if [[ "$DRY_RUN" = true ]]; then
+        echo "Kanna_${VERSION}_${suffix}-signed.dmg"
+    else
+        echo "Kanna_${VERSION}_${suffix}.dmg"
+    fi
+}
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Build, sign, notarize, and release a new version of Kanna.
+Build, sign, notarize, and release a new version of Kanna with Bazel.
 
 Options:
   --major    Bump major version (X.0.0)
@@ -53,11 +94,11 @@ Options:
   --help     Show this help message
 
 Prerequisites:
-  - Clean git working directory
+  - Clean git working directory (for --release)
+  - bazel installed
   - Developer ID Application certificate installed
-  - APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID env vars (for notarization)
-  - gh CLI authenticated
-  - Rust targets installed: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+  - APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID env vars or APPLE_KEYCHAIN_PROFILE (for notarization)
+  - gh CLI authenticated (for --release)
 
 Examples:
   ./scripts/ship.sh                   # Build both architectures, sign, and notarize
@@ -127,16 +168,20 @@ if [[ "$DRY_RUN" = false ]]; then
     fi
 fi
 
+# Required tools
+for TOOL in bazel security codesign hdiutil xcrun; do
+    if ! command -v "$TOOL" >/dev/null 2>&1; then
+        echo "Error: Missing required tool: $TOOL"
+        exit 1
+    fi
+done
+
 # Developer ID certificate
 DEVELOPER_ID=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}' || true)
 if [[ -z "$DEVELOPER_ID" ]]; then
-    if [[ "$DRY_RUN" = true ]]; then
-        echo "    [dry-run] No Developer ID certificate found — build will be unsigned"
-    else
-        echo "Error: No Developer ID Application certificate found."
-        echo "Install your certificate or run 'security find-identity -v -p codesigning' to check."
-        exit 1
-    fi
+    echo "Error: No Developer ID Application certificate found."
+    echo "Install your certificate or run 'security find-identity -v -p codesigning' to check."
+    exit 1
 else
     echo "    Signing identity: $DEVELOPER_ID"
     export APPLE_SIGNING_IDENTITY="$DEVELOPER_ID"
@@ -145,33 +190,31 @@ fi
 # Notarization credentials (skip check in dry-run mode)
 if [[ "$DRY_RUN" = false ]]; then
     MISSING_VARS=()
-    [[ -z "${APPLE_ID:-}" ]] && MISSING_VARS+=("APPLE_ID")
-    [[ -z "${APPLE_PASSWORD:-}" ]] && MISSING_VARS+=("APPLE_PASSWORD")
-    [[ -z "${APPLE_TEAM_ID:-}" ]] && MISSING_VARS+=("APPLE_TEAM_ID")
-    if [[ ${#MISSING_VARS[@]} -gt 0 ]]; then
+    if [[ -z "${APPLE_KEYCHAIN_PROFILE:-}" ]]; then
+        [[ -z "${APPLE_ID:-}" ]] && MISSING_VARS+=("APPLE_ID")
+        [[ -z "${APPLE_PASSWORD:-}" ]] && MISSING_VARS+=("APPLE_PASSWORD")
+        [[ -z "${APPLE_TEAM_ID:-}" ]] && MISSING_VARS+=("APPLE_TEAM_ID")
+    fi
+    if [[ -z "${APPLE_KEYCHAIN_PROFILE:-}" && ${#MISSING_VARS[@]} -gt 0 ]]; then
         echo "Error: Missing notarization env vars: ${MISSING_VARS[*]}"
-        echo "Set APPLE_ID, APPLE_PASSWORD (app-specific password), and APPLE_TEAM_ID."
+        echo "Set APPLE_ID, APPLE_PASSWORD (app-specific password), and APPLE_TEAM_ID,"
+        echo "or set APPLE_KEYCHAIN_PROFILE."
         echo "Or use --dry-run to skip notarization."
         exit 1
     fi
 fi
 
 # gh CLI (only needed for --release)
-if [[ "$DRY_RUN" = false ]]; then
+if [[ "$RELEASE" = true ]]; then
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "Error: gh CLI is required for --release."
+        exit 1
+    fi
     if ! gh auth status >/dev/null 2>&1; then
         echo "Error: gh CLI is not authenticated. Run 'gh auth login' first."
         exit 1
     fi
 fi
-
-# Rust targets
-for TARGET in "${ARCHS[@]}"; do
-    if ! rustup target list --installed | grep -q "$TARGET"; then
-        echo "Error: Rust target $TARGET is not installed."
-        echo "Run: rustup target add $TARGET"
-        exit 1
-    fi
-done
 
 echo "    Prerequisites OK"
 
@@ -214,10 +257,11 @@ if [[ "$CURRENT_VERSION" = "$VERSION" && "$CURRENT_TAURI_VERSION" = "$VERSION" &
     VERSION_ALREADY_SYNCED=true
 fi
 
+REMOTE_TAG_EXISTS=false
+RELEASE_EXISTS=false
+
 if [[ "$RELEASE" = true && "$VERSION_ALREADY_SYNCED" = true ]]; then
     LOCAL_TAG_EXISTS=false
-    REMOTE_TAG_EXISTS=false
-    RELEASE_EXISTS=false
 
     if git -C "$ROOT" tag -l "v$VERSION" | grep -q "v$VERSION"; then
         LOCAL_TAG_EXISTS=true
@@ -225,19 +269,18 @@ if [[ "$RELEASE" = true && "$VERSION_ALREADY_SYNCED" = true ]]; then
     if git -C "$ROOT" ls-remote --tags origin "refs/tags/v$VERSION" | grep -q "v$VERSION"; then
         REMOTE_TAG_EXISTS=true
     fi
-    if gh release view "v$VERSION" >/dev/null 2>&1; then
+    if github_release_exists; then
         RELEASE_EXISTS=true
     fi
 
     if [[ "$REMOTE_TAG_EXISTS" = true || "$RELEASE_EXISTS" = true ]]; then
-        echo "==> Kanna v$VERSION is already released"
+        echo "==> Continuing release retry for Kanna v$VERSION"
         echo "    Local tag: $LOCAL_TAG_EXISTS"
         echo "    Remote tag: $REMOTE_TAG_EXISTS"
         echo "    GitHub release: $RELEASE_EXISTS"
         if [[ "$RELEASE_EXISTS" = true ]]; then
             echo "    $(read_release_url)"
         fi
-        exit 0
     fi
 
     echo "    Version files already match v$VERSION; continuing as a release retry"
@@ -259,63 +302,42 @@ sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$TAURI_CONF"
 CARGO_TOML="$ROOT/apps/desktop/src-tauri/Cargo.toml"
 sed -i '' "1,/^version = /s/^version = \"[^\"]*\"/version = \"$VERSION\"/" "$CARGO_TOML"
 
-# Regenerate Cargo.lock
-cargo check --manifest-path "$CARGO_TOML" --quiet 2>/dev/null || true
-
 echo "    Version files updated to $VERSION"
 
-# --- Build both architectures ---
+# --- Build artifacts with Bazel ---
 
 DMG_PATHS=()
 RELEASE_DIR="$BUILD_DIR/release"
 mkdir -p "$RELEASE_DIR"
 
-for i in "${!ARCHS[@]}"; do
-    ARCH="${ARCHS[$i]}"
-    LABEL="${ARCH_LABELS[$i]}"
+STEP="building release artifacts"
+TARGETS=()
+for LABEL in "${ARCH_LABELS[@]}"; do
+    TARGETS+=("$(bazel_target_for_label "$LABEL")")
+done
 
-    STEP="build ($LABEL)"
-    echo "    Building sidecars ($LABEL)..."
+BAZEL_ARGS=(-c opt)
+if [[ "$DRY_RUN" = false ]]; then
+    BAZEL_ARGS=(--config=notarize "${BAZEL_ARGS[@]}")
+fi
 
-    # Build and stage all Tauri externalBin sidecars for this target.
-    (
-        cd "$ROOT"
-        export RUSTC_WRAPPER=""
-        if [[ "$ARCH" = "x86_64-apple-darwin" && -d "/usr/local/opt/openssl@3" ]]; then
-            export OPENSSL_DIR="/usr/local/opt/openssl@3"
-        fi
-        cargo build --release --target "$ARCH" --manifest-path crates/daemon/Cargo.toml
-        cargo build --release --target "$ARCH" --manifest-path crates/kanna-cli/Cargo.toml
-        cargo build --release --target "$ARCH" --manifest-path packages/terminal-recovery/Cargo.toml
-    )
-    "$ROOT/scripts/stage-sidecars.sh" --release --target "$ARCH"
+echo "    Building via Bazel: ${TARGETS[*]}"
+(
+    cd "$ROOT"
+    bazel build "${BAZEL_ARGS[@]}" "${TARGETS[@]}"
+)
 
-    echo "    Building app ($LABEL)..."
+BAZEL_BIN="$(cd "$ROOT" && bazel info bazel-bin)"
 
-    (
-        cd "$ROOT/apps/desktop"
-        # sccache doesn't work inside Tauri's build subprocess
-        export RUSTC_WRAPPER=""
-        # x86_64 cross-compile needs x86 Homebrew OpenSSL
-        if [[ "$ARCH" = "x86_64-apple-darwin" && -d "/usr/local/opt/openssl@3" ]]; then
-            export OPENSSL_DIR="/usr/local/opt/openssl@3"
-        fi
-        if [[ "$DRY_RUN" = true ]]; then
-            # Unset notarization vars so Tauri signs but doesn't notarize
-            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
-        fi
-        bun tauri build --target "$ARCH"
-    )
-
-    # Find the DMG in Tauri's output directory
-    DMG_SOURCE_DIR="$BUILD_DIR/${ARCH}/release/bundle/dmg"
-    DMG_SOURCE=$(find "$DMG_SOURCE_DIR" -name "*.dmg" -type f 2>/dev/null | head -1)
-    if [[ -z "$DMG_SOURCE" ]]; then
-        echo "Error: No DMG found in $DMG_SOURCE_DIR"
+for LABEL in "${ARCH_LABELS[@]}"; do
+    STEP="collecting artifact ($LABEL)"
+    DMG_SOURCE="$BAZEL_BIN/release/$(bazel_output_for_label "$LABEL")"
+    if [[ ! -f "$DMG_SOURCE" ]]; then
+        echo "Error: Expected Bazel output not found: $DMG_SOURCE"
         exit 1
     fi
 
-    DMG_NAME="Kanna-${VERSION}-${LABEL}.dmg"
+    DMG_NAME="$(release_asset_name "$LABEL")"
     DMG_DEST="$RELEASE_DIR/$DMG_NAME"
     cp "$DMG_SOURCE" "$DMG_DEST"
     DMG_PATHS+=("$DMG_DEST")
@@ -329,50 +351,60 @@ VERSION_FILES_DIRTY=false
 # --- Release ---
 
 if [[ "$RELEASE" = true ]]; then
-    # Check tag doesn't already exist on remote
     if git -C "$ROOT" ls-remote --tags origin "refs/tags/v$VERSION" | grep -q "v$VERSION"; then
-        echo "Error: Tag v$VERSION already exists on origin."
-        exit 1
+        REMOTE_TAG_EXISTS=true
+    fi
+    if github_release_exists; then
+        RELEASE_EXISTS=true
     fi
 
-    STEP="committing version bump"
-    echo "    Committing version bump..."
-    git -C "$ROOT" add -f VERSION apps/desktop/src-tauri/tauri.conf.json apps/desktop/src-tauri/Cargo.toml apps/desktop/src-tauri/Cargo.lock
-    if git -C "$ROOT" diff --cached --quiet; then
-        echo "    No version file changes to commit; reusing existing HEAD for v$VERSION"
-    else
-        git -C "$ROOT" commit -m "release: v$VERSION"
-    fi
-
-    STEP="tagging and pushing"
-    echo "    Tagging v$VERSION..."
-    # Only create tag if it doesn't already exist locally (re-release case)
-    if ! git -C "$ROOT" tag -l "v$VERSION" | grep -q "v$VERSION"; then
-        git -C "$ROOT" tag "v$VERSION"
-    fi
-
-    # Fast-forward main to include the version bump, then push main + tag.
-    # This works because the worktree branch started from main with no diverging commits.
-    CURRENT_BRANCH=$(git -C "$ROOT" symbolic-ref --short HEAD)
-    if [[ "$CURRENT_BRANCH" != "main" ]]; then
-        echo "    Fast-forwarding main to include release commit..."
-        git -C "$ROOT" fetch origin main --quiet
-        RELEASE_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
-        # Verify main is an ancestor (worktree didn't diverge)
-        if ! git -C "$ROOT" merge-base --is-ancestor origin/main "$RELEASE_COMMIT"; then
-            echo "Error: main has diverged from this branch. Merge main first."
-            exit 1
+    if [[ "$REMOTE_TAG_EXISTS" = false ]]; then
+        STEP="committing version bump"
+        echo "    Committing version bump..."
+        git -C "$ROOT" add -f VERSION apps/desktop/src-tauri/tauri.conf.json apps/desktop/src-tauri/Cargo.toml apps/desktop/src-tauri/Cargo.lock
+        if git -C "$ROOT" diff --cached --quiet; then
+            echo "    No version file changes to commit; reusing existing HEAD for v$VERSION"
+        else
+            git -C "$ROOT" commit -m "release: v$VERSION"
         fi
-        git -C "$ROOT" push origin "$RELEASE_COMMIT:refs/heads/main" --tags
+
+        STEP="tagging and pushing"
+        echo "    Tagging v$VERSION..."
+        if ! git -C "$ROOT" tag -l "v$VERSION" | grep -q "v$VERSION"; then
+            git -C "$ROOT" tag "v$VERSION"
+        fi
+
+        # Fast-forward main to include the version bump, then push main + tag.
+        # This works because the worktree branch started from main with no diverging commits.
+        CURRENT_BRANCH=$(git -C "$ROOT" symbolic-ref --short HEAD)
+        if [[ "$CURRENT_BRANCH" != "main" ]]; then
+            echo "    Fast-forwarding main to include release commit..."
+            git -C "$ROOT" fetch origin main --quiet
+            RELEASE_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
+            # Verify main is an ancestor (worktree didn't diverge)
+            if ! git -C "$ROOT" merge-base --is-ancestor origin/main "$RELEASE_COMMIT"; then
+                echo "Error: main has diverged from this branch. Merge main first."
+                exit 1
+            fi
+            git -C "$ROOT" push origin "$RELEASE_COMMIT:refs/heads/main" --tags
+        else
+            git -C "$ROOT" push origin main --tags
+        fi
     else
-        git -C "$ROOT" push origin main --tags
+        echo "    Reusing existing remote tag v$VERSION"
     fi
 
-    STEP="creating GitHub release"
-    echo "    Creating GitHub release..."
-    gh release create "v$VERSION" "${DMG_PATHS[@]}" \
-        --title "Kanna v$VERSION" \
-        --generate-notes
+    if [[ "$RELEASE_EXISTS" = true ]]; then
+        STEP="uploading GitHub release assets"
+        echo "    Updating GitHub release assets..."
+        gh release upload "v$VERSION" "${DMG_PATHS[@]}" --clobber
+    else
+        STEP="creating GitHub release"
+        echo "    Creating GitHub release..."
+        gh release create "v$VERSION" "${DMG_PATHS[@]}" \
+            --title "Kanna v$VERSION" \
+            --generate-notes
+    fi
 
     echo "==> Shipped Kanna v$VERSION"
     echo "    $(read_release_url)"

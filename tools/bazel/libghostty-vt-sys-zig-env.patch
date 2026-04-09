@@ -1,0 +1,16 @@
+diff --git a/build.rs b/build.rs
+index 1d58282..a7f3434 100644
+--- a/build.rs
++++ b/build.rs
+@@ -39,7 +39,10 @@ fn main() {
+     // Build libghostty-vt via zig.
+     let install_prefix = out_dir.join("ghostty-install");
+ 
+-    let mut build = Command::new("zig");
++    let zig = env::var("ZIG").unwrap_or_else(|_| "zig".to_string());
++    println!("cargo:rerun-if-env-changed=ZIG");
++
++    let mut build = Command::new(zig);
+     build
+         .arg("build")
+         .arg("-Demit-lib-vt")

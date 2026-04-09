@@ -1,0 +1,341 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["VERSION"])
+
+load("@rules_tauri//tauri:defs.bzl", "tauri_bundle_inputs", "tauri_macos_app")
+load("//tools/bazel:defs.bzl", "bun_vite_dist", "macos_codesign_app", "macos_codesign_file", "macos_dmg", "macos_notarize_dmg")
+
+filegroup(
+    name = "desktop_frontend_srcs",
+    srcs = [
+        "//apps/desktop:frontend_srcs",
+    ] + glob([
+        "node_modules/**",
+        "package.json",
+        "packages/core/package.json",
+        "packages/core/node_modules/**",
+        "packages/core/src/**",
+        "packages/db/package.json",
+        "packages/db/node_modules/**",
+        "packages/db/src/**",
+    ]),
+)
+
+bun_vite_dist(
+    name = "desktop_frontend_dist",
+    srcs = [":desktop_frontend_srcs"],
+    package_dir = "apps/desktop",
+)
+
+filegroup(
+    name = "daemon_cargo_srcs",
+    srcs = ["//crates/daemon:cargo_srcs", "VERSION"],
+)
+
+filegroup(
+    name = "kanna_cli_cargo_srcs",
+    srcs = ["//crates/kanna-cli:cargo_srcs"],
+)
+
+filegroup(
+    name = "terminal_recovery_cargo_srcs",
+    srcs = ["//packages/terminal-recovery:cargo_srcs"],
+)
+
+genrule(
+    name = "kanna_daemon_arm64",
+    srcs = ["//crates/daemon:kanna_daemon"],
+    outs = ["kanna-daemon-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_daemon_release_arm64",
+    srcs = ["//crates/daemon:kanna_daemon"],
+    outs = ["release/kanna-daemon-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_daemon_release_x86_64",
+    srcs = ["//crates/daemon:kanna_daemon_x86_64"],
+    outs = ["release/kanna-daemon-x86_64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_cli_arm64",
+    srcs = ["//crates/kanna-cli:kanna_cli"],
+    outs = ["kanna-cli-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_cli_release_arm64",
+    srcs = ["//crates/kanna-cli:kanna_cli"],
+    outs = ["release/kanna-cli-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_cli_release_x86_64",
+    srcs = ["//crates/kanna-cli:kanna_cli_x86_64"],
+    outs = ["release/kanna-cli-x86_64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_terminal_recovery_arm64",
+    srcs = ["//packages/terminal-recovery:kanna_terminal_recovery"],
+    outs = ["kanna-terminal-recovery-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_terminal_recovery_release_arm64",
+    srcs = ["//packages/terminal-recovery:kanna_terminal_recovery"],
+    outs = ["release/kanna-terminal-recovery-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_terminal_recovery_release_x86_64",
+    srcs = ["//packages/terminal-recovery:kanna_terminal_recovery_x86_64"],
+    outs = ["release/kanna-terminal-recovery-x86_64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_desktop_binary_arm64",
+    srcs = ["//apps/desktop/src-tauri:kanna_desktop"],
+    outs = ["kanna-desktop"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_desktop_binary_release_arm64",
+    srcs = ["//apps/desktop/src-tauri:kanna_desktop"],
+    outs = ["release/kanna-desktop"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_desktop_binary_release_x86_64",
+    srcs = ["//apps/desktop/src-tauri:kanna_desktop_x86_64"],
+    outs = ["release/x86_64/kanna-desktop"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+filegroup(
+    name = "desktop_macos_icon",
+    srcs = ["//apps/desktop/src-tauri:icons/icon.icns"],
+)
+
+filegroup(
+    name = "kanna_builtin_resources",
+    srcs = glob([
+        ".kanna/agents/**",
+        ".kanna/pipelines/**",
+        ".kanna/tasks/**",
+    ]),
+)
+
+tauri_bundle_inputs(
+    name = "kanna_bundle_inputs_arm64",
+    main_binary = ":kanna_desktop_binary_arm64",
+    sidecars = [
+        ":kanna_cli_arm64",
+        ":kanna_daemon_arm64",
+        ":kanna_terminal_recovery_arm64",
+    ],
+    resource_trees = {
+        ":kanna_builtin_resources": "",
+    },
+    icons = [":desktop_macos_icon"],
+    tauri_config = "//apps/desktop/src-tauri:tauri.conf.json",
+    info_plist_fragments = ["//apps/desktop/src-tauri:Info.plist"],
+    bundle_id = "com.kanna.app",
+    product_name = "Kanna",
+    version_file = "VERSION",
+    target_triple = "aarch64-apple-darwin",
+)
+
+tauri_macos_app(
+    name = "kanna_app_arm64",
+    bundle = ":kanna_bundle_inputs_arm64",
+)
+
+tauri_bundle_inputs(
+    name = "kanna_bundle_inputs_release_arm64",
+    main_binary = ":kanna_desktop_binary_release_arm64",
+    sidecars = [
+        ":kanna_cli_release_arm64",
+        ":kanna_daemon_release_arm64",
+        ":kanna_terminal_recovery_release_arm64",
+    ],
+    resource_trees = {
+        ":kanna_builtin_resources": "",
+    },
+    icons = [":desktop_macos_icon"],
+    tauri_config = "//apps/desktop/src-tauri:tauri.conf.json",
+    info_plist_fragments = ["//apps/desktop/src-tauri:Info.plist"],
+    bundle_id = "com.kanna.app",
+    product_name = "Kanna",
+    version_file = "VERSION",
+    target_triple = "aarch64-apple-darwin",
+)
+
+tauri_macos_app(
+    name = "kanna_app_release_arm64",
+    bundle = ":kanna_bundle_inputs_release_arm64",
+)
+
+macos_codesign_app(
+    name = "kanna_signed_app_release_arm64",
+    app = ":kanna_app_release_arm64",
+    output_name = "release/Kanna-arm64.app",
+)
+
+macos_dmg(
+    name = "kanna_dmg_release_arm64",
+    app = ":kanna_signed_app_release_arm64",
+    output_name = "release/Kanna-arm64.dmg",
+    volume_name = "Kanna",
+)
+
+macos_codesign_file(
+    name = "kanna_signed_dmg_release_arm64",
+    src = ":kanna_dmg_release_arm64",
+    output_name = "release/Kanna-arm64-signed.dmg",
+)
+
+macos_notarize_dmg(
+    name = "kanna_notarized_dmg_release_arm64",
+    dmg = ":kanna_signed_dmg_release_arm64",
+    output_name = "release/Kanna-arm64-notarized.dmg",
+)
+
+tauri_bundle_inputs(
+    name = "kanna_bundle_inputs_release_x86_64",
+    main_binary = ":kanna_desktop_binary_release_x86_64",
+    sidecars = [
+        ":kanna_cli_release_x86_64",
+        ":kanna_daemon_release_x86_64",
+        ":kanna_terminal_recovery_release_x86_64",
+    ],
+    resource_trees = {
+        ":kanna_builtin_resources": "",
+    },
+    icons = [":desktop_macos_icon"],
+    tauri_config = "//apps/desktop/src-tauri:tauri.conf.json",
+    info_plist_fragments = ["//apps/desktop/src-tauri:Info.plist"],
+    bundle_id = "com.kanna.app",
+    product_name = "Kanna",
+    version_file = "VERSION",
+    target_triple = "x86_64-apple-darwin",
+)
+
+tauri_macos_app(
+    name = "kanna_app_release_x86_64",
+    bundle = ":kanna_bundle_inputs_release_x86_64",
+)
+
+macos_codesign_app(
+    name = "kanna_signed_app_release_x86_64",
+    app = ":kanna_app_release_x86_64",
+    output_name = "release/Kanna-x86_64.app",
+)
+
+macos_dmg(
+    name = "kanna_dmg_release_x86_64",
+    app = ":kanna_signed_app_release_x86_64",
+    output_name = "release/Kanna-x86_64.dmg",
+    volume_name = "Kanna",
+)
+
+macos_codesign_file(
+    name = "kanna_signed_dmg_release_x86_64",
+    src = ":kanna_dmg_release_x86_64",
+    output_name = "release/Kanna-x86_64-signed.dmg",
+)
+
+macos_notarize_dmg(
+    name = "kanna_notarized_dmg_release_x86_64",
+    dmg = ":kanna_signed_dmg_release_x86_64",
+    output_name = "release/Kanna-x86_64-notarized.dmg",
+)
+
+filegroup(
+    name = "release_apps",
+    srcs = [
+        ":kanna_app_release_arm64",
+        ":kanna_app_release_x86_64",
+    ],
+)
+
+filegroup(
+    name = "release_signed_apps",
+    srcs = [
+        ":kanna_signed_app_release_arm64",
+        ":kanna_signed_app_release_x86_64",
+    ],
+)
+
+filegroup(
+    name = "release_dmgs",
+    srcs = [
+        ":kanna_dmg_release_arm64",
+        ":kanna_dmg_release_x86_64",
+    ],
+)
+
+filegroup(
+    name = "release_signed_dmgs",
+    srcs = [
+        ":kanna_signed_dmg_release_arm64",
+        ":kanna_signed_dmg_release_x86_64",
+    ],
+)
+
+filegroup(
+    name = "release_notarized_dmgs",
+    srcs = [
+        ":kanna_notarized_dmg_release_arm64",
+        ":kanna_notarized_dmg_release_x86_64",
+    ],
+)
+
+alias(
+    name = "release",
+    actual = ":release_notarized_dmgs",
+)
+
+alias(
+    name = "kanna_bundle_inputs",
+    actual = ":kanna_bundle_inputs_arm64",
+)
+
+alias(
+    name = "kanna_app",
+    actual = ":kanna_app_arm64",
+)
+
+alias(
+    name = "kanna_bundle_inputs_release",
+    actual = ":kanna_bundle_inputs_release_arm64",
+)
+
+alias(
+    name = "kanna_app_release",
+    actual = ":kanna_app_release_arm64",
+)
+
+alias(
+    name = "kanna_bundle_inputs_release_intel",
+    actual = ":kanna_bundle_inputs_release_x86_64",
+)
+
+alias(
+    name = "kanna_app_release_intel",
+    actual = ":kanna_app_release_x86_64",
+)

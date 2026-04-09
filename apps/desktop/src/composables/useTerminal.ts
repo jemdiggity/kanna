@@ -20,10 +20,10 @@ import {
   getReconnectResizeDelayMs,
   getReconnectKeyboardPush,
   getTerminalRecoveryMode,
+  isMissingDaemonSessionFailure,
   shouldRespawnAfterAttachFailure,
   shouldPushKittyKeyboardOnFreshAttach,
   shouldRestoreRecoveryState,
-  shouldResetTerminalOnReconnect,
   shouldRunTerminalDispose,
   shouldSupportKittyKeyboard,
   shouldSkipReconnect,
@@ -32,6 +32,7 @@ import {
 } from "./terminalSessionRecovery"
 import { useToast } from "./useToast"
 import i18n from "../i18n"
+import { getAppErrorMessage } from "../appError"
 
 export interface SpawnOptions {
   cwd: string
@@ -55,6 +56,15 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     snapshot: Awaited<ReturnType<typeof loadSessionRecoveryState>>
     failed: boolean
   }
+  interface AttachSnapshotResult {
+    version: number
+    rows: number
+    cols: number
+    cursor_row: number
+    cursor_col: number
+    cursor_visible: boolean
+    vt: string
+  }
   let unlistenOutput: (() => void) | null = null
   let unlistenExit: (() => void) | null = null
   let unlistenDaemonReady: (() => void) | null = null
@@ -69,6 +79,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   // Scroll-lock: when the user scrolls up, hold their viewport position
   // instead of letting TUI redraws yank them to the top of the buffer.
   let isFollowing = true
+
+  function getLiveTerminal(): Terminal | null {
+    return disposed ? null : terminal.value
+  }
 
   function handleLinkActivate(_event: MouseEvent, uri: string) {
     if (isTauri) {
@@ -461,7 +475,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     if (shouldSkipReconnect(connecting, attached)) return
     connecting = true
     const recoveryMode = getTerminalRecoveryMode(spawnOptions, options)
-    const shouldApplyReconnectEffects = hasAttachedOnce || !options?.skipInitialReconnectEffects
+    const shouldApplyReconnectEffects = hasAttachedOnce
     console.warn("[terminal][connect] start", {
       sessionId,
       recoveryMode,
@@ -474,62 +488,47 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       agentProvider: options?.agentProvider ?? null,
     })
     let recoveryState = null as Awaited<ReturnType<typeof loadSessionRecoveryState>>
-    let appliedRecoveryState = false
-    let recoveryFetchFailed = false
     let shouldSpawnRecoverySession = false
 
     try {
-      if (
-        terminal.value &&
-        shouldApplyReconnectEffects &&
-        shouldRestoreRecoveryState(spawnOptions, options)
-      ) {
-        await ensureFitted()
-        const recoveryFetchResult = await fetchDaemonSnapshot()
-        recoveryState = recoveryFetchResult.snapshot
-        recoveryFetchFailed = recoveryFetchResult.failed
-        appliedRecoveryState = await applyRecoveryStateIfNeeded(
-          recoveryState,
-          shouldApplyReconnectEffects,
-        )
+      const attachSnapshot =
+        recoveryMode === "attach-only"
+          ? await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
+              sessionId,
+            })
+          : null
+      if (recoveryMode !== "attach-only") {
+        await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
       }
-
-      await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
-      attached = true
-      hasAttachedOnce = true
       console.warn("[terminal][connect] attach:ok", {
         sessionId,
         instanceId,
-        hasSnapshot: recoveryState != null,
         shouldApplyReconnectEffects,
       })
       // Attach succeeded — session was alive in daemon.
-      if (terminal.value) {
-        if (
-          shouldApplyReconnectEffects &&
-          !appliedRecoveryState &&
-          !recoveryFetchFailed &&
-          shouldResetTerminalOnReconnect(options)
-        ) {
-          console.warn("[terminal][connect] terminal:reset", {
-            sessionId,
-            instanceId,
-            reason: "reconnect_without_snapshot",
+      const liveTerminal = getLiveTerminal()
+      if (liveTerminal) {
+        if (attachSnapshot) {
+          liveTerminal.reset()
+          await new Promise<void>((resolve) => {
+            liveTerminal.write(attachSnapshot.vt, resolve)
           })
-          terminal.value.reset()
         }
         const reconnectKeyboardPush = getReconnectKeyboardPush({
           ...options,
           kittyKeyboard: options?.kittyKeyboard,
         })
         if (reconnectKeyboardPush) {
-          terminal.value.write(reconnectKeyboardPush)
+          liveTerminal.write(reconnectKeyboardPush)
         }
         await ensureFitted()
+        const resizedTerminal = getLiveTerminal()
+        if (!resizedTerminal) return
+        const { cols, rows } = resizedTerminal
         if (shouldApplyReconnectEffects) {
           await waitForReconnectRedrawSettle()
+          if (!getLiveTerminal()) return
           await waitForReconnectResizeDelay()
-          const { cols, rows } = terminal.value
           if (shouldForceDoubleResizeOnReconnect(options)) {
             console.warn("[terminal][connect] resize:double", {
               sessionId,
@@ -548,11 +547,23 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
             })
             await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
           }
+        } else {
+          console.warn("[terminal][connect] resize:single", {
+            sessionId,
+            cols,
+            rows,
+          })
+          await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
         }
       }
+      if (attachSnapshot) {
+        await invoke("resume_session_stream", { sessionId, agentProvider: options?.agentProvider })
+      }
+      attached = true
+      hasAttachedOnce = true
       return
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = getAppErrorMessage(e)
       console.warn("[terminal][connect] attach:error", {
         sessionId,
         instanceId,
@@ -560,9 +571,42 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         error: msg,
       })
       if (recoveryMode === "attach-only") {
-        terminal.value?.write(formatAttachFailureMessage(msg))
-        if (shouldRespawnAfterAttachFailure(msg, hasAttachedOnce, spawnOptions, options)) {
-          toast.error(i18n.global.t(getRespawnToastKey(msg, recoveryState != null)))
+        if (
+          shouldRestoreRecoveryState(spawnOptions, options) &&
+          (isMissingDaemonSessionFailure(e) || shouldRespawnAfterAttachFailure(
+            e,
+            hasAttachedOnce,
+            false,
+            spawnOptions,
+            options,
+          ))
+        ) {
+          await ensureFitted()
+          if (!getLiveTerminal()) return
+          const recoveryFetchResult = await fetchDaemonSnapshot()
+          recoveryState = recoveryFetchResult.snapshot
+          await applyRecoveryStateIfNeeded(
+            recoveryState,
+            true,
+          )
+        }
+        if (hasAttachedOnce || !isMissingDaemonSessionFailure(e)) {
+          terminal.value?.write(formatAttachFailureMessage(msg))
+        }
+        if (shouldRespawnAfterAttachFailure(
+          e,
+          hasAttachedOnce,
+          recoveryState != null,
+          spawnOptions,
+          options,
+        )) {
+          console.warn("[terminal][connect] pty_lost:respawn", {
+            sessionId,
+            error: msg,
+            hasAttachedOnce,
+            hasRecoveryState: recoveryState != null,
+          })
+          toast.warning(i18n.global.t(getRespawnToastKey(e, recoveryState != null)))
           shouldSpawnRecoverySession = true
         } else {
           return
@@ -571,22 +615,38 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         shouldSpawnRecoverySession = true
       }
       // No existing session — spawn a new one if we have spawn options
-      if (shouldSpawnRecoverySession && spawnOptions && terminal.value) {
+      if (shouldSpawnRecoverySession && spawnOptions && getLiveTerminal()) {
         await ensureFitted()
-        const { cols, rows } = terminal.value
+        const spawnTerminal = getLiveTerminal()
+        if (!spawnTerminal) return
+        const { cols, rows } = spawnTerminal
         try {
           await spawnOptions.spawnFn(sessionId, spawnOptions.cwd, spawnOptions.prompt, cols, rows)
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
           console.error("[terminal] PTY spawn failed:", e)
-          terminal.value.write(`\r\n\x1b[31mFailed to start agent: ${msg}\x1b[0m\r\n`)
+          spawnTerminal.write(`\r\n\x1b[31mFailed to start agent: ${msg}\x1b[0m\r\n`)
           return
         }
-        // Now attach to the newly spawned session
-        await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
+        // Now attach to the newly spawned session.
+        // Task terminals need the snapshot attach flow; shell terminals still use plain attach.
+        if (recoveryMode === "attach-only") {
+          const attachSnapshot = await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
+            sessionId,
+          })
+          spawnTerminal.reset()
+          await new Promise<void>((resolve) => {
+            spawnTerminal.write(attachSnapshot.vt, resolve)
+          })
+          await invoke("resume_session_stream", { sessionId, agentProvider: options?.agentProvider })
+        } else {
+          await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
+        }
         attached = true
-        if (terminal.value && shouldPushKittyKeyboardOnFreshAttach(options)) {
-          terminal.value.write("\x1b[>1u")
+        hasAttachedOnce = true
+        const attachedTerminal = getLiveTerminal()
+        if (attachedTerminal && shouldPushKittyKeyboardOnFreshAttach(options)) {
+          attachedTerminal.write("\x1b[>1u")
         }
       }
     } finally {
@@ -673,6 +733,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         (event) => {
           const sid = event.payload.session_id
           if (sid === sessionId || sid === teardownId) {
+            if (sid === sessionId) {
+              attached = false
+            }
             if (terminal.value) {
               terminal.value.write(`\r\n[Process exited with code ${event.payload.code}]\r\n`)
             }

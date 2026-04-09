@@ -14,7 +14,7 @@ main() {
 
   arch=$(uname -m)
   case "$arch" in
-    arm64|aarch64) arch_suffix="aarch64" ;;
+    arm64|aarch64) arch_suffix="arm64" ;;
     x86_64)        arch_suffix="x86_64" ;;
     *)             fail "Unsupported architecture: ${arch}" ;;
   esac

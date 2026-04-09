@@ -8,6 +8,7 @@
 #   ./scripts/dev.sh stop -k      # stop the session and kill the daemon
 #   ./scripts/dev.sh restart      # stop + start
 #   ./scripts/dev.sh restart -k   # stop (kill daemon) + start
+#   ./scripts/dev.sh kill-daemon  # kill the daemon without touching tmux
 #   ./scripts/dev.sh log          # print desktop log
 #   ./scripts/dev.sh log relay    # print relay log (--mobile)
 #   ./scripts/dev.sh log server   # print kanna-server log (--mobile)
@@ -218,7 +219,7 @@ LOCALEOF
 }
 
 kill_daemon() {
-  local pid_file="$ROOT/.kanna-daemon/daemon.pid"
+  local pid_file="$RESOLVED_DAEMON_DIR/daemon.pid"
   if [ -f "$pid_file" ]; then
     local pid
     pid="$(cat "$pid_file")"
@@ -321,7 +322,8 @@ case "$CMD" in
       tmux attach -t "$SESSION"
     fi
     ;;
+  kill-daemon) kill_daemon ;;
   log)     log "$2" ;;
   seed)    seed ;;
-  *)       echo "Usage: $0 {start|stop|restart|log [window]|seed} [--mobile] [--seed] [--attach] [--kill-daemon]" ;;
+  *)       echo "Usage: $0 {start|stop|restart|kill-daemon|log [window]|seed} [--mobile] [--seed] [--attach] [--kill-daemon]" ;;
 esac

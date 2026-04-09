@@ -1,0 +1,6 @@
+try-import %workspace%/.bazelrc.user
+
+build:notarize --action_env=APPLE_ID
+build:notarize --action_env=APPLE_PASSWORD
+build:notarize --action_env=APPLE_TEAM_ID
+build:notarize --action_env=APPLE_KEYCHAIN_PROFILE
