@@ -9,7 +9,6 @@ platform(
 )
 
 exports_files([
-    "build_cargo_binary.py",
     "build_frontend_dist.py",
     "build_macos_dmg.py",
     "build_macos_notarized_dmg.py",
