@@ -491,9 +491,15 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     let shouldSpawnRecoverySession = false
 
     try {
-      const attachSnapshot = await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
-        sessionId,
-      })
+      const attachSnapshot =
+        recoveryMode === "attach-only"
+          ? await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
+              sessionId,
+            })
+          : null
+      if (recoveryMode !== "attach-only") {
+        await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
+      }
       console.warn("[terminal][connect] attach:ok", {
         sessionId,
         instanceId,
@@ -502,10 +508,12 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       // Attach succeeded — session was alive in daemon.
       const liveTerminal = getLiveTerminal()
       if (liveTerminal) {
-        liveTerminal.reset()
-        await new Promise<void>((resolve) => {
-          liveTerminal.write(attachSnapshot.vt, resolve)
-        })
+        if (attachSnapshot) {
+          liveTerminal.reset()
+          await new Promise<void>((resolve) => {
+            liveTerminal.write(attachSnapshot.vt, resolve)
+          })
+        }
         const reconnectKeyboardPush = getReconnectKeyboardPush({
           ...options,
           kittyKeyboard: options?.kittyKeyboard,
@@ -548,7 +556,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
         }
       }
-      await invoke("resume_session_stream", { sessionId, agentProvider: options?.agentProvider })
+      if (attachSnapshot) {
+        await invoke("resume_session_stream", { sessionId, agentProvider: options?.agentProvider })
+      }
       attached = true
       hasAttachedOnce = true
       return
@@ -618,16 +628,22 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           spawnTerminal.write(`\r\n\x1b[31mFailed to start agent: ${msg}\x1b[0m\r\n`)
           return
         }
-        // Now attach to the newly spawned session
-        const attachSnapshot = await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
-          sessionId,
-        })
-        spawnTerminal.reset()
-        await new Promise<void>((resolve) => {
-          spawnTerminal.write(attachSnapshot.vt, resolve)
-        })
-        await invoke("resume_session_stream", { sessionId, agentProvider: options?.agentProvider })
+        // Now attach to the newly spawned session.
+        // Task terminals need the snapshot attach flow; shell terminals still use plain attach.
+        if (recoveryMode === "attach-only") {
+          const attachSnapshot = await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
+            sessionId,
+          })
+          spawnTerminal.reset()
+          await new Promise<void>((resolve) => {
+            spawnTerminal.write(attachSnapshot.vt, resolve)
+          })
+          await invoke("resume_session_stream", { sessionId, agentProvider: options?.agentProvider })
+        } else {
+          await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
+        }
         attached = true
+        hasAttachedOnce = true
         const attachedTerminal = getLiveTerminal()
         if (attachedTerminal && shouldPushKittyKeyboardOnFreshAttach(options)) {
           attachedTerminal.write("\x1b[>1u")
