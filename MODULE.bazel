@@ -1,0 +1,125 @@
+module(
+    name = "kanna_local",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_tauri", version = "0.0.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "rules_rust", version = "0.69.0")
+bazel_dep(name = "rules_zig", version = "0.12.3")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+git_override(
+    module_name = "rules_tauri",
+    remote = "https://github.com/jemdiggity/rules_tauri.git",
+    commit = "d254333374e72cc04100e30e2bec1664b89ed35b",
+)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = ["x86_64-apple-darwin"],
+    versions = ["1.93.1"],
+)
+use_repo(
+    rust,
+    "rust_toolchains",
+    "rust_macos_aarch64__x86_64-apple-darwin__stable_tools",
+)
+
+register_toolchains("@rust_toolchains//:all")
+
+rust_host_tools = use_extension("@rules_rust//rust:extensions.bzl", "rust_host_tools")
+rust_host_tools.host_tools(
+    name = "kanna_rust_host_tools",
+    version = "1.93.1",
+)
+use_repo(rust_host_tools, "kanna_rust_host_tools")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "kanna_cli_crates",
+    cargo_lockfile = "//crates/kanna-cli:Cargo.lock",
+    manifests = ["//crates/kanna-cli:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+)
+crate.from_cargo(
+    name = "daemon_crates",
+    cargo_lockfile = "//crates/daemon:Cargo.lock",
+    manifests = ["//crates/daemon:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+)
+crate.from_cargo(
+    name = "terminal_recovery_crates",
+    cargo_lockfile = "//packages/terminal-recovery:Cargo.lock",
+    manifests = ["//packages/terminal-recovery:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+)
+crate.from_cargo(
+    name = "desktop_crates",
+    cargo_lockfile = "//apps/desktop/src-tauri:Cargo.lock",
+    manifests = ["//:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+)
+crate.annotation(
+    crate = "libghostty-vt-sys",
+    repositories = [
+        "daemon_crates",
+        "terminal_recovery_crates",
+    ],
+    patches = ["//tools/bazel:libghostty-vt-sys-zig-env.patch"],
+    patch_args = ["-p1"],
+    gen_build_script = "on",
+    build_script_env = {
+        "HOME": "$${OUT_DIR}/home",
+        "XDG_CACHE_HOME": "$${OUT_DIR}/xdg-cache",
+        "ZIG": "$${pwd}/$(ZIG_BIN)",
+        "ZIG_GLOBAL_CACHE_DIR": "$${OUT_DIR}/zig-cache/global",
+        "ZIG_LOCAL_CACHE_DIR": "$${OUT_DIR}/zig-cache/local",
+    },
+    build_script_toolchains = ["@rules_zig//zig:resolved_toolchain"],
+)
+crate.annotation(
+    crate = "openssl-src",
+    repositories = ["desktop_crates"],
+    patches = ["//tools/bazel:openssl-src-bazel-runfiles.patch"],
+    patch_args = ["-p1"],
+    data_glob = ["openssl/**"],
+)
+crate.annotation(
+    crate = "tauri-utils",
+    repositories = ["desktop_crates"],
+    patches = [
+        "//tools/bazel:tauri-utils-bazel-permission-paths.patch",
+        "//tools/bazel:tauri-utils-bazel-debug-assertions.patch",
+    ],
+    patch_args = ["-p1"],
+)
+use_repo(crate, "kanna_cli_crates")
+use_repo(crate, "daemon_crates", "terminal_recovery_crates", "desktop_crates")
+
+zig = use_extension("@rules_zig//zig:extensions.bzl", "zig")
+zig.toolchain(
+    default = True,
+    zig_version = "0.15.2",
+)
+use_repo(zig, "zig_toolchains")
+
+host_tools = use_extension("//tools/bazel:extensions.bzl", "host_tools")
+use_repo(
+    host_tools,
+    "kanna_host_bun",
+    "kanna_host_cargo_home",
+)

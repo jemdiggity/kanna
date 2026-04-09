@@ -1,0 +1,29 @@
+--- a/src/acl/resolved.rs
++++ b/src/acl/resolved.rs
+@@ -491,14 +491,18 @@
+         )
+       }
+       #[cfg(not(debug_assertions))]
+-      literal_struct!(
+-        tokens,
+-        ::tauri::utils::acl::resolved::ResolvedCommand,
+-        context,
+-        windows,
+-        webviews,
+-        scope_id
+-      )
++      {
++        tokens.append_all(quote! {
++          ::tauri::utils::acl::resolved::ResolvedCommand {
++            context: #context,
++            #[cfg(debug_assertions)]
++            referenced_by: ::tauri::utils::acl::resolved::ResolvedCommandReference::default(),
++            windows: #windows,
++            webviews: #webviews,
++            scope_id: #scope_id,
++          }
++        })
++      }
+     }
+   }
+ 

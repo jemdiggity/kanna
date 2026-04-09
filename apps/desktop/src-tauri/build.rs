@@ -1,4 +1,9 @@
 fn main() {
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        std::env::set_current_dir(&manifest_dir)
+            .unwrap_or_else(|error| panic!("failed to chdir to {manifest_dir}: {error}"));
+    }
+
     // Embed VERSION file content so lib.rs can use it for the About dialog
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -37,5 +42,26 @@ fn main() {
     println!("cargo:rerun-if-env-changed=KANNA_BUILD_COMMIT");
     println!("cargo:rerun-if-env-changed=KANNA_BUILD_WORKTREE");
 
-    tauri_build::build()
+    if let Err(error) = tauri_build::try_build(Default::default()) {
+        let cwd = std::env::current_dir().ok();
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        let diagnostics = [
+            ("Cargo.toml", std::path::Path::new("Cargo.toml").exists()),
+            ("Info.plist", std::path::Path::new("Info.plist").exists()),
+            ("icons", std::path::Path::new("icons").exists()),
+            (
+                "capabilities",
+                std::path::Path::new("capabilities").exists(),
+            ),
+            ("../dist", std::path::Path::new("../dist").exists()),
+            ("binaries", std::path::Path::new("binaries").exists()),
+            (
+                "../../../.kanna",
+                std::path::Path::new("../../../.kanna").exists(),
+            ),
+        ];
+        panic!(
+            "tauri_build failed: {error:#}\ncwd={cwd:?}\nCARGO_MANIFEST_DIR={manifest_dir:?}\npath_diagnostics={diagnostics:?}"
+        );
+    }
 }

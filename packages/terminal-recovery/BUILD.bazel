@@ -1,0 +1,47 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@terminal_recovery_crates//:defs.bzl", "all_crate_deps")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "cargo_srcs",
+    srcs = [
+        "Cargo.lock",
+        "Cargo.toml",
+    ] + glob(["src/**/*.rs"]),
+)
+
+rust_library(
+    name = "kanna_terminal_recovery_lib",
+    srcs = glob(["src/**/*.rs"], exclude = ["src/main.rs"]),
+    crate_root = "src/lib.rs",
+    crate_name = "kanna_terminal_recovery",
+    edition = "2021",
+    deps = all_crate_deps(normal = True),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_binary(
+    name = "kanna_terminal_recovery",
+    srcs = glob(["src/**/*.rs"], exclude = ["src/lib.rs"]),
+    crate_root = "src/main.rs",
+    crate_name = "kanna_terminal_recovery",
+    edition = "2021",
+    deps = all_crate_deps(normal = True) + [
+        ":kanna_terminal_recovery_lib",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_binary(
+    name = "kanna_terminal_recovery_x86_64",
+    srcs = glob(["src/**/*.rs"], exclude = ["src/lib.rs"]),
+    crate_root = "src/main.rs",
+    crate_name = "kanna_terminal_recovery",
+    edition = "2021",
+    deps = all_crate_deps(normal = True) + [
+        ":kanna_terminal_recovery_lib",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    platform = "//tools/bazel:macos_x86_64",
+)

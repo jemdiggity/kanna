@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "../../../apps/desktop/src-tauri",
+    "../../../crates/claude-agent-sdk",
+    "../../../crates/tauri-plugin-delta-updater",
+]
+resolver = "2"
