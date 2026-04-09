@@ -36,6 +36,7 @@ def main() -> int:
     parser.add_argument("--package-dir", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--bun", required=True)
+    parser.add_argument("--node", required=True)
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir).resolve()
@@ -46,8 +47,10 @@ def main() -> int:
     home.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(home)
     bun_path = absolute_path(args.bun)
+    node_path = absolute_path(args.node)
     path_entries = [
         str(bun_path.parent),
+        str(node_path.parent),
         "/usr/bin",
         "/bin",
         "/usr/sbin",

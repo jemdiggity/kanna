@@ -45,16 +45,17 @@ def _bun_vite_dist_impl(ctx):
     src_files = _files_from_targets(ctx.attr.srcs)
     tool = ctx.file._tool
     bun = ctx.file._bun
+    node = ctx.file._node
     source_manifest = ctx.actions.declare_file(ctx.label.name + "_srcs.json")
 
     _write_source_manifest(ctx, src_files, source_manifest)
 
     ctx.actions.run_shell(
-        inputs = depset(direct = src_files + [tool, source_manifest, bun]),
+        inputs = depset(direct = src_files + [tool, source_manifest, bun, node]),
         outputs = [out_dir],
         command = """
 set -euo pipefail
-python3 "$1" --source-manifest "$2" --package-dir "$3" --out-dir "$4" --bun "$5"
+python3 "$1" --source-manifest "$2" --package-dir "$3" --out-dir "$4" --bun "$5" --node "$6"
 """,
         arguments = [
             tool.path,
@@ -62,6 +63,7 @@ python3 "$1" --source-manifest "$2" --package-dir "$3" --out-dir "$4" --bun "$5"
             ctx.attr.package_dir,
             out_dir.path,
             bun.path,
+            node.path,
         ],
         mnemonic = "KannaBunViteDist",
         progress_message = "Building frontend dist for %s" % ctx.label.name,
@@ -325,6 +327,10 @@ bun_vite_dist = rule(
         "_bun": attr.label(
             allow_single_file = True,
             default = "@kanna_host_bun//:bun",
+        ),
+        "_node": attr.label(
+            allow_single_file = True,
+            default = "@kanna_host_node//:node",
         ),
     },
 )

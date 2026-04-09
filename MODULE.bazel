@@ -121,5 +121,6 @@ host_tools = use_extension("//tools/bazel:extensions.bzl", "host_tools")
 use_repo(
     host_tools,
     "kanna_host_bun",
+    "kanna_host_node",
     "kanna_host_cargo_home",
 )
