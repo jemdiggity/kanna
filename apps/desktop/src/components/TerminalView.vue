@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from "vue"
+import { ref, onMounted, onUnmounted, watch, nextTick } from "vue"
 import { useTerminal, type SpawnOptions } from "../composables/useTerminal"
 import { shouldDelayConnectUntilAfterInitialLayout } from "../composables/terminalSessionRecovery"
 import { shouldStartTerminalSession } from "../composables/terminalVisibility"
@@ -26,6 +26,7 @@ defineExpose({
 
 let resizeObserver: ResizeObserver | null = null
 let started = false
+let focusRafId = 0
 
 async function startWhenActive() {
   if (!shouldStartTerminalSession(props.active) || started || !containerRef.value) return
@@ -37,6 +38,20 @@ async function startWhenActive() {
     await waitForStableLayout(containerRef.value)
   }
   await startListening()
+}
+
+async function focusWhenActive() {
+  if (!props.active || !terminal.value) return
+  await nextTick()
+  if (focusRafId) cancelAnimationFrame(focusRafId)
+  focusRafId = requestAnimationFrame(() => {
+    focusRafId = 0
+    if (!props.active || !terminal.value) return
+    // Let modals own focus while they are open; otherwise the active terminal
+    // should reclaim focus when it first mounts or becomes visible.
+    if (document.querySelector(".modal-overlay")) return
+    terminal.value.focus()
+  })
 }
 
 async function waitForStableLayout(el: HTMLElement) {
@@ -62,17 +77,22 @@ onMounted(async () => {
     resizeObserver = new ResizeObserver(() => fitDeferred())
     resizeObserver.observe(containerRef.value)
     await startWhenActive()
+    await focusWhenActive()
   }
 })
 
 watch(
   () => props.active,
-  async () => {
+  async (active) => {
     await startWhenActive()
+    if (active) {
+      await focusWhenActive()
+    }
   },
 )
 
 onUnmounted(() => {
+  if (focusRafId) cancelAnimationFrame(focusRafId)
   resizeObserver?.disconnect()
   dispose()
 })
