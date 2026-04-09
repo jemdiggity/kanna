@@ -9,7 +9,7 @@ const status = await fetch(`${WD_URL}/status`).catch(() => null);
 if (!status?.ok) {
   console.error("\n  WebDriver not available on port 4445.");
   console.error("  Start the app with:\n");
-  console.error("    KANNA_DB_NAME=kanna-test.db bun tauri dev\n");
+  console.error("    cd .kanna-worktrees/task-<id> && ./scripts/dev.sh start -a\n");
   process.exit(1);
 }
 
@@ -42,7 +42,7 @@ if (!vueCheck.value) {
   process.exit(1);
 }
 
-// Verify the app is running with a test database — refuse to run tests against production data
+// Verify the app is not using the production database.
 const dbCheck = await fetch(`${WD_URL}/session/${sid}/execute/sync`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -57,9 +57,9 @@ const dbCheck = await fetch(`${WD_URL}/session/${sid}/execute/sync`, {
 await fetch(`${WD_URL}/session/${sid}`, { method: "DELETE" });
 
 const currentDb = dbCheck.value as string;
-if (!currentDb || !currentDb.includes("test")) {
-  console.error(`\n  REFUSING TO RUN: app is using database "${currentDb}", not a test DB.`);
+if (!currentDb || currentDb === "kanna-v2.db") {
+  console.error(`\n  REFUSING TO RUN: app is using database "${currentDb}", which is the production DB.`);
   console.error("  Start the app with:\n");
-  console.error("    KANNA_DB_NAME=kanna-test.db bun tauri dev\n");
+  console.error("    cd .kanna-worktrees/task-<id> && ./scripts/dev.sh start -a\n");
   process.exit(1);
 }

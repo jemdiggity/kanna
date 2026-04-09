@@ -155,12 +155,12 @@ This means the main Kanna app and a dev worktree can run simultaneously without 
 
 ### Launching the dev server
 
-Always use `./scripts/dev.sh` to start the dev server — never run `bun run dev`, `bun tauri dev`, or `cargo tauri dev` directly. `bun run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, forwards all `KANNA_*` env vars, and runs in a background tmux session.
+Always use `./scripts/dev.sh` to start the dev server — never run `bun run dev`, `bun tauri dev`, or `cargo tauri dev` directly. `bun run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon paths internally, and runs in a background tmux session.
 
 ```bash
 # Development (from repo root or worktree root)
 ./scripts/dev.sh             # start in tmux (auto-detects worktree)
-./scripts/dev.sh start --seed # start with seed data (requires KANNA_DB_NAME=kanna-test.db)
+./scripts/dev.sh start --seed # start with seed data (run from a worktree)
 ./scripts/dev.sh stop        # stop the tmux session
 ./scripts/dev.sh restart     # stop + start
 ./scripts/dev.sh log         # print recent tmux output
@@ -179,8 +179,8 @@ cd crates/daemon && cargo test -- --test-threads=1
 # Rust integration tests (needs claude in PATH)
 cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignored --nocapture
 
-# E2E tests (needs app running with test DB)
-# Terminal 1: KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start -a
+# E2E tests (needs app running in a worktree dev instance)
+# Terminal 1: cd {repo}/.kanna-worktrees/task-{uuid} && ./scripts/dev.sh start -a
 # Terminal 2: cd apps/desktop && bun test:e2e
 ```
 
@@ -344,8 +344,8 @@ User makes PR → GitHub API → DB update → stage transition
 |---|---|---|
 | `KANNA_DEV_PORT` | vite.config.ts, dev.sh | Dev server port (default 1420) |
 | `KANNA_WORKTREE` | dev.sh → runtime | Flag: running in a worktree |
-| `KANNA_DB_NAME` | stores/db.ts | Override SQLite filename (default `kanna-v2.db`) |
-| `KANNA_DAEMON_DIR` | daemon, tests | Override daemon data directory |
+| `KANNA_DB_NAME` | dev.sh → stores/db.ts | Resolved SQLite filename for the current instance |
+| `KANNA_DAEMON_DIR` | dev.sh → daemon | Resolved daemon data directory for the current instance |
 | `KANNA_GITHUB_TOKEN` | core/github | GitHub API auth |
 | `KANNA_SLACK_TOKEN` | core/slack | Slack API auth |
 | `KANNA_DISCORD_TOKEN` | core/discord | Discord API auth |
@@ -403,7 +403,7 @@ User makes PR → GitHub API → DB update → stage transition
 
 SQLite via `tauri-plugin-sql`. Schema defined inline in `stores/db.ts`'s `runMigrations()`. See the Database Tables inventory in the Codebase Overview section for the full table list.
 
-DB name configurable via `KANNA_DB_NAME` env var (defaults to `kanna-v2.db`). E2E tests use `kanna-test.db`. Worktrees auto-name their DB `kanna-wt-{worktree-dir}.db` (e.g., `kanna-wt-task-10720bf8.db`). All DBs live in `~/Library/Application Support/com.kanna.app/`.
+DB name is resolved by `dev.sh` from the current context: main instances use `kanna-v2.db`, and worktrees auto-name their DB `kanna-wt-{worktree-dir}.db` (for example `kanna-wt-task-10720bf8.db`). All DBs live in `~/Library/Application Support/com.kanna.app/`.
 
 ## Testing
 

@@ -230,14 +230,14 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/shared.db'" "$TMUX_LOG"; then
-  printf 'expected explicit KANNA_DB_NAME to win, got:\n' >&2
+if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_DB_NAME to be ignored, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_NAME='shared.db'" "$TMUX_LOG"; then
-  printf 'expected explicit KANNA_DB_NAME export to remain canonical, got:\n' >&2
+if ! grep -Fq "KANNA_DB_NAME='kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+  printf 'expected derived worktree KANNA_DB_NAME to remain canonical, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
@@ -257,8 +257,8 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DAEMON_DIR='/tmp/shared-daemon-dir'" "$TMUX_LOG"; then
-  printf 'expected explicit KANNA_DAEMON_DIR to win, got:\n' >&2
+if ! grep -Fq "KANNA_DAEMON_DIR='$TEST_ROOT/.kanna-daemon'" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_DAEMON_DIR to be ignored, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
@@ -275,8 +275,8 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/shared.db" "$SQLITE_LOG"; then
-  printf 'expected seed to use explicit KANNA_DB_NAME, got:\n' >&2
+if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db" "$SQLITE_LOG"; then
+  printf 'expected seed to ignore explicit KANNA_DB_NAME, got:\n' >&2
   cat "$SQLITE_LOG" >&2
   exit 1
 fi
@@ -296,14 +296,14 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_PATH='/tmp/shared-kanna.db'" "$TMUX_LOG"; then
-  printf 'expected explicit KANNA_DB_PATH to win, got:\n' >&2
+if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_DB_PATH to be ignored, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_NAME='shared-kanna.db'" "$TMUX_LOG"; then
-  printf 'expected KANNA_DB_NAME to be derived from explicit KANNA_DB_PATH, got:\n' >&2
+if ! grep -Fq "KANNA_DB_NAME='kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+  printf 'expected KANNA_DB_NAME to remain worktree-derived, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi

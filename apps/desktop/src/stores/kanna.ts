@@ -37,6 +37,7 @@ import {
 } from "./portAllocationLog";
 import i18n from '../i18n';
 import { resolveDbName } from "./db";
+import { buildKannaCliEnv } from "./kannaCliEnv";
 import {
   listRepos, insertRepo, findRepoByPath,
   hideRepo as hideRepoQuery, unhideRepo as unhideRepoQuery,
@@ -1052,8 +1053,6 @@ export const useKannaStore = defineStore("kanna", () => {
 
     env.KANNA_WORKTREE = "1";
 
-    // Pipeline env vars — passed to agent so kanna-cli can signal stage completion
-    env.KANNA_TASK_ID = sessionId;
     try {
       kannaCliPath = await invoke<string>("which_binary", { name: "kanna-cli" });
       env.KANNA_CLI_PATH = kannaCliPath;
@@ -1061,19 +1060,19 @@ export const useKannaStore = defineStore("kanna", () => {
       console.error("[store] failed to resolve kanna-cli path:", e);
     }
     try {
-      const [appDataDir, dbName] = await Promise.all([
+      const [appDataDir, dbName, socketPath] = await Promise.all([
         invoke<string>("get_app_data_dir"),
         resolveDbName(),
+        invoke<string>("get_pipeline_socket_path"),
       ]);
-      env.KANNA_DB_PATH = `${appDataDir}/${dbName}`;
+      Object.assign(env, buildKannaCliEnv({
+        taskId: sessionId,
+        dbName,
+        appDataDir,
+        socketPath,
+      }));
     } catch (e) {
-      console.error("[store] failed to resolve database path for task env:", e);
-    }
-    try {
-      const socketPath = await invoke<string>("get_pipeline_socket_path");
-      env.KANNA_SOCKET_PATH = socketPath;
-    } catch (e) {
-      console.error("[store] failed to get pipeline socket path:", e);
+      console.error("[store] failed to resolve kanna-cli env:", e);
     }
     const escapedPrompt = prompt.replace(/'/g, "'\\''");
     let agentCmd: string;

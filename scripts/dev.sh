@@ -72,9 +72,7 @@ read_port() {
 }
 
 resolve_db_name() {
-  if [ -n "${KANNA_DB_NAME:-}" ]; then
-    printf '%s\n' "$KANNA_DB_NAME"
-  elif [ -n "${KANNA_WORKTREE:-}" ]; then
+  if [ -n "${KANNA_WORKTREE:-}" ]; then
     printf 'kanna-wt-%s.db\n' "$(basename "$ROOT")"
   else
     printf 'kanna-v2.db\n'
@@ -82,17 +80,11 @@ resolve_db_name() {
 }
 
 resolve_db_path() {
-  if [ -n "${KANNA_DB_PATH:-}" ]; then
-    printf '%s\n' "$KANNA_DB_PATH"
-  else
-    printf '%s/Library/Application Support/%s/%s\n' "$HOME" "$DESKTOP_BUNDLE_IDENTIFIER" "$(resolve_db_name)"
-  fi
+  printf '%s/Library/Application Support/%s/%s\n' "$HOME" "$DESKTOP_BUNDLE_IDENTIFIER" "$(resolve_db_name)"
 }
 
 resolve_daemon_dir() {
-  if [ -n "${KANNA_DAEMON_DIR:-}" ]; then
-    printf '%s\n' "$KANNA_DAEMON_DIR"
-  elif [ -n "${KANNA_WORKTREE:-}" ]; then
+  if [ -n "${KANNA_WORKTREE:-}" ]; then
     printf '%s/.kanna-daemon\n' "$ROOT"
   else
     printf '%s/Library/Application Support/Kanna\n' "$HOME"
