@@ -1,7 +1,7 @@
+use serde::Serialize;
 use std::io::Write;
 use std::process::Command;
 use std::sync::OnceLock;
-use serde::Serialize;
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -99,23 +99,35 @@ fn builtin_resource_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 pub fn read_builtin_resource(app: AppHandle, relative_path: String) -> Result<String, String> {
     let base = builtin_resource_dir(&app)?;
     let resource_path = base.join(&relative_path);
-    std::fs::read_to_string(&resource_path)
-        .map_err(|e| format!("failed to read resource '{}': {}", resource_path.display(), e))
+    std::fs::read_to_string(&resource_path).map_err(|e| {
+        format!(
+            "failed to read resource '{}': {}",
+            resource_path.display(),
+            e
+        )
+    })
 }
 
 /// List entries in a bundled resources subdirectory.
 /// `relative_path` is relative to the resources root (e.g., ".kanna/agents").
 #[tauri::command]
-pub fn list_builtin_resources(app: AppHandle, relative_path: String) -> Result<Vec<String>, String> {
+pub fn list_builtin_resources(
+    app: AppHandle,
+    relative_path: String,
+) -> Result<Vec<String>, String> {
     let base = builtin_resource_dir(&app)?;
     let resource_path = base.join(&relative_path);
     if !resource_path.is_dir() {
         return Ok(Vec::new());
     }
     let mut names = Vec::new();
-    for entry in std::fs::read_dir(&resource_path)
-        .map_err(|e| format!("failed to read resource dir '{}': {}", resource_path.display(), e))?
-    {
+    for entry in std::fs::read_dir(&resource_path).map_err(|e| {
+        format!(
+            "failed to read resource dir '{}': {}",
+            resource_path.display(),
+            e
+        )
+    })? {
         let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
         names.push(entry.file_name().to_string_lossy().to_string());
     }

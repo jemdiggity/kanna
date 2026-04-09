@@ -1,0 +1,85 @@
+--- a/src/acl/build.rs
++++ b/src/acl/build.rs
+@@ -7,7 +7,8 @@
+ use std::{
+   collections::{BTreeMap, HashMap},
+   env, fs,
+-  path::{Path, PathBuf},
++  ffi::OsStr,
++  path::{Component, Path, PathBuf},
+ };
+ 
+ use crate::{
+@@ -110,6 +111,47 @@
+   parse_permissions(permission_files)
+ }
+ 
++fn current_execroot_main() -> Option<PathBuf> {
++  env::current_dir().ok().and_then(|cwd| {
++    cwd.ancestors()
++      .find(|path| {
++        path.file_name() == Some(OsStr::new("_main"))
++          && path.parent().and_then(Path::file_name) == Some(OsStr::new("execroot"))
++      })
++      .map(PathBuf::from)
++  })
++}
++
++fn remap_bazel_execroot_path(path: PathBuf) -> PathBuf {
++  if path.exists() {
++    return path;
++  }
++
++  let Some(execroot_main) = current_execroot_main() else {
++    return path;
++  };
++
++  let mut components = path.components().peekable();
++  while let Some(component) = components.next() {
++    if component == Component::Normal(OsStr::new("execroot"))
++      && components.peek() == Some(&Component::Normal(OsStr::new("_main")))
++    {
++      let _ = components.next();
++      let suffix = components.fold(PathBuf::new(), |mut acc, component| {
++        acc.push(component.as_os_str());
++        acc
++      });
++      let remapped = execroot_main.join(suffix);
++      if remapped.exists() {
++        return remapped;
++      }
++      break;
++    }
++  }
++
++  path
++}
++
+ /// Read all permissions listed from the defined cargo cfg key value.
+ pub fn read_permissions() -> Result<HashMap<String, Vec<PermissionFile>>, Error> {
+   let mut permissions_map = HashMap::new();
+@@ -126,10 +168,13 @@
+           .unwrap_or(v)
+       })
+     {
+-      let permissions_path = PathBuf::from(value);
++      let permissions_path = remap_bazel_execroot_path(PathBuf::from(value));
+       let permissions_str =
+         fs::read_to_string(&permissions_path).map_err(|e| Error::ReadFile(e, permissions_path))?;
+-      let permissions: Vec<PathBuf> = serde_json::from_str(&permissions_str)?;
++      let permissions: Vec<PathBuf> = serde_json::from_str::<Vec<PathBuf>>(&permissions_str)?
++        .into_iter()
++        .map(remap_bazel_execroot_path)
++        .collect();
+       let permissions = parse_permissions(permissions)?;
+ 
+       let plugin_crate_name = plugin_crate_name_var.to_lowercase().replace('_', "-");
+@@ -183,7 +228,7 @@
+           .unwrap_or(v)
+       })
+     {
+-      let path = PathBuf::from(value);
++      let path = remap_bazel_execroot_path(PathBuf::from(value));
+       let json = fs::read_to_string(&path).map_err(|e| Error::ReadFile(e, path))?;
+       let schema: serde_json::Value = serde_json::from_str(&json)?;
+ 

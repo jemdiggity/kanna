@@ -1,0 +1,23 @@
+package(default_visibility = ["//visibility:public"])
+
+load("//tools/bazel:defs.bzl", "copy_tree")
+
+filegroup(
+    name = "frontend_srcs",
+    srcs = glob([
+        "bun.lock",
+        "bunfig.toml",
+        "index.html",
+        "node_modules/**",
+        "package.json",
+        "public/**",
+        "src/**",
+        "tsconfig*.json",
+        "vite.config.ts",
+    ]),
+)
+
+copy_tree(
+    name = "dist",
+    src = "//:desktop_frontend_dist",
+)

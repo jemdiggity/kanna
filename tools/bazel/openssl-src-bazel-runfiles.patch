@@ -1,0 +1,66 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,7 +7,35 @@
+ use std::process::Command;
+ 
+ pub fn source_dir() -> PathBuf {
+-    Path::new(env!("CARGO_MANIFEST_DIR")).join("openssl")
++    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
++    let direct = manifest_dir.join("openssl");
++    if direct.exists() {
++        return direct;
++    }
++
++    let repo_name = manifest_dir.file_name().map(PathBuf::from);
++    let cwd = env::current_dir().ok();
++
++    if let (Some(repo_name), Some(cwd)) = (repo_name, cwd) {
++        let candidates = [
++            cwd.join(&repo_name).join("openssl"),
++            cwd.parent()
++                .map(|parent| parent.join(&repo_name).join("openssl"))
++                .unwrap_or_else(|| cwd.join(&repo_name).join("openssl")),
++            cwd.join("external").join(&repo_name).join("openssl"),
++            cwd.parent()
++                .map(|parent| parent.join("external").join(&repo_name).join("openssl"))
++                .unwrap_or_else(|| cwd.join("external").join(&repo_name).join("openssl")),
++        ];
++
++        for candidate in candidates {
++            if candidate.exists() {
++                return candidate;
++            }
++        }
++    }
++
++    direct
+ }
+ 
+ pub fn version() -> &'static str {
+@@ -516,6 +544,25 @@
+             let mut skip_next = false;
+             let mut is_isysroot = false;
+             for arg in compiler.args() {
++                let arg_str = arg.to_string_lossy();
++
++                // Bazel's Apple toolchain injects wrapper/debug flags that OpenSSL's
++                // Configure parser does not understand, or that duplicate the target
++                // already selected via the platform name above.
++                if target.contains("apple") && !target.contains("apple-ios") {
++                    if arg == "-isysroot" || arg == "-target" {
++                        skip_next = true;
++                        continue;
++                    }
++                    if arg_str == "-no-canonical-prefixes" ||
++                        arg_str.starts_with("--target=") ||
++                        arg_str.starts_with("-fdebug-prefix-map=") ||
++                        arg_str.starts_with("-F__BAZEL_") ||
++                        arg_str.contains("__BAZEL_") {
++                        continue;
++                    }
++                }
++
+                 // For whatever reason `-static` on MUSL seems to cause
+                 // issues...
+                 if target.contains("musl") && arg == "-static" {
