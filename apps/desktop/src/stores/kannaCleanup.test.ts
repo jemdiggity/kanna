@@ -8,6 +8,7 @@ import {
   reportPrewarmSessionError,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
+import { AppError } from "../appError";
 
 describe("kannaCleanup", () => {
   it("ignores teardown sessions for cache clearing", () => {
@@ -52,14 +53,12 @@ describe("kannaCleanup", () => {
   });
 
   it("treats missing daemon sessions as idempotent close errors", () => {
-    expect(isMissingDaemonSessionError(new Error("session not found: abc123"))).toBe(true);
-    expect(isMissingDaemonSessionError("session not found: abc123")).toBe(true);
+    expect(isMissingDaemonSessionError(new AppError("session not found: abc123", "session_not_found"))).toBe(true);
     expect(isMissingDaemonSessionError(new Error("permission denied"))).toBe(false);
   });
 
   it("treats existing sessions as idempotent prewarm errors", () => {
-    expect(isSessionAlreadyExistsError(new Error("session already exists: shell-wt-abc123"))).toBe(true);
-    expect(isSessionAlreadyExistsError("session already exists: shell-wt-abc123")).toBe(true);
+    expect(isSessionAlreadyExistsError(new AppError("session already exists: shell-wt-abc123", "session_already_exists"))).toBe(true);
     expect(isSessionAlreadyExistsError(new Error("permission denied"))).toBe(false);
   });
 
@@ -69,7 +68,7 @@ describe("kannaCleanup", () => {
       calls.push(args);
     };
 
-    reportCloseSessionError("[store] kill agent session failed:", new Error("session not found: abc123"), logger);
+    reportCloseSessionError("[store] kill agent session failed:", new AppError("session not found: abc123", "session_not_found"), logger);
     reportCloseSessionError("[store] kill agent session failed:", new Error("permission denied"), logger);
 
     expect(calls).toHaveLength(1);
@@ -84,7 +83,7 @@ describe("kannaCleanup", () => {
       calls.push(args);
     };
 
-    reportPrewarmSessionError("[store] shell pre-warm failed:", new Error("session already exists: shell-wt-abc123"), logger);
+    reportPrewarmSessionError("[store] shell pre-warm failed:", new AppError("session already exists: shell-wt-abc123", "session_already_exists"), logger);
     reportPrewarmSessionError("[store] shell pre-warm failed:", new Error("permission denied"), logger);
 
     expect(calls).toHaveLength(1);

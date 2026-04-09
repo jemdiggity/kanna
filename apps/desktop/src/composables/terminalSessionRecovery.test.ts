@@ -22,6 +22,7 @@ import {
   shouldRestoreRecoveryState,
   buildTaskShellCommand,
 } from "./terminalSessionRecovery";
+import { AppError } from "../appError";
 
 describe("getTerminalRecoveryMode", () => {
   const spawnFn = async () => {};
@@ -56,12 +57,23 @@ describe("formatAttachFailureMessage", () => {
 describe("isDaemonHandoffFailure", () => {
   it("recognizes explicit daemon handoff loss errors", () => {
     expect(
-      isDaemonHandoffFailure("session lost during daemon handoff: failed to receive PTY fd")
+      isDaemonHandoffFailure(
+        new AppError(
+          "session lost during daemon handoff: failed to receive PTY fd",
+          "handoff_lost",
+        ),
+      )
     ).toBe(true);
   });
 
   it("ignores generic attach failures", () => {
-    expect(isDaemonHandoffFailure("session not found")).toBe(false);
+    expect(isDaemonHandoffFailure(new AppError("session not found: abc123"))).toBe(false);
+  });
+
+  it("recognizes structured daemon handoff errors", () => {
+    expect(
+      isDaemonHandoffFailure({ message: "attach failed", code: "handoff_lost" }),
+    ).toBe(true);
   });
 });
 
@@ -71,7 +83,11 @@ describe("shouldRespawnAfterAttachFailure", () => {
   it("respawns task terminals after explicit daemon handoff loss", () => {
     expect(
       shouldRespawnAfterAttachFailure(
-        "session lost during daemon handoff: failed to receive PTY fd",
+        new AppError(
+          "session lost during daemon handoff: failed to receive PTY fd",
+          "handoff_lost",
+        ),
+        false,
         false,
         { cwd: "/tmp/task", prompt: "do work", spawnFn },
         { agentProvider: "claude", worktreePath: "/tmp/task" },
@@ -82,7 +98,8 @@ describe("shouldRespawnAfterAttachFailure", () => {
   it("does not respawn task terminals on the first attach when the session is still being created", () => {
     expect(
       shouldRespawnAfterAttachFailure(
-        "session not found",
+        new AppError("session not found: task-1", "session_not_found"),
+        false,
         false,
         { cwd: "/tmp/task", prompt: "do work", spawnFn },
         { agentProvider: "claude", worktreePath: "/tmp/task" },
@@ -90,11 +107,24 @@ describe("shouldRespawnAfterAttachFailure", () => {
     ).toBe(false);
   });
 
+  it("respawns task terminals when scrollback exists but the PTY is gone", () => {
+    expect(
+      shouldRespawnAfterAttachFailure(
+        new AppError("attach failed", "session_not_found"),
+        false,
+        true,
+        { cwd: "/tmp/task", prompt: "do work", spawnFn },
+        { agentProvider: "claude", worktreePath: "/tmp/task" },
+      )
+    ).toBe(true);
+  });
+
   it("respawns task terminals when a previously attached live session disappears", () => {
     expect(
       shouldRespawnAfterAttachFailure(
-        "session not found",
+        new AppError("session not found: task-1", "session_not_found"),
         true,
+        false,
         { cwd: "/tmp/task", prompt: "do work", spawnFn },
         { agentProvider: "claude", worktreePath: "/tmp/task" },
       )
@@ -104,8 +134,12 @@ describe("shouldRespawnAfterAttachFailure", () => {
   it("does not respawn shell terminals from attach failure fallback", () => {
     expect(
       shouldRespawnAfterAttachFailure(
-        "session lost during daemon handoff: failed to receive PTY fd",
+        new AppError(
+          "session lost during daemon handoff: failed to receive PTY fd",
+          "handoff_lost",
+        ),
         true,
+        false,
         { cwd: "/tmp/repo", prompt: "", spawnFn },
         undefined,
       )
@@ -117,18 +151,21 @@ describe("getRespawnToastKey", () => {
   it("uses restart-specific copy for explicit daemon handoff loss", () => {
     expect(
       getRespawnToastKey(
-        "session lost during daemon handoff: failed to receive PTY fd",
+        new AppError(
+          "session lost during daemon handoff: failed to receive PTY fd",
+          "handoff_lost",
+        ),
         false,
       ),
     ).toBe("toasts.daemonHandoffRespawned");
   });
 
   it("uses generic copy when a previously attached session is simply missing", () => {
-    expect(getRespawnToastKey("session not found", false)).toBe("toasts.sessionRespawned");
+    expect(getRespawnToastKey(new AppError("attach failed", "session_not_found"), false)).toBe("toasts.sessionRespawned");
   });
 
   it("keeps the scrollback variant for generic respawns", () => {
-    expect(getRespawnToastKey("session not found", true)).toBe(
+    expect(getRespawnToastKey(new AppError("session not found: task-1", "session_not_found"), true)).toBe(
       "toasts.sessionRespawnedWithScrollback",
     );
   });

@@ -1,6 +1,20 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    SessionNotFound,
+    SessionAlreadyExists,
+    HandoffLost,
+    HandoffVersionMismatch,
+    PtySpawnFailed,
+    PtyCloneFailed,
+    SidecarInitFailed,
+    WriteFailed,
+    UnknownSignal,
+}
+
 fn default_cursor_visible() -> bool {
     true
 }
@@ -40,6 +54,9 @@ pub enum Command {
         rows: u16,
     },
     Attach {
+        session_id: String,
+    },
+    AttachSnapshot {
         session_id: String,
     },
     Detach {
@@ -101,6 +118,8 @@ pub enum Event {
     },
     Ok,
     Error {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<ErrorCode>,
         message: String,
     },
     Snapshot {
@@ -365,12 +384,16 @@ mod tests {
     #[test]
     fn test_event_error_roundtrip() {
         let evt = Event::Error {
+            code: Some(ErrorCode::SessionNotFound),
             message: "something went wrong".to_string(),
         };
         let json = serde_json::to_string(&evt).unwrap();
         let decoded: Event = serde_json::from_str(&json).unwrap();
         match decoded {
-            Event::Error { message } => assert_eq!(message, "something went wrong"),
+            Event::Error { code, message } => {
+                assert_eq!(code, Some(ErrorCode::SessionNotFound));
+                assert_eq!(message, "something went wrong");
+            }
             _ => panic!("wrong variant"),
         }
     }

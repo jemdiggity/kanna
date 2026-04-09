@@ -3,12 +3,30 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
+use tauri::Emitter;
 use tokio::sync::Mutex;
 
 use crate::daemon_client::DaemonClient;
 
 pub type DaemonState = Arc<Mutex<Option<DaemonClient>>>;
 pub type AttachedSessions = Arc<Mutex<HashSet<String>>>;
+pub type PendingAttachedStreams = Arc<Mutex<HashMap<String, DaemonClient>>>;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DaemonCommandError {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+impl From<String> for DaemonCommandError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            code: None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TerminalSnapshotPayload {
@@ -175,38 +193,56 @@ impl SessionScanState {
 }
 
 /// Read the Ok/Error ack while already holding the lock.
-fn parse_ack(response: &str) -> Result<(), String> {
-    let event: serde_json::Value = serde_json::from_str(response).unwrap_or_default();
-    if let Some("Error") = event.get("type").and_then(|t| t.as_str()) {
-        let msg = event
+fn parse_error_event(event: &serde_json::Value) -> DaemonCommandError {
+    DaemonCommandError {
+        message: event
             .get("message")
             .and_then(|m| m.as_str())
-            .unwrap_or("daemon error");
-        return Err(msg.to_string());
+            .unwrap_or("daemon error")
+            .to_string(),
+        code: event
+            .get("code")
+            .and_then(|c| c.as_str())
+            .map(std::string::ToString::to_string),
+    }
+}
+
+fn parse_ack(response: &str) -> Result<(), DaemonCommandError> {
+    let event: serde_json::Value = serde_json::from_str(response).unwrap_or_default();
+    if let Some("Error") = event.get("type").and_then(|t| t.as_str()) {
+        return Err(parse_error_event(&event));
     }
     Ok(())
 }
 
-fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, String> {
+fn parse_snapshot_response(
+    response: &str,
+) -> Result<TerminalSnapshotPayload, DaemonCommandError> {
     let event: serde_json::Value =
-        serde_json::from_str(response).map_err(|e| format!("failed to parse event: {}", e))?;
+        serde_json::from_str(response).map_err(|e| DaemonCommandError {
+            message: format!("failed to parse event: {}", e),
+            code: None,
+        })?;
 
     match event.get("type").and_then(|t| t.as_str()) {
         Some("Snapshot") => serde_json::from_value(
             event
                 .get("snapshot")
                 .cloned()
-                .ok_or_else(|| "snapshot response missing payload".to_string())?,
+                .ok_or_else(|| DaemonCommandError {
+                    message: "snapshot response missing payload".to_string(),
+                    code: None,
+                })?,
         )
-        .map_err(|e| format!("failed to parse snapshot payload: {}", e)),
-        Some("Error") => {
-            let msg = event
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown error");
-            Err(msg.to_string())
-        }
-        _ => Err(format!("unexpected event: {}", response)),
+        .map_err(|e| DaemonCommandError {
+            message: format!("failed to parse snapshot payload: {}", e),
+            code: None,
+        }),
+        Some("Error") => Err(parse_error_event(&event)),
+        _ => Err(DaemonCommandError {
+            message: format!("unexpected event: {}", response),
+            code: None,
+        }),
     }
 }
 
@@ -268,256 +304,31 @@ async fn ensure_connected(state: &DaemonState) -> Result<(), String> {
     Ok(())
 }
 
-fn require_option_mut<'a, T>(value: &'a mut Option<T>, context: &str) -> Result<&'a mut T, String> {
-    value
-        .as_mut()
-        .ok_or_else(|| format!("{context} unavailable"))
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn spawn_session(
-    state: tauri::State<'_, DaemonState>,
+async fn spawn_attached_stream_task(
+    app: tauri::AppHandle,
+    stream_client: DaemonClient,
     session_id: String,
-    cwd: String,
-    executable: String,
-    args: Vec<String>,
-    env: HashMap<String, String>,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
-    let cmd = serde_json::json!({
-        "type": "Spawn",
-        "session_id": session_id,
-        "cwd": cwd,
-        "executable": executable,
-        "args": args,
-        "env": env,
-        "cols": cols,
-        "rows": rows,
-    });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = require_option_mut(&mut guard, "daemon client")?;
-    client.send_command(&json).await?;
-
-    // Read response — expect SessionCreated or Error
-    let response = client.read_event().await?;
-    let event: serde_json::Value =
-        serde_json::from_str(&response).map_err(|e| format!("bad response: {}", e))?;
-    match event.get("type").and_then(|t| t.as_str()) {
-        Some("SessionCreated") => Ok(()),
-        Some("Error") => {
-            let msg = event
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown error");
-            Err(msg.to_string())
-        }
-        _ => Err(format!("unexpected spawn response: {}", response)),
-    }
-}
-
-#[tauri::command]
-pub async fn get_session_recovery_state(
-    state: tauri::State<'_, DaemonState>,
-    session_id: String,
-) -> Result<Option<SessionRecoveryStatePayload>, String> {
-    let cmd = serde_json::json!({
-        "type": "Snapshot",
-        "session_id": session_id,
-    });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = require_option_mut(&mut guard, "daemon client")?;
-    client.send_command(&json).await?;
-    let response = client.read_event().await?;
-    match parse_snapshot_response(&response) {
-        Ok(snapshot) => Ok(Some(SessionRecoveryStatePayload {
-            serialized: snapshot.vt,
-            cols: snapshot.cols,
-            rows: snapshot.rows,
-            saved_at: 0,
-            sequence: 0,
-        })),
-        Err(message) if message.contains("session not found") => Ok(None),
-        Err(message) => Err(message),
-    }
-}
-
-#[tauri::command]
-pub async fn send_input(
-    state: tauri::State<'_, DaemonState>,
-    session_id: String,
-    data: Vec<u8>,
-) -> Result<(), String> {
-    let cmd = serde_json::json!({
-        "type": "Input",
-        "session_id": session_id,
-        "data": data,
-    });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = require_option_mut(&mut guard, "daemon client")?;
-    client.send_command(&json).await?;
-    let response = client.read_event().await?;
-    parse_ack(&response)
-}
-
-#[tauri::command]
-pub async fn resize_session(
-    state: tauri::State<'_, DaemonState>,
-    session_id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
-    let cmd = serde_json::json!({
-        "type": "Resize",
-        "session_id": session_id,
-        "cols": cols,
-        "rows": rows,
-    });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = require_option_mut(&mut guard, "daemon client")?;
-    client.send_command(&json).await?;
-    let _ = client.read_event().await; // consume Ok
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn signal_session(
-    state: tauri::State<'_, DaemonState>,
-    session_id: String,
-    signal: String,
-) -> Result<(), String> {
-    let cmd = serde_json::json!({
-        "type": "Signal",
-        "session_id": session_id,
-        "signal": signal,
-    });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = require_option_mut(&mut guard, "daemon client")?;
-    client.send_command(&json).await?;
-    let response = client.read_event().await?;
-    parse_ack(&response)
-}
-
-#[tauri::command]
-pub async fn kill_session(
-    state: tauri::State<'_, DaemonState>,
-    session_id: String,
-) -> Result<(), String> {
-    let cmd = serde_json::json!({
-        "type": "Kill",
-        "session_id": session_id,
-    });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = require_option_mut(&mut guard, "daemon client")?;
-    client.send_command(&json).await?;
-    let response = client.read_event().await?;
-    parse_ack(&response)
-}
-
-#[tauri::command]
-pub async fn list_sessions(
-    state: tauri::State<'_, DaemonState>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let cmd = serde_json::json!({ "type": "List" });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
-    client.send_command(&json).await?;
-    let response = client.read_event().await?;
-
-    let event: serde_json::Value =
-        serde_json::from_str(&response).map_err(|e| format!("failed to parse event: {}", e))?;
-
-    match event.get("type").and_then(|t| t.as_str()) {
-        Some("SessionList") => {
-            let sessions = event
-                .get("sessions")
-                .and_then(|s| s.as_array())
-                .cloned()
-                .unwrap_or_default();
-            Ok(sessions)
-        }
-        Some("Error") => {
-            let msg = event
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown error");
-            Err(msg.to_string())
-        }
-        _ => Err(format!("unexpected event: {}", response)),
-    }
-}
-
-pub async fn attach_session_inner(
-    app: &tauri::AppHandle,
-    session_id: String,
-    attached: &AttachedSessions,
+    attached: AttachedSessions,
     agent_provider: Option<String>,
-) -> Result<(), String> {
-    eprintln!(
-        "[attach] start session={} provider={:?}",
-        session_id, agent_provider
-    );
-    // Create a dedicated connection for this session's output streaming.
-    // This avoids mixing Output events with command responses.
-    let socket_path = daemon_socket_path();
-    let mut stream_client = DaemonClient::connect(&socket_path).await?;
-
-    // Send Attach command
-    let cmd = serde_json::json!({ "type": "Attach", "session_id": session_id });
-    stream_client
-        .send_command(&serde_json::to_string(&cmd).unwrap())
-        .await?;
-
-    // Read the Ok/Error response
-    let response = stream_client.read_event().await?;
-    let event: serde_json::Value = serde_json::from_str(&response).map_err(|e| e.to_string())?;
-    if let Some("Error") = event.get("type").and_then(|t| t.as_str()) {
-        let msg = event
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("attach failed");
-        eprintln!("[attach] rejected session={} error={}", session_id, msg);
-        return Err(msg.to_string());
-    }
-
-    // Track this session as attached
+) {
     attached.lock().await.insert(session_id.clone());
-    eprintln!("[attach] acknowledged session={}", session_id);
 
-    // Determine the agent provider for pattern matching
     let provider = match agent_provider.as_deref() {
         Some("copilot") => AgentProvider::Copilot,
         Some("codex") => AgentProvider::Codex,
         _ => AgentProvider::Claude,
     };
 
-    // Spawn a background task to read Output/Exit events and emit Tauri events
     let sid = session_id.clone();
     let app = app.clone();
     let attached_clone = attached.clone();
-    use tauri::Emitter;
     tauri::async_runtime::spawn(async move {
         let scan_state =
             std::sync::Arc::new(tokio::sync::Mutex::new(SessionScanState::new(provider)));
         let mut exited_normally = false;
         let mut output_event_count: usize = 0;
+        let mut stream_client = stream_client;
 
-        // Spawn a flush timer task
         let scan_state_timer = scan_state.clone();
         let app_timer = app.clone();
         let sid_timer = sid.clone();
@@ -541,8 +352,6 @@ pub async fn attach_session_inner(
             }
         });
 
-        // On Err (connection lost / daemon restart) we intentionally do NOT
-        // remove from attached so the re-attach coordinator can re-attach.
         while let Ok(line) = stream_client.read_event().await {
             let event: serde_json::Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
@@ -562,8 +371,6 @@ pub async fn attach_session_inner(
                             sid, output_event_count, byte_len
                         );
                     }
-                    // Convert data array to base64 string for efficient transfer
-                    // The raw number array can be large and slow to serialize
                     if let Some(data) = event.get("data").and_then(|d| d.as_array()) {
                         let bytes: Vec<u8> = data
                             .iter()
@@ -577,9 +384,6 @@ pub async fn attach_session_inner(
                         });
                         let _ = app.emit("terminal_output", &payload);
 
-                        // Strip ANSI escape sequences to get clean text for pattern matching.
-                        // Copilot's TUI uses per-character color codes (shimmer effect),
-                        // so raw byte matching (e.g. b"Thinking") won't work.
                         let stripped = {
                             let mut out = Vec::with_capacity(bytes.len());
                             let mut i = 0;
@@ -610,10 +414,8 @@ pub async fn attach_session_inner(
                                         if i < bytes.len() && bytes[i] == b'\\' {
                                             i += 1;
                                         }
-                                    } else {
-                                        if i < bytes.len() {
-                                            i += 1;
-                                        }
+                                    } else if i < bytes.len() {
+                                        i += 1;
                                     }
                                 } else if bytes[i] >= 0x20 || bytes[i] == b'\n' {
                                     out.push(bytes[i]);
@@ -642,10 +444,6 @@ pub async fn attach_session_inner(
 
                             let mut state = scan_state.lock().await;
                             state.append(text);
-
-                            // Check fragment for immediate events (spinner → working,
-                            // text patterns like Interrupted/WaitingForInput).
-                            // Idle detection is handled by the timer via check_idle().
                             let events = state.on_fragment(text);
                             for event_name in events {
                                 let hook = serde_json::json!({
@@ -660,7 +458,6 @@ pub async fn attach_session_inner(
                     }
                 }
                 Some("Exit") => {
-                    // Session exited normally — remove from tracked set
                     flush_handle.abort();
                     attached_clone.lock().await.remove(&sid);
                     eprintln!("[attach] exit event session={}", sid);
@@ -682,7 +479,280 @@ pub async fn attach_session_inner(
         }
         eprintln!("[attach] output stream ended for session {}", sid);
     });
+}
 
+fn require_option_mut<'a, T>(value: &'a mut Option<T>, context: &str) -> Result<&'a mut T, String> {
+    value
+        .as_mut()
+        .ok_or_else(|| format!("{context} unavailable"))
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn spawn_session(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+    cwd: String,
+    executable: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    cols: u16,
+    rows: u16,
+) -> Result<(), DaemonCommandError> {
+    let cmd = serde_json::json!({
+        "type": "Spawn",
+        "session_id": session_id,
+        "cwd": cwd,
+        "executable": executable,
+        "args": args,
+        "env": env,
+        "cols": cols,
+        "rows": rows,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = require_option_mut(&mut guard, "daemon client")?;
+    client.send_command(&json).await?;
+
+    // Read response — expect SessionCreated or Error
+    let response = client.read_event().await?;
+    let event: serde_json::Value =
+        serde_json::from_str(&response).map_err(|e| format!("bad response: {}", e))?;
+    match event.get("type").and_then(|t| t.as_str()) {
+        Some("SessionCreated") => Ok(()),
+        Some("Error") => Err(parse_error_event(&event)),
+        _ => Err(DaemonCommandError {
+            message: format!("unexpected spawn response: {}", response),
+            code: None,
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn get_session_recovery_state(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+) -> Result<Option<SessionRecoveryStatePayload>, DaemonCommandError> {
+    let cmd = serde_json::json!({
+        "type": "Snapshot",
+        "session_id": session_id,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = require_option_mut(&mut guard, "daemon client")?;
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+    match parse_snapshot_response(&response) {
+        Ok(snapshot) => Ok(Some(SessionRecoveryStatePayload {
+            serialized: snapshot.vt,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            saved_at: 0,
+            sequence: 0,
+        })),
+        Err(message) if message.code.as_deref() == Some("session_not_found") => Ok(None),
+        Err(message) => Err(message),
+    }
+}
+
+#[tauri::command]
+pub async fn send_input(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+    data: Vec<u8>,
+) -> Result<(), DaemonCommandError> {
+    let cmd = serde_json::json!({
+        "type": "Input",
+        "session_id": session_id,
+        "data": data,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = require_option_mut(&mut guard, "daemon client")?;
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+    parse_ack(&response)
+}
+
+#[tauri::command]
+pub async fn resize_session(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), DaemonCommandError> {
+    let cmd = serde_json::json!({
+        "type": "Resize",
+        "session_id": session_id,
+        "cols": cols,
+        "rows": rows,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = require_option_mut(&mut guard, "daemon client")?;
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+    parse_ack(&response)
+}
+
+#[tauri::command]
+pub async fn signal_session(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+    signal: String,
+) -> Result<(), DaemonCommandError> {
+    let cmd = serde_json::json!({
+        "type": "Signal",
+        "session_id": session_id,
+        "signal": signal,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = require_option_mut(&mut guard, "daemon client")?;
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+    parse_ack(&response)
+}
+
+#[tauri::command]
+pub async fn kill_session(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+) -> Result<(), DaemonCommandError> {
+    let cmd = serde_json::json!({
+        "type": "Kill",
+        "session_id": session_id,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = require_option_mut(&mut guard, "daemon client")?;
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+    parse_ack(&response)
+}
+
+#[tauri::command]
+pub async fn list_sessions(
+    state: tauri::State<'_, DaemonState>,
+) -> Result<Vec<serde_json::Value>, DaemonCommandError> {
+    let cmd = serde_json::json!({ "type": "List" });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = guard.as_mut().unwrap();
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+
+    let event: serde_json::Value =
+        serde_json::from_str(&response).map_err(|e| format!("failed to parse event: {}", e))?;
+
+    match event.get("type").and_then(|t| t.as_str()) {
+        Some("SessionList") => {
+            let sessions = event
+                .get("sessions")
+                .and_then(|s| s.as_array())
+                .cloned()
+                .unwrap_or_default();
+            Ok(sessions)
+        }
+        Some("Error") => Err(parse_error_event(&event)),
+        _ => Err(DaemonCommandError {
+            message: format!("unexpected event: {}", response),
+            code: None,
+        }),
+    }
+}
+
+pub async fn attach_session_inner(
+    app: &tauri::AppHandle,
+    session_id: String,
+    attached: &AttachedSessions,
+    agent_provider: Option<String>,
+) -> Result<(), DaemonCommandError> {
+    eprintln!(
+        "[attach] start session={} provider={:?}",
+        session_id, agent_provider
+    );
+    // Create a dedicated connection for this session's output streaming.
+    // This avoids mixing Output events with command responses.
+    let socket_path = daemon_socket_path();
+    let mut stream_client = DaemonClient::connect(&socket_path).await?;
+
+    // Send Attach command
+    let cmd = serde_json::json!({ "type": "Attach", "session_id": session_id });
+    stream_client
+        .send_command(&serde_json::to_string(&cmd).unwrap())
+        .await?;
+
+    // Read the Ok/Error response
+    let response = stream_client.read_event().await?;
+    let event: serde_json::Value = serde_json::from_str(&response).map_err(|e| e.to_string())?;
+    if let Some("Error") = event.get("type").and_then(|t| t.as_str()) {
+        let error = parse_error_event(&event);
+        eprintln!(
+            "[attach] rejected session={} error={} code={:?}",
+            session_id, error.message, error.code
+        );
+        return Err(error);
+    }
+
+    eprintln!("[attach] acknowledged session={}", session_id);
+    spawn_attached_stream_task(app.clone(), stream_client, session_id, attached.clone(), agent_provider).await;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn attach_session_with_snapshot(
+    pending_streams: tauri::State<'_, PendingAttachedStreams>,
+    session_id: String,
+) -> Result<TerminalSnapshotPayload, DaemonCommandError> {
+    let socket_path = daemon_socket_path();
+    let mut stream_client = DaemonClient::connect(&socket_path).await?;
+    let cmd = serde_json::json!({ "type": "AttachSnapshot", "session_id": session_id });
+    stream_client
+        .send_command(&serde_json::to_string(&cmd).unwrap())
+        .await?;
+
+    let response = stream_client.read_event().await?;
+    let snapshot = parse_snapshot_response(&response)?;
+    pending_streams
+        .lock()
+        .await
+        .insert(session_id.clone(), stream_client);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn resume_session_stream(
+    app: tauri::AppHandle,
+    pending_streams: tauri::State<'_, PendingAttachedStreams>,
+    attached: tauri::State<'_, AttachedSessions>,
+    session_id: String,
+    agent_provider: Option<String>,
+) -> Result<(), DaemonCommandError> {
+    let stream_client = pending_streams
+        .lock()
+        .await
+        .remove(&session_id)
+        .ok_or_else(|| DaemonCommandError {
+            message: format!("pending stream not found for {}", session_id),
+            code: None,
+        })?;
+    spawn_attached_stream_task(
+        app,
+        stream_client,
+        session_id,
+        attached.inner().clone(),
+        agent_provider,
+    )
+    .await;
     Ok(())
 }
 
@@ -692,7 +762,7 @@ pub async fn attach_session(
     attached: tauri::State<'_, AttachedSessions>,
     session_id: String,
     agent_provider: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), DaemonCommandError> {
     attach_session_inner(&app, session_id, &attached, agent_provider).await
 }
 
@@ -701,7 +771,7 @@ pub async fn detach_session(
     state: tauri::State<'_, DaemonState>,
     attached: tauri::State<'_, AttachedSessions>,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<(), DaemonCommandError> {
     attached.lock().await.remove(&session_id);
     let cmd = serde_json::json!({
         "type": "Detach",

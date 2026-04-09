@@ -1,4 +1,5 @@
 import type { SpawnOptions, TerminalOptions } from "./useTerminal";
+import { getAppErrorCode } from "../appError";
 
 export type TerminalRecoveryMode = "attach-only" | "spawn-on-missing";
 export interface ReconnectRedrawPolicy {
@@ -22,10 +23,11 @@ export interface TerminalGeometry {
   rows: number;
 }
 
-const DAEMON_HANDOFF_FAILURE_PREFIX = "session lost during daemon handoff:";
+const SESSION_NOT_FOUND_CODE = "session_not_found";
+const HANDOFF_LOST_CODE = "handoff_lost";
 
-export function isMissingDaemonSessionFailure(message: string): boolean {
-  return message.includes("session not found");
+export function isMissingDaemonSessionFailure(error: unknown): boolean {
+  return getAppErrorCode(error) === SESSION_NOT_FOUND_CODE;
 }
 
 export function getTerminalRecoveryMode(
@@ -145,30 +147,35 @@ export function formatAttachFailureMessage(message: string): string {
   return `\r\n\x1b[31mFailed to reconnect to existing session: ${message}\x1b[0m\r\n`;
 }
 
-export function isDaemonHandoffFailure(message: string): boolean {
-  return message.startsWith(DAEMON_HANDOFF_FAILURE_PREFIX);
+export function isDaemonHandoffFailure(error: unknown): boolean {
+  return getAppErrorCode(error) === HANDOFF_LOST_CODE;
 }
 
 export function shouldRespawnAfterAttachFailure(
-  message: string,
+  error: unknown,
   hasAttachedOnce: boolean,
+  hasRecoveryState: boolean,
   spawnOptions?: SpawnOptions,
   options?: TerminalOptions,
 ): boolean {
-  if (!hasAttachedOnce && isMissingDaemonSessionFailure(message)) {
+  if (
+    isMissingDaemonSessionFailure(error) &&
+    !hasAttachedOnce &&
+    !hasRecoveryState
+  ) {
     return false;
   }
   return (
     getTerminalRecoveryMode(spawnOptions, options) === "attach-only" &&
-    (isDaemonHandoffFailure(message) || isMissingDaemonSessionFailure(message))
+    (isDaemonHandoffFailure(error) || isMissingDaemonSessionFailure(error))
   );
 }
 
 export function getRespawnToastKey(
-  message: string,
+  error: unknown,
   hasRecoveryState: boolean,
 ): string {
-  if (isDaemonHandoffFailure(message)) {
+  if (isDaemonHandoffFailure(error)) {
     return hasRecoveryState
       ? "toasts.daemonHandoffRespawnedWithScrollback"
       : "toasts.daemonHandoffRespawned";
