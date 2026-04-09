@@ -1,4 +1,5 @@
 import { clearCachedTerminalState } from "../composables/terminalStateCache";
+import { getAppErrorCode } from "../appError";
 
 export function isTeardownSessionId(sessionId: string): boolean {
   return sessionId.startsWith("td-");
@@ -9,25 +10,11 @@ export function shouldClearCachedTerminalStateOnSessionExit(sessionId: string): 
 }
 
 export function isMissingDaemonSessionError(error: unknown): boolean {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
-
-  return message.includes("session not found");
+  return getAppErrorCode(error) === "session_not_found";
 }
 
 export function isSessionAlreadyExistsError(error: unknown): boolean {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
-
-  return message.includes("session already exists");
+  return getAppErrorCode(error) === "session_already_exists";
 }
 
 export function reportCloseSessionError(

@@ -222,27 +222,6 @@ const preselectedBlockerIds = computedAsync(async () => {
   return blockers.map((b) => b.id);
 }, []);
 
-// Active session IDs — drives terminal cleanup in TerminalTabs.
-// When a task is closed (stage='done'), its ID leaves this set and
-// TerminalTabs unmounts the stale TerminalView reactively.
-const activeSessionIds = computed(() =>
-  new Set(store.items.filter((i) => i.stage !== "done").map((i) => i.id))
-);
-
-const activePtySessions = computed(() =>
-  store.items
-    .filter((i) => i.stage !== "done" && (i.agent_type ?? "pty") === "pty")
-    .map((i) => {
-      const repo = store.repos.find((r) => r.id === i.repo_id);
-      return {
-        sessionId: i.id,
-        worktreePath: i.branch && repo ? `${repo.path}/.kanna-worktrees/${i.branch}` : undefined,
-        prompt: i.prompt || "",
-        agentProvider: i.agent_provider,
-      };
-    })
-);
-
 // Build a map of blocked item ID → blocker names for the sidebar
 const sidebarBlockerNames = computedAsync(async () => {
   const blockedItems = store.items.filter((i) => hasTag(i, "blocked"));
@@ -884,8 +863,6 @@ onMounted(async () => {
       ref="mainPanelRef"
       v-if="!isMobile || store.selectedItemId"
       :item="store.currentItem"
-      :active-session-ids="activeSessionIds"
-      :active-pty-sessions="activePtySessions"
       :repo-path="store.selectedRepo?.path"
       :spawn-pty-session="store.spawnPtySession"
       :maximized="maximized"

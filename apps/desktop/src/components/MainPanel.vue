@@ -1,19 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { AgentProvider, PipelineItem } from "@kanna/db";
+import type { PipelineItem } from "@kanna/db";
 import { invoke } from "../invoke";
 import TaskHeader from "./TaskHeader.vue";
 import TerminalTabs from "./TerminalTabs.vue";
 
 const props = defineProps<{
   item: PipelineItem | null;
-  activeSessionIds: Set<string>;
-  activePtySessions?: Array<{
-    sessionId: string;
-    worktreePath?: string;
-    prompt?: string;
-    agentProvider?: AgentProvider;
-  }>;
   repoPath?: string;
   spawnPtySession?: (sessionId: string, cwd: string, prompt: string, cols: number, rows: number) => Promise<void>;
   maximized?: boolean;
@@ -123,8 +116,6 @@ async function copyCommand(agent: string) {
       <template v-else>
         <TerminalTabs
           :session-id="item.id"
-          :active-session-ids="activeSessionIds"
-          :active-pty-sessions="activePtySessions"
           :agent-type="item.agent_type || 'pty'"
           :agent-provider="item.agent_provider"
           :repo-path="repoPath"

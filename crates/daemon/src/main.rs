@@ -133,11 +133,21 @@ fn handoff_loss_message(reason: impl Into<String>) -> String {
     format!("session lost during daemon handoff: {}", reason.into())
 }
 
+fn error_event(
+    code: Option<protocol::ErrorCode>,
+    message: impl Into<String>,
+) -> protocol::Event {
+    protocol::Event::Error {
+        code,
+        message: message.into(),
+    }
+}
+
 fn parse_handoff_response(line: &str) -> Result<Vec<protocol::HandoffSession>, String> {
     if let Ok(event) = serde_json::from_str::<Event>(line) {
         return match event {
             Event::HandoffReady { sessions } => Ok(sessions),
-            Event::Error { message } => Err(message),
+            Event::Error { message, .. } => Err(message),
             other => Err(format!("unexpected response: {:?}", other)),
         };
     }
@@ -626,9 +636,10 @@ async fn handle_connection(
             Some(Command::Observe { session_id }) => {
                 let mgr = sessions.lock().await;
                 if !mgr.contains(&session_id) {
-                    let evt = Event::Error {
-                        message: format!("session not found: {}", session_id),
-                    };
+                    let evt = error_event(
+                        Some(protocol::ErrorCode::SessionNotFound),
+                        format!("session not found: {}", session_id),
+                    );
                     drop(mgr);
                     let _ = write_event(&mut *writer.lock().await, &evt).await;
                     continue;
@@ -711,9 +722,10 @@ async fn handle_command(
             let mut mgr = sessions.lock().await;
             if mgr.contains(&session_id) {
                 log::warn!("[spawn] session already exists: {}", session_id);
-                let evt = Event::Error {
-                    message: format!("session already exists: {}", session_id),
-                };
+                let evt = error_event(
+                    Some(protocol::ErrorCode::SessionAlreadyExists),
+                    format!("session already exists: {}", session_id),
+                );
                 let _ = write_event(&mut *writer.lock().await, &evt).await;
                 return;
             }
@@ -727,9 +739,10 @@ async fn handle_command(
                     let sidecar = match sidecar::TerminalSidecar::new(cols, rows, 10_000) {
                         Ok(sidecar) => sidecar,
                         Err(e) => {
-                            let evt = Event::Error {
-                                message: format!("failed to create terminal sidecar: {}", e),
-                            };
+                            let evt = error_event(
+                                Some(protocol::ErrorCode::SidecarInitFailed),
+                                format!("failed to create terminal sidecar: {}", e),
+                            );
                             let _ = write_event(&mut *writer.lock().await, &evt).await;
                             return;
                         }
@@ -796,9 +809,10 @@ async fn handle_command(
                     let _ = write_event(&mut *writer.lock().await, &evt).await;
                 }
                 Err(e) => {
-                    let evt = Event::Error {
-                        message: format!("failed to spawn PTY: {}", e),
-                    };
+                    let evt = error_event(
+                        Some(protocol::ErrorCode::PtySpawnFailed),
+                        format!("failed to spawn PTY: {}", e),
+                    );
                     let _ = write_event(&mut *writer.lock().await, &evt).await;
                 }
             }
@@ -809,10 +823,14 @@ async fn handle_command(
             let mut mgr = sessions.lock().await;
             if !mgr.contains(&session_id) {
                 let lost_message = lost_handoff_sessions.lock().await.get(&session_id).cloned();
-                let evt = Event::Error {
-                    message: lost_message
-                        .unwrap_or_else(|| format!("session not found: {}", session_id)),
-                };
+                let evt = error_event(
+                    Some(if lost_message.is_some() {
+                        protocol::ErrorCode::HandoffLost
+                    } else {
+                        protocol::ErrorCode::SessionNotFound
+                    }),
+                    lost_message.unwrap_or_else(|| format!("session not found: {}", session_id)),
+                );
                 drop(mgr);
                 let _ = write_event(&mut *writer.lock().await, &evt).await;
                 return;
@@ -876,18 +894,20 @@ async fn handle_command(
                                 (reader, stream_control, recovery_cols, recovery_rows)
                             }
                             Err(e) => {
-                                let evt = Event::Error {
-                                    message: format!("failed to clone PTY reader: {}", e),
-                                };
+                                let evt = error_event(
+                                    Some(protocol::ErrorCode::PtyCloneFailed),
+                                    format!("failed to clone PTY reader: {}", e),
+                                );
                                 drop(mgr);
                                 let _ = write_event(&mut *writer.lock().await, &evt).await;
                                 return;
                             }
                         },
                         None => {
-                            let evt = Event::Error {
-                                message: format!("session not found: {}", session_id),
-                            };
+                            let evt = error_event(
+                                Some(protocol::ErrorCode::SessionNotFound),
+                                format!("session not found: {}", session_id),
+                            );
                             drop(mgr);
                             let _ = write_event(&mut *writer.lock().await, &evt).await;
                             return;
@@ -974,9 +994,10 @@ async fn handle_command(
 
                 Event::Ok
             } else {
-                Event::Error {
-                    message: format!("session not found: {}", session_id),
-                }
+                error_event(
+                    Some(protocol::ErrorCode::SessionNotFound),
+                    format!("session not found: {}", session_id),
+                )
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -990,21 +1011,157 @@ async fn handle_command(
                         let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
                     }
                     Err(e) => {
-                        let evt = Event::Error {
-                            message: format!("write error: {}", e),
-                        };
+                        let evt = error_event(
+                            Some(protocol::ErrorCode::WriteFailed),
+                            format!("write error: {}", e),
+                        );
                         drop(mgr);
                         let _ = write_event(&mut *writer.lock().await, &evt).await;
                     }
                 },
                 None => {
-                    let evt = Event::Error {
-                        message: format!("session not found: {}", session_id),
-                    };
+                    let evt = error_event(
+                        Some(protocol::ErrorCode::SessionNotFound),
+                        format!("session not found: {}", session_id),
+                    );
                     drop(mgr);
                     let _ = write_event(&mut *writer.lock().await, &evt).await;
                 }
             }
+        }
+
+        Command::AttachSnapshot { session_id } => {
+            log::info!("[attach_snapshot] session={}", session_id);
+            let mut mgr = sessions.lock().await;
+            if !mgr.contains(&session_id) {
+                let lost_message = lost_handoff_sessions.lock().await.get(&session_id).cloned();
+                let evt = error_event(
+                    Some(if lost_message.is_some() {
+                        protocol::ErrorCode::HandoffLost
+                    } else {
+                        protocol::ErrorCode::SessionNotFound
+                    }),
+                    lost_message.unwrap_or_else(|| format!("session not found: {}", session_id)),
+                );
+                drop(mgr);
+                let _ = write_event(&mut *writer.lock().await, &evt).await;
+                return;
+            }
+
+            let is_streaming = session_writers.lock().await.contains_key(&session_id);
+            if !is_streaming {
+                log::info!(
+                    "[attach_snapshot] starting stream_output on first attach for adopted/non-streaming session {}",
+                    session_id
+                );
+                let (pty_reader, stream_control, recovery_cols, recovery_rows) =
+                    match mgr.sessions.get_mut(&session_id) {
+                        Some(session) => match session.pty.try_clone_reader() {
+                            Ok(reader) => {
+                                let stream_control = StreamControl::new();
+                                let recovery_cols = session.pty.cols();
+                                let recovery_rows = session.pty.rows();
+                                session.stream_control = Some(stream_control.clone());
+                                (reader, stream_control, recovery_cols, recovery_rows)
+                            }
+                            Err(e) => {
+                                let evt = error_event(
+                                    Some(protocol::ErrorCode::PtyCloneFailed),
+                                    format!("failed to clone PTY reader: {}", e),
+                                );
+                                drop(mgr);
+                                let _ = write_event(&mut *writer.lock().await, &evt).await;
+                                return;
+                            }
+                        },
+                        None => {
+                            let evt = error_event(
+                                Some(protocol::ErrorCode::SessionNotFound),
+                                format!("session not found: {}", session_id),
+                            );
+                            drop(mgr);
+                            let _ = write_event(&mut *writer.lock().await, &evt).await;
+                            return;
+                        }
+                    };
+
+                drop(mgr);
+
+                let resume_from_disk = recovery_manager.has_persisted_snapshot(&session_id);
+                if let Err(error) = recovery_manager
+                    .start_session(&session_id, recovery_cols, recovery_rows, resume_from_disk)
+                    .await
+                {
+                    log::warn!(
+                        "[recovery] failed to start mirrored adopted session {} (resume_from_disk={}): {}",
+                        session_id,
+                        resume_from_disk,
+                        error
+                    );
+                }
+
+                let writers_for_stream = session_writers.clone();
+                let sizes_for_stream = session_sizes.clone();
+                let observers_for_stream = session_observers.clone();
+                let recovery_for_stream = recovery_manager.clone();
+                let no_buffer: PreAttachBuffer = Arc::new(Mutex::new(None));
+                let sessions_for_stream = sessions.clone();
+                let session_id_for_stream = session_id.clone();
+                tokio::task::spawn_blocking(move || {
+                    stream_output(
+                        session_id_for_stream,
+                        pty_reader,
+                        stream_control,
+                        writers_for_stream,
+                        no_buffer,
+                        sessions_for_stream,
+                        sizes_for_stream,
+                        observers_for_stream,
+                        recovery_for_stream,
+                    );
+                });
+
+                mgr = sessions.lock().await;
+            }
+
+            let snapshot = match mgr.sessions.get_mut(&session_id) {
+                Some(session) => match session.sidecar.snapshot() {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        log::warn!(
+                            "[attach_snapshot] snapshot not ready for session {}: {}; falling back to blank snapshot",
+                            session_id,
+                            error
+                        );
+                        blank_snapshot(session.pty.rows(), session.pty.cols())
+                    }
+                },
+                None => {
+                    let evt = error_event(
+                        Some(protocol::ErrorCode::SessionNotFound),
+                        format!("session not found: {}", session_id),
+                    );
+                    drop(mgr);
+                    let _ = write_event(&mut *writer.lock().await, &evt).await;
+                    return;
+                }
+            };
+
+            if let Some(buffer) = pre_attach_buffers.lock().await.remove(&session_id) {
+                let _ = buffer.lock().await.take();
+            }
+
+            {
+                let mut writers = session_writers.lock().await;
+                writers.entry(session_id.clone()).or_default().push(writer.clone());
+                let evt = Event::Snapshot {
+                    session_id: session_id.clone(),
+                    snapshot,
+                };
+                let _ = write_event(&mut *writer.lock().await, &evt).await;
+            }
+
+            drop(mgr);
         }
 
         Command::Resize {
@@ -1029,9 +1186,7 @@ async fn handle_command(
             let success = result.is_ok();
             let evt = match result {
                 Ok(_) => Event::Ok,
-                Err(e) => Event::Error {
-                    message: e.to_string(),
-                },
+                Err(e) => error_event(None, e.to_string()),
             };
             if success {
                 recovery_manager
@@ -1051,9 +1206,10 @@ async fn handle_command(
                 "SIGKILL" => libc::SIGKILL,
                 "SIGWINCH" => libc::SIGWINCH,
                 other => {
-                    let evt = Event::Error {
-                        message: format!("unknown signal: {}", other),
-                    };
+                    let evt = error_event(
+                        Some(protocol::ErrorCode::UnknownSignal),
+                        format!("unknown signal: {}", other),
+                    );
                     let _ = write_event(&mut *writer.lock().await, &evt).await;
                     return;
                 }
@@ -1063,9 +1219,7 @@ async fn handle_command(
             drop(mgr);
             let evt = match result {
                 Ok(_) => Event::Ok,
-                Err(e) => Event::Error {
-                    message: e.to_string(),
-                },
+                Err(e) => error_event(None, e.to_string()),
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -1093,9 +1247,7 @@ async fn handle_command(
             }
             let evt = match result {
                 Ok(_) => Event::Ok,
-                Err(e) => Event::Error {
-                    message: e.to_string(),
-                },
+                Err(e) => error_event(None, e.to_string()),
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -1128,10 +1280,11 @@ async fn handle_command(
                         snapshot: recovery_snapshot_to_terminal_snapshot(snapshot),
                     }
                 }
-                Ok(None) => Event::Error {
-                    message: format!("session not found: {}", session_id),
-                },
-                Err(e) => Event::Error { message: e },
+                Ok(None) => error_event(
+                    Some(protocol::ErrorCode::SessionNotFound),
+                    format!("session not found: {}", session_id),
+                ),
+                Err(e) => error_event(None, e),
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -1178,12 +1331,13 @@ async fn handle_handoff(
 
     if version != HANDOFF_VERSION && version != HANDOFF_COMPAT_VERSION {
         log::info!("[handoff] version mismatch, rejecting");
-        let evt = Event::Error {
-            message: format!(
+        let evt = error_event(
+            Some(protocol::ErrorCode::HandoffVersionMismatch),
+            format!(
                 "handoff version mismatch: expected {} or {}, got {}",
                 HANDOFF_VERSION, HANDOFF_COMPAT_VERSION, version
             ),
-        };
+        );
         let _ = write_event(&mut *writer.lock().await, &evt).await;
         return;
     }

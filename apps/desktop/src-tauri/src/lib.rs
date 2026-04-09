@@ -2,7 +2,7 @@ mod commands;
 mod daemon_client;
 
 use commands::agent::AgentState;
-use commands::daemon::{AttachedSessions, DaemonState};
+use commands::daemon::{AttachedSessions, DaemonState, PendingAttachedStreams};
 use daemon_client::DaemonClient;
 use dashmap::DashMap;
 use std::path::PathBuf;
@@ -491,6 +491,10 @@ pub fn run() {
         .manage(
             Arc::new(Mutex::new(std::collections::HashSet::<String>::new())) as AttachedSessions,
         )
+        .manage(
+            Arc::new(Mutex::new(std::collections::HashMap::<String, DaemonClient>::new()))
+                as PendingAttachedStreams,
+        )
         .manage(Arc::new(Mutex::new(None)) as PipelineSocketState)
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -581,6 +585,8 @@ pub fn run() {
             commands::daemon::list_sessions,
             commands::daemon::get_session_recovery_state,
             commands::daemon::attach_session,
+            commands::daemon::attach_session_with_snapshot,
+            commands::daemon::resume_session_stream,
             commands::daemon::detach_session,
             // Git commands
             commands::git::git_diff,

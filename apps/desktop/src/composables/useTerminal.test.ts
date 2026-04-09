@@ -1,6 +1,7 @@
 import { defineComponent, h } from "vue";
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AppError } from "../appError";
 
 const invokeMock = vi.fn();
 const listenMock = vi.fn();
@@ -137,6 +138,17 @@ describe("useTerminal", () => {
       };
     });
     invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored scrollback",
+        };
+      }
       if (cmd === "get_session_recovery_state") {
         return {
           serialized: "restored scrollback",
@@ -160,19 +172,20 @@ describe("useTerminal", () => {
     vi.clearAllMocks();
   });
 
-  it("restores recovery state before attaching the live session", async () => {
+  it("attaches the live session before issuing an initial resize", async () => {
     const callOrder: string[] = [];
     const { useTerminal } = await import("./useTerminal");
-
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
-      if (cmd === "get_session_recovery_state") {
+      if (cmd === "attach_session_with_snapshot") {
         return {
-          serialized: "restored scrollback",
-          cols: 80,
+          version: 1,
           rows: 24,
-          savedAt: 1,
-          sequence: 7,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored scrollback",
         };
       }
       return null;
@@ -211,29 +224,33 @@ describe("useTerminal", () => {
     const startPromise = wrapper.vm.startListening();
     const terminal = terminals[0];
     expect(terminal).toBeDefined();
-
     for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-
-    expect(callOrder).toContain("get_session_recovery_state");
-    expect(callOrder).not.toContain("attach_session");
-    expect(terminal.reset).toHaveBeenCalledTimes(1);
-    expect(terminal.write).toHaveBeenCalledWith("restored scrollback", expect.any(Function));
-
-    terminal.flushNextStringWrite();
+    let startSettled = false;
+    startPromise.finally(() => {
+      startSettled = true;
+    });
+    for (let attempt = 0; attempt < 50 && !startSettled; attempt += 1) {
+      while (terminal.pendingStringWrites.length > 0) {
+        terminal.flushNextStringWrite();
+        await Promise.resolve();
+      }
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
     await startPromise;
 
     expect(callOrder).toEqual([
-      "get_session_recovery_state",
-      "attach_session",
+      "attach_session_with_snapshot",
       "resize_session",
-      "resize_session",
+      "resume_session_stream",
     ]);
+    expect(terminal.reset).toHaveBeenCalledTimes(1);
   });
 
-  it("does not respawn a task terminal when the initial attach races session creation", async () => {
+  it("respawns a task terminal when scrollback exists but the PTY is gone", async () => {
     const spawnFn = vi.fn(async () => {});
     const { useTerminal } = await import("./useTerminal");
 
@@ -247,11 +264,19 @@ describe("useTerminal", () => {
           sequence: 7,
         };
       }
-      if (cmd === "attach_session") {
+      if (cmd === "attach_session_with_snapshot") {
         if (spawnFn.mock.calls.length === 0) {
-          throw new Error("session not found: session-1");
+          throw new AppError("session not found: session-1", "session_not_found");
         }
-        return null;
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored scrollback",
+        };
       }
       return null;
     });
@@ -295,12 +320,33 @@ describe("useTerminal", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    terminal.flushNextStringWrite();
-    await startPromise;
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+    void startPromise;
 
+    for (let attempt = 0; attempt < 20 && (spawnFn.mock.calls.length === 0 || warningToastMock.mock.calls.length === 0); attempt += 1) {
+      while (terminal.pendingStringWrites.length > 0) {
+        terminal.flushNextStringWrite();
+        await Promise.resolve();
+      }
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
     expect(errorToastMock).not.toHaveBeenCalled();
-    expect(spawnFn).not.toHaveBeenCalled();
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
+    expect(terminal.write).toHaveBeenCalledWith("restored scrollback", expect.any(Function));
+    expect(
+      terminal.write.mock.calls.some(
+        ([data]) =>
+          typeof data === "string" &&
+          data.includes("Failed to reconnect to existing session"),
+      ),
+    ).toBe(false);
   });
 
   it("spawns a shell terminal when no pre-warmed session exists", async () => {
@@ -377,15 +423,31 @@ describe("useTerminal", () => {
           sequence: 7,
         };
       }
-      if (cmd === "attach_session") {
+      if (cmd === "attach_session_with_snapshot") {
         attachCount += 1;
         if (attachCount === 1) {
-          return null;
+          return {
+            version: 1,
+            rows: 24,
+            cols: 80,
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            vt: "restored scrollback",
+          };
         }
         if (!spawnCompleted) {
-          throw new Error("session not found: session-1");
+          throw new AppError("session not found: session-1", "session_not_found");
         }
-        return null;
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored scrollback",
+        };
       }
       return null;
     });
@@ -429,7 +491,10 @@ describe("useTerminal", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    terminal.flushNextStringWrite();
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
     await startPromise;
 
     const streamLostListeners = eventListeners.get("session_stream_lost") ?? [];
@@ -465,28 +530,29 @@ describe("useTerminal", () => {
 
     resolveSpawn?.();
 
-    for (let attempt = 0; attempt < 10 && invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session").length < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 10 && invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot").length < 3; attempt += 1) {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
     expect(spawnFn).toHaveBeenCalledTimes(1);
-    expect(errorToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
+    expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
   });
 
-  it("applies Copilot recovery before attach and only performs a single resize", async () => {
+  it("attaches Copilot sessions without replaying recovery state on first mount", async () => {
     const callOrder: string[] = [];
     const { useTerminal } = await import("./useTerminal");
-
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
-      if (cmd === "get_session_recovery_state") {
+      if (cmd === "attach_session_with_snapshot") {
         return {
-          serialized: "restored copilot scrollback",
-          cols: 80,
+          version: 1,
           rows: 24,
-          savedAt: 1,
-          sequence: 9,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored copilot scrollback",
         };
       }
       return null;
@@ -525,25 +591,22 @@ describe("useTerminal", () => {
     const startPromise = wrapper.vm.startListening();
     const terminal = terminals[0];
     expect(terminal).toBeDefined();
-
     for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-
-    expect(callOrder).toContain("get_session_recovery_state");
-    expect(callOrder).not.toContain("attach_session");
-    expect(terminal.reset).toHaveBeenCalledTimes(1);
-    expect(terminal.write).toHaveBeenCalledWith("restored copilot scrollback", expect.any(Function));
-
-    terminal.flushNextStringWrite();
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
     await startPromise;
 
     expect(callOrder).toEqual([
-      "get_session_recovery_state",
-      "attach_session",
+      "attach_session_with_snapshot",
       "resize_session",
+      "resume_session_stream",
     ]);
+    expect(terminal.reset).toHaveBeenCalledTimes(1);
   });
 
   it("reconnects immediately after session_stream_lost for task terminals", async () => {
@@ -552,6 +615,17 @@ describe("useTerminal", () => {
 
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored copilot scrollback",
+        };
+      }
       if (cmd === "get_session_recovery_state") {
         return {
           serialized: "restored copilot scrollback",
@@ -603,13 +677,16 @@ describe("useTerminal", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    terminal.flushNextStringWrite();
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
     await startPromise;
 
     expect(callOrder).toEqual([
-      "get_session_recovery_state",
-      "attach_session",
+      "attach_session_with_snapshot",
       "resize_session",
+      "resume_session_stream",
     ]);
 
     const streamLostListeners = eventListeners.get("session_stream_lost") ?? [];
@@ -631,34 +708,139 @@ describe("useTerminal", () => {
     }
 
     expect(callOrder).toEqual([
-      "get_session_recovery_state",
-      "attach_session",
+      "attach_session_with_snapshot",
       "resize_session",
-      "get_session_recovery_state",
-      "attach_session",
+      "resume_session_stream",
+      "attach_session_with_snapshot",
       "resize_session",
+      "resume_session_stream",
     ]);
   });
 
-  it("keeps the restored screen when reattach snapshot fetch fails during daemon turnover", async () => {
+  it("marks the terminal detached after session_exit so ensureConnected rechecks the daemon", async () => {
     const callOrder: string[] = [];
     const { useTerminal } = await import("./useTerminal");
-    let recoveryFetchCount = 0;
+    let resizeCount = 0;
 
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored scrollback",
+        };
+      }
       if (cmd === "get_session_recovery_state") {
-        recoveryFetchCount += 1;
-        if (recoveryFetchCount === 1) {
-          return {
-            serialized: "restored copilot scrollback",
-            cols: 80,
-            rows: 24,
-            savedAt: 1,
-            sequence: 11,
-          };
+        return {
+          serialized: "restored scrollback",
+          cols: 80,
+          rows: 24,
+          savedAt: 1,
+          sequence: 12,
+        };
+      }
+      if (cmd === "resize_session") {
+        resizeCount += 1;
+        if (resizeCount === 2) {
+          throw new AppError("session not found: session-1", "session_not_found");
         }
-        throw new Error("failed to write command: Broken pipe (os error 32)");
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening, ensureConnected } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "hello",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "copilot",
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening, ensureConnected };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+    await startPromise;
+
+    const exitListeners = eventListeners.get("session_exit") ?? [];
+    expect(exitListeners).toHaveLength(1);
+    exitListeners[0]({ payload: { session_id: "session-1", code: 0 } });
+
+    const ensurePromise = wrapper.vm.ensureConnected();
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      while (terminal.pendingStringWrites.length > 0) {
+        terminal.flushNextStringWrite();
+        await Promise.resolve();
+      }
+      if (callOrder.length >= 6) break;
+    }
+
+    await ensurePromise;
+
+    expect(callOrder).toEqual([
+      "attach_session_with_snapshot",
+      "resize_session",
+      "resume_session_stream",
+      "attach_session_with_snapshot",
+      "resize_session",
+      "resume_session_stream",
+    ]);
+  });
+
+  it("re-attaches during daemon turnover without depending on snapshot replay", async () => {
+    const callOrder: string[] = [];
+    const { useTerminal } = await import("./useTerminal");
+    invokeMock.mockImplementation(async (cmd: string) => {
+      callOrder.push(cmd);
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored copilot scrollback",
+        };
       }
       return null;
     });
@@ -696,13 +878,14 @@ describe("useTerminal", () => {
     const startPromise = wrapper.vm.startListening();
     const terminal = terminals[0];
     expect(terminal).toBeDefined();
-
     for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-
-    terminal.flushNextStringWrite();
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
     await startPromise;
     expect(terminal.reset).toHaveBeenCalledTimes(1);
 
@@ -711,18 +894,22 @@ describe("useTerminal", () => {
     streamLostListeners[0]({ payload: { session_id: "session-1" } });
 
     for (let attempt = 0; attempt < 10 && callOrder.length < 6; attempt += 1) {
+      while (terminal.pendingStringWrites.length > 0) {
+        terminal.flushNextStringWrite();
+        await Promise.resolve();
+      }
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
     expect(callOrder).toEqual([
-      "get_session_recovery_state",
-      "attach_session",
+      "attach_session_with_snapshot",
       "resize_session",
-      "get_session_recovery_state",
-      "attach_session",
+      "resume_session_stream",
+      "attach_session_with_snapshot",
       "resize_session",
+      "resume_session_stream",
     ]);
-    expect(terminal.reset).toHaveBeenCalledTimes(1);
+    expect(terminal.reset).toHaveBeenCalledTimes(2);
   });
 });

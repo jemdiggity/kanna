@@ -1204,17 +1204,10 @@ export const useKannaStore = defineStore("kanna", () => {
         }
       } catch (e) { console.error("[store] custom task teardown lookup failed:", e); }
     }
-    try {
-      const configContent = await invoke<string>("read_text_file", {
-        path: `${repo.path}/.kanna/config.json`,
-      });
-      if (configContent) {
-        const repoConfig = parseRepoConfig(configContent);
-        if (repoConfig.teardown?.length) {
-          cmds.push(...repoConfig.teardown);
-        }
-      }
-    } catch (e) { console.error("[store] repo teardown lookup failed:", e); }
+    const repoConfig = await readRepoConfig(repo.path);
+    if (repoConfig.teardown?.length) {
+      cmds.push(...repoConfig.teardown);
+    }
     return cmds;
   }
 

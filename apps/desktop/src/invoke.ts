@@ -1,6 +1,17 @@
 import { isTauri, mockInvoke } from "./tauri-mock";
+import { normalizeAppError } from "./appError";
 
-export const invoke: <T = any>(cmd: string, args?: Record<string, unknown>) => Promise<T> =
-  isTauri
-    ? (await import("@tauri-apps/api/core")).invoke
-    : (cmd: string, args?: any) => Promise.resolve(mockInvoke(cmd, args));
+const tauriInvoke = isTauri
+  ? (await import("@tauri-apps/api/core")).invoke
+  : (cmd: string, args?: Record<string, unknown>) => Promise.resolve(mockInvoke(cmd, args));
+
+export async function invoke<T = unknown>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  try {
+    return await tauriInvoke<T>(cmd, args);
+  } catch (error) {
+    throw normalizeAppError(error);
+  }
+}
