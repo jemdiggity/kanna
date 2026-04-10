@@ -6,14 +6,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import DiffView from "../DiffView.vue";
 import { clearContextShortcuts, resetContext } from "../../composables/useShortcutContext";
 
-const { invokeMock, setLanguageOverrideMock, renderMock } = vi.hoisted(() => ({
-  invokeMock: vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(),
-  setLanguageOverrideMock: vi.fn((fileMeta) => fileMeta),
-  renderMock: vi.fn(),
+const invokeMock = vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>();
+const setLanguageOverrideMock = vi.fn((fileMeta: { [key: string]: unknown }, lang: string) => ({
+  ...fileMeta,
+  languageOverride: lang,
 }));
+const renderMock = vi.fn();
 
 vi.mock("../../invoke", () => ({
-  invoke: invokeMock,
+  invoke: (...args: [string, Record<string, unknown> | undefined]) => invokeMock(...args),
 }));
 
 vi.mock("vue-i18n", () => ({
@@ -35,9 +36,9 @@ vi.mock("@pierre/diffs", () => ({
     },
   ]),
   FileDiff: class {
-    render = renderMock;
+    render = (...args: [Record<string, unknown>]) => renderMock(...args);
   },
-  setLanguageOverride: setLanguageOverrideMock,
+  setLanguageOverride: (...args: [Record<string, unknown>, string]) => setLanguageOverrideMock(...args),
 }));
 
 vi.mock("@pierre/diffs/worker", () => ({
@@ -88,6 +89,12 @@ describe("DiffView", () => {
       }),
       "python"
     );
+    const renderArg = renderMock.mock.calls.at(-1)?.[0];
+    expect(renderArg?.fileDiff).toMatchObject({
+      oldName: "BUILD.bazel",
+      newName: "BUILD.bazel",
+      languageOverride: "python",
+    });
 
     wrapper.unmount();
   });
