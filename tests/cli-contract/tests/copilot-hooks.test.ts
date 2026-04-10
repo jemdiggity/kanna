@@ -13,6 +13,44 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+function extractFirstJsonObject(text: string): string {
+  const trimmed = text.trim();
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return trimmed.slice(0, index + 1);
+      }
+    }
+  }
+
+  return trimmed;
+}
+
 describe("copilot hooks (.github/hooks/*.json)", () => {
   /**
    * Interactive-mode hook tests (-i flag).
@@ -287,9 +325,8 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       if (exists) {
         const content = await readFile(stdinDump, "utf-8");
         console.log("[copilot hooks] postToolUse stdin:", content.substring(0, 500));
-        // If it fired, the content should be valid JSON
-        const firstLine = content.trim().split("\n")[0];
-        const parsed = JSON.parse(firstLine);
+        // Copilot can emit multiple hook payloads back-to-back in one file.
+        const parsed = JSON.parse(extractFirstJsonObject(content));
         console.log("[copilot hooks] postToolUse keys:", Object.keys(parsed));
       } else {
         console.log("[copilot hooks] postToolUse did NOT fire — copilot may not have used a tool");
