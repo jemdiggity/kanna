@@ -2,6 +2,9 @@
  * W3C WebDriver HTTP client for tauri-plugin-webdriver.
  */
 
+import { writeFile } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { getWebDriverPort } from "./config";
 
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
@@ -98,7 +101,7 @@ export class WebDriverClient {
     const b64: string = res.value;
     if (path) {
       const buf = Buffer.from(b64, "base64");
-      await Bun.write(path, buf);
+      await writeFile(path, buf);
     }
     return b64;
   }
@@ -112,7 +115,7 @@ export class WebDriverClient {
       try {
         return await this.findElement(css);
       } catch {
-        await Bun.sleep(200);
+        await sleep(200);
       }
     }
     throw new Error(`waitForElement("${css}") timed out after ${timeoutMs}ms`);
@@ -132,7 +135,7 @@ export class WebDriverClient {
       } catch {
         // Element might not exist yet
       }
-      await Bun.sleep(200);
+      await sleep(200);
     }
     throw new Error(
       `waitForText("${css}", "${text}") timed out after ${timeoutMs}ms`
@@ -147,7 +150,7 @@ export class WebDriverClient {
     while (Date.now() < deadline) {
       try {
         await this.findElement(css);
-        await Bun.sleep(200);
+        await sleep(200);
       } catch {
         return; // Element not found — success
       }
@@ -168,7 +171,7 @@ export class WebDriverClient {
       } catch {
         // The window may still be booting.
       }
-      await Bun.sleep(200);
+      await sleep(200);
     }
     throw new Error(`waitForAppReady timed out after ${timeoutMs}ms`);
   }
