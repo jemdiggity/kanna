@@ -1,7 +1,5 @@
-import { describe, it, expect, setDefaultTimeout } from "vitest";
+import { describe, it, expect } from "vitest";
 import { runCopilot, runCopilotRaw } from "../helpers/copilot";
-
-setDefaultTimeout(30_000);
 
 describe("copilot CLI flags", () => {
   it("-p produces output and exits", async () => {

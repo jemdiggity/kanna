@@ -1,6 +1,4 @@
-import { describe, it, expect, setDefaultTimeout } from "vitest";
-
-setDefaultTimeout(30_000);
+import { describe, it, expect } from "vitest";
 import { runClaude } from "../helpers/claude";
 
 describe("output format", () => {

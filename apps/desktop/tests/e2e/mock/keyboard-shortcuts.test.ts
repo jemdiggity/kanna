@@ -1,9 +1,7 @@
 import { dirname, resolve } from "path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "vitest";
-
-setDefaultTimeout(30_000);
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod, getVueState } from "../helpers/vue";

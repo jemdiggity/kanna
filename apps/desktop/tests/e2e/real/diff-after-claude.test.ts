@@ -1,12 +1,10 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod } from "../helpers/vue";
 import { dirname, resolve } from "path";
-
-setDefaultTimeout(60_000);
 
 const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../..");
 

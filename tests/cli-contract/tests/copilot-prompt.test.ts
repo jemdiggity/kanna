@@ -1,7 +1,5 @@
-import { describe, it, expect, setDefaultTimeout } from "vitest";
+import { describe, it, expect } from "vitest";
 import { runCopilotRaw } from "../helpers/copilot";
-
-setDefaultTimeout(30_000);
 
 /**
  * Test the different ways to pass prompts to copilot CLI.

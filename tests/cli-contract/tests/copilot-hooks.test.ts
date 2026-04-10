@@ -1,10 +1,8 @@
-import { describe, it, expect, setDefaultTimeout } from "vitest";
+import { describe, it, expect } from "vitest";
 import { runCopilot, runCopilotInteractive, createHookTestDir } from "../helpers/copilot";
 import { rm, readFile, access } from "fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
-
-setDefaultTimeout(30_000);
 
 async function pathExists(path: string): Promise<boolean> {
   try {

@@ -1,7 +1,5 @@
-import { describe, it, expect, setDefaultTimeout } from "vitest";
+import { describe, it, expect } from "vitest";
 import { runClaude, runClaudeRaw } from "../helpers/claude";
-
-setDefaultTimeout(30_000);
 
 describe("CLI flags", () => {
   it("stream-json produces valid NDJSON", async () => {
