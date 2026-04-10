@@ -4,7 +4,8 @@ import { useI18n } from "vue-i18n";
 import { useLessScroll } from "../composables/useLessScroll";
 import { invoke } from "../invoke";
 import { registerContextShortcuts } from "../composables/useShortcutContext";
-import { FileDiff, parsePatchFiles } from "@pierre/diffs";
+import { FileDiff, parsePatchFiles, setLanguageOverride } from "@pierre/diffs";
+import { isBazelSyntaxPath } from "../utils/syntaxLanguage";
 import {
   getOrCreateWorkerPoolSingleton,
   type WorkerPoolManager,
@@ -167,7 +168,17 @@ async function renderDiff(patch: string) {
   cleanupInstance();
 
   // Render each file diff
-  for (const fileMeta of allFiles) {
+  for (const rawFileMeta of allFiles) {
+    const displayPath =
+      rawFileMeta.newName ||
+      rawFileMeta.oldName ||
+      rawFileMeta.fileName ||
+      "";
+
+    const fileMeta = isBazelSyntaxPath(displayPath)
+      ? setLanguageOverride(rawFileMeta, "python")
+      : rawFileMeta;
+
     const wrapper = document.createElement("div");
     wrapper.className = "diff-file";
     containerRef.value.appendChild(wrapper);
