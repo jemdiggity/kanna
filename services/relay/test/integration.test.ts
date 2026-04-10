@@ -1,3 +1,5 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import WebSocket from "ws";
 
@@ -94,13 +96,11 @@ function closeAndWait(ws: WebSocket): Promise<void> {
 }
 
 describe("Relay integration", () => {
-  let relayProcess: ReturnType<typeof import("child_process").spawn> | null =
-    null;
+  let relayProcess: ChildProcessWithoutNullStreams | null = null;
 
   beforeAll(async () => {
-    const { spawn } = await import("child_process");
-    relayProcess = spawn("bun", ["run", "src/index.ts"], {
-      cwd: new URL("..", import.meta.url).pathname,
+    relayProcess = spawn("pnpm", ["exec", "tsx", "src/index.ts"], {
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
       env: { ...process.env, SKIP_AUTH: "true", PORT: String(RELAY_PORT) },
       stdio: "pipe",
     });
