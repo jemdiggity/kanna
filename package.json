@@ -1,7 +1,7 @@
 {
   "name": "kanna",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": ["apps/*", "packages/*", "services/*", "tests/*"],
   "scripts": {
     "build": "turbo build",
     "dev": "./scripts/dev.sh",
