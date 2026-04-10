@@ -76,7 +76,7 @@ The following agents ship with Kanna and can be referenced in any pipeline:
 ## Your Process
 
 1. Ask the user to describe the workflow — what stages it has, what each stage does, whether transitions should be manual or automatic.
-2. Ask about any setup/teardown scripts needed (e.g., `bun install` before starting, `bun test` after completing a stage).
+2. Ask about any setup/teardown scripts needed (e.g., `pnpm install` before starting, `pnpm test` after completing a stage).
 3. Ask any clarifying questions needed to produce a complete pipeline definition.
 4. Write the pipeline JSON to `.kanna/pipelines/{name}.json` in the current repo.
 5. Confirm the file was written and show the user its contents.
