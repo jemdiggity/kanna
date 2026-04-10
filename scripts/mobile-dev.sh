@@ -87,7 +87,7 @@ check_deps() {
   # Ensure relay deps are installed
   if [ ! -d "$RELAY_DIR/node_modules" ]; then
     echo "Installing relay dependencies..."
-    (cd "$RELAY_DIR" && bun install)
+    (cd "$RELAY_DIR" && pnpm install)
   fi
 }
 
@@ -123,7 +123,7 @@ start() {
   # Create tmux session with relay broker
   tmux new-session -d -s "$SESSION" -n relay -c "$RELAY_DIR"
   tmux send-keys -t "$SESSION:relay" \
-    "PORT=${RELAY_PORT} SKIP_AUTH=true bun run dev" Enter
+    "PORT=${RELAY_PORT} SKIP_AUTH=true pnpm run dev" Enter
 
   # Wait for relay to start
   sleep 2
@@ -141,7 +141,7 @@ start() {
   echo "  LAN IP: ${LAN_IP}"
   tmux new-window -t "$SESSION" -n mobile -c "$MOBILE_DIR"
   tmux send-keys -t "$SESSION:mobile" \
-    "KANNA_DEV_PORT=${MOBILE_PORT} KANNA_RELAY_PORT=${RELAY_PORT} bunx tauri ios dev --host ${LAN_IP}" Enter
+    "KANNA_DEV_PORT=${MOBILE_PORT} KANNA_RELAY_PORT=${RELAY_PORT} pnpm exec tauri ios dev --host ${LAN_IP}" Enter
 
   echo "Started tmux session '$SESSION' with 3 windows: relay, server, mobile"
   echo "Attach with: tmux attach -t $SESSION"

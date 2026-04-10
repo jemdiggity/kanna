@@ -130,7 +130,7 @@ start_mobile() {
   # Install relay deps if needed
   if [ ! -d "$ROOT/services/relay/node_modules" ]; then
     echo "Installing relay dependencies..."
-    (cd "$ROOT/services/relay" && bun install)
+    (cd "$ROOT/services/relay" && pnpm install)
   fi
 
   # Generate kanna-server config
@@ -159,7 +159,7 @@ MEOF
   # Window: relay broker
   tmux new-window -t "$SESSION" -n relay -c "$ROOT/services/relay"
   tmux send-keys -t "$SESSION:relay" \
-    "PORT=${RELAY_PORT} SKIP_AUTH=true bun run dev" Enter
+    "PORT=${RELAY_PORT} SKIP_AUTH=true pnpm run dev" Enter
 
   # Wait for relay to start
   sleep 2
@@ -182,7 +182,7 @@ MEOF
   # Window: tauri ios dev
   tmux new-window -t "$SESSION" -n mobile -c "$ROOT/apps/mobile"
   tmux send-keys -t "$SESSION:mobile" \
-    "KANNA_DEV_PORT=${MOBILE_PORT} KANNA_RELAY_PORT=${RELAY_PORT} bunx tauri ios dev" Enter
+    "KANNA_DEV_PORT=${MOBILE_PORT} KANNA_RELAY_PORT=${RELAY_PORT} pnpm exec tauri ios dev" Enter
 }
 
 start() {
@@ -204,7 +204,7 @@ start() {
 
   # Build dev sidecars before tauri dev so externalBin inputs exist and are
   # owned by the dev path instead of beforeBuildCommand.
-  DEV_CMD="bun run build:sidecars && bun tauri dev"
+  DEV_CMD="pnpm run build:sidecars && pnpm exec tauri dev"
   LOCAL_CONF="$ROOT/apps/desktop/src-tauri/tauri.conf.local.json"
   if [ -n "$KANNA_WORKTREE" ] && [ -n "$KANNA_DEV_PORT" ]; then
     cat > "$LOCAL_CONF" <<LOCALEOF
@@ -214,7 +214,7 @@ start() {
   }
 }
 LOCALEOF
-    DEV_CMD="bun run build:sidecars && bun tauri dev --config $LOCAL_CONF"
+    DEV_CMD="pnpm run build:sidecars && pnpm exec tauri dev --config $LOCAL_CONF"
   fi
 
   if [ -n "$EXPORTS" ]; then

@@ -48,17 +48,30 @@ else
   fail "Cargo — comes with Rust, install from https://rustup.rs"
 fi
 
-# Bun
-BUN_REQUIRED="1.3.9"
-if command -v bun &>/dev/null; then
-  bun_ver="$(bun --version)"
-  if printf '%s\n%s\n' "$BUN_REQUIRED" "$bun_ver" | sort -V | head -n1 | grep -qx "$BUN_REQUIRED"; then
-    pass "Bun $bun_ver (>= $BUN_REQUIRED)"
+# Node.js
+NODE_REQUIRED="22.0.0"
+if command -v node &>/dev/null; then
+  node_ver="$(node --version | sed 's/^v//')"
+  if printf '%s\n%s\n' "$NODE_REQUIRED" "$node_ver" | sort -V | head -n1 | grep -qx "$NODE_REQUIRED"; then
+    pass "Node.js $node_ver (>= $NODE_REQUIRED)"
   else
-    fail "Bun $bun_ver is too old — need >= $BUN_REQUIRED. Update with: bun upgrade"
+    fail "Node.js $node_ver is too old — need >= $NODE_REQUIRED. Update from https://nodejs.org/"
   fi
 else
-  fail "Bun — install from https://bun.sh"
+  fail "Node.js — install from https://nodejs.org/"
+fi
+
+# pnpm
+PNPM_REQUIRED="10.8.1"
+if command -v pnpm &>/dev/null; then
+  pnpm_ver="$(pnpm --version)"
+  if printf '%s\n%s\n' "$PNPM_REQUIRED" "$pnpm_ver" | sort -V | head -n1 | grep -qx "$PNPM_REQUIRED"; then
+    pass "pnpm $pnpm_ver (>= $PNPM_REQUIRED)"
+  else
+    fail "pnpm $pnpm_ver is too old — need >= $PNPM_REQUIRED. Update with: corepack prepare pnpm@${PNPM_REQUIRED} --activate"
+  fi
+else
+  fail "pnpm — install with: corepack enable && corepack prepare pnpm@${PNPM_REQUIRED} --activate"
 fi
 
 # Bazelisk / Bazel
@@ -139,9 +152,9 @@ else
   if [ "$FAIL" -gt 0 ]; then
     printf "\n\033[31mFix the issues above before installing dependencies.\033[0m\n"
   else
-    printf "  Installing dependencies with bun...\n"
-    bun install
-    pass "bun install (includes Tauri CLI via @tauri-apps/cli)"
+    printf "  Installing dependencies with pnpm...\n"
+    pnpm install
+    pass "pnpm install (includes Tauri CLI via @tauri-apps/cli)"
   fi
 fi
 
