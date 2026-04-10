@@ -7,6 +7,7 @@ import { useShortcutContext, registerContextShortcuts } from "../composables/use
 import { useInlineSearch } from "../composables/useInlineSearch";
 import { useModalZIndex } from "../composables/useModalZIndex";
 import { macOsTextInputAttrs } from "../utils/textInput";
+import { getSyntaxLanguageForPath } from "../utils/syntaxLanguage";
 
 const { t } = useI18n();
 const { zIndex } = useModalZIndex();
@@ -139,21 +140,6 @@ watch([renderMarkdown, content], async ([shouldRender, raw]) => {
   renderedMarkdown.value = parser.render(raw);
 });
 
-function langFromPath(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() || "";
-  const map: Record<string, string> = {
-    ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
-    vue: "vue", html: "html", css: "css", scss: "scss",
-    json: "json", toml: "toml", yaml: "yaml", yml: "yaml",
-    md: "markdown", rs: "rust", py: "python", rb: "ruby",
-    go: "go", sh: "bash", zsh: "bash", bash: "bash",
-    sql: "sql", swift: "swift", kt: "kotlin", java: "java",
-    c: "c", cpp: "cpp", h: "c", hpp: "cpp",
-    xml: "xml", svg: "xml", graphql: "graphql",
-  };
-  return map[ext] || "text";
-}
-
 async function loadFile() {
   loading.value = true;
   error.value = null;
@@ -163,7 +149,7 @@ async function loadFile() {
     const raw = await invoke<string>("read_text_file", { path: fullPath });
 
     const hl = await getHighlighter();
-    const lang = langFromPath(props.filePath);
+    const lang = getSyntaxLanguageForPath(props.filePath);
 
     try {
       await hl.loadLanguage(lang);
