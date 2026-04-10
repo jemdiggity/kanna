@@ -11,7 +11,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "test": "sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; exec vitest run \"$@\"' --",
+    "test": "sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; exec vitest run src \"$@\"' --",
     "test:e2e": "tsx tests/e2e/run.ts mock/",
     "test:e2e:real": "tsx tests/e2e/run.ts real/",
     "test:e2e:all": "tsx tests/e2e/run.ts"
