@@ -8,14 +8,25 @@ import { getWebDriverBaseUrl, getWebDriverPort } from "./helpers/config";
 const WD_URL = getWebDriverBaseUrl();
 const WD_PORT = getWebDriverPort();
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 const status = await fetch(`${WD_URL}/status`).catch(() => null);
 if (!status?.ok) {
-  console.error(`\n  WebDriver not available on port ${WD_PORT}.`);
-  console.error("  Start the app with:\n");
-  console.error(`    TAURI_WEBDRIVER_PORT=${WD_PORT} KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start\n`);
-  console.error("  Or run:\n");
-  console.error("    bun test:e2e\n");
-  process.exit(1);
+  fail(
+    [
+      `WebDriver not available on port ${WD_PORT}.`,
+      "Start the app with:",
+      `  TAURI_WEBDRIVER_PORT=${WD_PORT} KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start`,
+      "Or run:",
+      "  bun test:e2e",
+    ].join("\n")
+  );
 }
 
 // Quick check that Vue is mounted
@@ -27,8 +38,7 @@ const session = await fetch(`${WD_URL}/session`, {
 
 const sid = session.value?.sessionId;
 if (!sid) {
-  console.error("\n  Failed to create WebDriver session.\n");
-  process.exit(1);
+  fail("Failed to create WebDriver session.");
 }
 
 async function executeSync(script: string): Promise<unknown> {
@@ -54,13 +64,12 @@ while (Date.now() < readyDeadline) {
   } catch {
     // The window may still be booting.
   }
-  await Bun.sleep(200);
+  await sleep(200);
 }
 
 if (!vueReady) {
   await fetch(`${WD_URL}/session/${sid}`, { method: "DELETE" });
-  console.error("\n  Vue app not mounted. Wait for the Tauri window to fully load.\n");
-  process.exit(1);
+  fail("Vue app not mounted. Wait for the Tauri window to fully load.");
 }
 
 // Verify the app is running with a test database — refuse to run tests against production data
@@ -71,8 +80,11 @@ const currentDb = await executeSync(
 await fetch(`${WD_URL}/session/${sid}`, { method: "DELETE" });
 
 if (typeof currentDb !== "string" || !currentDb.includes("test")) {
-  console.error(`\n  REFUSING TO RUN: app is using database "${String(currentDb)}", not a test DB.`);
-  console.error("  Start the app with:\n");
-  console.error(`    TAURI_WEBDRIVER_PORT=${WD_PORT} KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start\n`);
-  process.exit(1);
+  fail(
+    [
+      `REFUSING TO RUN: app is using database "${String(currentDb)}", not a test DB.`,
+      "Start the app with:",
+      `  TAURI_WEBDRIVER_PORT=${WD_PORT} KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start`,
+    ].join("\n")
+  );
 }
