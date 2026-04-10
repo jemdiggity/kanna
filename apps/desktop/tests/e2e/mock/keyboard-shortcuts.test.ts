@@ -1,12 +1,14 @@
-import { resolve } from "path";
-import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
+import { dirname, resolve } from "path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "vitest";
 
 setDefaultTimeout(30_000);
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod, getVueState } from "../helpers/vue";
 
-const TEST_REPO_PATH = resolve(import.meta.dir, "../../../..");
+const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const CTX_SCRIPT = 'window.__KANNA_E2E__.setupState';
 
 describe("keyboard shortcuts", () => {
@@ -36,19 +38,19 @@ describe("keyboard shortcuts", () => {
 
   it("Shift+Cmd+N opens New Task modal", async () => {
     await pressKey("N", { meta: true, shift: true });
-    await Bun.sleep(300);
+    await sleep(300);
     const modal = await client.waitForElement(".modal-overlay", 2000);
     expect(modal).toBeTruthy();
   });
 
   it("Escape closes modal", async () => {
     await pressKey("Escape");
-    await Bun.sleep(500);
+    await sleep(500);
     try {
       await client.findElement(".modal-overlay");
       // Modal still there — close via state
       await client.executeSync(`${CTX_SCRIPT}.showNewTaskModal = false;`);
-      await Bun.sleep(300);
+      await sleep(300);
     } catch {
       // Modal already gone
     }
@@ -70,7 +72,7 @@ describe("keyboard shortcuts", () => {
          .then(function() { ctx.selectedItemId.value = id2; cb("ok"); })
          .catch(function(e) { cb("err:" + e); });`
     );
-    await Bun.sleep(500);
+    await sleep(500);
 
     const items = (await getVueState(client, "items")) as Array<{ id: string }>;
     if (!items || items.length < 2) {
@@ -84,7 +86,7 @@ describe("keyboard shortcuts", () => {
     await client.executeSync(
       `window.__KANNA_E2E__.setupState.navigateItems(1);`
     );
-    await Bun.sleep(200);
+    await sleep(200);
     const afterDown = await getVueState(client, "selectedItemId");
     expect(afterDown).not.toBe(firstSelected);
 

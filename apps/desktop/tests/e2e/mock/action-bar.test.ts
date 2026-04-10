@@ -1,12 +1,14 @@
-import { resolve } from "path";
-import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
+import { dirname, resolve } from "path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "vitest";
 
 setDefaultTimeout(30_000);
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod, getVueState } from "../helpers/vue";
 
-const TEST_REPO_PATH = resolve(import.meta.dir, "../../../..");
+const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 describe("action bar", () => {
   const client = new WebDriverClient();
@@ -55,7 +57,7 @@ describe("action bar", () => {
          .then(function() { cb("ok"); })
          .catch(function(e) { cb("err:" + e); });`
     );
-    await Bun.sleep(300);
+    await sleep(300);
     const sidebarText = await client.executeSync<string>(
       `return document.querySelector(".sidebar")?.textContent || "";`
     );

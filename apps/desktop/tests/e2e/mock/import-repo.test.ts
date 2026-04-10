@@ -1,11 +1,12 @@
-import { resolve } from "path";
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "node:url";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
 import { callVueMethod } from "../helpers/vue";
 
 // Use the kanna-tauri repo itself as a test fixture
-const TEST_REPO_PATH = resolve(import.meta.dir, "../../../..");
+const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const SECOND_REPO_PATH = resolve(TEST_REPO_PATH, "..", "..");
 
 describe("import repo", () => {

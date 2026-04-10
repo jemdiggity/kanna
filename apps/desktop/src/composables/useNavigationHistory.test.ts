@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createNavigationHistory } from "./useNavigationHistory";
 
 describe("useNavigationHistory", () => {
   let nav: ReturnType<typeof createNavigationHistory>;
   let now: number;
-  let dateSpy: ReturnType<typeof spyOn>;
+  let dateSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     now = 10_000;
-    dateSpy = spyOn(Date, "now").mockImplementation(() => now);
+    dateSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
     nav = createNavigationHistory();
   });
 

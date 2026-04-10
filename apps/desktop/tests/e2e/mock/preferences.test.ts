@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase } from "../helpers/reset";
 import { queryDb } from "../helpers/vue";
@@ -37,14 +38,14 @@ describe("preferences", () => {
     await client.executeSync(
       `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));`
     );
-    await Bun.sleep(500);
+    await sleep(500);
     // If still open, close via Vue state
     try {
       await client.findElement(".prefs-panel");
       await client.executeSync(
         `window.__KANNA_E2E__.setupState.showPreferencesPanel = false;`
       );
-      await Bun.sleep(300);
+      await sleep(300);
     } catch {
       // Already closed
     }

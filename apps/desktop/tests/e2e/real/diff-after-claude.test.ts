@@ -1,12 +1,14 @@
-import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod } from "../helpers/vue";
-import { resolve } from "path";
+import { dirname, resolve } from "path";
 
 setDefaultTimeout(60_000);
 
-const TEST_REPO_PATH = resolve(import.meta.dir, "../../../../..");
+const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../..");
 
 describe("diff after claude (real CLI)", () => {
   const client = new WebDriverClient();
@@ -33,7 +35,7 @@ describe("diff after claude (real CLI)", () => {
     await client.waitForText(".sidebar", "In Progress");
 
     // Wait for Claude to finish (process exits)
-    await Bun.sleep(15_000);
+    await sleep(15_000);
 
     // Switch to Diff tab
     const tabs = await client.findElements(".tab");
@@ -45,7 +47,7 @@ describe("diff after claude (real CLI)", () => {
       }
     }
 
-    await Bun.sleep(3000);
+    await sleep(3000);
 
     const diffView = await client.findElement(".diff-view");
     const text = await client.getText(diffView);

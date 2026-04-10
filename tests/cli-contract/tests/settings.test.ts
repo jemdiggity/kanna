@@ -1,8 +1,10 @@
-import { describe, it, expect, setDefaultTimeout } from "bun:test";
+import { describe, it, expect, setDefaultTimeout } from "vitest";
 
 setDefaultTimeout(30_000);
 import { runClaude, runClaudeRaw } from "../helpers/claude";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
+import { once } from "node:events";
+import { spawn } from "node:child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -58,8 +60,12 @@ describe("--settings flag", () => {
     const tmpDir = await mkdtemp(join(tmpdir(), "kanna-test-"));
     await mkdir(join(tmpDir, ".claude"), { recursive: true });
     // Initialize a git repo so Claude recognizes it as a project
-    const { spawn } = await import("bun");
-    await spawn({ cmd: ["git", "init"], cwd: tmpDir, stdout: "ignore", stderr: "ignore" }).exited;
+    const gitInit = spawn("git", ["init"], {
+      cwd: tmpDir,
+      stdio: "ignore",
+    });
+    const [exitCode] = await once(gitInit, "exit");
+    expect(exitCode).toBe(0);
 
     await writeFile(
       join(tmpDir, ".claude", "settings.json"),

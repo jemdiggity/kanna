@@ -1,12 +1,13 @@
-import { resolve } from "path";
-import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "node:url";
+import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "vitest";
 
 setDefaultTimeout(30_000);
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod, getVueState, tauriInvoke } from "../helpers/vue";
 
-const TEST_REPO_PATH = resolve(import.meta.dir, "../../../..");
+const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 describe("diff view", () => {
   const client = new WebDriverClient();

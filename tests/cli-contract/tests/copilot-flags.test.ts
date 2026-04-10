@@ -1,4 +1,4 @@
-import { describe, it, expect, setDefaultTimeout } from "bun:test";
+import { describe, it, expect, setDefaultTimeout } from "vitest";
 import { runCopilot, runCopilotRaw } from "../helpers/copilot";
 
 setDefaultTimeout(30_000);

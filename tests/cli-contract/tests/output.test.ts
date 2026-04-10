@@ -1,4 +1,4 @@
-import { describe, it, expect, setDefaultTimeout } from "bun:test";
+import { describe, it, expect, setDefaultTimeout } from "vitest";
 
 setDefaultTimeout(30_000);
 import { runClaude } from "../helpers/claude";

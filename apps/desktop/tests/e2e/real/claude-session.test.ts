@@ -1,12 +1,14 @@
-import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod } from "../helpers/vue";
-import { resolve } from "path";
+import { dirname, resolve } from "path";
 
 setDefaultTimeout(60_000);
 
-const TEST_REPO_PATH = resolve(import.meta.dir, "../../../../..");
+const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../..");
 
 describe("claude session (real CLI)", () => {
   const client = new WebDriverClient();
@@ -38,7 +40,7 @@ describe("claude session (real CLI)", () => {
     expect(terminal).toBeTruthy();
 
     // Wait for session to exit — the terminal shows "[Process exited with code X]"
-    await Bun.sleep(10_000);
+    await sleep(10_000);
     const termText = await client.executeSync<string>(
       `const el = document.querySelector(".xterm-screen");
        return el ? el.textContent : "";`

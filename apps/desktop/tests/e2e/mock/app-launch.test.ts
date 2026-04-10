@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase } from "../helpers/reset";
 
@@ -10,7 +11,7 @@ describe("app launch", () => {
     await resetDatabase(client);
     // Reload to get fresh UI after reset
     await client.executeSync("location.reload()");
-    await Bun.sleep(1000);
+    await sleep(1000);
   });
 
   afterAll(async () => {

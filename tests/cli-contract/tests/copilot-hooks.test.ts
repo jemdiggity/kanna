@@ -1,9 +1,19 @@
-import { describe, it, expect, setDefaultTimeout } from "bun:test";
+import { describe, it, expect, setDefaultTimeout } from "vitest";
 import { runCopilot, runCopilotInteractive, createHookTestDir } from "../helpers/copilot";
-import { rm, readFile } from "fs/promises";
+import { rm, readFile, access } from "fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
 setDefaultTimeout(30_000);
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe("copilot hooks (.github/hooks/*.json)", () => {
   /**
@@ -34,9 +44,9 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      await Bun.sleep(1500);
-      expect(await Bun.file(startMarker).exists()).toBe(true);
-      expect(await Bun.file(endMarker).exists()).toBe(true);
+      await sleep(1500);
+      expect(await pathExists(startMarker)).toBe(true);
+      expect(await pathExists(endMarker)).toBe(true);
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
       await rm(startMarker, { force: true }).catch(() => {});
@@ -63,7 +73,7 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      await Bun.sleep(1500);
+      await sleep(1500);
 
       const content = await readFile(stdinDump, "utf-8");
       const parsed = JSON.parse(content.trim());
@@ -99,7 +109,7 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      await Bun.sleep(1500);
+      await sleep(1500);
 
       const content = await readFile(stdinDump, "utf-8");
       const parsed = JSON.parse(content.trim());
@@ -138,8 +148,8 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       expect(result.exitCode).toBe(0);
 
       // Give hooks a moment to fire
-      await Bun.sleep(1500);
-      const exists = await Bun.file(markerFile).exists();
+      await sleep(1500);
+      const exists = await pathExists(markerFile);
       expect(exists).toBe(true);
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
@@ -169,8 +179,8 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      await Bun.sleep(1500);
-      expect(await Bun.file(markerFile).exists()).toBe(true);
+      await sleep(1500);
+      expect(await pathExists(markerFile)).toBe(true);
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
       await rm(markerFile, { force: true }).catch(() => {});
@@ -199,7 +209,7 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      await Bun.sleep(1500);
+      await sleep(1500);
 
       const content = await readFile(outputFile, "utf-8");
       expect(content.trim()).toBe("hook-data-456");
@@ -231,7 +241,7 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      await Bun.sleep(1500);
+      await sleep(1500);
 
       const content = await readFile(stdinDump, "utf-8");
       console.log("[copilot hooks] sessionEnd stdin JSON:", content.trim());
@@ -273,9 +283,9 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      await Bun.sleep(1500);
+      await sleep(1500);
 
-      const exists = await Bun.file(stdinDump).exists();
+      const exists = await pathExists(stdinDump);
       if (exists) {
         const content = await readFile(stdinDump, "utf-8");
         console.log("[copilot hooks] postToolUse stdin:", content.substring(0, 500));
@@ -328,10 +338,10 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      await Bun.sleep(1500);
+      await sleep(1500);
 
       // sessionEnd hook should have fired
-      expect(await Bun.file(stopMarker).exists()).toBe(true);
+      expect(await pathExists(stopMarker)).toBe(true);
       const stopContent = await readFile(stopMarker, "utf-8");
       const parsed = JSON.parse(stopContent.trim());
       expect(parsed.event).toBe("sessionEnd");
@@ -346,7 +356,7 @@ describe("copilot hooks (.github/hooks/*.json)", () => {
     // Discovery test: check if personal hooks dir exists and is respected
     const home = process.env.HOME || "";
     const personalHooksDir = join(home, ".copilot", "hooks");
-    const exists = await Bun.file(personalHooksDir).exists().catch(() => false);
+    const exists = await pathExists(personalHooksDir);
     console.log("[copilot hooks] ~/.copilot/hooks/ exists:", exists);
     // This is informational — we don't want to modify the user's personal hooks
   });

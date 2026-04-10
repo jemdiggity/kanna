@@ -1,16 +1,22 @@
-import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Track all invoke calls
-let invokeCalls: { cmd: string; args: any }[] = [];
-let invokeResults: Record<string, any> = {};
+interface InvokeCall {
+  cmd: string;
+  args: unknown;
+}
+
+const testState = {
+  invokeCalls: [] as InvokeCall[],
+  invokeResults: {} as Record<string, unknown>,
+};
 
 // Mock the invoke module
-mock.module("../invoke", () => ({
-  invoke: async (cmd: string, args?: any) => {
-    invokeCalls.push({ cmd, args });
+vi.mock("../invoke", () => ({
+  invoke: async (cmd: string, args?: unknown) => {
+    testState.invokeCalls.push({ cmd, args });
     const key = cmd;
-    if (key in invokeResults) {
-      const val = invokeResults[key];
+    if (key in testState.invokeResults) {
+      const val = testState.invokeResults[key];
       if (typeof val === "function") return val(args);
       return val;
     }
@@ -19,7 +25,7 @@ mock.module("../invoke", () => ({
 }));
 
 // Mock tauri-mock to report as Tauri environment
-mock.module("../tauri-mock", () => ({
+vi.mock("../tauri-mock", () => ({
   isTauri: true,
 }));
 
@@ -35,8 +41,8 @@ const {
 
 describe("useBackup", () => {
   beforeEach(() => {
-    invokeCalls = [];
-    invokeResults = {
+    testState.invokeCalls = [];
+    testState.invokeResults = {
       get_app_data_dir: "/mock/data/dir",
       file_exists: true,
       copy_file: undefined,
@@ -79,53 +85,53 @@ describe("useBackup", () => {
     it("copies the DB file with a backup timestamp", async () => {
       await createBackup("kanna-v2.db");
 
-      const copyCall = invokeCalls.find((c) => c.cmd === "copy_file" && !c.args.src.includes("-wal") && !c.args.src.includes("-shm"));
+      const copyCall = testState.invokeCalls.find((c) => c.cmd === "copy_file" && !String((c.args as { src: string }).src).includes("-wal") && !String((c.args as { src: string }).src).includes("-shm"));
       expect(copyCall).toBeTruthy();
-      expect(copyCall!.args.src).toBe("/mock/data/dir/kanna-v2.db");
-      expect(copyCall!.args.dst).toMatch(/\/mock\/data\/dir\/kanna-v2\.db\.backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
+      expect((copyCall!.args as { src: string }).src).toBe("/mock/data/dir/kanna-v2.db");
+      expect((copyCall!.args as { dst: string }).dst).toMatch(/\/mock\/data\/dir\/kanna-v2\.db\.backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
     });
 
     it("checks for WAL and SHM sidecars", async () => {
       await createBackup("kanna-v2.db");
 
-      const walCheck = invokeCalls.find(
-        (c) => c.cmd === "file_exists" && c.args.path?.includes("-wal")
+      const walCheck = testState.invokeCalls.find(
+        (c) => c.cmd === "file_exists" && (c.args as { path?: string }).path?.includes("-wal")
       );
-      const shmCheck = invokeCalls.find(
-        (c) => c.cmd === "file_exists" && c.args.path?.includes("-shm")
+      const shmCheck = testState.invokeCalls.find(
+        (c) => c.cmd === "file_exists" && (c.args as { path?: string }).path?.includes("-shm")
       );
       expect(walCheck).toBeTruthy();
       expect(shmCheck).toBeTruthy();
     });
 
     it("copies WAL sidecar when it exists", async () => {
-      invokeResults.file_exists = (_args: any) => {
+      testState.invokeResults.file_exists = () => {
         // All files exist
         return true;
       };
       await createBackup("kanna-v2.db");
 
-      const walCopy = invokeCalls.find(
-        (c) => c.cmd === "copy_file" && c.args.src?.includes("-wal")
+      const walCopy = testState.invokeCalls.find(
+        (c) => c.cmd === "copy_file" && (c.args as { src?: string }).src?.includes("-wal")
       );
       expect(walCopy).toBeTruthy();
-      expect(walCopy!.args.src).toBe("/mock/data/dir/kanna-v2.db-wal");
+      expect((walCopy!.args as { src: string }).src).toBe("/mock/data/dir/kanna-v2.db-wal");
     });
 
     it("skips backup if DB file does not exist", async () => {
-      invokeResults.file_exists = false;
+      testState.invokeResults.file_exists = false;
       await createBackup("kanna-v2.db");
 
-      const copyCall = invokeCalls.find((c) => c.cmd === "copy_file");
+      const copyCall = testState.invokeCalls.find((c) => c.cmd === "copy_file");
       expect(copyCall).toBeUndefined();
     });
 
-    it("flushes WAL when db handle is provided", async () => {
+      it("flushes WAL when db handle is provided", async () => {
       const mockDb = {
-        execute: mock(async () => ({ rowsAffected: 0 })),
-        select: mock(async () => []),
+        execute: vi.fn(async () => ({ rowsAffected: 0 })),
+        select: vi.fn(async () => []),
       };
-      await createBackup("kanna-v2.db", mockDb as any);
+      await createBackup("kanna-v2.db", mockDb as never);
 
       expect(mockDb.execute).toHaveBeenCalledWith("PRAGMA wal_checkpoint(TRUNCATE)");
     });
@@ -134,24 +140,24 @@ describe("useBackup", () => {
       await createBackup("kanna-v2.db");
 
       // Should call list_dir for cleanup
-      const listCall = invokeCalls.find((c) => c.cmd === "list_dir");
+      const listCall = testState.invokeCalls.find((c) => c.cmd === "list_dir");
       expect(listCall).toBeTruthy();
     });
   });
 
   describe("migrateLegacyDatabaseIfNeeded", () => {
     it("copies a legacy database into the current app data dir", async () => {
-      invokeResults.get_app_data_dir = "/mock/data/build.kanna";
-      invokeResults.file_exists = ({ path }: { path: string }) =>
+      testState.invokeResults.get_app_data_dir = "/mock/data/build.kanna";
+      testState.invokeResults.file_exists = ({ path }: { path: string }) =>
         path === "/mock/data/com.kanna.app/kanna-v2.db" ||
         path === "/mock/data/com.kanna.app/kanna-v2.db-wal";
 
       await migrateLegacyDatabaseIfNeeded("kanna-v2.db");
 
-      const ensureDirCall = invokeCalls.find((c) => c.cmd === "ensure_directory");
-      expect(ensureDirCall?.args.path).toBe("/mock/data/build.kanna");
+      const ensureDirCall = testState.invokeCalls.find((c) => c.cmd === "ensure_directory");
+      expect((ensureDirCall?.args as { path: string }).path).toBe("/mock/data/build.kanna");
 
-      const copyCalls = invokeCalls.filter((c) => c.cmd === "copy_file");
+      const copyCalls = testState.invokeCalls.filter((c) => c.cmd === "copy_file");
       expect(copyCalls).toEqual([
         {
           cmd: "copy_file",
@@ -171,23 +177,23 @@ describe("useBackup", () => {
     });
 
     it("skips migration when the current database already exists", async () => {
-      invokeResults.get_app_data_dir = "/mock/data/build.kanna";
-      invokeResults.file_exists = ({ path }: { path: string }) =>
+      testState.invokeResults.get_app_data_dir = "/mock/data/build.kanna";
+      testState.invokeResults.file_exists = ({ path }: { path: string }) =>
         path === "/mock/data/build.kanna/kanna-v2.db";
 
       await migrateLegacyDatabaseIfNeeded("kanna-v2.db");
 
-      const copyCall = invokeCalls.find((c) => c.cmd === "copy_file");
+      const copyCall = testState.invokeCalls.find((c) => c.cmd === "copy_file");
       expect(copyCall).toBeUndefined();
     });
 
     it("skips migration when there is no legacy database to copy", async () => {
-      invokeResults.get_app_data_dir = "/mock/data/build.kanna";
-      invokeResults.file_exists = false;
+      testState.invokeResults.get_app_data_dir = "/mock/data/build.kanna";
+      testState.invokeResults.file_exists = false;
 
       await migrateLegacyDatabaseIfNeeded("kanna-v2.db");
 
-      const copyCall = invokeCalls.find((c) => c.cmd === "copy_file");
+      const copyCall = testState.invokeCalls.find((c) => c.cmd === "copy_file");
       expect(copyCall).toBeUndefined();
     });
   });
@@ -197,7 +203,7 @@ describe("useBackup", () => {
       const oldDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
       const oldTs = oldDate.toISOString().replace(/:/g, "-").replace(/\.\d+Z$/, "");
 
-      invokeResults.list_dir = [
+      testState.invokeResults.list_dir = [
         `kanna-v2.db.backup-${oldTs}`,
         `kanna-v2.db.backup-${oldTs}-wal`,
         `kanna-v2.db.backup-${oldTs}-shm`,
@@ -205,23 +211,23 @@ describe("useBackup", () => {
 
       await cleanOldBackups("kanna-v2.db");
 
-      const removeCalls = invokeCalls.filter((c) => c.cmd === "remove_file");
+      const removeCalls = testState.invokeCalls.filter((c) => c.cmd === "remove_file");
       // Should remove the main backup + attempt wal + shm
       expect(removeCalls.length).toBeGreaterThanOrEqual(1);
-      expect(removeCalls[0].args.path).toContain("backup-");
+      expect((removeCalls[0].args as { path: string }).path).toContain("backup-");
     });
 
     it("keeps recent backups", async () => {
       const recentDate = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
       const recentTs = recentDate.toISOString().replace(/:/g, "-").replace(/\.\d+Z$/, "");
 
-      invokeResults.list_dir = [
+      testState.invokeResults.list_dir = [
         `kanna-v2.db.backup-${recentTs}`,
       ];
 
       await cleanOldBackups("kanna-v2.db");
 
-      const removeCalls = invokeCalls.filter((c) => c.cmd === "remove_file");
+      const removeCalls = testState.invokeCalls.filter((c) => c.cmd === "remove_file");
       expect(removeCalls.length).toBe(0);
     });
 
@@ -229,7 +235,7 @@ describe("useBackup", () => {
       const oldDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
       const oldTs = oldDate.toISOString().replace(/:/g, "-").replace(/\.\d+Z$/, "");
 
-      invokeResults.list_dir = [
+      testState.invokeResults.list_dir = [
         `kanna-v2.db.backup-${oldTs}-wal`,
         `kanna-v2.db.backup-${oldTs}-shm`,
       ];
@@ -237,12 +243,12 @@ describe("useBackup", () => {
       await cleanOldBackups("kanna-v2.db");
 
       // Sidecar-only entries should be skipped (they don't match the backup pattern)
-      const removeCalls = invokeCalls.filter((c) => c.cmd === "remove_file");
+      const removeCalls = testState.invokeCalls.filter((c) => c.cmd === "remove_file");
       expect(removeCalls.length).toBe(0);
     });
 
     it("ignores non-backup files", async () => {
-      invokeResults.list_dir = [
+      testState.invokeResults.list_dir = [
         "kanna-v2.db",
         "kanna-v2.db-wal",
         "some-other-file.txt",
@@ -250,7 +256,7 @@ describe("useBackup", () => {
 
       await cleanOldBackups("kanna-v2.db");
 
-      const removeCalls = invokeCalls.filter((c) => c.cmd === "remove_file");
+      const removeCalls = testState.invokeCalls.filter((c) => c.cmd === "remove_file");
       expect(removeCalls.length).toBe(0);
     });
   });
@@ -259,12 +265,12 @@ describe("useBackup", () => {
     it("calls createBackup", async () => {
       await backupOnStartup("kanna-v2.db");
 
-      const copyCall = invokeCalls.find((c) => c.cmd === "copy_file");
+      const copyCall = testState.invokeCalls.find((c) => c.cmd === "copy_file");
       expect(copyCall).toBeTruthy();
     });
 
     it("does not throw on failure", async () => {
-      invokeResults.get_app_data_dir = () => {
+      testState.invokeResults.get_app_data_dir = () => {
         throw new Error("simulated failure");
       };
 
