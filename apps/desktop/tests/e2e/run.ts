@@ -83,7 +83,9 @@ async function resolveTestTargets(
       ...(await resolveTestTargets(e2eRoot, "real/")),
     ];
   }
-  if (normalized.endsWith(".test.ts")) return [normalized];
+  if (normalized.endsWith(".test.ts")) {
+    return [toDesktopRelativeTarget(normalized)];
+  }
 
   const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
   const files: string[] = [];
@@ -116,9 +118,13 @@ async function collectTestFiles(
       continue;
     }
     if (entry.isFile() && entry.name.endsWith(".test.ts")) {
-      files.push(relativePath);
+      files.push(toDesktopRelativeTarget(relativePath));
     }
   }
+}
+
+function toDesktopRelativeTarget(path: string): string {
+  return posix.join("tests", "e2e", path.replace(/\\/g, "/"));
 }
 
 async function canConnectToApp(baseUrl: string): Promise<boolean> {
