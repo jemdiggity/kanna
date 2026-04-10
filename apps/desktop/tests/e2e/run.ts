@@ -1,7 +1,10 @@
-import { createServer } from "net";
-import { join, resolve } from "path";
-import { homedir } from "os";
-import { rm } from "fs/promises";
+import { spawn } from "node:child_process";
+import { readdir, rm } from "node:fs/promises";
+import { createServer } from "node:net";
+import { homedir } from "node:os";
+import { dirname, join, posix, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 interface CommandOptions {
   cwd: string;
@@ -39,17 +42,26 @@ async function runCommand(
   command: string[],
   options: CommandOptions,
 ): Promise<void> {
-  const proc = Bun.spawn(command, {
+  const [file, ...args] = command;
+  const proc = spawn(file, args, {
     cwd: options.cwd,
     env: options.env,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
+    stdio: "inherit",
   });
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) {
-    throw new Error(`${command.join(" ")} exited with code ${exitCode}`);
-  }
+  await new Promise<void>((resolveCommand, reject) => {
+    proc.once("error", reject);
+    proc.once("exit", (exitCode, signal) => {
+      if (exitCode === 0) {
+        resolveCommand();
+        return;
+      }
+      if (signal) {
+        reject(new Error(`${command.join(" ")} exited with signal ${signal}`));
+        return;
+      }
+      reject(new Error(`${command.join(" ")} exited with code ${exitCode ?? "unknown"}`));
+    });
+  });
 }
 
 function toSpawnEnv(overrides: Record<string, string>): Record<string, string> {
@@ -75,11 +87,38 @@ async function resolveTestTargets(
 
   const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
   const files: string[] = [];
-  for await (const file of new Bun.Glob(`${prefix}**/*.test.ts`).scan({ cwd: e2eRoot })) {
-    files.push(file);
-  }
+  const prefixPath = join(e2eRoot, prefix);
+  await collectTestFiles(prefixPath, prefix, files).catch((error: unknown) => {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return;
+    }
+    throw error;
+  });
   files.sort();
   return files;
+}
+
+async function collectTestFiles(
+  absoluteDir: string,
+  relativeDir: string,
+  files: string[],
+): Promise<void> {
+  const entries = await readdir(absoluteDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const relativePath = posix.join(relativeDir.replace(/\\/g, "/"), entry.name);
+    if (entry.isDirectory()) {
+      await collectTestFiles(join(absoluteDir, entry.name), relativePath, files);
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".test.ts")) {
+      files.push(relativePath);
+    }
+  }
 }
 
 async function canConnectToApp(baseUrl: string): Promise<boolean> {
@@ -114,14 +153,15 @@ async function waitForApp(baseUrl: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await canConnectToApp(baseUrl)) return;
-    await Bun.sleep(1000);
+    await sleep(1000);
   }
   throw new Error(`timed out waiting for app at ${baseUrl}`);
 }
 
 async function main(): Promise<void> {
   const suite = process.argv[2];
-  const desktopRoot = resolve(import.meta.dir, "../..");
+  const currentDir = dirname(fileURLToPath(import.meta.url));
+  const desktopRoot = resolve(currentDir, "../..");
   const e2eRoot = join(desktopRoot, "tests", "e2e");
   const repoRoot = resolve(desktopRoot, "../..");
   const suffixBase = sanitizeSuffix(`${process.pid}-${Date.now()}`);
@@ -159,10 +199,13 @@ async function main(): Promise<void> {
 
     for (const testTarget of testTargets) {
       console.log(`\n[e2e] running ${testTarget}\n`);
-      await runCommand(["bun", "test", testTarget], {
-        cwd: e2eRoot,
-        env,
-      });
+      await runCommand(
+        ["pnpm", "exec", "vitest", "run", "--config", "./tests/e2e/vitest.config.ts", testTarget],
+        {
+          cwd: desktopRoot,
+          env,
+        },
+      );
     }
   } catch (error) {
     console.error("\n[e2e] recent dev log:\n");
