@@ -24,7 +24,7 @@ if (!status?.ok) {
       "Start the app with:",
       `  TAURI_WEBDRIVER_PORT=${WD_PORT} KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start`,
       "Or run:",
-      "  bun test:e2e",
+      "  pnpm test:e2e",
     ].join("\n")
   );
 }

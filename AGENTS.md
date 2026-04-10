@@ -21,7 +21,7 @@ Kanna is a product distributed to end users as a signed macOS app. All dependenc
 **Create a task:**
 1. Cmd+N → enter prompt (choose Claude or Copilot agent)
 2. App creates git worktree (`{repo}/.kanna-worktrees/task-{uuid}`)
-3. Runs `.kanna/config.json` setup scripts if present (e.g., `bun install`)
+3. Runs `.kanna/config.json` setup scripts if present (e.g., `pnpm install`)
 4. Spawns agent CLI in the worktree via daemon
 5. Agent starts working. User watches in real-time terminal.
 
@@ -117,7 +117,7 @@ Stored in SQLite `settings` table.
 
 ## Package Manager
 
-Use `bun` for all package management and script execution. Not pnpm, not npm.
+Use `pnpm` for all package management and script execution. Not npm.
 
 ## Monorepo Layout
 
@@ -155,7 +155,7 @@ This means the main Kanna app and a dev worktree can run simultaneously without 
 
 ### Launching the dev server
 
-Always use `./scripts/dev.sh` to start the dev server — never run `bun run dev`, `bun tauri dev`, or `cargo tauri dev` directly. `bun run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon paths internally, and runs in a background tmux session.
+Always use `./scripts/dev.sh` to start the dev server — never run `pnpm run dev`, `pnpm exec tauri dev`, or `cargo tauri dev` directly. `pnpm run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon paths internally, and runs in a background tmux session.
 
 ```bash
 # Development (from repo root or worktree root)
@@ -167,11 +167,11 @@ Always use `./scripts/dev.sh` to start the dev server — never run `bun run dev
 ./scripts/dev.sh start -a    # start and attach to tmux session
 
 # Build
-cd apps/desktop && bun tauri build
+cd apps/desktop && pnpm exec tauri build
 
 # Unit tests
-bun test                     # all packages via turborepo
-cd packages/core && bun test # core package only
+pnpm test                     # all packages via turborepo
+cd packages/core && pnpm test # core package only
 
 # Daemon tests
 cd crates/daemon && cargo test -- --test-threads=1
@@ -181,12 +181,12 @@ cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignore
 
 # E2E tests (needs app running in a worktree dev instance)
 # Terminal 1: cd {repo}/.kanna-worktrees/task-{uuid} && ./scripts/dev.sh start -a
-# Terminal 2: cd apps/desktop && bun test:e2e
+# Terminal 2: cd apps/desktop && pnpm test:e2e
 ```
 
 ### First build in a worktree
 
-The first `bun dev` in a fresh worktree compiles ~523 Rust crates (the daemon builds quickly, but the full Tauri app takes several minutes). Subsequent builds are incremental.
+The first `./scripts/dev.sh start` in a fresh worktree compiles ~523 Rust crates (the daemon builds quickly, but the full Tauri app takes several minutes). Subsequent builds are incremental.
 
 ## Architecture
 
@@ -332,7 +332,7 @@ User makes PR → GitHub API → DB update → stage transition
 | Script | Purpose |
 |---|---|
 | `dev.sh` | Dev server in tmux, auto-detects worktree, manages daemon lifecycle, seed data |
-| `setup.sh` | Verify prerequisites (Xcode CLT, Rust, Bun ≥1.3.9, tmux, etc.) |
+| `setup.sh` | Verify prerequisites (Xcode CLT, Rust, pnpm ≥10.8.1, tmux, etc.) |
 | `clean.sh` | Remove build artifacts (Rust targets, node_modules, dist, .turbo) |
 | `install.sh` | Download and install latest release from GitHub (DMG, arch auto-detect) |
 | `ship.sh` | Release automation: version bump, dual-arch build, sign, notarize, publish |
@@ -411,7 +411,7 @@ DB name is resolved by `dev.sh` from the current context: main instances use `ka
 - **Integration tests:** Rust tests in `apps/desktop/src-tauri/tests/` (real Claude CLI)
 - **Daemon tests:** `crates/daemon/tests/` — handoff and reconnect tests with real daemon processes
 - **CLI contract tests:** `tests/cli-contract/` — verify Claude and Copilot CLI flag compatibility
-- **E2E tests:** bun test + W3C WebDriver via `tauri-plugin-webdriver` on port 4445
+- **E2E tests:** `pnpm test:e2e` + W3C WebDriver via `tauri-plugin-webdriver` on port 4445
   - Mock tests (`apps/desktop/tests/e2e/mock/`): action-bar, app-launch, diff-view, import-repo, keyboard-shortcuts, preferences, task-lifecycle
   - Real tests (`apps/desktop/tests/e2e/real/`): claude-session, diff-after-claude (requires Claude CLI)
 - E2E tests access Vue internals via `__vue_app__._instance.setupState` — dev builds only
@@ -455,7 +455,7 @@ When something doesn't work, find the architectural reason and fix it at the rig
 ### TypeScript
 
 - **Never use `any`.** Use `unknown`, generics, proper interfaces, or type assertions to a specific type. If you're tempted to use `any`, you haven't modeled the type yet. Existing `any` usage is tech debt, not precedent.
-- **Run `bun tsc --noEmit`** before considering TypeScript work done. Fix all type errors — don't suppress them with `@ts-ignore` or `as any`.
+- **Run `pnpm exec tsc --noEmit`** before considering TypeScript work done. Fix all type errors — don't suppress them with `@ts-ignore` or `as any`.
 - **Prefer `interface` over `type`** for object shapes. Use `type` for unions, intersections, and mapped types.
 - **No non-null assertions (`!`)** unless the surrounding code makes the guarantee obvious (e.g., immediately after an existence check in the same scope).
 
