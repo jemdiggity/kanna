@@ -1,4 +1,6 @@
-import { spawn } from "bun";
+import { spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
 
 export interface CopilotResult {
   stdout: string;
@@ -7,11 +9,60 @@ export interface CopilotResult {
   duration: number;
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runProcess(
+  binary: string,
+  args: string[],
+  opts: {
+    cwd?: string;
+    env?: Record<string, string>;
+    timeoutMs: number;
+  }
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(binary, args, {
+      cwd: opts.cwd ?? "/tmp",
+      env: { ...process.env, ...opts.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+
+    const timer = setTimeout(() => {
+      child.kill();
+    }, opts.timeoutMs);
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode: code ?? -1 });
+    });
+  });
+}
+
 /**
  * Find the copilot binary.
  * Install methods: brew, curl installer (~/.local/bin), npm global.
  */
-export function findCopilotBinary(): string {
+export async function findCopilotBinary(): Promise<string> {
   const home = process.env.HOME || "";
   const candidates = [
     `${home}/.local/bin/copilot`,
@@ -21,7 +72,7 @@ export function findCopilotBinary(): string {
     "/opt/homebrew/bin/copilot",
   ];
   for (const p of candidates) {
-    if (Bun.file(p).size > 0) return p;
+    if (await pathExists(p)) return p;
   }
   throw new Error(
     "copilot binary not found. Install: curl -fsSL https://gh.io/copilot-install | bash"
@@ -39,7 +90,7 @@ export async function runCopilot(opts: {
   env?: Record<string, string>;
   timeoutMs?: number;
 }): Promise<CopilotResult> {
-  const binary = findCopilotBinary();
+  const binary = await findCopilotBinary();
   const args = [
     "-p", opts.prompt,
     "--yolo",
@@ -48,24 +99,11 @@ export async function runCopilot(opts: {
   ];
 
   const start = Date.now();
-  const proc = spawn({
-    cmd: [binary, ...args],
-    cwd: opts.cwd || "/tmp",
-    env: { ...process.env, ...opts.env },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: null,
+  const { stdout, stderr, exitCode } = await runProcess(binary, args, {
+    cwd: opts.cwd ?? "/tmp",
+    env: opts.env,
+    timeoutMs: opts.timeoutMs ?? 30000,
   });
-
-  const timeout = opts.timeoutMs || 30000;
-  const timer = setTimeout(() => proc.kill(), timeout);
-
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
-  clearTimeout(timer);
 
   const duration = Date.now() - start;
   return { stdout, stderr, exitCode, duration };
@@ -84,7 +122,7 @@ export async function runCopilotInteractive(opts: {
   env?: Record<string, string>;
   timeoutMs?: number;
 }): Promise<CopilotResult> {
-  const binary = findCopilotBinary();
+  const binary = await findCopilotBinary();
   const args = [
     "-i", opts.prompt,
     "--yolo",
@@ -92,24 +130,11 @@ export async function runCopilotInteractive(opts: {
   ];
 
   const start = Date.now();
-  const proc = spawn({
-    cmd: [binary, ...args],
-    cwd: opts.cwd || "/tmp",
-    env: { ...process.env, ...opts.env },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: null,
+  const { stdout, stderr, exitCode } = await runProcess(binary, args, {
+    cwd: opts.cwd ?? "/tmp",
+    env: opts.env,
+    timeoutMs: opts.timeoutMs ?? 30000,
   });
-
-  const timeout = opts.timeoutMs || 30000;
-  const timer = setTimeout(() => proc.kill(), timeout);
-
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
-  clearTimeout(timer);
 
   const duration = Date.now() - start;
   return { stdout, stderr, exitCode, duration };
@@ -124,27 +149,12 @@ export async function runCopilotRaw(args: string[], opts?: {
   env?: Record<string, string>;
   timeoutMs?: number;
 }): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const binary = findCopilotBinary();
-  const proc = spawn({
-    cmd: [binary, ...args],
-    cwd: opts?.cwd || "/tmp",
-    env: { ...process.env, ...opts?.env },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: null,
+  const binary = await findCopilotBinary();
+  return await runProcess(binary, args, {
+    cwd: opts?.cwd ?? "/tmp",
+    env: opts?.env,
+    timeoutMs: opts?.timeoutMs ?? 15000,
   });
-
-  const timeout = opts?.timeoutMs || 15000;
-  const timer = setTimeout(() => proc.kill(), timeout);
-
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
-  clearTimeout(timer);
-
-  return { stdout, stderr, exitCode };
 }
 
 /**
@@ -159,12 +169,20 @@ export async function createHookTestDir(hookConfig: Record<string, unknown>): Pr
   const tmpDir = await mkdtemp(join(tmpdir(), "kanna-copilot-test-"));
 
   // git init so copilot recognizes the repo root
-  await spawn({
-    cmd: ["git", "init"],
-    cwd: tmpDir,
-    stdout: "ignore",
-    stderr: "ignore",
-  }).exited;
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("git", ["init"], {
+      cwd: tmpDir,
+      stdio: "ignore",
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`git init failed with exit code ${code ?? -1}`));
+    });
+  });
 
   // Write hook config to .github/hooks/kanna.json
   await mkdir(join(tmpDir, ".github", "hooks"), { recursive: true });

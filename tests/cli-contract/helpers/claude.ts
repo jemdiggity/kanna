@@ -1,5 +1,6 @@
-import { spawn } from "bun";
-import { resolve } from "path";
+import { spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
 
 export interface ClaudeResult {
   stdout: string;
@@ -9,10 +10,59 @@ export interface ClaudeResult {
   duration: number;
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runProcess(
+  binary: string,
+  args: string[],
+  opts: {
+    cwd?: string;
+    env?: Record<string, string>;
+    timeoutMs: number;
+  }
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(binary, args, {
+      cwd: opts.cwd ?? "/tmp",
+      env: { ...process.env, ...opts.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+
+    const timer = setTimeout(() => {
+      child.kill();
+    }, opts.timeoutMs);
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode: code ?? -1 });
+    });
+  });
+}
+
 /**
  * Find the claude binary.
  */
-export function findClaudeBinary(): string {
+export async function findClaudeBinary(): Promise<string> {
   const home = process.env.HOME || "";
   const candidates = [
     `${home}/.local/bin/claude`,
@@ -20,7 +70,7 @@ export function findClaudeBinary(): string {
     `${home}/.npm/bin/claude`,
   ];
   for (const p of candidates) {
-    if (Bun.file(p).size > 0) return p;
+    if (await pathExists(p)) return p;
   }
   throw new Error("claude binary not found");
 }
@@ -35,7 +85,7 @@ export async function runClaude(opts: {
   env?: Record<string, string>;
   timeoutMs?: number;
 }): Promise<ClaudeResult> {
-  const binary = findClaudeBinary();
+  const binary = await findClaudeBinary();
   const args = [
     "-p", opts.prompt,
     "--output-format", "stream-json",
@@ -46,24 +96,11 @@ export async function runClaude(opts: {
   ];
 
   const start = Date.now();
-  const proc = spawn({
-    cmd: [binary, ...args],
-    cwd: opts.cwd || "/tmp",
-    env: { ...process.env, ...opts.env },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: null,
+  const { stdout: stdoutBuf, stderr: stderrBuf, exitCode } = await runProcess(binary, args, {
+    cwd: opts.cwd ?? "/tmp",
+    env: opts.env,
+    timeoutMs: opts.timeoutMs ?? 30000,
   });
-
-  const timeout = opts.timeoutMs || 30000;
-  const timer = setTimeout(() => proc.kill(), timeout);
-
-  const [stdoutBuf, stderrBuf] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
-  clearTimeout(timer);
 
   const duration = Date.now() - start;
 
@@ -91,25 +128,10 @@ export async function runClaudeRaw(args: string[], opts?: {
   env?: Record<string, string>;
   timeoutMs?: number;
 }): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const binary = findClaudeBinary();
-  const proc = spawn({
-    cmd: [binary, ...args],
-    cwd: opts?.cwd || "/tmp",
-    env: { ...process.env, ...opts?.env },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: null,
+  const binary = await findClaudeBinary();
+  return await runProcess(binary, args, {
+    cwd: opts?.cwd ?? "/tmp",
+    env: opts?.env,
+    timeoutMs: opts?.timeoutMs ?? 15000,
   });
-
-  const timeout = opts?.timeoutMs || 15000;
-  const timer = setTimeout(() => proc.kill(), timeout);
-
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
-  clearTimeout(timer);
-
-  return { stdout, stderr, exitCode };
 }
