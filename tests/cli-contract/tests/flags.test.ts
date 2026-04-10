@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { runClaude, runClaudeRaw } from "../helpers/claude";
+import { isClaudeUnavailable, runClaude, runClaudeRaw } from "../helpers/claude";
 
 describe("CLI flags", () => {
   it("stream-json produces valid NDJSON", async () => {
     const result = await runClaude({ prompt: "Say OK" });
+    if (isClaudeUnavailable(result)) return;
     expect(result.exitCode).toBe(0);
     expect(result.lines.length).toBeGreaterThan(0);
     // Every line should have a "type" field
@@ -14,6 +15,7 @@ describe("CLI flags", () => {
 
   it("stream-json includes system, assistant, and result messages", async () => {
     const result = await runClaude({ prompt: "Say OK" });
+    if (isClaudeUnavailable(result)) return;
     const types = result.lines.map((l) => l.type);
     expect(types).toContain("system");
     expect(types).toContain("assistant");
@@ -22,6 +24,7 @@ describe("CLI flags", () => {
 
   it("--max-turns 1 limits to single turn", async () => {
     const result = await runClaude({ prompt: "Say OK" });
+    if (isClaudeUnavailable(result)) return;
     const resultMsg = result.lines.find((l) => l.type === "result") as any;
     expect(resultMsg).toBeTruthy();
     expect(resultMsg.num_turns).toBe(1);
@@ -29,12 +32,14 @@ describe("CLI flags", () => {
 
   it("-p with no stdin produces output and exits", async () => {
     const result = await runClaude({ prompt: "Say OK" });
+    if (isClaudeUnavailable(result)) return;
     expect(result.exitCode).toBe(0);
     expect(result.stdout.length).toBeGreaterThan(0);
   });
 
   it("exit code is 0 on success", async () => {
     const result = await runClaude({ prompt: "Say OK" });
+    if (isClaudeUnavailable(result)) return;
     expect(result.exitCode).toBe(0);
   });
 
@@ -43,6 +48,7 @@ describe("CLI flags", () => {
       prompt: "Say OK",
       flags: ["--permission-mode", "dontAsk"],
     });
+    if (isClaudeUnavailable(result)) return;
     expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain("invalid");
   });
@@ -52,6 +58,7 @@ describe("CLI flags", () => {
       prompt: "Say OK",
       flags: ["--permission-mode", "acceptEdits"],
     });
+    if (isClaudeUnavailable(result)) return;
     expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain("invalid");
   });

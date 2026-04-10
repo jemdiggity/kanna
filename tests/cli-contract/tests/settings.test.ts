@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runClaude, runClaudeRaw } from "../helpers/claude";
+import { isClaudeUnavailable, runClaude, runClaudeRaw } from "../helpers/claude";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
@@ -12,6 +12,7 @@ describe("--settings flag", () => {
       prompt: "Say OK",
       flags: ["--settings", '{"hooks":{}}'],
     });
+    if (isClaudeUnavailable(result)) return;
     expect(result.exitCode).toBe(0);
   });
 
@@ -35,6 +36,7 @@ describe("--settings flag", () => {
       prompt: "Say OK",
       flags: ["--settings", settings],
     });
+    if (isClaudeUnavailable(result)) return;
     expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain("error");
   });
@@ -78,6 +80,7 @@ describe("--settings flag", () => {
         "--settings", '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo test"}]}]}}',
       ],
     });
+    if (isClaudeUnavailable(result)) return;
 
     // If settings were replaced instead of merged, Claude might behave differently
     // At minimum, it shouldn't error

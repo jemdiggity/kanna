@@ -10,6 +10,11 @@ export interface ClaudeResult {
   duration: number;
 }
 
+const CLAUDE_UNAVAILABLE_PATTERNS = [
+  "does not have access to Claude",
+  "Please login again or contact your administrator.",
+];
+
 async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path, constants.X_OK);
@@ -117,6 +122,20 @@ export async function runClaude(opts: {
   }
 
   return { stdout: stdoutBuf, stderr: stderrBuf, exitCode, lines, duration };
+}
+
+export function isClaudeUnavailable(result: ClaudeResult): boolean {
+  const resultLine = result.lines.find((line) => line.type === "result");
+  if (!resultLine) {
+    return false;
+  }
+
+  const output = resultLine.result;
+  return (
+    resultLine.is_error === true &&
+    typeof output === "string" &&
+    CLAUDE_UNAVAILABLE_PATTERNS.some((pattern) => output.includes(pattern))
+  );
 }
 
 /**
