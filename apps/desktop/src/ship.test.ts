@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+
+const repoRoot = resolve(process.cwd(), "../..");
 
 describe("ship script release retry behavior", () => {
   it("checks for an existing release before rebuilding an already-synced version", () => {
     const shipScript = readFileSync(
-      new URL("../../../scripts/ship.sh", import.meta.url),
+      resolve(repoRoot, "scripts/ship.sh"),
       "utf8",
     );
 
@@ -13,7 +16,7 @@ describe("ship script release retry behavior", () => {
 
   it("does not require a new version-bump commit when the target version is already staged", () => {
     const shipScript = readFileSync(
-      new URL("../../../scripts/ship.sh", import.meta.url),
+      resolve(repoRoot, "scripts/ship.sh"),
       "utf8",
     );
 
@@ -23,7 +26,7 @@ describe("ship script release retry behavior", () => {
 
   it("reports the GitHub release URL from gh instead of a hardcoded repository path", () => {
     const shipScript = readFileSync(
-      new URL("../../../scripts/ship.sh", import.meta.url),
+      resolve(repoRoot, "scripts/ship.sh"),
       "utf8",
     );
 

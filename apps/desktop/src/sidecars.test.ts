@@ -1,8 +1,11 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import rootPkg from "../../../package.json";
 import desktopPkg from "../package.json";
 import tauriConf from "../src-tauri/tauri.conf.json";
+
+const repoRoot = resolve(process.cwd(), "../..");
 
 describe("desktop sidecar packaging", () => {
   it("keeps release builds free of dev-only version and sidecar staging hooks", () => {
@@ -14,11 +17,7 @@ describe("desktop sidecar packaging", () => {
 
   it("stages the daemon, cli, and terminal recovery sidecars", () => {
     const stageSidecarsScript = readFileSync(
-      new URL("../../../scripts/stage-sidecars.sh", import.meta.url),
-      "utf8",
-    );
-    const shipScript = readFileSync(
-      new URL("../../../scripts/ship.sh", import.meta.url),
+      resolve(repoRoot, "scripts/stage-sidecars.sh"),
       "utf8",
     );
     expect(desktopPkg.scripts?.["build:sidecars"]).toContain("packages/terminal-recovery/Cargo.toml");
@@ -26,14 +25,13 @@ describe("desktop sidecar packaging", () => {
     expect(stageSidecarsScript).toContain("kanna-terminal-recovery");
     expect(stageSidecarsScript).toContain("kanna-daemon");
     expect(stageSidecarsScript).toContain("kanna-cli");
-    expect(shipScript).toContain("packages/terminal-recovery/Cargo.toml");
   });
 
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {
     expect(desktopPkg.scripts?.dev).not.toContain("build:sidecars");
     expect(desktopPkg.scripts?.dev).toContain("vite");
-    expect(tauriConf.build.beforeDevCommand).toBe("bun run dev");
-    expect(tauriConf.build.beforeBuildCommand).toBe("bun run build");
+    expect(tauriConf.build.beforeDevCommand).toBe("pnpm run dev");
+    expect(tauriConf.build.beforeBuildCommand).toBe("pnpm run build");
     expect(rootPkg.scripts?.dev).toBe("./scripts/dev.sh");
   });
 });

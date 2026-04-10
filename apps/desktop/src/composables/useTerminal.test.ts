@@ -54,7 +54,7 @@ class FakeTerminal {
 const terminals: FakeTerminal[] = [];
 
 vi.mock("@xterm/xterm", () => ({
-  Terminal: vi.fn(() => {
+  Terminal: vi.fn(function TerminalMock() {
     const terminal = new FakeTerminal();
     terminals.push(terminal);
     return terminal;
