@@ -32,6 +32,7 @@ vi.mock("shiki", () => ({
 }));
 
 async function flushPromises() {
+  await vi.dynamicImportSettled();
   await Promise.resolve();
   await nextTick();
 }
