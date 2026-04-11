@@ -24,7 +24,6 @@ filegroup(
         "capabilities/**",
         "icons/**",
         "src/**/*.rs",
-        "tests/**/*.rs",
     ]),
 )
 
@@ -38,70 +37,15 @@ filegroup(
     srcs = glob(["capabilities/**"]),
 )
 
-genrule(
-    name = "sidecar_kanna_cli_arm64",
-    srcs = ["//crates/kanna-cli:kanna_cli"],
-    outs = ["binaries/kanna-cli-aarch64-apple-darwin"],
-    cmd = "cp $< $@ && chmod +x $@",
-)
-
-genrule(
-    name = "sidecar_kanna_cli_x86_64",
-    srcs = ["//crates/kanna-cli:kanna_cli_x86_64"],
-    outs = ["binaries/kanna-cli-x86_64-apple-darwin"],
-    cmd = "cp $< $@ && chmod +x $@",
-)
-
-genrule(
-    name = "sidecar_kanna_daemon_arm64",
-    srcs = ["//crates/daemon:kanna_daemon"],
-    outs = ["binaries/kanna-daemon-aarch64-apple-darwin"],
-    cmd = "cp $< $@ && chmod +x $@",
-)
-
-genrule(
-    name = "sidecar_kanna_daemon_x86_64",
-    srcs = ["//crates/daemon:kanna_daemon_x86_64"],
-    outs = ["binaries/kanna-daemon-x86_64-apple-darwin"],
-    cmd = "cp $< $@ && chmod +x $@",
-)
-
-genrule(
-    name = "sidecar_kanna_terminal_recovery_arm64",
-    srcs = ["//packages/terminal-recovery:kanna_terminal_recovery"],
-    outs = ["binaries/kanna-terminal-recovery-aarch64-apple-darwin"],
-    cmd = "cp $< $@ && chmod +x $@",
-)
-
-genrule(
-    name = "sidecar_kanna_terminal_recovery_x86_64",
-    srcs = ["//packages/terminal-recovery:kanna_terminal_recovery_x86_64"],
-    outs = ["binaries/kanna-terminal-recovery-x86_64-apple-darwin"],
-    cmd = "cp $< $@ && chmod +x $@",
-)
-
 filegroup(
     name = "tauri_build_data",
     srcs = [
         "Info.plist",
         "tauri.conf.json",
-        "//:VERSION",
-        "//:kanna_builtin_resources",
         "//apps/desktop:dist",
         ":capabilities",
         ":icons",
-    ] + select({
-        "@rules_rust//rust/platform:x86_64-apple-darwin": [
-            ":sidecar_kanna_cli_x86_64",
-            ":sidecar_kanna_daemon_x86_64",
-            ":sidecar_kanna_terminal_recovery_x86_64",
-        ],
-        "//conditions:default": [
-            ":sidecar_kanna_cli_arm64",
-            ":sidecar_kanna_daemon_arm64",
-            ":sidecar_kanna_terminal_recovery_arm64",
-        ],
-    }),
+    ],
 )
 
 cargo_build_script(
@@ -130,19 +74,17 @@ cargo_build_script(
     data = [
         ":cargo_srcs",
         ":tauri_build_data",
-        "//apps/desktop:dist",
     ],
     compile_data = [
         ":cargo_srcs",
         ":tauri_build_data",
-        "//apps/desktop:dist",
     ],
     build_script_env = {
         "DEP_TAURI_DEV": "false",
         "KANNA_BUILD_BRANCH": "",
         "KANNA_BUILD_COMMIT": "",
         "KANNA_BUILD_WORKTREE": "",
-        "TAURI_CONFIG": "{\"build\":{\"frontendDist\":\"../../../$(location //apps/desktop:dist)\"},\"bundle\":{\"externalBin\":[],\"resources\":[]}}",
+        "TAURI_CONFIG": "{\"bundle\":{\"externalBin\":[],\"resources\":[]}}",
     },
 )
 
