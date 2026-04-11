@@ -14,16 +14,19 @@ vite_bin.vite_binary(
 
 filegroup(
     name = "srcs",
-    srcs = glob(
-        ["**"],
-        exclude = [
-            ".DS_Store",
-            "**/.DS_Store",
-            "dist/**",
-            "node_modules/**",
-            "src-tauri/target/**",
-        ],
-    ),
+    srcs = [
+        "index.html",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "vite.config.ts",
+    ] + glob([
+        "public/**",
+        "src/**",
+    ], exclude = [
+        "src/**/*.test.ts",
+        "src/**/__tests__/**",
+    ]),
 )
 
 js_run_binary(

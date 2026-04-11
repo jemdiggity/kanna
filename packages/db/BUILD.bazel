@@ -9,16 +9,14 @@ npm_link_all_packages(
 
 filegroup(
     name = "srcs",
-    srcs = glob(
-        ["**"],
-        exclude = [
-            ".DS_Store",
-            "**/.DS_Store",
-            ".turbo/**",
-            "dist/**",
-            "node_modules/**",
-        ],
-    ),
+    srcs = [
+        "package.json",
+        "tsconfig.json",
+    ] + glob([
+        "src/**",
+    ], exclude = [
+        "src/**/*.test.ts",
+    ]),
 )
 
 copy_to_bin(
