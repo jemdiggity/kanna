@@ -20,25 +20,25 @@ def _bun_vite_dist_impl(ctx):
     out_dir = ctx.actions.declare_directory(ctx.label.name)
     src_files = _files_from_targets(ctx.attr.srcs)
     tool = ctx.file._tool
-    bun = ctx.file._bun
+    pnpm = ctx.file._pnpm
     node = ctx.file._node
     source_manifest = ctx.actions.declare_file(ctx.label.name + "_srcs.json")
 
     _write_source_manifest(ctx, src_files, source_manifest)
 
     ctx.actions.run_shell(
-        inputs = depset(direct = src_files + [tool, source_manifest, bun, node]),
+        inputs = depset(direct = src_files + [tool, source_manifest, pnpm, node]),
         outputs = [out_dir],
         command = """
 set -euo pipefail
-python3 "$1" --source-manifest "$2" --package-dir "$3" --out-dir "$4" --bun "$5" --node "$6"
+python3 "$1" --source-manifest "$2" --package-dir "$3" --out-dir "$4" --pnpm "$5" --node "$6"
 """,
         arguments = [
             tool.path,
             source_manifest.path,
             ctx.attr.package_dir,
             out_dir.path,
-            bun.path,
+            pnpm.path,
             node.path,
         ],
         mnemonic = "KannaBunViteDist",
@@ -204,13 +204,13 @@ bun_vite_dist = rule(
             allow_single_file = True,
             default = "//tools/bazel:build_frontend_dist.py",
         ),
-        "_bun": attr.label(
+        "_pnpm": attr.label(
             allow_single_file = True,
-            default = "@kanna_host_bun//:bun",
+            default = "@pnpm//:pnpm",
         ),
         "_node": attr.label(
             allow_single_file = True,
-            default = "@kanna_host_node//:node",
+            default = "@nodejs//:node",
         ),
     },
 )

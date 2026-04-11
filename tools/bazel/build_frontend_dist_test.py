@@ -27,7 +27,7 @@ class BuildFrontendDistTest(unittest.TestCase):
 
             fake_bin = root / "bin"
             fake_bin.mkdir()
-            fake_bun = fake_bin / "bun"
+            fake_pnpm = fake_bin / "pnpm"
             fake_node = fake_bin / "node"
 
             write_executable(
@@ -35,11 +35,11 @@ class BuildFrontendDistTest(unittest.TestCase):
                 "#!/bin/sh\nexit 0\n",
             )
             write_executable(
-                fake_bun,
+                fake_pnpm,
                 """#!/bin/sh
 set -eu
 command -v node >/dev/null 2>&1
-if [ "$1" = "x" ] && [ "$2" = "vite" ]; then
+if [ "$1" = "exec" ] && [ "$2" = "vite" ]; then
   out_dir=""
   while [ "$#" -gt 0 ]; do
     if [ "$1" = "--outDir" ]; then
@@ -78,8 +78,8 @@ fi
                     "apps/desktop",
                     "--out-dir",
                     str(out_dir),
-                    "--bun",
-                    str(fake_bun),
+                    "--pnpm",
+                    str(fake_pnpm),
                     "--node",
                     str(fake_node),
                 ],
