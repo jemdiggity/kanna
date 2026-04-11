@@ -639,6 +639,6 @@ pub fn run() {
             commands::shell::run_script,
             commands::shell::ensure_term_init,
         ])
-        .run(tauri::generate_context!())
+        .run(tauri::tauri_build_context!())
         .expect("error while running tauri application");
 }

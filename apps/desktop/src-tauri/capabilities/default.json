@@ -8,14 +8,14 @@
     "core:window:allow-create",
     "core:window:allow-set-title",
     "core:webview:allow-create-webview-window",
-    "opener:default",
-    "shell:allow-open",
-    "shell:allow-execute",
-    "sql:default",
-    "sql:allow-load",
-    "sql:allow-execute",
-    "sql:allow-select",
-    "sql:allow-close",
-    "dialog:default"
+    "plugin-opener:default",
+    "plugin-shell:allow-open",
+    "plugin-shell:allow-execute",
+    "plugin-sql:default",
+    "plugin-sql:allow-load",
+    "plugin-sql:allow-execute",
+    "plugin-sql:allow-select",
+    "plugin-sql:allow-close",
+    "plugin-dialog:default"
   ]
 }

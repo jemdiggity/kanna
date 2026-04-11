@@ -15,6 +15,7 @@ exports_files([
     "build_macos_signed_file.py",
     "defs.bzl",
     "libghostty-vt-sys-zig-env.patch",
+    "make_tauri_manifest.py",
     "openssl-src-bazel-runfiles.patch",
     "tauri-utils-bazel-debug-assertions.patch",
     "tauri-utils-bazel-permission-paths.patch",

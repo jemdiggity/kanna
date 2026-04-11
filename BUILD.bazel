@@ -2,9 +2,9 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["VERSION"])
 
-load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@kanna_npm//:defs.bzl", "npm_link_all_packages")
 load("@rules_tauri//tauri:defs.bzl", "tauri_bundle_inputs", "tauri_macos_app")
-load("//tools/bazel:defs.bzl", "macos_codesign_app", "macos_codesign_file", "macos_dmg", "macos_notarize_dmg")
+load("//tools/bazel:defs.bzl", "exec_target", "macos_codesign_app", "macos_codesign_file", "macos_dmg", "macos_notarize_dmg")
 
 npm_link_all_packages(
     name = "node_modules",
@@ -123,8 +123,14 @@ filegroup(
     ]),
 )
 
+exec_target(
+    name = "frontend_dist",
+    target = "//apps/desktop:dist",
+)
+
 tauri_bundle_inputs(
     name = "kanna_bundle_inputs_arm64",
+    frontend_dist = ":frontend_dist",
     main_binary = ":kanna_desktop_binary_arm64",
     sidecars = [
         ":kanna_cli_arm64",
@@ -150,6 +156,7 @@ tauri_macos_app(
 
 tauri_bundle_inputs(
     name = "kanna_bundle_inputs_release_arm64",
+    frontend_dist = ":frontend_dist",
     main_binary = ":kanna_desktop_binary_release_arm64",
     sidecars = [
         ":kanna_cli_release_arm64",
@@ -200,6 +207,7 @@ macos_notarize_dmg(
 
 tauri_bundle_inputs(
     name = "kanna_bundle_inputs_release_x86_64",
+    frontend_dist = ":frontend_dist",
     main_binary = ":kanna_desktop_binary_release_x86_64",
     sidecars = [
         ":kanna_cli_release_x86_64",

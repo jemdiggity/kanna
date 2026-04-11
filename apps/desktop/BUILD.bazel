@@ -1,9 +1,9 @@
 package(default_visibility = ["//visibility:public"])
 
 load("@aspect_rules_js//js:defs.bzl", "js_run_binary")
-load("@npm//:defs.bzl", "npm_link_all_packages")
-load("@npm//apps/desktop:vite/package_json.bzl", vite_bin = "bin")
-load("@npm//apps/desktop:vue-tsc/package_json.bzl", vue_tsc_bin = "bin")
+load("@kanna_npm//:defs.bzl", "npm_link_all_packages")
+load("@kanna_npm//apps/desktop:vite/package_json.bzl", vite_bin = "bin")
+load("@kanna_npm//apps/desktop:vue-tsc/package_json.bzl", vue_tsc_bin = "bin")
 
 npm_link_all_packages(
     name = "node_modules",

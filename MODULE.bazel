@@ -14,8 +14,8 @@ bazel_dep(name = "rules_nodejs", version = "6.7.3")
 
 git_override(
     module_name = "rules_tauri",
+    commit = "91357c8498648b05a483911ad8f195ae4bbd041f",
     remote = "https://github.com/jemdiggity/rules_tauri.git",
-    commit = "d254333374e72cc04100e30e2bec1664b89ed35b",
 )
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
@@ -26,8 +26,8 @@ rust.toolchain(
 )
 use_repo(
     rust,
-    "rust_toolchains",
     "rust_macos_aarch64__x86_64-apple-darwin__stable_tools",
+    "rust_toolchains",
 )
 
 register_toolchains("@rust_toolchains//:all")
@@ -77,14 +77,6 @@ crate.from_cargo(
     ],
 )
 crate.annotation(
-    crate = "libghostty-vt-sys",
-    repositories = [
-        "daemon_crates",
-        "terminal_recovery_crates",
-    ],
-    patches = ["//tools/bazel:libghostty-vt-sys-zig-env.patch"],
-    patch_args = ["-p1"],
-    gen_build_script = "on",
     build_script_env = {
         "HOME": "$${OUT_DIR}/home",
         "XDG_CACHE_HOME": "$${OUT_DIR}/xdg-cache",
@@ -93,25 +85,44 @@ crate.annotation(
         "ZIG_LOCAL_CACHE_DIR": "$${OUT_DIR}/zig-cache/local",
     },
     build_script_toolchains = ["@rules_zig//zig:resolved_toolchain"],
+    crate = "libghostty-vt-sys",
+    gen_build_script = "on",
+    patch_args = ["-p1"],
+    patches = ["//tools/bazel:libghostty-vt-sys-zig-env.patch"],
+    repositories = [
+        "daemon_crates",
+        "terminal_recovery_crates",
+    ],
 )
 crate.annotation(
     crate = "openssl-src",
-    repositories = ["desktop_crates"],
-    patches = ["//tools/bazel:openssl-src-bazel-runfiles.patch"],
-    patch_args = ["-p1"],
     data_glob = ["openssl/**"],
+    patch_args = ["-p1"],
+    patches = ["//tools/bazel:openssl-src-bazel-runfiles.patch"],
+    repositories = ["desktop_crates"],
 )
 crate.annotation(
     crate = "tauri-utils",
-    repositories = ["desktop_crates"],
+    patch_args = ["-p1"],
     patches = [
         "//tools/bazel:tauri-utils-bazel-permission-paths.patch",
         "//tools/bazel:tauri-utils-bazel-debug-assertions.patch",
     ],
-    patch_args = ["-p1"],
+    repositories = ["desktop_crates"],
 )
 use_repo(crate, "kanna_cli_crates")
-use_repo(crate, "daemon_crates", "terminal_recovery_crates", "desktop_crates")
+use_repo(
+    crate,
+    "daemon_crates",
+    "desktop_crates",
+    "desktop_crates__tauri-2.10.3",
+    "desktop_crates__tauri-plugin-dialog-2.6.0",
+    "desktop_crates__tauri-plugin-opener-2.5.3",
+    "desktop_crates__tauri-plugin-shell-2.3.5",
+    "desktop_crates__tauri-plugin-sql-2.3.2",
+    "desktop_crates__tauri-plugin-webdriver-0.2.1",
+    "terminal_recovery_crates",
+)
 
 zig = use_extension("@rules_zig//zig:extensions.bzl", "zig")
 zig.toolchain(
@@ -126,12 +137,13 @@ use_repo(node, "nodejs_toolchains")
 
 pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm")
 use_repo(pnpm, "pnpm")
+
 pnpm.pnpm(pnpm_version = "10.29.3")
 
 npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
 npm.npm_translate_lock(
-    name = "npm",
+    name = "kanna_npm",
     npmrc = "//apps/desktop:.npmrc",
     pnpm_lock = "//:pnpm-lock.yaml",
 )
-use_repo(npm, "npm")
+use_repo(npm, "kanna_npm")

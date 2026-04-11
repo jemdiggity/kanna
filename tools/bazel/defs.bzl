@@ -1,3 +1,530 @@
+TauriBundleInfo = provider(
+    doc = "Normalized Tauri bundle inputs for one target triple.",
+    fields = {
+        "bundle_inputs_dir": "Directory containing normalized bundle inputs.",
+        "bundle_manifest": "Manifest describing staged inputs and destinations.",
+        "main_binary": "Main application binary file.",
+        "sidecars": "List of staged sidecar files.",
+        "bundle_id": "Bundle identifier.",
+        "product_name": "Product name.",
+        "version": "Application version.",
+        "target_triple": "Target triple for this bundle.",
+        "info_plist": "Generated Info.plist file.",
+        "entitlements": "Optional entitlements file.",
+        "main_binary_name": "Basename used for the main app executable.",
+    },
+)
+
+MacosAppBundleInfo = provider(
+    doc = "Unsigned macOS app bundle output.",
+    fields = {
+        "app_bundle": "Directory representing the unsigned .app bundle.",
+        "bundle_id": "Bundle identifier.",
+        "product_name": "Product name.",
+        "version": "Application version.",
+        "target_triple": "Target triple for this app bundle.",
+        "info_plist": "Final Info.plist file.",
+        "manifest": "Bundle manifest file.",
+    },
+)
+
+def _normalize_parts(parts, absolute_behavior):
+    normalized = []
+    for part in parts:
+        if part in ["", "."]:
+            continue
+        if part == "..":
+            normalized.append("_up_")
+            continue
+        normalized.append(part)
+
+    if absolute_behavior and normalized:
+        return [absolute_behavior] + normalized
+    return normalized
+
+def _normalize_resource_relpath(path):
+    absolute_behavior = None
+    if path.startswith("/"):
+        absolute_behavior = "_root_"
+    return "/".join(_normalize_parts(path.split("/"), absolute_behavior))
+
+def _normalize_bundle_relative_path(path):
+    return "/".join(_normalize_parts(path.split("/"), None))
+
+def _strip_target_triple_suffix(path, target_triple):
+    filename = path.split("/")[-1]
+    suffix = "-%s" % target_triple
+    if filename.endswith(suffix):
+        return filename[:-len(suffix)]
+    return filename
+
+def _default_plist_inputs(bundle_id, product_name, version, main_binary_name):
+    return {
+        "bundle_id": bundle_id,
+        "product_name": product_name,
+        "version": version,
+        "main_binary_name": main_binary_name,
+    }
+
+def _manifest_entry(source, destination, kind):
+    return {
+        "source": source,
+        "destination": destination,
+        "kind": kind,
+    }
+
+def _encode_manifest(entries, metadata):
+    sorted_entries = sorted(entries, key = lambda entry: entry["destination"])
+    return json.encode({
+        "metadata": metadata,
+        "entries": sorted_entries,
+    })
+
+def _files_from_target(target):
+    return target[DefaultInfo].files.to_list()
+
+def _files_from_targets(targets):
+    files = []
+    for target in targets:
+        files.extend(_files_from_target(target))
+    return files
+
+def _single_file_from_target(target, attr_name):
+    files = _files_from_target(target)
+    if len(files) != 1:
+        fail("%s must provide exactly one file, got %d" % (attr_name, len(files)))
+    return files[0]
+
+def _label_keyed_entries(label_dict, kind):
+    entries = []
+    inputs = []
+    for target, destination in label_dict.items():
+        file = _single_file_from_target(target, kind)
+        entries.append((file, destination))
+        inputs.append(file)
+    return entries, inputs
+
+def _label_keyed_tree_entries(label_dict):
+    entries = []
+    inputs = []
+    for target, destination_prefix in label_dict.items():
+        for file in _files_from_target(target):
+            entries.append((file, destination_prefix))
+            inputs.append(file)
+    return entries, inputs
+
+def _tauri_bundle_inputs_impl(ctx):
+    has_version = ctx.attr.version != ""
+    has_version_file = ctx.file.version_file != None
+    if has_version == has_version_file:
+        fail("exactly one of version or version_file must be set")
+
+    main_binary = ctx.file.main_binary
+    main_binary_name = main_binary.basename
+    version_value = ctx.attr.version if has_version else "<from VERSION file>"
+
+    info_plist = ctx.actions.declare_file(ctx.label.name + "_Info.plist")
+    bundle_manifest = ctx.actions.declare_file(ctx.label.name + "_bundle_manifest.json")
+    bundle_inputs_dir = ctx.actions.declare_directory(ctx.label.name + "_bundle_inputs")
+    spec_file = ctx.actions.declare_file(ctx.label.name + "_bundle_spec.json")
+
+    frontend_files = _files_from_target(ctx.attr.frontend_dist) if ctx.attr.frontend_dist else []
+    sidecar_files = _files_from_targets(ctx.attr.sidecars)
+    resource_files = _files_from_targets(ctx.attr.resources)
+    icon_files = _files_from_targets(ctx.attr.icons)
+    capability_files = _files_from_targets(ctx.attr.capabilities)
+    framework_files = _files_from_targets(ctx.attr.frameworks)
+    plist_fragment_files = _files_from_targets(ctx.attr.info_plist_fragments)
+    resource_map_entries, mapped_resource_inputs = _label_keyed_entries(ctx.attr.resource_map, "resource_map")
+    resource_tree_entries, resource_tree_inputs = _label_keyed_tree_entries(ctx.attr.resource_trees)
+    macos_file_entries, macos_file_inputs = _label_keyed_entries(ctx.attr.macos_files, "macos_files")
+
+    plist_inputs = [ctx.executable._make_plist_tool]
+    plist_arguments = ctx.actions.args()
+    plist_arguments.add("--output", info_plist.path)
+    plist_arguments.add("--bundle-id", ctx.attr.bundle_id)
+    plist_arguments.add("--product-name", ctx.attr.product_name)
+    plist_arguments.add("--main-binary-name", main_binary_name)
+    if has_version:
+        plist_arguments.add("--version", ctx.attr.version)
+    else:
+        plist_inputs.append(ctx.file.version_file)
+        plist_arguments.add("--version-file", ctx.file.version_file.path)
+    if ctx.file.tauri_config:
+        plist_inputs.append(ctx.file.tauri_config)
+        plist_arguments.add("--tauri-config", ctx.file.tauri_config.path)
+    if icon_files:
+        plist_arguments.add("--icon-name", icon_files[0].basename)
+    for fragment in plist_fragment_files:
+        plist_inputs.append(fragment)
+        plist_arguments.add("--plist-fragment", fragment.path)
+
+    ctx.actions.run(
+        executable = ctx.executable._make_plist_tool,
+        inputs = plist_inputs,
+        outputs = [info_plist],
+        arguments = [plist_arguments],
+        mnemonic = "TauriMakePlist",
+        progress_message = "Generating Info.plist for %s" % ctx.label.name,
+    )
+
+    entries = []
+    manifest_inputs = [main_binary, info_plist]
+    if ctx.file.tauri_config:
+        manifest_inputs.append(ctx.file.tauri_config)
+    if ctx.file.entitlements:
+        manifest_inputs.append(ctx.file.entitlements)
+        entries.append(_manifest_entry(
+            ctx.file.entitlements.path,
+            "Contents/Resources/tauri/entitlements.plist",
+            "entitlements",
+        ))
+
+    entries.append(_manifest_entry(
+        info_plist.path,
+        "Contents/Info.plist",
+        "info_plist",
+    ))
+    entries.append(_manifest_entry(
+        main_binary.path,
+        "Contents/MacOS/%s" % main_binary_name,
+        "main_binary",
+    ))
+
+    for file in frontend_files:
+        manifest_inputs.append(file)
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/Resources/frontend/%s" % _normalize_resource_relpath(file.short_path),
+            "frontend_dist",
+        ))
+
+    for file in resource_files:
+        manifest_inputs.append(file)
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/Resources/resources/%s" % _normalize_resource_relpath(file.short_path),
+            "resource",
+        ))
+
+    for file, destination in resource_map_entries:
+        manifest_inputs.append(file)
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/Resources/%s" % _normalize_bundle_relative_path(destination),
+            "mapped_resource",
+        ))
+
+    for file, destination_prefix in resource_tree_entries:
+        manifest_inputs.append(file)
+        destination = _normalize_resource_relpath(file.short_path)
+        if destination_prefix:
+            destination = "%s/%s" % (
+                _normalize_bundle_relative_path(destination_prefix),
+                destination,
+            )
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/Resources/%s" % destination,
+            "resource_tree",
+        ))
+
+    for file in icon_files:
+        manifest_inputs.append(file)
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/Resources/%s" % file.basename,
+            "icon",
+        ))
+
+    for file in capability_files:
+        manifest_inputs.append(file)
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/Resources/tauri/capabilities/%s" % file.basename,
+            "capability",
+        ))
+
+    for file in framework_files:
+        manifest_inputs.append(file)
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/Frameworks/%s" % file.basename,
+            "framework",
+        ))
+
+    for file in sidecar_files:
+        expected_suffix = "-%s" % ctx.attr.target_triple
+        if not file.basename.endswith(expected_suffix):
+            fail("sidecar %s must end with %s" % (file.basename, expected_suffix))
+        manifest_inputs.append(file)
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/MacOS/%s" % _strip_target_triple_suffix(file.path, ctx.attr.target_triple),
+            "sidecar",
+        ))
+
+    for file, destination in macos_file_entries:
+        manifest_inputs.append(file)
+        entries.append(_manifest_entry(
+            file.path,
+            "Contents/%s" % _normalize_bundle_relative_path(destination),
+            "macos_file",
+        ))
+
+    metadata = _default_plist_inputs(
+        bundle_id = ctx.attr.bundle_id,
+        product_name = ctx.attr.product_name,
+        version = version_value,
+        main_binary_name = main_binary_name,
+    )
+    metadata["target_triple"] = ctx.attr.target_triple
+    metadata["entry_count"] = len(entries)
+
+    ctx.actions.write(
+        output = spec_file,
+        content = _encode_manifest(entries, metadata),
+    )
+
+    manifest_run_inputs = depset(
+        direct = manifest_inputs + mapped_resource_inputs + resource_tree_inputs + macos_file_inputs + [spec_file, ctx.executable._make_manifest_tool],
+    )
+    manifest_arguments = ctx.actions.args()
+    manifest_arguments.add("--spec", spec_file.path)
+    manifest_arguments.add("--output-dir", bundle_inputs_dir.path)
+    manifest_arguments.add("--output-manifest", bundle_manifest.path)
+    ctx.actions.run(
+        executable = ctx.executable._make_manifest_tool,
+        inputs = manifest_run_inputs,
+        outputs = [bundle_inputs_dir, bundle_manifest],
+        arguments = [manifest_arguments],
+        mnemonic = "TauriStageBundleInputs",
+        progress_message = "Staging Tauri bundle inputs for %s" % ctx.label.name,
+    )
+
+    return [
+        DefaultInfo(files = depset([bundle_inputs_dir, bundle_manifest, info_plist])),
+        TauriBundleInfo(
+            bundle_inputs_dir = bundle_inputs_dir,
+            bundle_manifest = bundle_manifest,
+            main_binary = main_binary,
+            sidecars = sidecar_files,
+            bundle_id = ctx.attr.bundle_id,
+            product_name = ctx.attr.product_name,
+            version = version_value,
+            target_triple = ctx.attr.target_triple,
+            info_plist = info_plist,
+            entitlements = ctx.file.entitlements,
+            main_binary_name = main_binary_name,
+        ),
+    ]
+
+def _tauri_macos_app_impl(ctx):
+    bundle = ctx.attr.bundle[TauriBundleInfo]
+    app_bundle = ctx.actions.declare_directory("%s.app" % ctx.label.name)
+    app_manifest = ctx.actions.declare_file("%s_app_manifest.json" % ctx.label.name)
+
+    ctx.actions.run_shell(
+        inputs = [bundle.bundle_inputs_dir, bundle.bundle_manifest],
+        outputs = [app_bundle, app_manifest],
+        command = """
+set -eu
+mkdir -p "$1"
+cp -R "$2"/Contents "$1/Contents"
+cp "$3" "$4"
+""",
+        arguments = [
+            app_bundle.path,
+            bundle.bundle_inputs_dir.path,
+            bundle.bundle_manifest.path,
+            app_manifest.path,
+        ],
+        mnemonic = "TauriAssembleMacosApp",
+        progress_message = "Assembling macOS app bundle for %s" % ctx.label.name,
+    )
+
+    return [
+        DefaultInfo(files = depset([app_bundle, app_manifest])),
+        MacosAppBundleInfo(
+            app_bundle = app_bundle,
+            bundle_id = bundle.bundle_id,
+            product_name = bundle.product_name,
+            version = bundle.version,
+            target_triple = bundle.target_triple,
+            info_plist = bundle.info_plist,
+            manifest = app_manifest,
+        ),
+    ]
+
+tauri_bundle_inputs = rule(
+    implementation = _tauri_bundle_inputs_impl,
+    attrs = {
+        "frontend_dist": attr.label(allow_files = True),
+        "main_binary": attr.label(allow_single_file = True, mandatory = True),
+        "sidecars": attr.label_list(allow_files = True),
+        "resources": attr.label_list(allow_files = True),
+        "resource_map": attr.label_keyed_string_dict(allow_files = True),
+        "resource_trees": attr.label_keyed_string_dict(allow_files = True),
+        "icons": attr.label_list(allow_files = True),
+        "tauri_config": attr.label(allow_single_file = True),
+        "capabilities": attr.label_list(allow_files = True),
+        "entitlements": attr.label(allow_single_file = True),
+        "info_plist_fragments": attr.label_list(allow_files = True),
+        "macos_files": attr.label_keyed_string_dict(allow_files = True),
+        "bundle_id": attr.string(mandatory = True),
+        "product_name": attr.string(mandatory = True),
+        "version": attr.string(),
+        "version_file": attr.label(allow_single_file = True),
+        "target_triple": attr.string(mandatory = True),
+        "frameworks": attr.label_list(allow_files = True),
+        "_make_manifest_tool": attr.label(
+            default = "//tools/bazel:make_tauri_manifest.py",
+            executable = True,
+            allow_single_file = True,
+            cfg = "exec",
+        ),
+        "_make_plist_tool": attr.label(
+            default = "@rules_tauri//tools:make_plist.py",
+            executable = True,
+            allow_single_file = True,
+            cfg = "exec",
+        ),
+    },
+)
+
+tauri_macos_app = rule(
+    implementation = _tauri_macos_app_impl,
+    attrs = {
+        "bundle": attr.label(mandatory = True),
+    },
+)
+
+def _target_platform_transition_impl(settings, attr):
+    return {
+        "//command_line_option:platforms": str(attr.platform),
+    }
+
+target_platform_transition = transition(
+    implementation = _target_platform_transition_impl,
+    inputs = [],
+    outputs = ["//command_line_option:platforms"],
+)
+
+def _exec_target_impl(ctx):
+    return [DefaultInfo(files = ctx.attr.target[DefaultInfo].files)]
+
+exec_target = rule(
+    implementation = _exec_target_impl,
+    attrs = {
+        "target": attr.label(mandatory = True, cfg = "exec"),
+    },
+)
+
+def _single_output(target, attr_name):
+    files = target[DefaultInfo].files.to_list()
+    if len(files) != 1:
+        fail("%s must provide exactly one output, got %d" % (attr_name, len(files)))
+    return files[0]
+
+def _find_named_file(files, basename, attr_name):
+    matches = [file for file in files if file.basename == basename]
+    if len(matches) != 1:
+        fail("%s must provide exactly one %s, got %d" % (attr_name, basename, len(matches)))
+    return matches[0]
+
+def _target_files(targets):
+    files = []
+    for target in targets:
+        files.extend(target[DefaultInfo].files.to_list())
+    return files
+
+def _tauri_acl_prep_dir_impl(ctx):
+    out = ctx.actions.declare_directory(ctx.label.name + ".out_dir")
+    config = _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
+    frontend_dist = _single_output(ctx.attr.frontend_dist, "frontend_dist")
+    dep_target_files = _target_files(ctx.attr.dep_env_targets)
+    dep_env_files = [file for file in dep_target_files if file.basename.endswith(".depenv")]
+    dep_out_dirs = [file for file in dep_target_files if file.is_directory]
+    inputs = depset(
+        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [frontend_dist] + dep_target_files,
+    )
+
+    args = ctx.actions.args()
+    args.add("--config", config.path)
+    for dep_env_file in dep_env_files:
+        args.add("--dep-env-file", dep_env_file.path)
+    for dep_out_dir in dep_out_dirs:
+        args.add("--dep-out-dir", dep_out_dir.path)
+    args.add("--frontend-dist", frontend_dist.path)
+    args.add("--out-dir", out.path)
+
+    ctx.actions.run(
+        executable = ctx.executable._tool,
+        inputs = inputs,
+        outputs = [out],
+        arguments = [args],
+        mnemonic = "TauriAclPrep",
+        progress_message = "Preparing Tauri ACL outputs for %s" % ctx.label.name,
+    )
+
+    return [DefaultInfo(files = depset([out]))]
+
+tauri_acl_prep_dir = rule(
+    implementation = _tauri_acl_prep_dir_impl,
+    attrs = {
+        "cargo_srcs": attr.label(mandatory = True),
+        "dep_env_targets": attr.label_list(),
+        "frontend_dist": attr.label(mandatory = True),
+        "tauri_build_data": attr.label(mandatory = True),
+        "_tool": attr.label(
+            default = Label("@rules_tauri//tools/tauri_acl_prep:tauri_acl_prep_exec"),
+            cfg = "exec",
+            executable = True,
+        ),
+    },
+)
+
+def _tauri_context_rust_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".rs")
+    config = _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
+    embedded_assets_rust = _single_output(ctx.attr.embedded_assets_rust, "embedded_assets_rust")
+    acl_out_dir = _single_output(ctx.attr.acl_out_dir, "acl_out_dir")
+    inputs = depset(
+        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [embedded_assets_rust, acl_out_dir],
+    )
+
+    args = ctx.actions.args()
+    args.add("--config", config.path)
+    args.add("--embedded-assets-rust", embedded_assets_rust.path)
+    args.add("--acl-out-dir", acl_out_dir.path)
+    args.add("--out", out.path)
+
+    ctx.actions.run(
+        executable = ctx.executable._tool,
+        inputs = inputs,
+        outputs = [out],
+        arguments = [args],
+        mnemonic = "TauriContextCodegen",
+        progress_message = "Generating Tauri context for %s" % ctx.label.name,
+    )
+
+    return [DefaultInfo(files = depset([out]))]
+
+tauri_context_rust = rule(
+    implementation = _tauri_context_rust_impl,
+    attrs = {
+        "acl_out_dir": attr.label(mandatory = True),
+        "cargo_srcs": attr.label(mandatory = True),
+        "embedded_assets_rust": attr.label(mandatory = True),
+        "tauri_build_data": attr.label(mandatory = True),
+        "_tool": attr.label(
+            default = Label("@rules_tauri//tools/tauri_context_codegen:tauri_context_codegen_exec"),
+            cfg = "exec",
+            executable = True,
+        ),
+    },
+)
+
 def _macos_dmg_impl(ctx):
     srcs = ctx.attr.app[DefaultInfo].files.to_list()
     app_candidates = [src for src in srcs if src.basename.endswith(".app")]

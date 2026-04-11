@@ -1,6 +1,7 @@
 load("@desktop_crates//:defs.bzl", "all_crate_deps")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("//tools/bazel:defs.bzl", "tauri_acl_prep_dir", "tauri_context_rust")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -42,10 +43,45 @@ filegroup(
     srcs = [
         "Info.plist",
         "tauri.conf.json",
-        "//apps/desktop:dist",
+        "//:frontend_dist",
         ":capabilities",
         ":icons",
     ],
+)
+
+genrule(
+    name = "embedded_assets_rust",
+    srcs = ["//:frontend_dist"],
+    tools = [
+        "@rules_tauri//tools/tauri_brotli_compress:tauri_brotli_compress_exec",
+        "@rules_tauri//tools/tauri_brotli_compress:tauri_transform_assets_exec",
+        "@rules_tauri//tools:tauri_embedded_assets_rust_exec",
+    ],
+    outs = ["embedded_assets_rust.rs"],
+    cmd = "$(execpath @rules_tauri//tools:tauri_embedded_assets_rust_exec) --transformer $(execpath @rules_tauri//tools/tauri_brotli_compress:tauri_transform_assets_exec) --compressor $(execpath @rules_tauri//tools/tauri_brotli_compress:tauri_brotli_compress_exec) --compression-quality 2 $(location //:frontend_dist) $@",
+)
+
+tauri_acl_prep_dir(
+    name = "desktop_build_script_acl_prep",
+    cargo_srcs = ":cargo_srcs",
+    dep_env_targets = [
+        "@desktop_crates__tauri-2.10.3//:build_script_build",
+        "@desktop_crates__tauri-plugin-dialog-2.6.0//:build_script_build",
+        "@desktop_crates__tauri-plugin-opener-2.5.3//:build_script_build",
+        "@desktop_crates__tauri-plugin-shell-2.3.5//:build_script_build",
+        "@desktop_crates__tauri-plugin-sql-2.3.2//:build_script_build",
+        "@desktop_crates__tauri-plugin-webdriver-0.2.1//:build_script_build",
+    ],
+    frontend_dist = "//:frontend_dist",
+    tauri_build_data = ":tauri_build_data",
+)
+
+tauri_context_rust(
+    name = "full_context_rust",
+    acl_out_dir = ":desktop_build_script_acl_prep",
+    cargo_srcs = ":cargo_srcs",
+    embedded_assets_rust = ":embedded_assets_rust",
+    tauri_build_data = ":tauri_build_data",
 )
 
 cargo_build_script(
@@ -75,11 +111,19 @@ cargo_build_script(
         "//:VERSION",
         ":cargo_srcs",
         ":tauri_build_data",
+        ":desktop_build_script_acl_prep",
+        ":embedded_assets_rust",
+        ":full_context_rust",
+        "//:frontend_dist",
     ],
     compile_data = [
         "//:VERSION",
         ":cargo_srcs",
         ":tauri_build_data",
+        ":desktop_build_script_acl_prep",
+        ":embedded_assets_rust",
+        ":full_context_rust",
+        "//:frontend_dist",
     ],
     build_script_env = {
         "DEP_TAURI_DEV": "false",
@@ -87,7 +131,8 @@ cargo_build_script(
         "KANNA_BUILD_COMMIT": "",
         "KANNA_BUILD_WORKTREE": "",
         "KANNA_VERSION_FILE": "$(location //:VERSION)",
-        "TAURI_CONFIG": "{\"bundle\":{\"externalBin\":[],\"resources\":[]}}",
+        "RULES_TAURI_BAZEL_ACL_OUT_DIR": "$(location :desktop_build_script_acl_prep)",
+        "RULES_TAURI_BAZEL_FULL_CONTEXT": "$(location :full_context_rust)",
     },
 )
 
@@ -97,6 +142,11 @@ rust_library(
     crate_root = "src/lib.rs",
     crate_name = "kanna_desktop_lib",
     edition = "2021",
+    compile_data = [
+        ":cargo_srcs",
+        ":tauri_build_data",
+        "//:frontend_dist",
+    ],
     deps = all_crate_deps(
         normal = True,
         package_name = "apps/desktop/src-tauri",
