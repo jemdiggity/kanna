@@ -20,6 +20,30 @@ curl -fsSL https://raw.githubusercontent.com/jemdiggity/kanna/main/scripts/insta
 
 Requires [Claude CLI](https://docs.anthropic.com/en/docs/claude-code).
 
+## Build Paths
+
+Development uses the normal Tauri path:
+
+```sh
+./scripts/dev.sh
+```
+
+Use that for:
+
+- local UI iteration
+- worktree-aware dev server startup
+- WebDriver-backed E2E runs
+- Tauri/Vite development behavior
+
+Release packaging uses the Bazel path:
+
+- deterministic frontend dist
+- deterministic Rust/Tauri binary builds
+- unsigned `.app` assembly
+- signing, DMG creation, and notarization
+
+The two paths are intentionally separate. `./scripts/dev.sh` is the dev entry point, and Bazel is the release entry point.
+
 ## Bazel Build
 
 Unsigned desktop app:
@@ -45,6 +69,8 @@ This path now follows the `rules_tauri` Tauri + Vite + Vue example shape:
 - Bazel builds the frontend dist at `//apps/desktop:dist`
 - Bazel builds the Rust/Tauri binary at `//apps/desktop/src-tauri:kanna_desktop`
 - `rules_tauri` assembles the unsigned macOS `.app`
+
+This is the release path. It is not intended to replace `./scripts/dev.sh` for local development.
 
 Release packaging remains available on top of that app graph:
 
