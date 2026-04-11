@@ -15,7 +15,6 @@ exports_files([
     "build_macos_signed_app.py",
     "build_macos_signed_file.py",
     "defs.bzl",
-    "extensions.bzl",
     "libghostty-vt-sys-zig-env.patch",
     "openssl-src-bazel-runfiles.patch",
     "tauri-utils-bazel-debug-assertions.patch",
