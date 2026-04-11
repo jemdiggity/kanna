@@ -327,7 +327,8 @@ echo "    Building via Bazel: ${TARGETS[*]}"
     bazel build "${BAZEL_ARGS[@]}" "${TARGETS[@]}"
 )
 
-BAZEL_BIN="$(cd "$ROOT" && bazel info bazel-bin)"
+BAZEL_INFO_ARGS=("${BAZEL_ARGS[@]}")
+BAZEL_BIN="$(cd "$ROOT" && bazel info "${BAZEL_INFO_ARGS[@]}" bazel-bin)"
 
 for LABEL in "${ARCH_LABELS[@]}"; do
     STEP="collecting artifact ($LABEL)"
