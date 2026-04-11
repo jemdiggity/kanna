@@ -66,6 +66,20 @@ bazel_output_for_label() {
     fi
 }
 
+resolve_bazel_output() {
+    local target="$1"
+    local output
+    output="$(
+        cd "$ROOT" &&
+        bazel cquery "${BAZEL_ARGS[@]}" "$target" --output=files | tail -1
+    )"
+    if [[ -z "$output" ]]; then
+        echo "Error: Bazel did not report an output file for $target" >&2
+        exit 1
+    fi
+    echo "$ROOT/$output"
+}
+
 release_asset_name() {
     local label="$1"
     local suffix
@@ -343,12 +357,10 @@ echo "    Building via Bazel: ${TARGETS[*]}"
     bazel build "${BAZEL_ARGS[@]}" "${TARGETS[@]}"
 )
 
-BAZEL_INFO_ARGS=("${BAZEL_ARGS[@]}")
-BAZEL_BIN="$(cd "$ROOT" && bazel info "${BAZEL_INFO_ARGS[@]}" bazel-bin)"
-
 for LABEL in "${ARCH_LABELS[@]}"; do
     STEP="collecting artifact ($LABEL)"
-    DMG_SOURCE="$BAZEL_BIN/release/$(bazel_output_for_label "$LABEL")"
+    TARGET="$(bazel_target_for_label "$LABEL")"
+    DMG_SOURCE="$(resolve_bazel_output "$TARGET")"
     if [[ ! -f "$DMG_SOURCE" ]]; then
         echo "Error: Expected Bazel output not found: $DMG_SOURCE"
         exit 1
@@ -356,6 +368,7 @@ for LABEL in "${ARCH_LABELS[@]}"; do
 
     DMG_NAME="$(release_asset_name "$LABEL")"
     DMG_DEST="$RELEASE_DIR/$DMG_NAME"
+    rm -f "$DMG_DEST"
     cp "$DMG_SOURCE" "$DMG_DEST"
     DMG_PATHS+=("$DMG_DEST")
 

@@ -183,7 +183,7 @@ tauri_macos_app(
 macos_codesign_app(
     name = "kanna_signed_app_release_arm64",
     app = ":kanna_app_release_arm64",
-    output_name = "release/Kanna-arm64.app",
+    output_name = "release/arm64/Kanna.app",
 )
 
 macos_dmg(
@@ -234,7 +234,7 @@ tauri_macos_app(
 macos_codesign_app(
     name = "kanna_signed_app_release_x86_64",
     app = ":kanna_app_release_x86_64",
-    output_name = "release/Kanna-x86_64.app",
+    output_name = "release/x86_64/Kanna.app",
 )
 
 macos_dmg(

@@ -35,4 +35,29 @@ describe("ship script release retry behavior", () => {
       "https://github.com/jemdiggity/kanna-tauri/releases/tag/v$VERSION",
     );
   });
+
+  it("resolves final Bazel outputs with cquery instead of assuming a bazel-bin path", () => {
+    const shipScript = readFileSync(
+      resolve(repoRoot, "scripts/ship.sh"),
+      "utf8",
+    );
+
+    expect(shipScript).toContain("bazel cquery");
+    expect(shipScript).toContain("--output=files");
+    expect(shipScript).not.toContain('DMG_SOURCE="$BAZEL_BIN/release/');
+  });
+});
+
+describe("release bundle naming", () => {
+  it("emits signed app bundles as Kanna.app for both architectures", () => {
+    const rootBuild = readFileSync(
+      resolve(repoRoot, "BUILD.bazel"),
+      "utf8",
+    );
+
+    expect(rootBuild).toContain('output_name = "release/arm64/Kanna.app"');
+    expect(rootBuild).toContain('output_name = "release/x86_64/Kanna.app"');
+    expect(rootBuild).not.toContain('output_name = "release/Kanna-arm64.app"');
+    expect(rootBuild).not.toContain('output_name = "release/Kanna-x86_64.app"');
+  });
 });
