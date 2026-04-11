@@ -61,6 +61,12 @@ const workingFilterLabel = computed(() => {
 let fileDiffInstance: FileDiff | null = null;
 let workerPool: WorkerPoolManager | null = null;
 
+interface DiffFilePathMetadata {
+  newName?: string;
+  oldName?: string;
+  fileName?: string;
+}
+
 async function initWorkerPool() {
   if (workerPool) return workerPool;
   try {
@@ -172,10 +178,11 @@ async function renderDiff(patch: string) {
 
   // Render each file diff
   for (const rawFileMeta of allFiles) {
+    const pathMeta = rawFileMeta as typeof rawFileMeta & DiffFilePathMetadata;
     const displayPath =
-      rawFileMeta.newName ||
-      rawFileMeta.oldName ||
-      rawFileMeta.fileName ||
+      pathMeta.newName ||
+      pathMeta.oldName ||
+      pathMeta.fileName ||
       "";
 
     const fileMeta = isBazelSyntaxPath(displayPath)

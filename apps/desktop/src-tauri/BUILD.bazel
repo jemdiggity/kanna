@@ -72,10 +72,12 @@ cargo_build_script(
         package_name = "apps/desktop/src-tauri",
     ),
     data = [
+        "//:VERSION",
         ":cargo_srcs",
         ":tauri_build_data",
     ],
     compile_data = [
+        "//:VERSION",
         ":cargo_srcs",
         ":tauri_build_data",
     ],
@@ -84,6 +86,7 @@ cargo_build_script(
         "KANNA_BUILD_BRANCH": "",
         "KANNA_BUILD_COMMIT": "",
         "KANNA_BUILD_WORKTREE": "",
+        "KANNA_VERSION_FILE": "$(location //:VERSION)",
         "TAURI_CONFIG": "{\"bundle\":{\"externalBin\":[],\"resources\":[]}}",
     },
 )

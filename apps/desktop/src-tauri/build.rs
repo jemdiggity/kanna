@@ -8,9 +8,17 @@ fn main() {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("KANNA_VERSION_FILE")
+                .ok()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     println!("cargo:rustc-env=KANNA_VERSION={version}");
     println!("cargo:rerun-if-env-changed=KANNA_VERSION");
+    println!("cargo:rerun-if-env-changed=KANNA_VERSION_FILE");
 
     let build_branch = std::env::var("KANNA_BUILD_BRANCH").unwrap_or_default();
     let build_commit = std::env::var("KANNA_BUILD_COMMIT").unwrap_or_default();

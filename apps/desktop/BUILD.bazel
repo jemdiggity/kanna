@@ -3,6 +3,7 @@ package(default_visibility = ["//visibility:public"])
 load("@aspect_rules_js//js:defs.bzl", "js_run_binary")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//apps/desktop:vite/package_json.bzl", vite_bin = "bin")
+load("@npm//apps/desktop:vue-tsc/package_json.bzl", vue_tsc_bin = "bin")
 
 npm_link_all_packages(
     name = "node_modules",
@@ -10,6 +11,10 @@ npm_link_all_packages(
 
 vite_bin.vite_binary(
     name = "vite",
+)
+
+vue_tsc_bin.vue_tsc_binary(
+    name = "vue_tsc",
 )
 
 filegroup(
@@ -30,10 +35,29 @@ filegroup(
 )
 
 js_run_binary(
+    name = "typecheck",
+    tool = ":vue_tsc",
+    args = ["--noEmit"],
+    srcs = [
+        ":srcs",
+        ":node_modules",
+        "//packages/core:srcs_in_bin",
+        "//packages/core:node_modules",
+        "//packages/db:srcs_in_bin",
+        "//packages/db:node_modules",
+    ],
+    chdir = package_name(),
+    stdout = "vue_tsc.stdout",
+    mnemonic = "TypecheckKannaDesktopFrontend",
+    progress_message = "Type-checking Kanna desktop frontend %{label}",
+)
+
+js_run_binary(
     name = "dist",
     tool = ":vite",
     args = ["build"],
     srcs = [
+        ":typecheck",
         ":srcs",
         ":node_modules",
         "//packages/core:srcs_in_bin",
