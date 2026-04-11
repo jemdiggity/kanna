@@ -20,27 +20,41 @@ curl -fsSL https://raw.githubusercontent.com/jemdiggity/kanna/main/scripts/insta
 
 Requires [Claude CLI](https://docs.anthropic.com/en/docs/claude-code).
 
-## Bazel Release
+## Bazel Build
 
-Unsigned release apps:
+Unsigned desktop app:
+
+```sh
+bazel build //:kanna_app_arm64
+```
+
+Optional release-shaped unsigned app:
+
+```sh
+bazel build //:kanna_app_release_arm64
+```
+
+Optional x86_64 release app:
+
+```sh
+bazel build //:kanna_app_release_x86_64
+```
+
+This path now follows the `rules_tauri` Tauri + Vite + Vue example shape:
+
+- Bazel builds the frontend dist at `//apps/desktop:dist`
+- Bazel builds the Rust/Tauri binary at `//apps/desktop/src-tauri:kanna_desktop`
+- `rules_tauri` assembles the unsigned macOS `.app`
+
+Release packaging remains available on top of that app graph:
 
 ```sh
 bazel build -c opt //:release_apps
-```
-
-Signed DMGs:
-
-```sh
 bazel build -c opt //:release_signed_dmgs
-```
-
-Notarized DMGs:
-
-```sh
 bazel build --config=notarize -c opt //:release
 ```
 
-Outputs land in `bazel-bin/release/`:
+Release outputs land in `bazel-bin/release/`:
 
 - `Kanna-arm64-notarized.dmg`
 - `Kanna-x86_64-notarized.dmg`
