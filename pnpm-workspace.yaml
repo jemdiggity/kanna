@@ -3,3 +3,4 @@ packages:
   - "packages/*"
   - "services/*"
   - "tests/*"
+onlyBuiltDependencies: []

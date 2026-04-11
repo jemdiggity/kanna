@@ -1,23 +1,44 @@
 package(default_visibility = ["//visibility:public"])
 
-load("//tools/bazel:defs.bzl", "copy_tree")
+load("@aspect_rules_js//js:defs.bzl", "js_run_binary")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//apps/desktop:vite/package_json.bzl", vite_bin = "bin")
 
-filegroup(
-    name = "frontend_srcs",
-    srcs = glob([
-        "bun.lock",
-        "bunfig.toml",
-        "index.html",
-        "node_modules/**",
-        "package.json",
-        "public/**",
-        "src/**",
-        "tsconfig*.json",
-        "vite.config.ts",
-    ]),
+npm_link_all_packages(
+    name = "node_modules",
 )
 
-copy_tree(
+vite_bin.vite_binary(
+    name = "vite",
+)
+
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            ".DS_Store",
+            "**/.DS_Store",
+            "dist/**",
+            "node_modules/**",
+            "src-tauri/target/**",
+        ],
+    ),
+)
+
+js_run_binary(
     name = "dist",
-    src = "//:desktop_frontend_dist",
+    tool = ":vite",
+    args = ["build"],
+    srcs = [
+        ":srcs",
+        ":node_modules",
+        "//packages/core:srcs",
+        "//packages/db:srcs",
+    ],
+    chdir = package_name(),
+    copy_srcs_to_bin = False,
+    out_dirs = ["dist"],
+    mnemonic = "BuildKannaDesktopFrontendDist",
+    progress_message = "Building Kanna desktop frontend dist %{label}",
 )
