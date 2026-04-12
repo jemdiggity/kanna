@@ -60,9 +60,9 @@ bazel_target_for_label() {
 bazel_output_for_label() {
     local label="$1"
     if [[ "$DRY_RUN" = true ]]; then
-        echo "Kanna-${label}-signed.dmg"
+        echo "signed/Kanna-${label}.dmg"
     else
-        echo "Kanna-${label}-notarized.dmg"
+        echo "notarized/Kanna-${label}.dmg"
     fi
 }
 
@@ -84,11 +84,7 @@ release_asset_name() {
     local label="$1"
     local suffix
     suffix="$(installer_arch_suffix "$label")"
-    if [[ "$DRY_RUN" = true ]]; then
-        echo "Kanna_${VERSION}_${suffix}-signed.dmg"
-    else
-        echo "Kanna_${VERSION}_${suffix}.dmg"
-    fi
+    echo "Kanna_${VERSION}_${suffix}.dmg"
 }
 
 bazel_cache_configured() {
