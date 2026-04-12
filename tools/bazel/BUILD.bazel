@@ -18,6 +18,7 @@ exports_files([
     "ghostty-simdutf-include.patch",
     "libghostty-vt-sys-zig-env.patch",
     "make_tauri_manifest.py",
+    "normalize_tauri_context.py",
     "openssl-src-bazel-runfiles.patch",
     "tauri-utils-bazel-debug-assertions.patch",
     "tauri-utils-bazel-permission-paths.patch",

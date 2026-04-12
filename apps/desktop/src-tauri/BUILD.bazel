@@ -35,8 +35,7 @@ filegroup(
         "Cargo.toml",
         "Info.plist",
         "tauri.conf.json",
-    ] + [
-        ":bazel_default_capability",
+        "capabilities/default.json",
     ] + glob([
         "icons/**",
     ]),
@@ -52,40 +51,13 @@ filegroup(
     srcs = glob(["capabilities/**"]),
 )
 
-genrule(
-    name = "bazel_default_capability",
-    srcs = ["capabilities/default.json"],
-    outs = ["bazel_capabilities/default.json"],
-    cmd = """
-python3 - "$<" "$@" <<'PY'
-import pathlib
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-for old, new in [
-    ('"opener:', '"plugin-opener:'),
-    ('"shell:', '"plugin-shell:'),
-    ('"sql:', '"plugin-sql:'),
-    ('"dialog:', '"plugin-dialog:'),
-]:
-    text = text.replace(old, new)
-pathlib.Path(sys.argv[2]).write_text(text, encoding="utf-8")
-PY
-""",
-)
-
-filegroup(
-    name = "bazel_capabilities",
-    srcs = [":bazel_default_capability"],
-)
-
 filegroup(
     name = "tauri_build_data",
     srcs = [
         "Info.plist",
         "tauri.conf.json",
         "//:frontend_dist",
-        ":bazel_capabilities",
+        ":capabilities",
         ":icons",
     ],
 )
@@ -131,9 +103,10 @@ genrule(
         ":full_context_rust_support",
         "src/lib.rs",
     ],
+    tools = ["//tools/bazel:normalize_tauri_context.py"],
     outs = ["src/lib_bazel.rs"],
     cmd = """
-python3 - "$(location src/lib.rs)" "$(location :full_context_rust_support)" "$@" <<'PY'
+python3 - "$(location src/lib.rs)" "$(location :full_context_rust_support)" "$(location //tools/bazel:normalize_tauri_context.py)" "$@" <<'PY'
 import json
 import pathlib
 import re
@@ -141,6 +114,9 @@ import sys
 
 src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 support_dir = pathlib.Path(sys.argv[2])
+helper_path = pathlib.Path(sys.argv[3])
+sys.path.insert(0, str(helper_path.parent))
+from normalize_tauri_context import normalize_generated_context
 support_dir_literal = json.dumps(f"../{support_dir.name}")
 context = (support_dir / "full_context_rust.rs").read_text(encoding="utf-8")
 context = re.sub(
@@ -148,11 +124,12 @@ context = re.sub(
     support_dir_literal,
     context,
 )
+context = normalize_generated_context(context)
 needle = "tauri::generate_context!()"
 if needle not in src:
     raise SystemExit(f"missing {needle} in src/lib.rs")
 src = src.replace(needle, context, 1)
-pathlib.Path(sys.argv[3]).write_text(
+pathlib.Path(sys.argv[4]).write_text(
     "// Bazel release builds consume the generated Tauri context directly.\\n" + src,
     encoding="utf-8",
 )
