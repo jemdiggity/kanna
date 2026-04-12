@@ -248,32 +248,21 @@ fi
 
 STEP="bumping version"
 
-# Fetch tags from origin so we don't miss versions pushed by other machines
+SOURCE_VERSION=$(read_current_version)
+IFS='.' read -r MAJOR MINOR PATCH <<< "$SOURCE_VERSION"
+
+# Fetch tags from origin so release retry checks see the latest remote state.
 git -C "$ROOT" fetch --quiet origin --tags
 
-LAST_TAG=$(git -C "$ROOT" tag -l 'v*' --sort=-v:refname | head -1)
-if [[ -z "$LAST_TAG" ]]; then
-    LAST_VERSION="0.0.0"
-else
-    LAST_VERSION="${LAST_TAG#v}"
-fi
-
-IFS='.' read -r MAJOR MINOR PATCH <<< "$LAST_VERSION"
-
-# Don't bump if the tag exists locally but was never pushed
-if [[ -n "$LAST_TAG" ]] && ! git -C "$ROOT" ls-remote --tags origin "refs/tags/$LAST_TAG" | grep -q "$LAST_TAG"; then
-    echo "    Tag $LAST_TAG exists locally but was never pushed — re-releasing $LAST_VERSION"
-else
-    case $BUMP in
-        major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-        minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-        patch) PATCH=$((PATCH + 1)) ;;
-    esac
-fi
+case $BUMP in
+    major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+    minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+    patch) PATCH=$((PATCH + 1)) ;;
+esac
 
 VERSION="$MAJOR.$MINOR.$PATCH"
 
-echo "==> Shipping Kanna v$LAST_VERSION → v$VERSION"
+echo "==> Shipping Kanna v$SOURCE_VERSION → v$VERSION"
 
 CURRENT_VERSION=$(read_current_version)
 CURRENT_TAURI_VERSION=$(read_tauri_version)

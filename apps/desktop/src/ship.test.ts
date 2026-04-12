@@ -5,6 +5,19 @@ import { describe, expect, it } from "vitest";
 const repoRoot = resolve(process.cwd(), "../..");
 
 describe("ship script release retry behavior", () => {
+  it("uses the VERSION file as the source of truth for the current version", () => {
+    const shipScript = readFileSync(
+      resolve(repoRoot, "scripts/ship.sh"),
+      "utf8",
+    );
+
+    expect(shipScript).toContain("SOURCE_VERSION=$(read_current_version)");
+    expect(shipScript).toContain('IFS=\'.\' read -r MAJOR MINOR PATCH <<< "$SOURCE_VERSION"');
+    expect(shipScript).not.toContain(
+      "IFS='.' read -r MAJOR MINOR PATCH <<< \"$LAST_VERSION\"",
+    );
+  });
+
   it("checks for an existing release before rebuilding an already-synced version", () => {
     const shipScript = readFileSync(
       resolve(repoRoot, "scripts/ship.sh"),
