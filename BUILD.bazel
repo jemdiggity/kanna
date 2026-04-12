@@ -196,13 +196,13 @@ macos_dmg(
 macos_codesign_file(
     name = "kanna_signed_dmg_release_arm64",
     src = ":kanna_dmg_release_arm64",
-    output_name = "release/Kanna-arm64-signed.dmg",
+    output_name = "release/signed/Kanna-arm64.dmg",
 )
 
 macos_notarize_dmg(
     name = "kanna_notarized_dmg_release_arm64",
     dmg = ":kanna_signed_dmg_release_arm64",
-    output_name = "release/Kanna-arm64-notarized.dmg",
+    output_name = "release/notarized/Kanna-arm64.dmg",
 )
 
 tauri_bundle_inputs(
@@ -247,13 +247,13 @@ macos_dmg(
 macos_codesign_file(
     name = "kanna_signed_dmg_release_x86_64",
     src = ":kanna_dmg_release_x86_64",
-    output_name = "release/Kanna-x86_64-signed.dmg",
+    output_name = "release/signed/Kanna-x86_64.dmg",
 )
 
 macos_notarize_dmg(
     name = "kanna_notarized_dmg_release_x86_64",
     dmg = ":kanna_signed_dmg_release_x86_64",
-    output_name = "release/Kanna-x86_64-notarized.dmg",
+    output_name = "release/notarized/Kanna-x86_64.dmg",
 )
 
 filegroup(

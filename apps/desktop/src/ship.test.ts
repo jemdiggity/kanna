@@ -60,4 +60,28 @@ describe("release bundle naming", () => {
     expect(rootBuild).not.toContain('output_name = "release/Kanna-arm64.app"');
     expect(rootBuild).not.toContain('output_name = "release/Kanna-x86_64.app"');
   });
+
+  it("uses the same dmg asset name in dry-run and release without signed in the filename", () => {
+    const shipScript = readFileSync(
+      resolve(repoRoot, "scripts/ship.sh"),
+      "utf8",
+    );
+
+    expect(shipScript).toContain('echo "Kanna_${VERSION}_${suffix}.dmg"');
+    expect(shipScript).not.toContain('echo "Kanna_${VERSION}_${suffix}-signed.dmg"');
+  });
+
+  it("does not emit signed in bazel dmg output filenames", () => {
+    const rootBuild = readFileSync(
+      resolve(repoRoot, "BUILD.bazel"),
+      "utf8",
+    );
+
+    expect(rootBuild).toContain('output_name = "release/Kanna-arm64.dmg"');
+    expect(rootBuild).toContain('output_name = "release/Kanna-x86_64.dmg"');
+    expect(rootBuild).toContain('output_name = "release/signed/Kanna-arm64.dmg"');
+    expect(rootBuild).toContain('output_name = "release/signed/Kanna-x86_64.dmg"');
+    expect(rootBuild).not.toContain('output_name = "release/Kanna-arm64-signed.dmg"');
+    expect(rootBuild).not.toContain('output_name = "release/Kanna-x86_64-signed.dmg"');
+  });
 });
