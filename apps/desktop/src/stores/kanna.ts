@@ -94,6 +94,10 @@ interface PreparedPtySession {
   agentCmd: string;
   kannaCliPath?: string;
 }
+
+interface WorktreeBootstrapResult {
+  visibleBootstrapSteps: string[];
+}
 // Module-level DB handle — set once by init(), never null after that.
 let _db: DbHandle;
 let portAllocationChain: Promise<void> = Promise.resolve();
@@ -812,15 +816,21 @@ export const useKannaStore = defineStore("kanna", () => {
     try {
       let s1 = performance.now();
       let repoConfig: RepoConfig;
+      let worktreeBootstrap: WorktreeBootstrapResult | null = null;
       if (agentType === "pty") {
         try {
-          repoConfig = await readRepoConfig(repoPath);
+          const [config, bootstrap] = await Promise.all([
+            readRepoConfig(repoPath),
+            createWorktree(repoPath, branch, worktreePath, opts?.baseBranch),
+          ]);
+          repoConfig = config;
+          worktreeBootstrap = bootstrap;
         } catch (e) {
-          console.error("[store] failed to read repo config:", e);
+          console.error("[store] failed to read repo config or create worktree:", e);
           toast.error(tt('toasts.worktreeFailed'));
           return;
         }
-        console.log(`[perf:setup] readConfig: ${(performance.now() - s1).toFixed(1)}ms`);
+        console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
       } else {
         try {
           const [config] = await Promise.all([
@@ -856,12 +866,6 @@ export const useKannaStore = defineStore("kanna", () => {
             maxBudgetUsd: opts?.customTask?.maxBudgetUsd ?? null,
           });
         } else {
-          const defaultBranch = opts?.baseBranch
-            ? null
-            : await invoke<string>("git_default_branch", { repoPath }).catch((e) => {
-                console.warn("[store] failed to resolve default branch for bootstrap:", e);
-                return "main";
-              });
           const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(id, prompt, {
             agentProvider,
             model: opts?.customTask?.model,
@@ -877,18 +881,15 @@ export const useKannaStore = defineStore("kanna", () => {
           const bootstrapAgentCmd = buildTaskShellCommand(agentCmd, [], { kannaCliPath });
 
           const bootstrapCmd = buildTaskBootstrapCommand({
-            repoPath,
             worktreePath,
-            branch,
-            baseBranch: opts?.baseBranch,
+            visibleBootstrapSteps: worktreeBootstrap?.visibleBootstrapSteps ?? [],
             setupCmds,
             agentCmd: bootstrapAgentCmd,
-            defaultBranch,
           });
 
           await invoke("spawn_session", {
             sessionId: id,
-            cwd: opts?.baseBranch ? `${repoPath}/.kanna-worktrees/${opts.baseBranch}` : repoPath,
+            cwd: worktreePath,
             executable: "/bin/zsh",
             args: ["--login", "-i", "-c", bootstrapCmd],
             env,
@@ -944,19 +945,29 @@ export const useKannaStore = defineStore("kanna", () => {
     return { claude, copilot, codex };
   }
 
-  async function createWorktree(repoPath: string, branch: string, worktreePath: string, baseBranch?: string) {
+  async function createWorktree(
+    repoPath: string,
+    branch: string,
+    worktreePath: string,
+    baseBranch?: string,
+  ): Promise<WorktreeBootstrapResult> {
     const worktreeAddCwd = baseBranch
       ? `${repoPath}/.kanna-worktrees/${baseBranch}`
       : repoPath;
+    const visibleBootstrapSteps: string[] = [];
 
     // For new tasks (no baseBranch), fetch origin and branch from origin/{defaultBranch}
     // so the worktree starts from the latest remote state, not a potentially stale local branch.
     let startPoint: string | null = baseBranch ? "HEAD" : null;
+    let renderedStartPoint = baseBranch ? "HEAD" : "HEAD";
     if (!baseBranch) {
       try {
         const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
+        renderedStartPoint = defaultBranch;
+        visibleBootstrapSteps.push(`git fetch origin ${defaultBranch}`);
         await invoke("git_fetch", { repoPath, branch: defaultBranch });
         startPoint = `origin/${defaultBranch}`;
+        renderedStartPoint = startPoint;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         const isOffline = /could not resolve host|network is unreachable|connection refused|timed out/i.test(msg);
@@ -976,6 +987,12 @@ export const useKannaStore = defineStore("kanna", () => {
       path: worktreePath,
       startPoint,
     });
+
+    visibleBootstrapSteps.push(
+      `git worktree add -b ${branch} '${worktreePath.replace(/'/g, `'\\''`)}' ${renderedStartPoint}`,
+    );
+
+    return { visibleBootstrapSteps };
   }
 
 
