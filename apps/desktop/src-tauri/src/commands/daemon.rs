@@ -834,7 +834,19 @@ pub async fn detach_session(
     session_id: String,
 ) -> Result<(), DaemonCommandError> {
     attached.lock().await.remove(&session_id);
-    pending_streams.lock().await.remove(&session_id);
+    if let Some(mut pending_stream) = pending_streams.lock().await.remove(&session_id) {
+        let cmd = serde_json::to_string(&serde_json::json!({
+            "type": "Detach",
+            "session_id": session_id,
+        }))
+        .map_err(|e| DaemonCommandError {
+            message: format!("failed to serialize detach command: {e}"),
+            code: None,
+        })?;
+        pending_stream.send_command(&cmd).await?;
+        let response = pending_stream.read_event().await?;
+        parse_ack(&response)?;
+    }
     if let Some(active_stream) = active_streams.lock().await.remove(&session_id) {
         let _ = active_stream.shutdown.send(());
     }
