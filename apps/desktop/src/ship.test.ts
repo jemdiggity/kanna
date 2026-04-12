@@ -84,4 +84,19 @@ describe("release bundle naming", () => {
     expect(rootBuild).not.toContain('output_name = "release/Kanna-arm64-signed.dmg"');
     expect(rootBuild).not.toContain('output_name = "release/Kanna-x86_64-signed.dmg"');
   });
+
+  it("uses the same desktop bundle identifier in Bazel and tauri config", () => {
+    const rootBuild = readFileSync(
+      resolve(repoRoot, "BUILD.bazel"),
+      "utf8",
+    );
+    const tauriConfig = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/tauri.conf.json"),
+      "utf8",
+    );
+
+    expect(tauriConfig).toContain('"identifier": "build.kanna"');
+    expect(rootBuild).toContain('bundle_id = "build.kanna"');
+    expect(rootBuild).not.toContain('bundle_id = "com.kanna.app"');
+  });
 });
