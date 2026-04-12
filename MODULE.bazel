@@ -3,6 +3,8 @@ module(
     version = "0.0.0",
 )
 
+git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
 bazel_dep(name = "rules_tauri", version = "0.0.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "rules_rust", version = "0.69.0")
@@ -16,6 +18,38 @@ git_override(
     module_name = "rules_tauri",
     commit = "32dd94193dca6ed2331a7e98473efa6beaebea13",
     remote = "https://github.com/jemdiggity/rules_tauri.git",
+)
+
+git_repository(
+    name = "kanna_ghostty_src",
+    build_file_content = """
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "build.zig",
+    "build.zig.zon",
+])
+
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            "BUILD",
+            "BUILD.bazel",
+            "WORKSPACE",
+            "WORKSPACE.bazel",
+        ],
+    ),
+)
+""",
+    commit = "665a03f380204ce1976941d36649963b4da80880",
+    patch_args = ["-p1"],
+    patches = [
+        "//tools/bazel:ghostty-libvt-fast-path.patch",
+        "//tools/bazel:ghostty-simdutf-include.patch",
+    ],
+    remote = "https://github.com/jemdiggity/ghostty.git",
 )
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
@@ -78,6 +112,7 @@ crate.from_cargo(
 )
 crate.annotation(
     build_script_env = {
+        "GHOSTTY_SOURCE_DIR": "$${pwd}/external/+git_repository+kanna_ghostty_src",
         "HOME": "$${OUT_DIR}/home",
         "XDG_CACHE_HOME": "$${OUT_DIR}/xdg-cache",
         "ZIG": "$${pwd}/$(ZIG_BIN)",
@@ -92,6 +127,11 @@ crate.annotation(
     repositories = [
         "daemon_crates",
         "terminal_recovery_crates",
+    ],
+    build_script_data = [
+        "@@+git_repository+kanna_ghostty_src//:build.zig",
+        "@@+git_repository+kanna_ghostty_src//:build.zig.zon",
+        "@@+git_repository+kanna_ghostty_src//:srcs",
     ],
 )
 crate.annotation(

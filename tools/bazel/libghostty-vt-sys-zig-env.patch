@@ -1,8 +1,6 @@
-diff --git a/build.rs b/build.rs
-index 1d58282..a7f3434 100644
 --- a/build.rs
 +++ b/build.rs
-@@ -39,7 +39,10 @@ fn main() {
+@@ -42,7 +42,10 @@
      // Build libghostty-vt via zig.
      let install_prefix = out_dir.join("ghostty-install");
  
@@ -14,3 +12,36 @@ index 1d58282..a7f3434 100644
      build
          .arg("build")
          .arg("-Demit-lib-vt")
+@@ -60,7 +63,8 @@
+     run(build, "zig build");
+ 
+     let lib_dir = install_prefix.join("lib");
+-    let include_dir = install_prefix.join("include");
++    let installed_include_dir = install_prefix.join("include");
++    let source_include_dir = ghostty_dir.join("include");
+ 
+     let lib_name = if target.contains("windows") {
+         "ghostty-vt-static.lib"
+@@ -73,11 +77,17 @@
+         "expected static library at {}",
+         lib_dir.join(lib_name).display()
+     );
+-    assert!(
+-        include_dir.join("ghostty").join("vt.h").exists(),
+-        "expected header at {}",
+-        include_dir.join("ghostty").join("vt.h").display()
+-    );
++    let include_dir = if installed_include_dir.join("ghostty").join("vt.h").exists() {
++        installed_include_dir
++    } else {
++        assert!(
++            source_include_dir.join("ghostty").join("vt.h").exists(),
++            "expected header at {} or {}",
++            installed_include_dir.join("ghostty").join("vt.h").display(),
++            source_include_dir.join("ghostty").join("vt.h").display()
++        );
++        source_include_dir
++    };
+ 
+     println!("cargo:rustc-link-search=native={}", lib_dir.display());
+     println!("cargo:rustc-link-lib=static=ghostty-vt");

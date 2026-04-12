@@ -1,0 +1,17 @@
+diff --git a/src/build/SharedDeps.zig b/src/build/SharedDeps.zig
+index c38d915..8664dbb 100644
+--- a/src/build/SharedDeps.zig
++++ b/src/build/SharedDeps.zig
+@@ -762,6 +762,10 @@ pub fn addSimd(
+             .target = target,
+             .optimize = optimize,
+         })) |simdutf_dep| {
++            // Propagate the vendored simdutf headers to consumers compiling
++            // Ghostty's SIMD C++ sources under their own module.
++            m.addIncludePath(simdutf_dep.path("vendor"));
++
+             m.linkLibrary(simdutf_dep.artifact("simdutf"));
+             if (static_libs) |v| try v.append(
+                 b.allocator,
+*** End Patch
+天天中彩票 to=functions.apply_patch code  彩神争霸提现***
