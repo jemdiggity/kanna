@@ -1,3 +1,4 @@
+pub mod logging;
 pub mod protocol;
 pub mod service;
 pub mod session_mirror;

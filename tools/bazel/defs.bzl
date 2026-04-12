@@ -525,6 +525,47 @@ tauri_context_rust = rule(
     },
 )
 
+def _tauri_context_support_dir_impl(ctx):
+    out = ctx.actions.declare_directory(ctx.label.name)
+    config = _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
+    embedded_assets_rust = _single_output(ctx.attr.embedded_assets_rust, "embedded_assets_rust")
+    acl_out_dir = _single_output(ctx.attr.acl_out_dir, "acl_out_dir")
+    inputs = depset(
+        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [embedded_assets_rust, acl_out_dir],
+    )
+
+    args = ctx.actions.args()
+    args.add("--config", config.path)
+    args.add("--embedded-assets-rust", embedded_assets_rust.path)
+    args.add("--acl-out-dir", acl_out_dir.path)
+    args.add("--out", out.path + "/full_context_rust.rs")
+
+    ctx.actions.run(
+        executable = ctx.executable._tool,
+        inputs = inputs,
+        outputs = [out],
+        arguments = [args],
+        mnemonic = "TauriContextCodegenDir",
+        progress_message = "Generating Tauri context support dir for %s" % ctx.label.name,
+    )
+
+    return [DefaultInfo(files = depset([out]))]
+
+tauri_context_support_dir = rule(
+    implementation = _tauri_context_support_dir_impl,
+    attrs = {
+        "acl_out_dir": attr.label(mandatory = True),
+        "cargo_srcs": attr.label(mandatory = True),
+        "embedded_assets_rust": attr.label(mandatory = True),
+        "tauri_build_data": attr.label(mandatory = True),
+        "_tool": attr.label(
+            default = Label("@rules_tauri//tools/tauri_context_codegen:tauri_context_codegen_exec"),
+            cfg = "exec",
+            executable = True,
+        ),
+    },
+)
+
 def _macos_dmg_impl(ctx):
     srcs = ctx.attr.app[DefaultInfo].files.to_list()
     app_candidates = [src for src in srcs if src.basename.endswith(".app")]

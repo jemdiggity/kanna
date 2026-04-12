@@ -826,6 +826,11 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       hasDaemonReadyListener: unlistenDaemonReady != null,
       hasStreamLostListener: unlistenStreamLost != null,
     })
+    if (attached || connecting || hasAttachedOnce) {
+      invoke("detach_session", { sessionId }).catch((error) => {
+        console.warn("[terminal] Failed to detach session during dispose:", error)
+      })
+    }
     disposed = true
     attached = false
     fileExistsCache.clear()
