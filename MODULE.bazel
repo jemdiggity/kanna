@@ -14,7 +14,7 @@ bazel_dep(name = "rules_nodejs", version = "6.7.3")
 
 git_override(
     module_name = "rules_tauri",
-    commit = "91357c8498648b05a483911ad8f195ae4bbd041f",
+    commit = "32dd94193dca6ed2331a7e98473efa6beaebea13",
     remote = "https://github.com/jemdiggity/rules_tauri.git",
 )
 

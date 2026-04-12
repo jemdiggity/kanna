@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::Emitter;
@@ -11,6 +12,12 @@ use crate::daemon_client::DaemonClient;
 pub type DaemonState = Arc<Mutex<Option<DaemonClient>>>;
 pub type AttachedSessions = Arc<Mutex<HashSet<String>>>;
 pub type PendingAttachedStreams = Arc<Mutex<HashMap<String, DaemonClient>>>;
+pub type ActiveAttachedStreams = Arc<Mutex<HashMap<String, ActiveAttachedStream>>>;
+
+pub struct ActiveAttachedStream {
+    attach_id: u64,
+    shutdown: tokio::sync::oneshot::Sender<()>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DaemonCommandError {
@@ -56,6 +63,7 @@ fn default_cursor_visible() -> bool {
 
 const SCAN_BUFFER_CAP: usize = 4096;
 const SCAN_FLUSH_MS: u64 = 150;
+static NEXT_ATTACH_ID: AtomicU64 = AtomicU64::new(1);
 // Text shown in Claude's status bar ONLY while actively processing.
 // After ANSI stripping, cursor-movement codes collapse the spaces.
 const CLAUDE_WORKING_INDICATOR: &str = "esctointerrupt";
@@ -213,9 +221,7 @@ fn parse_ack(response: &str) -> Result<(), DaemonCommandError> {
     Ok(())
 }
 
-fn parse_snapshot_response(
-    response: &str,
-) -> Result<TerminalSnapshotPayload, DaemonCommandError> {
+fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, DaemonCommandError> {
     let event: serde_json::Value =
         serde_json::from_str(response).map_err(|e| DaemonCommandError {
             message: format!("failed to parse event: {}", e),
@@ -223,19 +229,18 @@ fn parse_snapshot_response(
         })?;
 
     match event.get("type").and_then(|t| t.as_str()) {
-        Some("Snapshot") => serde_json::from_value(
-            event
-                .get("snapshot")
-                .cloned()
-                .ok_or_else(|| DaemonCommandError {
+        Some("Snapshot") => {
+            serde_json::from_value(event.get("snapshot").cloned().ok_or_else(|| {
+                DaemonCommandError {
                     message: "snapshot response missing payload".to_string(),
                     code: None,
-                })?,
-        )
-        .map_err(|e| DaemonCommandError {
-            message: format!("failed to parse snapshot payload: {}", e),
-            code: None,
-        }),
+                }
+            })?)
+            .map_err(|e| DaemonCommandError {
+                message: format!("failed to parse snapshot payload: {}", e),
+                code: None,
+            })
+        }
         Some("Error") => Err(parse_error_event(&event)),
         _ => Err(DaemonCommandError {
             message: format!("unexpected event: {}", response),
@@ -307,9 +312,21 @@ async fn spawn_attached_stream_task(
     stream_client: DaemonClient,
     session_id: String,
     attached: AttachedSessions,
+    active_streams: ActiveAttachedStreams,
     agent_provider: Option<String>,
 ) {
     attached.lock().await.insert(session_id.clone());
+    let attach_id = NEXT_ATTACH_ID.fetch_add(1, Ordering::Relaxed);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    if let Some(previous) = active_streams.lock().await.insert(
+        session_id.clone(),
+        ActiveAttachedStream {
+            attach_id,
+            shutdown: shutdown_tx,
+        },
+    ) {
+        let _ = previous.shutdown.send(());
+    }
 
     let provider = match agent_provider.as_deref() {
         Some("copilot") => AgentProvider::Copilot,
@@ -320,10 +337,12 @@ async fn spawn_attached_stream_task(
     let sid = session_id.clone();
     let app = app.clone();
     let attached_clone = attached.clone();
+    let active_streams_clone = active_streams.clone();
     tauri::async_runtime::spawn(async move {
         let scan_state =
             std::sync::Arc::new(tokio::sync::Mutex::new(SessionScanState::new(provider)));
         let mut exited_normally = false;
+        let mut detached_intentionally = false;
         let mut output_event_count: usize = 0;
         let mut stream_client = stream_client;
 
@@ -350,7 +369,26 @@ async fn spawn_attached_stream_task(
             }
         });
 
-        while let Ok(line) = stream_client.read_event().await {
+        loop {
+            let line = tokio::select! {
+                _ = &mut shutdown_rx => {
+                    detached_intentionally = true;
+                    if let Ok(cmd) = serde_json::to_string(&serde_json::json!({
+                        "type": "Detach",
+                        "session_id": &sid,
+                    })) {
+                        let _ = stream_client.send_command(&cmd).await;
+                        if let Ok(response) = stream_client.read_event().await {
+                            let _ = parse_ack(&response);
+                        }
+                    }
+                    break;
+                }
+                line = stream_client.read_event() => match line {
+                    Ok(line) => line,
+                    Err(_) => break,
+                }
+            };
             let event: serde_json::Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -468,7 +506,19 @@ async fn spawn_attached_stream_task(
         }
         flush_handle.abort();
         attached_clone.lock().await.remove(&sid);
-        if !exited_normally {
+        let removed = active_streams_clone.lock().await.remove(&sid);
+        if removed
+            .as_ref()
+            .is_some_and(|stream| stream.attach_id != attach_id)
+        {
+            if let Some(stream) = removed {
+                active_streams_clone
+                    .lock()
+                    .await
+                    .insert(sid.clone(), stream);
+            }
+        }
+        if !exited_normally && !detached_intentionally {
             let payload = serde_json::json!({
                 "session_id": &sid,
             });
@@ -671,6 +721,7 @@ pub async fn attach_session_inner(
     app: &tauri::AppHandle,
     session_id: String,
     attached: &AttachedSessions,
+    active_streams: &ActiveAttachedStreams,
     agent_provider: Option<String>,
 ) -> Result<(), DaemonCommandError> {
     eprintln!(
@@ -701,7 +752,15 @@ pub async fn attach_session_inner(
     }
 
     eprintln!("[attach] acknowledged session={}", session_id);
-    spawn_attached_stream_task(app.clone(), stream_client, session_id, attached.clone(), agent_provider).await;
+    spawn_attached_stream_task(
+        app.clone(),
+        stream_client,
+        session_id,
+        attached.clone(),
+        active_streams.clone(),
+        agent_provider,
+    )
+    .await;
 
     Ok(())
 }
@@ -732,6 +791,7 @@ pub async fn resume_session_stream(
     app: tauri::AppHandle,
     pending_streams: tauri::State<'_, PendingAttachedStreams>,
     attached: tauri::State<'_, AttachedSessions>,
+    active_streams: tauri::State<'_, ActiveAttachedStreams>,
     session_id: String,
     agent_provider: Option<String>,
 ) -> Result<(), DaemonCommandError> {
@@ -748,6 +808,7 @@ pub async fn resume_session_stream(
         stream_client,
         session_id,
         attached.inner().clone(),
+        active_streams.inner().clone(),
         agent_provider,
     )
     .await;
@@ -758,28 +819,24 @@ pub async fn resume_session_stream(
 pub async fn attach_session(
     app: tauri::AppHandle,
     attached: tauri::State<'_, AttachedSessions>,
+    active_streams: tauri::State<'_, ActiveAttachedStreams>,
     session_id: String,
     agent_provider: Option<String>,
 ) -> Result<(), DaemonCommandError> {
-    attach_session_inner(&app, session_id, &attached, agent_provider).await
+    attach_session_inner(&app, session_id, &attached, &active_streams, agent_provider).await
 }
 
 #[tauri::command]
 pub async fn detach_session(
-    state: tauri::State<'_, DaemonState>,
     attached: tauri::State<'_, AttachedSessions>,
+    pending_streams: tauri::State<'_, PendingAttachedStreams>,
+    active_streams: tauri::State<'_, ActiveAttachedStreams>,
     session_id: String,
 ) -> Result<(), DaemonCommandError> {
     attached.lock().await.remove(&session_id);
-    let cmd = serde_json::json!({
-        "type": "Detach",
-        "session_id": session_id,
-    });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-    ensure_connected(&state).await?;
-    let mut guard = state.lock().await;
-    let client = guard.as_mut().unwrap();
-    client.send_command(&json).await?;
-    let response = client.read_event().await?;
-    parse_ack(&response)
+    pending_streams.lock().await.remove(&session_id);
+    if let Some(active_stream) = active_streams.lock().await.remove(&session_id) {
+        let _ = active_stream.shutdown.send(());
+    }
+    Ok(())
 }

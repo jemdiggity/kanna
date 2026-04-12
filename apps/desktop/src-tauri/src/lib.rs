@@ -2,7 +2,10 @@ mod commands;
 mod daemon_client;
 
 use commands::agent::AgentState;
-use commands::daemon::{AttachedSessions, DaemonState, PendingAttachedStreams};
+use commands::daemon::{
+    ActiveAttachedStream, ActiveAttachedStreams, AttachedSessions, DaemonState,
+    PendingAttachedStreams,
+};
 use daemon_client::DaemonClient;
 use dashmap::DashMap;
 use std::path::PathBuf;
@@ -504,10 +507,13 @@ pub fn run() {
         .manage(
             Arc::new(Mutex::new(std::collections::HashSet::<String>::new())) as AttachedSessions,
         )
-        .manage(
-            Arc::new(Mutex::new(std::collections::HashMap::<String, DaemonClient>::new()))
-                as PendingAttachedStreams,
-        )
+        .manage(Arc::new(Mutex::new(std::collections::HashMap::<
+            String,
+            ActiveAttachedStream,
+        >::new())) as ActiveAttachedStreams)
+        .manage(Arc::new(Mutex::new(
+            std::collections::HashMap::<String, DaemonClient>::new(),
+        )) as PendingAttachedStreams)
         .manage(Arc::new(Mutex::new(None)) as PipelineSocketState)
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -639,6 +645,6 @@ pub fn run() {
             commands::shell::run_script,
             commands::shell::ensure_term_init,
         ])
-        .run(tauri::tauri_build_context!())
+        .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

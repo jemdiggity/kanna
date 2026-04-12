@@ -250,6 +250,83 @@ describe("useTerminal", () => {
     expect(terminal.reset).toHaveBeenCalledTimes(1);
   });
 
+  it("detaches the active task session stream when the terminal unmounts", async () => {
+    const callOrder: string[] = [];
+    const { useTerminal } = await import("./useTerminal");
+    invokeMock.mockImplementation(async (cmd: string) => {
+      callOrder.push(cmd);
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored scrollback",
+        };
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "hello",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "claude",
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+    await startPromise;
+
+    wrapper.unmount();
+
+    for (let attempt = 0; attempt < 10 && !callOrder.includes("detach_session"); attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(callOrder).toEqual([
+      "attach_session_with_snapshot",
+      "resize_session",
+      "resume_session_stream",
+      "detach_session",
+    ]);
+  });
+
   it("respawns a task terminal when scrollback exists but the PTY is gone", async () => {
     const spawnFn = vi.fn(async () => {});
     const { useTerminal } = await import("./useTerminal");

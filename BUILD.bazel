@@ -90,21 +90,21 @@ genrule(
 
 genrule(
     name = "kanna_desktop_binary_arm64",
-    srcs = ["//apps/desktop/src-tauri:kanna_desktop"],
+    srcs = ["//apps/desktop/src-tauri:kanna_desktop_bazel"],
     outs = ["kanna-desktop"],
     cmd = "cp $< $@ && chmod +x $@",
 )
 
 genrule(
     name = "kanna_desktop_binary_release_arm64",
-    srcs = ["//apps/desktop/src-tauri:kanna_desktop"],
+    srcs = ["//apps/desktop/src-tauri:kanna_desktop_bazel"],
     outs = ["release/kanna-desktop"],
     cmd = "cp $< $@ && chmod +x $@",
 )
 
 genrule(
     name = "kanna_desktop_binary_release_x86_64",
-    srcs = ["//apps/desktop/src-tauri:kanna_desktop_x86_64"],
+    srcs = ["//apps/desktop/src-tauri:kanna_desktop_x86_64_bazel"],
     outs = ["release/x86_64/kanna-desktop"],
     cmd = "cp $< $@ && chmod +x $@",
 )
@@ -132,6 +132,7 @@ tauri_bundle_inputs(
     name = "kanna_bundle_inputs_arm64",
     frontend_dist = ":frontend_dist",
     main_binary = ":kanna_desktop_binary_arm64",
+    main_binary_name = "kanna-desktop",
     sidecars = [
         ":kanna_cli_arm64",
         ":kanna_daemon_arm64",
@@ -141,6 +142,7 @@ tauri_bundle_inputs(
         ":kanna_builtin_resources": "",
     },
     icons = [":desktop_macos_icon"],
+    capabilities = ["//apps/desktop/src-tauri:bazel_default_capability"],
     tauri_config = "//apps/desktop/src-tauri:tauri.conf.json",
     info_plist_fragments = ["//apps/desktop/src-tauri:Info.plist"],
     bundle_id = "build.kanna",
@@ -158,6 +160,7 @@ tauri_bundle_inputs(
     name = "kanna_bundle_inputs_release_arm64",
     frontend_dist = ":frontend_dist",
     main_binary = ":kanna_desktop_binary_release_arm64",
+    main_binary_name = "kanna-desktop",
     sidecars = [
         ":kanna_cli_release_arm64",
         ":kanna_daemon_release_arm64",
@@ -167,6 +170,7 @@ tauri_bundle_inputs(
         ":kanna_builtin_resources": "",
     },
     icons = [":desktop_macos_icon"],
+    capabilities = ["//apps/desktop/src-tauri:bazel_default_capability"],
     tauri_config = "//apps/desktop/src-tauri:tauri.conf.json",
     info_plist_fragments = ["//apps/desktop/src-tauri:Info.plist"],
     bundle_id = "build.kanna",
@@ -209,6 +213,7 @@ tauri_bundle_inputs(
     name = "kanna_bundle_inputs_release_x86_64",
     frontend_dist = ":frontend_dist",
     main_binary = ":kanna_desktop_binary_release_x86_64",
+    main_binary_name = "kanna-desktop",
     sidecars = [
         ":kanna_cli_release_x86_64",
         ":kanna_daemon_release_x86_64",
@@ -218,6 +223,7 @@ tauri_bundle_inputs(
         ":kanna_builtin_resources": "",
     },
     icons = [":desktop_macos_icon"],
+    capabilities = ["//apps/desktop/src-tauri:bazel_default_capability"],
     tauri_config = "//apps/desktop/src-tauri:tauri.conf.json",
     info_plist_fragments = ["//apps/desktop/src-tauri:Info.plist"],
     bundle_id = "build.kanna",
