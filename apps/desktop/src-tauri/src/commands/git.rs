@@ -1,5 +1,6 @@
 use git2::{Repository, Signature};
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::process::Command;
 
 #[derive(Serialize)]
@@ -264,6 +265,31 @@ pub fn git_default_branch(repo_path: String) -> Result<String, String> {
     }
 
     Ok("main".to_string())
+}
+
+#[tauri::command]
+pub fn git_list_base_branches(repo_path: String) -> Result<Vec<String>, String> {
+    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+    let default_branch = git_default_branch(repo_path.clone())?;
+    let mut refs = BTreeSet::new();
+
+    let branches = repo
+        .branches(Some(git2::BranchType::Local))
+        .map_err(|e| e.to_string())?;
+
+    for branch_result in branches {
+        let (branch, _) = branch_result.map_err(|e| e.to_string())?;
+        if let Some(name) = branch.name().map_err(|e| e.to_string())? {
+            refs.insert(name.to_string());
+        }
+    }
+
+    let origin_default_ref = format!("refs/remotes/origin/{}", default_branch);
+    if repo.find_reference(&origin_default_ref).is_ok() {
+        refs.insert(format!("origin/{}", default_branch));
+    }
+
+    Ok(refs.into_iter().collect())
 }
 
 #[tauri::command]
