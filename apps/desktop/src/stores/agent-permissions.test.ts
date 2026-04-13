@@ -1,0 +1,43 @@
+import { describe, expect, it } from "vitest";
+import {
+  getAgentPermissionFlags,
+  normalizePermissionMode,
+} from "./agent-permissions";
+
+describe("normalizePermissionMode", () => {
+  it("treats omitted and default permission modes as provider defaults", () => {
+    expect(normalizePermissionMode()).toBeUndefined();
+    expect(normalizePermissionMode("default")).toBeUndefined();
+  });
+
+  it("preserves explicit non-default permission modes", () => {
+    expect(normalizePermissionMode("dontAsk")).toBe("dontAsk");
+    expect(normalizePermissionMode("acceptEdits")).toBe("acceptEdits");
+  });
+});
+
+describe("getAgentPermissionFlags", () => {
+  it("maps Claude default-like permissions to the dangerous skip flag", () => {
+    expect(getAgentPermissionFlags("claude")).toEqual(["--dangerously-skip-permissions"]);
+    expect(getAgentPermissionFlags("claude", "default")).toEqual(["--dangerously-skip-permissions"]);
+    expect(getAgentPermissionFlags("claude", "dontAsk")).toEqual(["--dangerously-skip-permissions"]);
+  });
+
+  it("maps Claude acceptEdits to an explicit permission-mode flag", () => {
+    expect(getAgentPermissionFlags("claude", "acceptEdits")).toEqual(["--permission-mode acceptEdits"]);
+  });
+
+  it("maps Copilot generic permissions to its yolo flag", () => {
+    expect(getAgentPermissionFlags("copilot")).toEqual(["--yolo"]);
+    expect(getAgentPermissionFlags("copilot", "default")).toEqual(["--yolo"]);
+    expect(getAgentPermissionFlags("copilot", "dontAsk")).toEqual(["--yolo"]);
+    expect(getAgentPermissionFlags("copilot", "acceptEdits")).toEqual(["--yolo"]);
+  });
+
+  it("maps Codex generic permissions to provider-specific flags", () => {
+    expect(getAgentPermissionFlags("codex")).toEqual(["--yolo"]);
+    expect(getAgentPermissionFlags("codex", "default")).toEqual(["--yolo"]);
+    expect(getAgentPermissionFlags("codex", "dontAsk")).toEqual(["--yolo"]);
+    expect(getAgentPermissionFlags("codex", "acceptEdits")).toEqual(["--full-auto"]);
+  });
+});
