@@ -61,7 +61,7 @@ describe("useShortcutContext", () => {
       const actions = result.map((s) => s.action);
       expect(actions).toContain("shortcuts.keyboardShortcuts");
       expect(actions).toContain("shortcuts.commandPalette");
-      expect(actions).toContain("shortcuts.dismiss");
+      expect(actions).not.toContain("shortcuts.dismiss");
     });
 
     it("excludes command palette from modal contexts but allows keyboard shortcuts", () => {
@@ -77,7 +77,7 @@ describe("useShortcutContext", () => {
           expect(actions).not.toContain("shortcuts.dismiss");
         } else {
           expect(actions).toContain("shortcuts.keyboardShortcuts");
-          expect(actions).toContain("shortcuts.dismiss");
+          expect(actions).not.toContain("shortcuts.dismiss");
         }
       }
     });

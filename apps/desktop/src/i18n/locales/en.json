@@ -34,6 +34,11 @@
     "showOnStartup": "Don't show on startup",
     "showAll": "Show all shortcuts",
     "showContext": "Show {context}",
+    "groupCreateOrganize": "Tasks",
+    "groupMoveAround": "Navigation",
+    "groupOpenInspect": "Tools",
+    "groupWorkspace": "Views",
+    "groupAppHelp": "Help",
     "groupTasks": "Tasks",
     "groupNavigation": "Navigation",
     "groupViews": "Views",
@@ -70,7 +75,7 @@
     "newestUnread": "Newest Unread Task",
     "oldestRead": "Oldest Read Task",
     "newestRead": "Newest Read Task",
-    "focusSearch": "Focus Search"
+    "focusSearch": "Search"
   },
   "shortcutContexts": {
     "main": "Main Shortcuts",

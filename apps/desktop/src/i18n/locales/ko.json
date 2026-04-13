@@ -34,6 +34,11 @@
     "showOnStartup": "시작 시 표시하지 않기",
     "showAll": "모든 단축키 표시",
     "showContext": "{context} 표시",
+    "groupCreateOrganize": "작업",
+    "groupMoveAround": "탐색",
+    "groupOpenInspect": "도구",
+    "groupWorkspace": "보기",
+    "groupAppHelp": "도움말",
     "groupTasks": "작업",
     "groupNavigation": "탐색",
     "groupViews": "보기",
@@ -70,7 +75,7 @@
     "newestUnread": "가장 최근의 읽지 않은 작업",
     "oldestRead": "가장 오래된 읽은 작업",
     "newestRead": "가장 최근의 읽은 작업",
-    "focusSearch": "검색 포커스"
+    "focusSearch": "검색"
   },
   "shortcutContexts": {
     "main": "메인 단축키",
