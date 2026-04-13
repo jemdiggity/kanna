@@ -37,6 +37,7 @@ import {
   formatTaskPortAllocationLog,
   type PortAllocationLogEntry,
 } from "./portAllocationLog";
+import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import i18n from '../i18n';
 import { resolveDbName } from "./db";
 import { buildKannaCliEnv } from "./kannaCliEnv";
@@ -1262,8 +1263,10 @@ export const useKannaStore = defineStore("kanna", () => {
 
   function selectNextItem(nextId: string | null) {
     if (nextId) {
+      if (selectedItemId.value === nextId) return;
       selectItem(nextId);
     } else {
+      if (selectedItemId.value === null) return;
       selectedItemId.value = null;
     }
   }
@@ -1350,6 +1353,14 @@ export const useKannaStore = defineStore("kanna", () => {
 
       // 3. Mark teardown — if linger, keep sessions alive for user to review
       await updatePipelineItemStage(_db, item.id, TEARDOWN_STAGE);
+      if (shouldSelectNextOnCloseTransition({
+        selectNext: opts?.selectNext !== false,
+        wasBlocked,
+        previousStage: item.stage,
+        nextStage: TEARDOWN_STAGE,
+      })) {
+        selectNextItem(nextId);
+      }
       bump();
 
       if (devLingerTerminals.value) {
