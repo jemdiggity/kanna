@@ -89,6 +89,7 @@
   "sidebar": {
     "searchPlaceholder": "タスクを検索…  ⌘F",
     "noTasks": "タスクなし",
+    "noTasksMatching": "「{query}」に一致するタスクはありません",
     "noReposYet": "リポジトリがありません。",
     "noReposHint": "{shortcut} で作成できます。",
     "newTaskTooltip": "新規タスク (⌘N)",
