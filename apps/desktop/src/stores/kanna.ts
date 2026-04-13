@@ -33,6 +33,8 @@ import {
   resolveAgentProvider,
   type AgentProviderAvailability,
 } from "./agent-provider";
+import { buildPendingTaskPlaceholder } from "./taskCreationPlaceholder";
+import { shouldIgnoreRuntimeStatusDuringSetup } from "./taskRuntimeStatus";
 import {
   formatTaskPortAllocationLog,
   type PortAllocationLogEntry,
@@ -296,6 +298,11 @@ export const useKannaStore = defineStore("kanna", () => {
   const pendingCreateVisibility = new Map<string, { bumpAt: number }>();
   let refreshRunId = 0;
 
+  interface DaemonSessionInfo {
+    session_id?: string;
+    status?: string;
+  }
+
   function emitTaskSelected(itemId: string) {
     const item = items.value.find((i) => i.id === itemId);
     insertOperatorEvent(_db, "task_selected", itemId, item?.repo_id ?? null).catch((e) =>
@@ -356,6 +363,57 @@ export const useKannaStore = defineStore("kanna", () => {
       console.log(`[perf:createItem] nextTick after visible: ${(performance.now() - pending.bumpAt).toFixed(1)}ms (id=${id})`);
     }
   });
+
+  async function applyTaskRuntimeStatus(item: PipelineItem, status: string) {
+    if (shouldIgnoreRuntimeStatusDuringSetup(status, pendingSetupIds.value.includes(item.id))) {
+      return;
+    }
+
+    if (status === "busy") {
+      if (item.activity !== "working") {
+        await updatePipelineItemActivity(_db, item.id, "working");
+        bump();
+      }
+      return;
+    }
+
+    if (status === "idle") {
+      if (item.activity === "working") {
+        if (selectedItemId.value === item.id) {
+          await updatePipelineItemActivity(_db, item.id, "idle");
+        } else {
+          await updatePipelineItemActivity(_db, item.id, "unread");
+        }
+        bump();
+      }
+      return;
+    }
+
+    if (status === "waiting") {
+      if (item.activity !== "unread" && selectedItemId.value !== item.id) {
+        await updatePipelineItemActivity(_db, item.id, "unread");
+        bump();
+      }
+    }
+  }
+
+  async function syncTaskStatusesFromDaemon() {
+    if (!isTauri) return;
+
+    try {
+      const sessions = await invoke<DaemonSessionInfo[]>("list_sessions");
+      for (const session of sessions) {
+        const sessionId = session.session_id;
+        const status = session.status;
+        if (!sessionId || !status) continue;
+        const item = items.value.find((candidate) => candidate.id === sessionId);
+        if (!item) continue;
+        await applyTaskRuntimeStatus(item, status);
+      }
+    } catch (error) {
+      console.error("[store] failed to sync task statuses from daemon:", error);
+    }
+  }
 
   // ── Selection & navigation history ──────────────────────────────
   const selectedRepoId = ref<string | null>(null);
@@ -690,6 +748,30 @@ export const useKannaStore = defineStore("kanna", () => {
     const effectiveAgentType = opts?.customTask?.executionMode ?? agentType;
     const requestedAgentProviders = opts?.customTask?.agentProvider ?? opts?.agentProvider;
     const displayName = opts?.customTask?.name ?? null;
+    const pendingPlaceholder = buildPendingTaskPlaceholder({
+      id,
+      repoId,
+      prompt: effectivePrompt,
+      branch,
+      agentType: effectiveAgentType,
+      requestedAgentProviders,
+      pipelineName: opts?.pipelineName,
+      stage: opts?.stage,
+      displayName,
+    });
+
+    items.value = [
+      pendingPlaceholder,
+      ...items.value.filter((item) => item.id !== id),
+    ];
+    pendingSetupIds.value = [...pendingSetupIds.value, id];
+    pendingCreateVisibility.set(id, { bumpAt: performance.now() });
+
+    const removePendingPlaceholder = () => {
+      items.value = items.value.filter((item) => item.id !== id);
+      pendingSetupIds.value = pendingSetupIds.value.filter((pendingId) => pendingId !== id);
+      pendingCreateVisibility.delete(id);
+    };
 
     // Resolve pipeline name: explicit > repo config > "default"
     let pipelineName = opts?.pipelineName;
@@ -764,90 +846,93 @@ export const useKannaStore = defineStore("kanna", () => {
     let portEnv: Record<string, string> = {};
     let baseRef: string | null = null;
     let pipelineItemInserted = false;
-    await withPortAllocationLock(async () => {
-      try {
-        // Compute base_ref for merge-base diffing
-        t1 = performance.now();
+    try {
+      await withPortAllocationLock(async () => {
         try {
-          const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
-          // Prefer origin ref if remote exists
+          // Compute base_ref for merge-base diffing
+          t1 = performance.now();
           try {
-            await invoke<string>("git_merge_base", { repoPath, refA: `origin/${defaultBranch}`, refB: "HEAD" });
-            baseRef = `origin/${defaultBranch}`;
-          } catch {
-            baseRef = defaultBranch;
+            const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
+            // Prefer origin ref if remote exists
+            try {
+              await invoke<string>("git_merge_base", { repoPath, refA: `origin/${defaultBranch}`, refB: "HEAD" });
+              baseRef = `origin/${defaultBranch}`;
+            } catch {
+              baseRef = defaultBranch;
+            }
+          } catch (e) {
+            console.warn("[store] failed to compute base_ref:", e);
           }
+          console.log(`[perf:createItem] git base_ref: ${(performance.now() - t1).toFixed(1)}ms`);
+
+          // Insert DB record once the final metadata is known.
+          t1 = performance.now();
+          await insertPipelineItem(_db, {
+            id,
+            repo_id: repoId,
+            issue_number: null,
+            issue_title: null,
+            prompt: effectivePrompt,
+            pipeline: pipelineName,
+            stage: firstStageName,
+            tags: opts?.tags ?? [firstStageName],
+            pr_number: null,
+            pr_url: null,
+            branch,
+            agent_type: effectiveAgentType,
+            agent_provider: effectiveAgentProvider,
+            port_offset: portOffset,
+            port_env: Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null,
+            activity: "working",
+            display_name: displayName,
+            base_ref: baseRef,
+          });
+
+          pipelineItemInserted = true;
+
+          // Assign machine-wide ports only after the task row exists so the
+          // task_port foreign key can reference the new pipeline_item.
+          const allocated = await claimTaskPorts(id, repoConfig);
+          portOffset = allocated.firstPort;
+          portEnv = allocated.portEnv;
+          await _db.execute(
+            `UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?`,
+            [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
+          );
         } catch (e) {
-          console.warn("[store] failed to compute base_ref:", e);
+          if (pipelineItemInserted) {
+            await _db.execute("DELETE FROM pipeline_item WHERE id = ?", [id]).catch(() => undefined);
+          }
+          await deleteTaskPortsForItem(_db, id).catch(() => undefined);
+          console.error("[store] task creation failed:", e);
+          toast.error(tt('toasts.dbInsertFailed'));
+          throw e;
         }
-        console.log(`[perf:createItem] git base_ref: ${(performance.now() - t1).toFixed(1)}ms`);
+        console.log(`[perf:createItem] DB insert: ${(performance.now() - t1).toFixed(1)}ms`);
+      });
 
-        // Insert DB record immediately so the UI updates without waiting on IO
-        t1 = performance.now();
-        await insertPipelineItem(_db, {
-          id,
-          repo_id: repoId,
-          issue_number: null,
-          issue_title: null,
-          prompt: effectivePrompt,
-          pipeline: pipelineName,
-          stage: firstStageName,
-          tags: opts?.tags ?? [firstStageName],
-          pr_number: null,
-          pr_url: null,
-          branch,
-          agent_type: effectiveAgentType,
-          agent_provider: effectiveAgentProvider,
-          port_offset: portOffset,
-          port_env: Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null,
-          activity: "working",
-          display_name: displayName,
-          base_ref: baseRef,
-        });
+      bump();
+      console.log(`[perf:createItem] bump -> waiting for items refresh (id=${id})`);
+      console.log(`[perf:createItem] TOTAL (modal → bump): ${(performance.now() - t0).toFixed(1)}ms`);
 
-        pipelineItemInserted = true;
-
-        // Assign machine-wide ports only after the task row exists so the
-        // task_port foreign key can reference the new pipeline_item.
-        const allocated = await claimTaskPorts(id, repoConfig);
-        portOffset = allocated.firstPort;
-        portEnv = allocated.portEnv;
-        await _db.execute(
-          `UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?`,
-          [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
-        );
-      } catch (e) {
-        if (pipelineItemInserted) {
-          await _db.execute("DELETE FROM pipeline_item WHERE id = ?", [id]).catch(() => undefined);
-        }
-        await deleteTaskPortsForItem(_db, id).catch(() => undefined);
-        console.error("[store] task creation failed:", e);
-        toast.error(tt('toasts.dbInsertFailed'));
-        throw e;
-      }
-      console.log(`[perf:createItem] DB insert: ${(performance.now() - t1).toFixed(1)}ms`);
-    });
-
-    pendingSetupIds.value = [...pendingSetupIds.value, id];
-    pendingCreateVisibility.set(id, { bumpAt: performance.now() });
-    bump();
-    console.log(`[perf:createItem] bump -> waiting for items refresh (id=${id})`);
-    console.log(`[perf:createItem] TOTAL (modal → bump): ${(performance.now() - t0).toFixed(1)}ms`);
-
-    // Worktree creation, config read, and agent spawn run in the background.
-    // Selection is deferred until setup completes so the terminal mounts
-    // only after the session exists in the daemon.
-    setupWorktreeAndSpawn(
-      id,
-      repoPath,
-      worktreePath,
-      branch,
-      portEnv,
-      pipelinePrompt,
-      effectiveAgentType,
-      effectiveAgentProvider,
-      opts,
-    );
+      // Worktree creation, config read, and agent spawn run in the background.
+      // Selection is deferred until setup completes so the terminal mounts
+      // only after the session exists in the daemon.
+      setupWorktreeAndSpawn(
+        id,
+        repoPath,
+        worktreePath,
+        branch,
+        portEnv,
+        pipelinePrompt,
+        effectiveAgentType,
+        effectiveAgentProvider,
+        opts,
+      );
+    } catch (e) {
+      removePendingPlaceholder();
+      throw e;
+    }
   }
 
   /** Background IO for createItem: read config, create worktree, spawn agent, then select. */
@@ -859,6 +944,13 @@ export const useKannaStore = defineStore("kanna", () => {
     opts?: { baseBranch?: string; tags?: string[]; pipelineName?: string; stage?: string; customTask?: CustomTaskConfig; agentProvider?: AgentProvider; model?: string; permissionMode?: string; allowedTools?: string[] },
   ) {
     const s0 = performance.now();
+    const markSetupFailed = async (error: unknown, logPrefix: string, toastMessage: string) => {
+      await updatePipelineItemActivity(_db, id, "idle");
+      bump();
+      console.error(logPrefix, error);
+      toast.error(toastMessage);
+    };
+
     try {
       let s1 = performance.now();
       let worktreeBootstrap: WorktreeBootstrapResult | null = null;
@@ -869,8 +961,11 @@ export const useKannaStore = defineStore("kanna", () => {
           const repoConfig = await readRepoConfig(worktreePath);
           ptySetupCmds = repoConfig.setup || [];
         } catch (e) {
-          console.error("[store] failed to read repo config or create worktree:", e);
-          toast.error(tt('toasts.worktreeFailed'));
+          await markSetupFailed(
+            e,
+            "[store] failed to read repo config or create worktree:",
+            tt('toasts.worktreeFailed'),
+          );
           return;
         }
         console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
@@ -878,8 +973,11 @@ export const useKannaStore = defineStore("kanna", () => {
         try {
           await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
         } catch (e) {
-          console.error("[store] git_worktree_add failed:", e);
-          toast.error(tt('toasts.worktreeFailed'));
+          await markSetupFailed(
+            e,
+            "[store] git_worktree_add failed:",
+            tt('toasts.worktreeFailed'),
+          );
           return;
         }
         console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
@@ -932,11 +1030,17 @@ export const useKannaStore = defineStore("kanna", () => {
             env,
             cols: 80,
             rows: 24,
+            agentProvider,
           });
+          await syncTaskStatusesFromDaemon();
         }
       } catch (e) {
-        console.error("[store] agent spawn failed:", e);
-        toast.error(`${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`);
+        await markSetupFailed(
+          e,
+          "[store] agent spawn failed:",
+          `${tt('toasts.agentStartFailed')}: ${e instanceof Error ? e.message : e}`,
+        );
+        return;
       }
       console.log(`[perf:setup] spawnSession: ${(performance.now() - s1).toFixed(1)}ms`);
 
@@ -947,6 +1051,7 @@ export const useKannaStore = defineStore("kanna", () => {
       console.log(`[perf:setup] TOTAL (background): ${(performance.now() - s0).toFixed(1)}ms`);
     } finally {
       pendingSetupIds.value = pendingSetupIds.value.filter(pid => pid !== id);
+      await syncTaskStatusesFromDaemon();
     }
   }
 
@@ -1240,7 +1345,9 @@ export const useKannaStore = defineStore("kanna", () => {
       env,
       cols,
       rows,
+      agentProvider: options?.agentProvider ?? null,
     });
+    await syncTaskStatusesFromDaemon();
   }
 
   function computeNextItemId(closingId: string): string | null {
@@ -2057,40 +2164,16 @@ export const useKannaStore = defineStore("kanna", () => {
     }
 
     // Event listeners
-    listen("hook_event", async (event: any) => {
+    listen("status_changed", async (event: any) => {
       const payload = event.payload || event;
       const sessionId = payload.session_id;
-      const hookEvent = payload.event;
+      const status = payload.status;
       if (!sessionId) return;
 
       const item = items.value.find((i) => i.id === sessionId);
       if (!item) return;
-
-      if (hookEvent === "ClaudeWorking" || hookEvent === "CopilotThinking" || hookEvent === "CodexWorking") {
-        if (item.activity !== "working") {
-          await updatePipelineItemActivity(_db, item.id, "working");
-          bump();
-        }
-      } else if (hookEvent === "ClaudeIdle" || hookEvent === "CopilotIdle" || hookEvent === "CodexIdle") {
-        if (item.activity === "working") {
-          if (selectedItemId.value === sessionId) {
-            await updatePipelineItemActivity(_db, item.id, "idle");
-          } else {
-            await updatePipelineItemActivity(_db, item.id, "unread");
-          }
-          bump();
-        }
-      } else if (hookEvent === "Interrupted") {
-        if (item.activity === "working") {
-          await updatePipelineItemActivity(_db, item.id, "idle");
-          bump();
-        }
-      } else if (hookEvent === "WaitingForInput") {
-        if (item.activity !== "unread" && selectedItemId.value !== sessionId) {
-          await updatePipelineItemActivity(_db, item.id, "unread");
-          bump();
-        }
-      }
+      if (typeof status !== "string") return;
+      await applyTaskRuntimeStatus(item, status);
     });
 
     listen("session_exit", async (event: any) => {
@@ -2113,6 +2196,10 @@ export const useKannaStore = defineStore("kanna", () => {
         clearCachedTerminalState(sessionId);
       }
       _handleAgentFinished(sessionId);
+    });
+
+    listen("daemon_ready", async () => {
+      await syncTaskStatusesFromDaemon();
     });
 
     // Pipeline stage-complete signal from kanna-cli via app socket

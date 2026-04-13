@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
@@ -61,143 +60,7 @@ fn default_cursor_visible() -> bool {
     true
 }
 
-const SCAN_BUFFER_CAP: usize = 4096;
-const SCAN_FLUSH_MS: u64 = 150;
 static NEXT_ATTACH_ID: AtomicU64 = AtomicU64::new(1);
-// Text shown in Claude's status bar ONLY while actively processing.
-// After ANSI stripping, cursor-movement codes collapse the spaces.
-const CLAUDE_WORKING_INDICATOR: &str = "esctointerrupt";
-// Claude's idle prompt character (❯, U+276F). Present when waiting for input.
-const CLAUDE_IDLE_PROMPT: char = '\u{276F}';
-// Codex uses "esc to interrupt" (with spaces) in its status bar while processing.
-const CODEX_WORKING_INDICATOR: &str = "esc to interrupt";
-// Codex idle prompt character (›, U+203A). Present when waiting for input.
-const CODEX_IDLE_PROMPT: char = '\u{203A}';
-
-#[derive(Clone, Debug, PartialEq)]
-enum AgentProvider {
-    Claude,
-    Copilot,
-    Codex,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum AgentState {
-    Idle,
-    Working,
-}
-
-struct SessionScanState {
-    buffer: String,
-    last_data_at: Instant,
-    state: AgentState,
-    provider: AgentProvider,
-}
-
-impl SessionScanState {
-    fn new(provider: AgentProvider) -> Self {
-        Self {
-            buffer: String::new(),
-            last_data_at: Instant::now(),
-            state: AgentState::Idle,
-            provider,
-        }
-    }
-
-    fn append(&mut self, text: &str) {
-        self.buffer.push_str(text);
-        self.last_data_at = Instant::now();
-        if self.buffer.len() > SCAN_BUFFER_CAP {
-            let mut drain_to = self.buffer.len() - SCAN_BUFFER_CAP;
-            // Advance to the next char boundary to avoid panicking on multi-byte
-            // UTF-8 chars (emoji, box-drawing, etc.)
-            while drain_to < self.buffer.len() && !self.buffer.is_char_boundary(drain_to) {
-                drain_to += 1;
-            }
-            self.buffer.drain(..drain_to);
-        }
-    }
-
-    /// Called on each fragment. Returns events to emit.
-    ///
-    /// Claude detection uses two signals:
-    /// - "esctointerrupt" in fragment → Working (status bar text during processing)
-    /// - ❯ (U+276F) idle prompt without "esctointerrupt" → Claude Idle
-    /// - Codex uses "esc to interrupt" (with spaces) and › (U+203A) idle prompt
-    fn on_fragment(&mut self, text: &str) -> Vec<&'static str> {
-        let mut events = Vec::new();
-
-        match self.provider {
-            AgentProvider::Claude => {
-                let has_working = text.contains(CLAUDE_WORKING_INDICATOR);
-                let has_idle_prompt = text.contains(CLAUDE_IDLE_PROMPT);
-
-                if has_working {
-                    if self.state != AgentState::Working {
-                        self.state = AgentState::Working;
-                        events.push("ClaudeWorking");
-                    }
-                } else if has_idle_prompt && self.state != AgentState::Idle {
-                    self.state = AgentState::Idle;
-                    events.push("ClaudeIdle");
-                }
-
-                if text.contains("Do you want to allow") {
-                    events.push("WaitingForInput");
-                }
-            }
-            AgentProvider::Codex => {
-                let has_working = text.contains(CODEX_WORKING_INDICATOR);
-                let has_idle_prompt = text.contains(CODEX_IDLE_PROMPT);
-
-                if has_working {
-                    if self.state != AgentState::Working {
-                        self.state = AgentState::Working;
-                        events.push("CodexWorking");
-                    }
-                } else if has_idle_prompt && self.state != AgentState::Idle {
-                    self.state = AgentState::Idle;
-                    events.push("CodexIdle");
-                }
-
-                if text.contains("Do you want to allow") {
-                    events.push("WaitingForInput");
-                }
-            }
-            AgentProvider::Copilot => {
-                if text.contains("Esc to cancel") && self.state != AgentState::Working {
-                    self.state = AgentState::Working;
-                    events.push("CopilotThinking");
-                }
-                if text.contains("Operation cancelled") {
-                    events.push("Interrupted");
-                }
-            }
-        }
-
-        // Shared text pattern checks
-        if text.contains("Interrupted") {
-            self.state = AgentState::Idle;
-            events.push("Interrupted");
-        }
-
-        events
-    }
-
-    /// Called by the timer after a period of silence.
-    /// For Copilot, used to detect the working→idle transition since Copilot
-    /// doesn't emit a reliable idle prompt — it just stops outputting "Esc to cancel".
-    fn check_idle(&mut self) -> Vec<&'static str> {
-        self.buffer.clear();
-        let mut events = Vec::new();
-        if self.provider == AgentProvider::Copilot && self.state == AgentState::Working {
-            self.state = AgentState::Idle;
-            events.push("CopilotIdle");
-        }
-        events
-    }
-}
-
 /// Read the Ok/Error ack while already holding the lock.
 fn parse_error_event(event: &serde_json::Value) -> DaemonCommandError {
     DaemonCommandError {
@@ -219,6 +82,19 @@ fn parse_ack(response: &str) -> Result<(), DaemonCommandError> {
         return Err(parse_error_event(&event));
     }
     Ok(())
+}
+
+fn parse_agent_provider(
+    agent_provider: Option<String>,
+) -> Result<Option<String>, DaemonCommandError> {
+    match agent_provider.as_deref() {
+        Some("claude") | Some("copilot") | Some("codex") => Ok(agent_provider),
+        Some(other) => Err(DaemonCommandError {
+            message: format!("unsupported agent provider: {other}"),
+            code: None,
+        }),
+        None => Ok(None),
+    }
 }
 
 fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, DaemonCommandError> {
@@ -313,7 +189,6 @@ async fn spawn_attached_stream_task(
     session_id: String,
     attached: AttachedSessions,
     active_streams: ActiveAttachedStreams,
-    agent_provider: Option<String>,
 ) {
     attached.lock().await.insert(session_id.clone());
     let attach_id = NEXT_ATTACH_ID.fetch_add(1, Ordering::Relaxed);
@@ -328,46 +203,15 @@ async fn spawn_attached_stream_task(
         let _ = previous.shutdown.send(());
     }
 
-    let provider = match agent_provider.as_deref() {
-        Some("copilot") => AgentProvider::Copilot,
-        Some("codex") => AgentProvider::Codex,
-        _ => AgentProvider::Claude,
-    };
-
     let sid = session_id.clone();
     let app = app.clone();
     let attached_clone = attached.clone();
     let active_streams_clone = active_streams.clone();
     tauri::async_runtime::spawn(async move {
-        let scan_state =
-            std::sync::Arc::new(tokio::sync::Mutex::new(SessionScanState::new(provider)));
         let mut exited_normally = false;
         let mut detached_intentionally = false;
         let mut output_event_count: usize = 0;
         let mut stream_client = stream_client;
-
-        let scan_state_timer = scan_state.clone();
-        let app_timer = app.clone();
-        let sid_timer = sid.clone();
-        let flush_handle = tauri::async_runtime::spawn(async move {
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(SCAN_FLUSH_MS)).await;
-                let mut state = scan_state_timer.lock().await;
-                if state.buffer.is_empty() {
-                    continue;
-                }
-                if state.last_data_at.elapsed() >= std::time::Duration::from_millis(SCAN_FLUSH_MS) {
-                    let events = state.check_idle();
-                    for event_name in events {
-                        let hook = serde_json::json!({
-                            "session_id": &sid_timer,
-                            "event": event_name,
-                        });
-                        let _ = app_timer.emit("hook_event", &hook);
-                    }
-                }
-            }
-        });
 
         loop {
             let line = tokio::select! {
@@ -419,82 +263,11 @@ async fn spawn_attached_stream_task(
                             "data_b64": b64,
                         });
                         let _ = app.emit("terminal_output", &payload);
-
-                        let stripped = {
-                            let mut out = Vec::with_capacity(bytes.len());
-                            let mut i = 0;
-                            while i < bytes.len() {
-                                if bytes[i] == 0x1b {
-                                    i += 1;
-                                    if i < bytes.len() && bytes[i] == b'[' {
-                                        i += 1;
-                                        while i < bytes.len()
-                                            && !(bytes[i] >= 0x40 && bytes[i] <= 0x7e)
-                                        {
-                                            i += 1;
-                                        }
-                                        if i < bytes.len() {
-                                            i += 1;
-                                        }
-                                    } else if i < bytes.len() && bytes[i] == b']' {
-                                        i += 1;
-                                        while i < bytes.len()
-                                            && bytes[i] != 0x07
-                                            && bytes[i] != 0x1b
-                                        {
-                                            i += 1;
-                                        }
-                                        if i < bytes.len() {
-                                            i += 1;
-                                        }
-                                        if i < bytes.len() && bytes[i] == b'\\' {
-                                            i += 1;
-                                        }
-                                    } else if i < bytes.len() {
-                                        i += 1;
-                                    }
-                                } else if bytes[i] >= 0x20 || bytes[i] == b'\n' {
-                                    out.push(bytes[i]);
-                                    i += 1;
-                                } else {
-                                    i += 1;
-                                }
-                            }
-                            out
-                        };
-                        let text = String::from_utf8_lossy(&stripped);
-                        let text = text.trim();
-
-                        if !text.is_empty() {
-                            {
-                                use std::io::Write;
-                                let log_path = crate::daemon_data_dir().join("pty-scan.log");
-                                if let Ok(mut f) = std::fs::OpenOptions::new()
-                                    .create(true)
-                                    .append(true)
-                                    .open(&log_path)
-                                {
-                                    let _ = writeln!(f, "[pty-scan] sid={} {:?}", sid, text);
-                                }
-                            }
-
-                            let mut state = scan_state.lock().await;
-                            state.append(text);
-                            let events = state.on_fragment(text);
-                            for event_name in events {
-                                let hook = serde_json::json!({
-                                    "session_id": event.get("session_id"),
-                                    "event": event_name,
-                                });
-                                let _ = app.emit("hook_event", &hook);
-                            }
-                        }
                     } else {
                         let _ = app.emit("terminal_output", &event);
                     }
                 }
                 Some("Exit") => {
-                    flush_handle.abort();
                     attached_clone.lock().await.remove(&sid);
                     eprintln!("[attach] exit event session={}", sid);
                     let _ = app.emit("session_exit", &event);
@@ -504,7 +277,6 @@ async fn spawn_attached_stream_task(
                 _ => {}
             }
         }
-        flush_handle.abort();
         attached_clone.lock().await.remove(&sid);
         let removed = active_streams_clone.lock().await.remove(&sid);
         if removed
@@ -546,7 +318,9 @@ pub async fn spawn_session(
     env: HashMap<String, String>,
     cols: u16,
     rows: u16,
+    agent_provider: Option<String>,
 ) -> Result<(), DaemonCommandError> {
+    let agent_provider = parse_agent_provider(agent_provider)?;
     let cmd = serde_json::json!({
         "type": "Spawn",
         "session_id": session_id,
@@ -556,6 +330,7 @@ pub async fn spawn_session(
         "env": env,
         "cols": cols,
         "rows": rows,
+        "agent_provider": agent_provider,
     });
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     ensure_connected(&state).await?;
@@ -758,7 +533,6 @@ pub async fn attach_session_inner(
         session_id,
         attached.clone(),
         active_streams.clone(),
-        agent_provider,
     )
     .await;
 
@@ -793,7 +567,7 @@ pub async fn resume_session_stream(
     attached: tauri::State<'_, AttachedSessions>,
     active_streams: tauri::State<'_, ActiveAttachedStreams>,
     session_id: String,
-    agent_provider: Option<String>,
+    _agent_provider: Option<String>,
 ) -> Result<(), DaemonCommandError> {
     let stream_client = pending_streams
         .lock()
@@ -809,7 +583,6 @@ pub async fn resume_session_stream(
         session_id,
         attached.inner().clone(),
         active_streams.inner().clone(),
-        agent_provider,
     )
     .await;
     Ok(())

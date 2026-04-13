@@ -398,7 +398,7 @@ describe("buildTaskShellCommand", () => {
 describe("getReconnectRedrawPolicy", () => {
   it("waits for Claude idle, then delays briefly, with a fallback timeout", () => {
     expect(getReconnectRedrawPolicy({ agentProvider: "claude" })).toEqual({
-      waitForIdleEvent: "ClaudeIdle",
+      waitForIdleStatus: "idle",
       settleDelayMs: 200,
       fallbackDelayMs: 2000,
     });
@@ -406,7 +406,7 @@ describe("getReconnectRedrawPolicy", () => {
 
   it("uses immediate redraw policy for other providers", () => {
     expect(getReconnectRedrawPolicy({ agentProvider: "codex" })).toEqual({
-      waitForIdleEvent: null,
+      waitForIdleStatus: null,
       settleDelayMs: 0,
       fallbackDelayMs: 0,
     });

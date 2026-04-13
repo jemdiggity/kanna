@@ -1,0 +1,54 @@
+import type { AgentProvider, PipelineItem } from "@kanna/db";
+import { normalizeAgentProviderCandidates } from "./agent-provider";
+
+interface BuildPendingTaskPlaceholderOptions {
+  id: string;
+  repoId: string;
+  prompt: string;
+  branch: string;
+  agentType: "pty" | "sdk";
+  requestedAgentProviders?: AgentProvider | AgentProvider[];
+  pipelineName?: string;
+  stage?: string;
+  displayName?: string | null;
+  nowIso?: string;
+}
+
+export function buildPendingTaskPlaceholder(
+  options: BuildPendingTaskPlaceholderOptions,
+): PipelineItem {
+  const nowIso = options.nowIso ?? new Date().toISOString();
+  const stage = options.stage ?? "in progress";
+  const requestedProviders = normalizeAgentProviderCandidates(options.requestedAgentProviders);
+
+  return {
+    id: options.id,
+    repo_id: options.repoId,
+    issue_number: null,
+    issue_title: null,
+    prompt: options.prompt,
+    pipeline: options.pipelineName ?? "default",
+    stage,
+    stage_result: null,
+    tags: JSON.stringify([stage]),
+    pr_number: null,
+    pr_url: null,
+    branch: options.branch,
+    closed_at: null,
+    agent_type: options.agentType,
+    agent_provider: requestedProviders[0] ?? "claude",
+    activity: "working",
+    activity_changed_at: nowIso,
+    unread_at: null,
+    port_offset: null,
+    display_name: options.displayName ?? null,
+    port_env: null,
+    pinned: 0,
+    pin_order: null,
+    base_ref: null,
+    claude_session_id: null,
+    previous_stage: null,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+}
