@@ -186,11 +186,12 @@ mod tests {
 
     #[test]
     fn prefers_cli_specific_db_path() {
-        let env = [
-            ("KANNA_CLI_DB_PATH", "/tmp/worktree.db"),
-        ];
+        let env = [("KANNA_CLI_DB_PATH", "/tmp/worktree.db")];
 
-        assert_eq!(resolve_stage_db_path(&env), Ok("/tmp/worktree.db".to_string()));
+        assert_eq!(
+            resolve_stage_db_path(&env),
+            Ok("/tmp/worktree.db".to_string())
+        );
     }
 
     #[test]

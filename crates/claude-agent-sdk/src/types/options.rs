@@ -45,7 +45,7 @@ impl Effort {
 /// Options for starting a Claude CLI session.
 ///
 /// Use the builder pattern via `SessionOptions::builder()`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SessionOptions {
     /// Working directory for the CLI process.
     pub cwd: Option<String>,
@@ -81,29 +81,6 @@ pub struct SessionOptions {
     pub has_permission_callback: bool,
 }
 
-impl Default for SessionOptions {
-    fn default() -> Self {
-        Self {
-            cwd: None,
-            model: None,
-            permission_mode: None,
-            allowed_tools: Vec::new(),
-            disallowed_tools: Vec::new(),
-            max_turns: None,
-            max_budget_usd: None,
-            resume: None,
-            continue_session: false,
-            system_prompt: None,
-            thinking: None,
-            effort: None,
-            env: HashMap::new(),
-            include_partial_messages: false,
-            additional_directories: Vec::new(),
-            has_permission_callback: false,
-        }
-    }
-}
-
 impl SessionOptions {
     /// Create a new builder for session options.
     pub fn builder() -> SessionOptionsBuilder {
@@ -114,9 +91,7 @@ impl SessionOptions {
     ///
     /// Always includes: `--output-format stream-json --input-format stream-json --verbose`
     pub fn to_cli_args(&self, prompt: Option<&str>) -> Vec<String> {
-        let mut args = vec![
-            "-p".to_string(),
-        ];
+        let mut args = vec!["-p".to_string()];
 
         // The initial prompt goes as the -p argument
         if let Some(p) = prompt {
@@ -131,10 +106,7 @@ impl SessionOptions {
 
         // Only add --input-format stream-json if we need multi-turn (follow-up messages via stdin)
         if self.resume.is_some() || self.continue_session {
-            args.extend([
-                "--input-format".to_string(),
-                "stream-json".to_string(),
-            ]);
+            args.extend(["--input-format".to_string(), "stream-json".to_string()]);
         }
 
         if let Some(model) = &self.model {
@@ -338,9 +310,7 @@ mod tests {
 
     #[test]
     fn test_model_flag() {
-        let opts = SessionOptions::builder()
-            .model("claude-sonnet-4-6")
-            .build();
+        let opts = SessionOptions::builder().model("claude-sonnet-4-6").build();
         let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--model").unwrap();
         assert_eq!(args[idx + 1], "claude-sonnet-4-6");
@@ -404,9 +374,7 @@ mod tests {
 
     #[test]
     fn test_resume_flag() {
-        let opts = SessionOptions::builder()
-            .resume("session-123")
-            .build();
+        let opts = SessionOptions::builder().resume("session-123").build();
         let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--resume").unwrap();
         assert_eq!(args[idx + 1], "session-123");
@@ -466,9 +434,7 @@ mod tests {
 
     #[test]
     fn test_include_partial_messages_flag() {
-        let opts = SessionOptions::builder()
-            .include_partial_messages()
-            .build();
+        let opts = SessionOptions::builder().include_partial_messages().build();
         let args = opts.to_cli_args(None);
         assert!(args.contains(&"--include-partial-messages".to_string()));
     }
@@ -493,9 +459,7 @@ mod tests {
 
     #[test]
     fn test_permission_callback_flag() {
-        let opts = SessionOptions::builder()
-            .with_permission_callback()
-            .build();
+        let opts = SessionOptions::builder().with_permission_callback().build();
         let args = opts.to_cli_args(None);
         let idx = args
             .iter()

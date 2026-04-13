@@ -46,8 +46,8 @@ pub use types::control::{
 };
 pub use types::messages::{
     AssistantMessage, AuthStatusMessage, ContentBlock, Message, PromptSuggestionMessage,
-    RateLimitMessage, ResultMessage, StreamEventMessage, SystemMessage, ToolProgressMessage,
-    Usage, UserInput, UserMessage,
+    RateLimitMessage, ResultMessage, StreamEventMessage, SystemMessage, ToolProgressMessage, Usage,
+    UserInput, UserMessage,
 };
 pub use types::options::{Effort, SessionOptions, SessionOptionsBuilder, ThinkingMode};
 pub use types::permissions::{PermissionMode, PermissionResult};
