@@ -15,6 +15,7 @@ import {
 import { isAppShortcut } from "./useKeyboardShortcuts"
 import {
   formatAttachFailureMessage,
+  formatMissingInitialTaskSessionMessage,
   getRespawnToastKey,
   getReconnectRedrawPolicy,
   getReconnectResizeDelayMs,
@@ -437,6 +438,21 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     }
   }
 
+  async function taskWorktreeExists(): Promise<boolean> {
+    const worktreePath = options?.worktreePath
+    if (!worktreePath) return false
+    try {
+      return await invoke<boolean>("file_exists", { path: worktreePath })
+    } catch (error) {
+      console.warn("[terminal][connect] worktree existence check failed", {
+        sessionId,
+        worktreePath,
+        error: getAppErrorMessage(error),
+      })
+      return false
+    }
+  }
+
   async function applyRecoveryStateIfNeeded(
     recoveryState: Awaited<ReturnType<typeof loadSessionRecoveryState>>,
     shouldApplyReconnectEffects: boolean,
@@ -590,6 +606,22 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
             true,
           )
         }
+        const shouldRespawnMissingInitialTaskSession =
+          !hasAttachedOnce &&
+          isMissingDaemonSessionFailure(e) &&
+          recoveryState == null &&
+          await taskWorktreeExists()
+
+        if (shouldRespawnMissingInitialTaskSession) {
+          console.warn("[terminal][connect] missing_initial_session:respawn", {
+            sessionId,
+            instanceId,
+          })
+          toast.warning(i18n.global.t("toasts.sessionRespawned"))
+          shouldSpawnRecoverySession = true
+        } else if (!hasAttachedOnce && isMissingDaemonSessionFailure(e)) {
+          terminal.value?.write(formatMissingInitialTaskSessionMessage())
+        }
         if (hasAttachedOnce || !isMissingDaemonSessionFailure(e)) {
           terminal.value?.write(formatAttachFailureMessage(msg))
         }
@@ -608,7 +640,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           })
           toast.warning(i18n.global.t(getRespawnToastKey(e, recoveryState != null)))
           shouldSpawnRecoverySession = true
-        } else {
+        } else if (!shouldSpawnRecoverySession) {
           return
         }
       } else {

@@ -426,6 +426,169 @@ describe("useTerminal", () => {
     ).toBe(false);
   });
 
+  it("leaves a terminal message when the first task attach cannot find a live PTY", async () => {
+    const spawnFn = vi.fn(async () => {});
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "file_exists") {
+        return false;
+      }
+      if (cmd === "attach_session_with_snapshot") {
+        throw new AppError("session not found: session-1", "session_not_found");
+      }
+      if (cmd === "get_session_recovery_state") {
+        return null;
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "hello",
+            spawnFn,
+          },
+          {
+            agentProvider: "codex",
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    await wrapper.vm.startListening();
+
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(warningToastMock).not.toHaveBeenCalled();
+    expect(errorToastMock).not.toHaveBeenCalled();
+    expect(
+      terminal.write.mock.calls.some(
+        ([data]) =>
+          typeof data === "string" &&
+          data.includes("Knock, knock, Neo."),
+      ),
+    ).toBe(true);
+  });
+
+  it("respawns a missing task session on first attach when the worktree still exists", async () => {
+    const spawnFn = vi.fn(async () => {});
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "file_exists") {
+        return true;
+      }
+      if (cmd === "attach_session_with_snapshot") {
+        if (spawnFn.mock.calls.length === 0) {
+          throw new AppError("session not found: session-1", "session_not_found");
+        }
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "fresh session output",
+        };
+      }
+      if (cmd === "get_session_recovery_state") {
+        return null;
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "hello",
+            spawnFn,
+          },
+          {
+            agentProvider: "codex",
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+
+    for (let attempt = 0; attempt < 20 && (spawnFn.mock.calls.length === 0 || warningToastMock.mock.calls.length === 0); attempt += 1) {
+      while (terminal.pendingStringWrites.length > 0) {
+        terminal.flushNextStringWrite();
+        await Promise.resolve();
+      }
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    let startSettled = false;
+    startPromise.finally(() => {
+      startSettled = true;
+    });
+    for (let attempt = 0; attempt < 50 && !startSettled; attempt += 1) {
+      while (terminal.pendingStringWrites.length > 0) {
+        terminal.flushNextStringWrite();
+        await Promise.resolve();
+      }
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await startPromise;
+
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawned");
+    expect(errorToastMock).not.toHaveBeenCalled();
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
+    expect(terminal.write).toHaveBeenCalledWith("fresh session output", expect.any(Function));
+    expect(
+      terminal.write.mock.calls.some(
+        ([data]) =>
+          typeof data === "string" &&
+          data.includes("Knock, knock, Neo."),
+      ),
+    ).toBe(false);
+  });
+
   it("spawns a shell terminal when no pre-warmed session exists", async () => {
     const spawnFn = vi.fn(async () => {});
     const { useTerminal } = await import("./useTerminal");
