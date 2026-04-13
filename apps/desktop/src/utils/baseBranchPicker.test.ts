@@ -35,6 +35,14 @@ describe("getDefaultBaseBranch", () => {
   it("falls back to local default when origin/default is unavailable", () => {
     expect(getDefaultBaseBranch(["main", "feature/a"], "main")).toBe("main");
   });
+
+  it("returns the first available candidate when default refs are missing", () => {
+    expect(getDefaultBaseBranch(["feature/b", "feature/a"], "main")).toBe("feature/a");
+  });
+
+  it("returns an empty string when there are no candidates", () => {
+    expect(getDefaultBaseBranch([], "main")).toBe("");
+  });
 });
 
 describe("filterBaseBranchCandidates", () => {
@@ -44,6 +52,22 @@ describe("filterBaseBranchCandidates", () => {
       "",
       "main",
     )).toEqual(["origin/main", "main", "feature/alpha", "feature/zeta"]);
+  });
+
+  it("preserves canonical ordering for whitespace-only queries", () => {
+    expect(filterBaseBranchCandidates(
+      ["feature/zeta", "main", "origin/main", "feature/alpha"],
+      "   ",
+      "main",
+    )).toEqual(["origin/main", "main", "feature/alpha", "feature/zeta"]);
+  });
+
+  it("preserves canonical ordering when fuzzy scores tie", () => {
+    expect(filterBaseBranchCandidates(
+      ["main", "origin/main"],
+      "main",
+      "main",
+    )).toEqual(["origin/main", "main"]);
   });
 
   it("filters and sorts matches with fuzzyMatch", () => {

@@ -25,7 +25,7 @@ export function getDefaultBaseBranch(
   defaultBranch: string,
 ): string {
   const ordered = orderBaseBranchCandidates(candidates, defaultBranch);
-  return ordered[0] ?? defaultBranch;
+  return ordered[0] ?? "";
 }
 
 export function filterBaseBranchCandidates(
@@ -36,6 +36,7 @@ export function filterBaseBranchCandidates(
   const ordered = orderBaseBranchCandidates(candidates, defaultBranch);
   const trimmed = query.trim();
   if (!trimmed) return ordered;
+  const canonicalOrder = new Map(ordered.map((candidate, index) => [candidate, index]));
 
   return ordered
     .map((candidate) => ({
@@ -44,7 +45,14 @@ export function filterBaseBranchCandidates(
     }))
     .filter((entry) => entry.match !== null)
     .sort((a, b) => {
-      if (b.match!.score !== a.match!.score) return b.match!.score - a.match!.score;
+      const leftScore = a.match?.score ?? 0;
+      const rightScore = b.match?.score ?? 0;
+      if (rightScore !== leftScore) return rightScore - leftScore;
+
+      const leftOrder = canonicalOrder.get(a.candidate) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = canonicalOrder.get(b.candidate) ?? Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+
       return a.candidate.localeCompare(b.candidate);
     })
     .map((entry) => entry.candidate);
