@@ -122,4 +122,61 @@ describe("NewTaskModal", () => {
       keys: "⇧⌘[ / ⇧⌘]",
     });
   });
+
+  it("emits the selected base branch on submit", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        defaultAgentProvider: "claude",
+        pipelines: ["default"],
+        defaultPipeline: "default",
+        baseBranches: ["origin/main", "main", "feature/task-base-branch"],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get("textarea").setValue("Ship branch picker");
+    await wrapper.get('[data-testid="base-branch-toggle"]').trigger("click");
+    await wrapper.get('[data-testid="base-branch-option-feature/task-base-branch"]').trigger("click");
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
+
+    expect(wrapper.emitted("submit")).toEqual([
+      ["Ship branch picker", "claude", "default", "feature/task-base-branch"],
+    ]);
+  });
+
+  it("filters branch options with fuzzy search", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        baseBranches: ["origin/main", "main", "feature/task-base-branch", "fix/base-branch-picker"],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get('[data-testid="base-branch-toggle"]').trigger("click");
+    await wrapper.get('[data-testid="base-branch-search"]').setValue("tbb");
+
+    expect(wrapper.text()).toContain("feature/task-base-branch");
+    expect(wrapper.text()).not.toContain("fix/base-branch-picker");
+  });
+
+  it("shows the selected base branch inline before the picker is opened", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        baseBranches: ["origin/main", "main"],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("origin/main");
+  });
 });
