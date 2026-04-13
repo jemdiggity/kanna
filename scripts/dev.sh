@@ -48,6 +48,14 @@ canonical_tmux_session_name() {
   printf '%s' "$1" | tr '.' '_'
 }
 
+tmux_env_args() {
+  local key
+  local value
+  while IFS='=' read -r key value; do
+    printf '%s\0%s\0' "-e" "${key}=${value}"
+  done < <(env | grep -E '^(KANNA_|TAURI_WEBDRIVER_PORT=)')
+}
+
 # Auto-detect worktree by checking if we're inside .kanna-worktrees/
 if [ -n "$KANNA_WORKTREE" ] || echo "$ROOT" | grep -q '\.kanna-worktrees/'; then
   export KANNA_WORKTREE=1
@@ -198,9 +206,10 @@ start() {
     exit 1
   fi
   local DESKTOP_CWD="$ROOT/apps/desktop"
-  tmux new-session -d -s "$SESSION" -n desktop -c "$DESKTOP_CWD"
-  # Forward all KANNA_* env vars into the tmux session
-  EXPORTS="$(env | grep -E '^(KANNA_|TAURI_WEBDRIVER_PORT=)' | sed "s/^\([^=]*\)=\(.*\)/export \1='\2'/" | tr '\n' ' ')"
+  local TMUX_ENV=()
+  while IFS= read -r -d '' arg; do
+    TMUX_ENV+=("$arg")
+  done < <(tmux_env_args)
 
   # Build dev sidecars before tauri dev so externalBin inputs exist and are
   # owned by the dev path instead of beforeBuildCommand.
@@ -217,11 +226,8 @@ LOCALEOF
     DEV_CMD="pnpm run build:sidecars && pnpm exec tauri dev --config $LOCAL_CONF"
   fi
 
-  if [ -n "$EXPORTS" ]; then
-    tmux send-keys -t "$SESSION:desktop" "$EXPORTS&& $DEV_CMD" Enter
-  else
-    tmux send-keys -t "$SESSION:desktop" "$DEV_CMD" Enter
-  fi
+  tmux new-session -d "${TMUX_ENV[@]}" -s "$SESSION" -n desktop -c "$DESKTOP_CWD" "$DEV_CMD"
+  tmux set-option -t "$SESSION" remain-on-exit on >/dev/null
 
   if $MOBILE; then
     start_mobile
