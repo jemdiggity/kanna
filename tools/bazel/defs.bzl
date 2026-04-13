@@ -68,9 +68,31 @@ def _parse_icon_position(name, coords):
     if x == "" or y == "":
         fail("icon_positions[%s] must be formatted as x,y" % name)
 
-    x_value = int(x)
-    y_value = int(y)
+    x_value = _parse_int_string("icon_positions", name, x)
+    y_value = _parse_int_string("icon_positions", name, y)
     return "%s:%s,%s" % (name, x_value, y_value)
+
+def _parse_int_string(field_name, key, value):
+    if value == "":
+        fail("%s[%s] must be an integer" % (field_name, key))
+
+    start = 0
+    first = value[0]
+    if first in ["+", "-"]:
+        if len(value) == 1:
+            fail("%s[%s] must be an integer" % (field_name, key))
+        start = 1
+
+    for i in range(start, len(value)):
+        if value[i] not in "0123456789":
+            fail("%s[%s] must be an integer" % (field_name, key))
+
+    return int(value)
+
+def _format_window_coords(name, values):
+    if len(values) != 2:
+        fail("%s must contain exactly two integers" % name)
+    return ",".join([str(value) for value in values])
 
 def _default_plist_inputs(bundle_id, product_name, version, main_binary_name):
     return {
@@ -596,10 +618,8 @@ def _macos_dmg_impl(ctx):
     args.add("--volume-name", ctx.attr.volume_name)
     if ctx.file.volume_icon:
         args.add("--volume-icon", ctx.file.volume_icon.path)
-    if ctx.attr.window_pos:
-        args.add("--window-pos", ",".join([str(value) for value in ctx.attr.window_pos]))
-    if ctx.attr.window_size:
-        args.add("--window-size", ",".join([str(value) for value in ctx.attr.window_size]))
+    args.add("--window-pos", _format_window_coords("window_pos", ctx.attr.window_pos))
+    args.add("--window-size", _format_window_coords("window_size", ctx.attr.window_size))
     if ctx.attr.icon_size:
         args.add("--icon-size", str(ctx.attr.icon_size))
     if ctx.attr.text_size:
@@ -724,10 +744,7 @@ macos_dmg = rule(
         "window_size": attr.int_list(default = [500, 350]),
         "icon_size": attr.int(default = 128),
         "text_size": attr.int(default = 16),
-        "icon_positions": attr.string_dict(default = {
-            "Kanna.app": "160,175",
-            "Applications": "352,175",
-        }),
+        "icon_positions": attr.string_dict(default = {}),
         "include_applications_link": attr.bool(default = True),
         "_tool": attr.label(
             allow_single_file = True,
