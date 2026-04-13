@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
 import { fuzzyMatch } from "../utils/fuzzyMatch";
 import { useKannaStore } from "../stores/kanna";
+import { isTeardownStage } from "../stores/taskStages";
 import { macOsTextInputAttrs } from "../utils/textInput";
 
 function hasTag(item: { tags: string }, tag: string): boolean {
@@ -312,8 +313,8 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
                   :style="{
                     fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
                     fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                    textDecoration: element.stage === 'torndown' ? 'line-through' : 'none',
-                    opacity: element.stage === 'torndown' ? 0.5 : 1,
+                    textDecoration: isTeardownStage(element.stage) ? 'line-through' : 'none',
+                    opacity: isTeardownStage(element.stage) ? 0.5 : 1,
                   }"
                 >{{ itemTitle(element) }}</span>
               </div>
@@ -364,8 +365,8 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
                     :style="{
                       fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
                       fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                      textDecoration: element.stage === 'torndown' ? 'line-through' : 'none',
-                      opacity: element.stage === 'torndown' ? 0.5 : 1,
+                      textDecoration: isTeardownStage(element.stage) ? 'line-through' : 'none',
+                      opacity: isTeardownStage(element.stage) ? 0.5 : 1,
                     }"
                   >{{ itemTitle(element) }}</span>
                 </div>

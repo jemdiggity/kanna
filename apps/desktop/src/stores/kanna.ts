@@ -21,6 +21,7 @@ import {
   reportPrewarmSessionError,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
+import { isTeardownStage, TEARDOWN_STAGE } from "./taskStages";
 import { formatAppWindowTitle, type AppBuildInfo } from "./windowTitle";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
@@ -1285,8 +1286,8 @@ export const useKannaStore = defineStore("kanna", () => {
         [item.id]
       );
 
-      // Already torndown — second close kills sessions and finishes
-      if (item.stage === "torndown") {
+      // Already in teardown — second close kills sessions and finishes
+      if (isTeardownStage(item.stage)) {
         await Promise.all([
           invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
             reportCloseSessionError("[store] kill agent session failed:", e)),
@@ -1347,8 +1348,8 @@ export const useKannaStore = defineStore("kanna", () => {
         await invoke("attach_session", { sessionId: tdSessionId, agentProvider: "claude" });
       }
 
-      // 3. Mark torndown — if linger, keep sessions alive for user to review
-      await updatePipelineItemStage(_db, item.id, "torndown");
+      // 3. Mark teardown — if linger, keep sessions alive for user to review
+      await updatePipelineItemStage(_db, item.id, TEARDOWN_STAGE);
       bump();
 
       if (devLingerTerminals.value) {
@@ -2112,7 +2113,7 @@ export const useKannaStore = defineStore("kanna", () => {
         for (const resolve of waiters) resolve();
       }
 
-      // Teardown session finished — already in torndown state, nothing extra needed
+      // Teardown session finished — already in teardown state, nothing extra needed
       if (typeof sessionId === "string" && isTeardownSessionId(sessionId)) {
         return;
       }

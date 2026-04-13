@@ -235,4 +235,8 @@ export async function runMigrations(db: DbHandle): Promise<void> {
       }
     }
   });
+
+  await runMigration("010_rename_torndown_stage", async () => {
+    await db.execute(`UPDATE pipeline_item SET stage = 'teardown' WHERE stage = 'torndown'`);
+  });
 }

@@ -100,6 +100,10 @@ function createMigrationDb(initialRows: PipelineItemRow[]): DbHandle & {
         for (const item of pipelineItems) {
           if (item.stage === "legacy") item.stage = "in progress";
         }
+      } else if (sql === `UPDATE pipeline_item SET stage = 'teardown' WHERE stage = 'torndown'`) {
+        for (const item of pipelineItems) {
+          if (item.stage === "torndown") item.stage = "teardown";
+        }
       }
 
       return { rowsAffected: 1 };
@@ -173,5 +177,15 @@ describe("runMigrations", () => {
 
     expect(db.pipelineItems[0]?.stage).toBe("pr");
     expect(db.pipelineItems[1]?.stage).toBe("merge");
+  });
+
+  it("renames legacy torndown rows to teardown", async () => {
+    db = createMigrationDb([
+      { stage: "torndown", tags: "[]", closed_at: null },
+    ]);
+
+    await runMigrations(db);
+
+    expect(db.pipelineItems[0]?.stage).toBe("teardown");
   });
 });
