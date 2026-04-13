@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
+from typing import Optional
 from pathlib import Path
 
 
@@ -12,6 +14,8 @@ DEFAULT_WINDOW_POS = (10, 60)
 DEFAULT_WINDOW_SIZE = (500, 350)
 DEFAULT_ICON_SIZE = 128
 DEFAULT_TEXT_SIZE = 16
+FINDER_INFO_LENGTH = 32
+VOLUME_CUSTOM_ICON_FLAG = 0x0400
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,8 +23,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--app", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--volume-name", required=True)
+    parser.add_argument("--volume-icon")
+    parser.add_argument("--window-pos", default="10,60")
+    parser.add_argument("--window-size", default="500,350")
+    parser.add_argument("--icon-size", type=int, default=128)
+    parser.add_argument("--text-size", type=int, default=16)
+    parser.add_argument("--icon-position", action="append", default=[])
     parser.add_argument("--include-applications-link", action="store_true")
     return parser.parse_args()
+
+
+def parse_pair(raw_value: str, label: str) -> tuple[int, int]:
+    try:
+        raw_x, raw_y = raw_value.split(",", 1)
+        return (int(raw_x), int(raw_y))
+    except ValueError as exc:
+        raise SystemExit(f"invalid {label}: {raw_value}") from exc
 
 
 def parse_icon_positions(entries: list[str]) -> dict[str, tuple[int, int]]:
@@ -35,6 +53,14 @@ def parse_icon_positions(entries: list[str]) -> dict[str, tuple[int, int]]:
     return positions
 
 
+def parse_mount_dir(attach_output: str) -> Path:
+    for line in reversed(attach_output.splitlines()):
+        fields = line.split("\t")
+        if fields and fields[-1].startswith("/"):
+            return Path(fields[-1])
+    raise SystemExit("unable to determine mount directory from hdiutil attach output")
+
+
 def copy_staged_item(source: Path, destination: Path) -> None:
     if source.is_symlink():
         os.symlink(os.readlink(source), destination)
@@ -44,9 +70,69 @@ def copy_staged_item(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination, follow_symlinks=False)
 
 
+def run_checked(command: list[str]) -> None:
+    subprocess.run(command, check=True)
+
+
+def mark_volume_icon(mount_dir: Path, icon_path: Path) -> None:
+    staged_icon = mount_dir / ".VolumeIcon.icns"
+    shutil.copy2(icon_path, staged_icon)
+    mark_staged_volume_icon(mount_dir)
+
+
+def mark_staged_volume_icon(mount_dir: Path) -> None:
+    staged_icon = mount_dir / ".VolumeIcon.icns"
+    if not staged_icon.exists():
+        raise SystemExit(f"staged volume icon does not exist: {staged_icon}")
+    set_finder_info(staged_icon, file_type=b"icnC")
+    set_finder_info(mount_dir, finder_flags=VOLUME_CUSTOM_ICON_FLAG)
+
+
+def read_finder_info(path: Path) -> bytes:
+    result = subprocess.run(
+        ["xattr", "-px", "com.apple.FinderInfo", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return bytes(FINDER_INFO_LENGTH)
+    hex_value = "".join(result.stdout.split())
+    if not hex_value:
+        return bytes(FINDER_INFO_LENGTH)
+    finder_info = bytes.fromhex(hex_value)
+    if len(finder_info) < FINDER_INFO_LENGTH:
+        return finder_info.ljust(FINDER_INFO_LENGTH, b"\x00")
+    return finder_info[:FINDER_INFO_LENGTH]
+
+
+def set_finder_info(
+    path: Path,
+    *,
+    file_type: Optional[bytes] = None,
+    finder_flags: Optional[int] = None,
+) -> None:
+    finder_info = bytearray(read_finder_info(path))
+    if file_type is not None:
+        if len(file_type) != 4:
+            raise SystemExit(f"Finder file type must be four bytes: {file_type!r}")
+        finder_info[4:8] = file_type
+    if finder_flags is not None:
+        current_flags = int.from_bytes(finder_info[8:10], "big")
+        finder_info[8:10] = (current_flags | finder_flags).to_bytes(2, "big")
+    run_checked(
+        [
+            "xattr",
+            "-wx",
+            "com.apple.FinderInfo",
+            finder_info.hex(),
+            str(path),
+        ]
+    )
+
+
 def build_applescript(
     *,
-    volume_name: str,
     window_pos: tuple[int, int],
     window_size: tuple[int, int],
     icon_size: int,
@@ -78,10 +164,82 @@ def build_applescript(
                 set arrangement to not arranged
             end tell
 {position_lines}
+            close
+            open
+            delay 1
         end tell
+        delay 1
+        tell disk (volumeName as string)
+            tell container window
+                set statusbar visible to false
+                set the bounds to {{theXOrigin, theYOrigin, theXOrigin + theWidth, theYOrigin + theHeight}}
+            end tell
+        end tell
+        set dsStorePath to "/Volumes/" & volumeName & "/.DS_Store"
+        repeat 20 times
+            if (do shell script "[ -f " & quoted form of dsStorePath & " ] && echo yes || echo no") is "yes" then
+                return
+            end if
+            delay 0.5
+        end repeat
     end tell
+    error "Finder did not write .DS_Store for " & volumeName
 end run
 """
+
+
+def run_finder_layout(
+    *,
+    volume_name: str,
+    mount_dir: Path,
+    window_pos: tuple[int, int],
+    window_size: tuple[int, int],
+    icon_size: int,
+    text_size: int,
+    icon_positions: dict[str, tuple[int, int]],
+) -> None:
+    script = build_applescript(
+        window_pos=window_pos,
+        window_size=window_size,
+        icon_size=icon_size,
+        text_size=text_size,
+        icon_positions=icon_positions,
+    )
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".applescript", delete=False
+    ) as handle:
+        handle.write(script)
+        applescript_path = Path(handle.name)
+    try:
+        last_error: Optional[subprocess.CalledProcessError] = None
+        for _ in range(10):
+            result = subprocess.run(
+                ["osascript", str(applescript_path), volume_name],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                last_error = None
+                break
+            last_error = subprocess.CalledProcessError(
+                result.returncode,
+                result.args,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+            if "(-1728)" not in result.stderr:
+                raise last_error
+            time.sleep(1)
+        if last_error is not None:
+            raise last_error
+    finally:
+        applescript_path.unlink(missing_ok=True)
+    ds_store_path = mount_dir / ".DS_Store"
+    if not ds_store_path.exists():
+        raise SystemExit(
+            f"Finder did not write .DS_Store for mounted volume: {mount_dir}"
+        )
 
 
 def main() -> None:
@@ -89,9 +247,24 @@ def main() -> None:
 
     app_path = Path(args.app).resolve()
     output_path = Path(args.output).resolve()
+    window_pos = parse_pair(args.window_pos, "window position")
+    window_size = parse_pair(args.window_size, "window size")
+    icon_positions = parse_icon_positions(args.icon_position)
+    volume_icon_path = Path(args.volume_icon).resolve() if args.volume_icon else None
 
     if not app_path.exists():
         raise SystemExit(f"app does not exist: {app_path}")
+    if volume_icon_path is not None and not volume_icon_path.exists():
+        raise SystemExit(f"volume icon does not exist: {volume_icon_path}")
+
+    has_custom_layout = (
+        volume_icon_path is not None
+        or bool(icon_positions)
+        or args.window_pos != f"{DEFAULT_WINDOW_POS[0]},{DEFAULT_WINDOW_POS[1]}"
+        or args.window_size != f"{DEFAULT_WINDOW_SIZE[0]},{DEFAULT_WINDOW_SIZE[1]}"
+        or args.icon_size != DEFAULT_ICON_SIZE
+        or args.text_size != DEFAULT_TEXT_SIZE
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -100,15 +273,14 @@ def main() -> None:
         staging_dir.mkdir()
         mounted_dmg = Path(temp_dir) / "mounted.dmg"
         compressed_dmg = Path(temp_dir) / "compressed.dmg"
-        mount_dir = Path(temp_dir) / "mount"
-        mount_dir.mkdir()
+        private_mount_dir = Path(temp_dir) / "mount"
+        private_mount_dir.mkdir()
 
         staged_app = staging_dir / app_path.name
         shutil.copytree(app_path, staged_app, symlinks=False)
 
         if args.include_applications_link:
             os.symlink("/Applications", staging_dir / "Applications")
-
         du_output = subprocess.check_output(["du", "-sk", str(staging_dir)], text=True)
         staging_size_kb = int(du_output.split()[0])
         image_size_kb = max(10240, int(staging_size_kb * 1.25) + 10240)
@@ -125,25 +297,57 @@ def main() -> None:
             "-ov",
             str(mounted_dmg),
         ]
-        subprocess.run(create_command, check=True)
+        run_checked(create_command)
+
+        private_attach_command = [
+            "hdiutil",
+            "attach",
+            str(mounted_dmg),
+            "-mountpoint",
+            str(private_mount_dir),
+            "-readwrite",
+            "-nobrowse",
+            "-quiet",
+        ]
+        run_checked(private_attach_command)
+
+        try:
+            for child in staging_dir.iterdir():
+                destination = private_mount_dir / child.name
+                copy_staged_item(child, destination)
+            if volume_icon_path is not None:
+                mark_volume_icon(private_mount_dir, volume_icon_path)
+        finally:
+            run_checked(["hdiutil", "detach", str(private_mount_dir), "-quiet"])
 
         attach_command = [
             "hdiutil",
             "attach",
             str(mounted_dmg),
-            "-mountpoint",
-            str(mount_dir),
+            "-readwrite",
             "-nobrowse",
-            "-quiet",
         ]
-        subprocess.run(attach_command, check=True)
+        attach_result = subprocess.run(
+            attach_command,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        mount_dir = parse_mount_dir(attach_result.stdout)
 
         try:
-            for child in staging_dir.iterdir():
-                destination = mount_dir / child.name
-                copy_staged_item(child, destination)
+            if has_custom_layout:
+                run_finder_layout(
+                    volume_name=args.volume_name,
+                    mount_dir=mount_dir,
+                    window_pos=window_pos,
+                    window_size=window_size,
+                    icon_size=args.icon_size,
+                    text_size=args.text_size,
+                    icon_positions=icon_positions,
+                )
         finally:
-            subprocess.run(["hdiutil", "detach", str(mount_dir), "-quiet"], check=True)
+            run_checked(["hdiutil", "detach", str(mount_dir), "-quiet"])
 
         convert_command = [
             "hdiutil",
@@ -155,7 +359,7 @@ def main() -> None:
             "-o",
             str(compressed_dmg),
         ]
-        subprocess.run(convert_command, check=True)
+        run_checked(convert_command)
         shutil.move(compressed_dmg, output_path)
 
 
