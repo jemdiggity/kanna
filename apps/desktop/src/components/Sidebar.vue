@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Repo, PipelineItem } from "@kanna/db";
-import { ref, nextTick, watch } from "vue";
+import { computed, ref, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
 import { fuzzyMatch } from "../utils/fuzzyMatch";
@@ -43,9 +43,11 @@ const collapsedRepos = ref<Set<string>>(new Set());
 const searchQuery = ref("");
 const searchInputRef = ref<HTMLInputElement | null>(null);
 const preSearchCollapsed = ref<Set<string> | null>(null);
+const trimmedSearchQuery = computed(() => searchQuery.value.trim());
+const hasActiveSearch = computed(() => trimmedSearchQuery.value.length > 0);
 
 function matchesSearch(item: PipelineItem): boolean {
-  const q = searchQuery.value.trim();
+  const q = trimmedSearchQuery.value;
   if (!q) return true;
   const title = item.display_name || item.issue_title || item.prompt;
   if (title && fuzzyMatch(q, title) !== null) return true;
@@ -119,6 +121,16 @@ function groupedByStage(repoId: string): StageGroup[] {
 function itemsForRepo(repoId: string): PipelineItem[] {
   const stageItems = groupedByStage(repoId).flatMap((g) => g.items);
   return [...sortedPinned(repoId), ...stageItems, ...sortedBlocked(repoId)];
+}
+
+function totalItemsForRepo(repoId: string): number {
+  return props.pipelineItems.filter((i) => i.repo_id === repoId && !isHidden(i)).length;
+}
+
+function repoCountLabel(repoId: string): string {
+  const visible = itemsForRepo(repoId).length;
+  if (!hasActiveSearch.value) return String(visible);
+  return `${visible}/${totalItemsForRepo(repoId)}`;
 }
 
 function itemTitle(item: PipelineItem): string {
@@ -242,14 +254,14 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
 </script>
 
 <template>
-  <aside class="sidebar" @mousedown="preventFocusSteal">
+  <aside class="sidebar" :class="{ 'is-filtering': hasActiveSearch }" @mousedown="preventFocusSteal">
     <div class="sidebar-content">
       <div v-if="repos.length === 0" class="empty-state">
         {{ $t('sidebar.noReposYet') }}<br>
         {{ $t('sidebar.noReposHint', { shortcut: '⌘I' }) }}
       </div>
 
-      <div v-for="repo in repos" :key="repo.id" v-show="!searchQuery.trim() || itemsForRepo(repo.id).length > 0" class="repo-section">
+      <div v-for="repo in repos" :key="repo.id" v-show="!hasActiveSearch || itemsForRepo(repo.id).length > 0" class="repo-section">
         <div
           class="repo-header"
           :class="{ selected: selectedRepoId === repo.id }"
@@ -261,8 +273,8 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
           >
             {{ collapsedRepos.has(repo.id) ? ">" : "v" }}
           </button>
-          <span class="repo-name">{{ repo.name }}</span>
-          <span class="repo-count">{{ itemsForRepo(repo.id).length }}</span>
+          <span class="repo-name" :class="{ 'filtered-label': hasActiveSearch }">{{ repo.name }}</span>
+          <span class="repo-count">{{ repoCountLabel(repo.id) }}</span>
           <button
             class="btn-icon btn-add-task"
             :title="$t('sidebar.newTaskTooltip')"
@@ -327,7 +339,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
 
           <!-- Stage sections (dynamic) -->
           <template v-for="group in groupedByStage(repo.id)" :key="group.stageName">
-            <div class="section-label">{{ group.stageName }}</div>
+            <div class="section-label" :class="{ 'filtered-label': hasActiveSearch }">{{ group.stageName }}</div>
             <draggable
               :model-value="group.items"
               :group="{ name: `repo-${repo.id}` }"
@@ -374,7 +386,11 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
           </template>
 
           <!-- Blocked tasks -->
-          <div v-if="sortedBlocked(repo.id).length > 0" class="section-label">{{ $t('sidebar.sectionBlocked') }}</div>
+          <div
+            v-if="sortedBlocked(repo.id).length > 0"
+            class="section-label"
+            :class="{ 'filtered-label': hasActiveSearch }"
+          >{{ $t('sidebar.sectionBlocked') }}</div>
           <div class="type-zone">
             <div
               v-for="element in sortedBlocked(repo.id)"
@@ -408,7 +424,10 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
           </div>
 
           <div v-if="itemsForRepo(repo.id).length === 0" class="no-items">
-            {{ $t('sidebar.noTasks') }}
+            {{ hasActiveSearch
+              ? $t('sidebar.noTasksMatching', { query: trimmedSearchQuery })
+              : $t('sidebar.noTasks')
+            }}
           </div>
         </div>
       </div>
@@ -438,6 +457,32 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
   flex-direction: column;
   height: 100%;
   user-select: none;
+}
+
+.sidebar.is-filtering {
+  background: linear-gradient(180deg, #1f2123 0%, #1d1f21 100%);
+  border-right-color: #3a4b5d;
+}
+
+.sidebar.is-filtering .sidebar-content {
+  box-shadow: inset 0 1px 0 #314151;
+}
+
+.sidebar.is-filtering .repo-header {
+  background: #202327;
+}
+
+.sidebar.is-filtering .repo-count {
+  color: #9fb7cc;
+}
+
+.sidebar.is-filtering .search-input {
+  border-color: #4a6278;
+  background: #20252a;
+}
+
+.sidebar.is-filtering .search-input::placeholder {
+  color: #71869b;
 }
 
 .sidebar-content {
@@ -669,6 +714,10 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 6px 14px 2px;
+}
+
+.filtered-label {
+  font-style: italic;
 }
 
 .type-zone {

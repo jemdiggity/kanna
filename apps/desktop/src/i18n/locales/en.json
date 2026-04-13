@@ -84,6 +84,7 @@
   "sidebar": {
     "searchPlaceholder": "Search tasks…  ⌘F",
     "noTasks": "No tasks",
+    "noTasksMatching": "No tasks match \"{query}\"",
     "noReposYet": "No repos yet.",
     "noReposHint": "Press {shortcut} to create one.",
     "newTaskTooltip": "New Task (⌘N)",
