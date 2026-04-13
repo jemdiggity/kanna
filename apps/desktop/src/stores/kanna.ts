@@ -865,7 +865,7 @@ export const useKannaStore = defineStore("kanna", () => {
           try {
             const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
             const availableBaseBranches = await invoke<string[]>("git_list_base_branches", { repoPath })
-              .catch(() => [`origin/${defaultBranch}`, defaultBranch]);
+              .catch(() => [defaultBranch]);
             baseRef = resolveInitialBaseRef({
               selectedBaseBranch: opts?.baseBranch,
               availableBaseBranches,
