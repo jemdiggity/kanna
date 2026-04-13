@@ -5,8 +5,39 @@ export function isTeardownSessionId(sessionId: string): boolean {
   return sessionId.startsWith("td-");
 }
 
+export function getTaskIdFromTeardownSessionId(sessionId: string): string | null {
+  if (!isTeardownSessionId(sessionId)) {
+    return null;
+  }
+
+  const taskId = sessionId.slice(3);
+  return taskId.length > 0 ? taskId : null;
+}
+
 export function shouldClearCachedTerminalStateOnSessionExit(sessionId: string): boolean {
   return !isTeardownSessionId(sessionId);
+}
+
+export interface TeardownExitBehaviorInput {
+  exitCode: number | null;
+  lingerEnabled: boolean;
+}
+
+export interface EnterTeardownBehaviorInput {
+  teardownCommandCount: number;
+  lingerEnabled: boolean;
+}
+
+export function shouldAutoCloseTaskImmediatelyAfterEnteringTeardown(
+  input: EnterTeardownBehaviorInput,
+): boolean {
+  return input.teardownCommandCount === 0 && !input.lingerEnabled;
+}
+
+export function shouldAutoCloseTaskAfterTeardownExit(
+  input: TeardownExitBehaviorInput,
+): boolean {
+  return input.exitCode === 0 && !input.lingerEnabled;
 }
 
 export function isMissingDaemonSessionError(error: unknown): boolean {

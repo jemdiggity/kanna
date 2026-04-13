@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   closePipelineItemAndClearCachedTerminalState,
+  getTaskIdFromTeardownSessionId,
   isTeardownSessionId,
   isMissingDaemonSessionError,
   isSessionAlreadyExistsError,
   reportCloseSessionError,
   reportPrewarmSessionError,
+  shouldAutoCloseTaskAfterTeardownExit,
+  shouldAutoCloseTaskImmediatelyAfterEnteringTeardown,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
 import { AppError } from "../appError";
@@ -15,6 +18,51 @@ describe("kannaCleanup", () => {
     expect(isTeardownSessionId("td-task-1")).toBe(true);
     expect(shouldClearCachedTerminalStateOnSessionExit("td-task-1")).toBe(false);
     expect(shouldClearCachedTerminalStateOnSessionExit("task-1")).toBe(true);
+  });
+
+  it("extracts the task id from teardown session ids", () => {
+    expect(getTaskIdFromTeardownSessionId("td-task-1")).toBe("task-1");
+    expect(getTaskIdFromTeardownSessionId("task-1")).toBeNull();
+    expect(getTaskIdFromTeardownSessionId("td-")).toBeNull();
+  });
+
+  it("auto-closes tasks after successful teardown when linger is disabled", () => {
+    expect(shouldAutoCloseTaskAfterTeardownExit({ exitCode: 0, lingerEnabled: false })).toBe(true);
+  });
+
+  it("keeps tasks in teardown when linger is enabled", () => {
+    expect(shouldAutoCloseTaskAfterTeardownExit({ exitCode: 0, lingerEnabled: true })).toBe(false);
+  });
+
+  it("keeps tasks in teardown when teardown exits with an error", () => {
+    expect(shouldAutoCloseTaskAfterTeardownExit({ exitCode: 1, lingerEnabled: false })).toBe(false);
+  });
+
+  it("auto-closes immediately when entering teardown with no teardown commands and linger disabled", () => {
+    expect(
+      shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
+        teardownCommandCount: 0,
+        lingerEnabled: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not auto-close immediately when teardown commands exist", () => {
+    expect(
+      shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
+        teardownCommandCount: 1,
+        lingerEnabled: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not auto-close immediately when linger is enabled", () => {
+    expect(
+      shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
+        teardownCommandCount: 0,
+        lingerEnabled: true,
+      }),
+    ).toBe(false);
   });
 
   it("clears cached state only after a successful close", async () => {

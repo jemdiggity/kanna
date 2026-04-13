@@ -16,9 +16,12 @@ import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/termin
 import { clearCachedTerminalState } from "../composables/terminalStateCache";
 import {
   closePipelineItemAndClearCachedTerminalState,
+  getTaskIdFromTeardownSessionId,
   isTeardownSessionId,
   reportCloseSessionError,
   reportPrewarmSessionError,
+  shouldAutoCloseTaskAfterTeardownExit,
+  shouldAutoCloseTaskImmediatelyAfterEnteringTeardown,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
 import { isTeardownStage, TEARDOWN_STAGE } from "./taskStages";
@@ -1451,6 +1454,23 @@ export const useKannaStore = defineStore("kanna", () => {
         selectNextItem(nextId);
       }
       bump();
+
+      if (shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
+        teardownCommandCount: teardownCmds.length,
+        lingerEnabled: devLingerTerminals.value,
+      })) {
+        await Promise.all([
+          invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
+            reportCloseSessionError("[store] kill agent session failed:", e)),
+          invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
+            reportCloseSessionError("[store] kill shell session failed:", e)),
+        ]);
+        await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
+        await checkUnblocked(item.id);
+        bump();
+        return;
+      }
+
       void teardownExit;
       return;
     } catch (e) {
@@ -2160,8 +2180,31 @@ export const useKannaStore = defineStore("kanna", () => {
         for (const resolve of waiters) resolve();
       }
 
-      // Teardown session finished — already in teardown state, nothing extra needed
+      // Successful teardown exits finish the task unless lingering is enabled.
       if (typeof sessionId === "string" && isTeardownSessionId(sessionId)) {
+        const itemId = getTaskIdFromTeardownSessionId(sessionId);
+        const exitCode = typeof payload.code === "number" ? payload.code : null;
+        if (!itemId || !shouldAutoCloseTaskAfterTeardownExit({
+          exitCode,
+          lingerEnabled: devLingerTerminals.value,
+        })) {
+          return;
+        }
+
+        const item = items.value.find((i) => i.id === itemId);
+        if (!item || !isTeardownStage(item.stage)) {
+          return;
+        }
+
+        await Promise.all([
+          invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
+            reportCloseSessionError("[store] kill agent session failed:", e)),
+          invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
+            reportCloseSessionError("[store] kill shell session failed:", e)),
+        ]);
+        await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
+        await checkUnblocked(item.id);
+        bump();
         return;
       }
 
