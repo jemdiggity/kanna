@@ -38,7 +38,7 @@ describe("task lifecycle config resolution", () => {
         return JSON.stringify({ setup: ["pnpm install"] });
       }
       if (command === "read_text_file" && args?.path === "/repo/.kanna/config.json") {
-        return JSON.stringify({ setup: ["pnpm root-install"] });
+        throw new Error("repo root config should not be read for task setup");
       }
       throw new Error(`unexpected invoke: ${command} ${JSON.stringify(args)}`);
     });
@@ -57,7 +57,7 @@ describe("task lifecycle config resolution", () => {
         return JSON.stringify({ teardown: ["pnpm worktree-clean"] });
       }
       if (command === "read_text_file" && args?.path === "/repo/.kanna/config.json") {
-        return JSON.stringify({ teardown: ["pnpm root-clean"] });
+        throw new Error("repo root config should not be read for task teardown");
       }
       if (command === "list_dir" && args?.path === "/repo/.kanna/tasks") {
         return [];
