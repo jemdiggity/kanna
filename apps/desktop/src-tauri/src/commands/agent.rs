@@ -186,7 +186,6 @@ pub async fn agent_close_session(
 fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
     match mode {
         Some("acceptEdits") | Some("accept-edits") => PermissionMode::AcceptEdits,
-        Some("default") => PermissionMode::Default,
         _ => PermissionMode::DontAsk,
     }
 }
@@ -317,4 +316,31 @@ fn strip_ansi_usage(input: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_permission_mode;
+    use claude_agent_sdk::PermissionMode;
+
+    #[test]
+    fn default_permission_mode_maps_to_dont_ask() {
+        assert_eq!(
+            parse_permission_mode(Some("default")),
+            PermissionMode::DontAsk
+        );
+        assert_eq!(parse_permission_mode(None), PermissionMode::DontAsk);
+    }
+
+    #[test]
+    fn accept_edits_permission_mode_is_preserved() {
+        assert_eq!(
+            parse_permission_mode(Some("acceptEdits")),
+            PermissionMode::AcceptEdits
+        );
+        assert_eq!(
+            parse_permission_mode(Some("accept-edits")),
+            PermissionMode::AcceptEdits
+        );
+    }
 }
