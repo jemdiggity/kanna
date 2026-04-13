@@ -34,6 +34,11 @@
     "showOnStartup": "起動時に表示しない",
     "showAll": "すべてのショートカットを表示",
     "showContext": "{context}を表示",
+    "groupCreateOrganize": "タスク",
+    "groupMoveAround": "ナビゲーション",
+    "groupOpenInspect": "ツール",
+    "groupWorkspace": "表示",
+    "groupAppHelp": "ヘルプ",
     "groupTasks": "タスク",
     "groupNavigation": "ナビゲーション",
     "groupViews": "表示",
@@ -70,7 +75,7 @@
     "newestUnread": "最も新しい未読タスク",
     "oldestRead": "最も古い既読タスク",
     "newestRead": "最も新しい既読タスク",
-    "focusSearch": "検索にフォーカス"
+    "focusSearch": "検索"
   },
   "shortcutContexts": {
     "main": "メインショートカット",

@@ -28,6 +28,53 @@ const contextTitle = computed(() => getContextTitle(t, props.context));
 const contextItems = computed(() => getContextShortcuts(props.context).map(s => ({ ...s, action: t(s.action) })));
 const groups = computed(() => getShortcutGroups(t));
 
+interface FullModeEntrySection {
+  kind: "section";
+  key: string;
+  text: string;
+  column: number;
+  row: number;
+}
+
+interface FullModeEntryItem {
+  kind: "item";
+  key: string;
+  action: string;
+  keys: string;
+  column: number;
+  row: number;
+}
+
+type FullModeEntry = FullModeEntrySection | FullModeEntryItem;
+
+const fullModeEntries = computed(() => {
+  const groupMap = new Map(groups.value.map((group) => [group.key, group]));
+  const entriesFor = (groupKey: string, column: number, startRow: number): FullModeEntry[] => {
+    const group = groupMap.get(groupKey);
+    if (!group) return [];
+
+    return [
+      { kind: "section", key: `${group.key}-section`, text: group.title, column, row: startRow },
+      ...group.shortcuts.map((shortcut, index) => ({
+        kind: "item" as const,
+        key: `${group.key}-${shortcut.action}-${shortcut.keys}`,
+        action: shortcut.action,
+        keys: shortcut.keys,
+        column,
+        row: startRow + index + 1,
+      })),
+    ];
+  };
+
+  return [
+    ...entriesFor("shortcuts.groupCreateOrganize", 1, 1),
+    ...entriesFor("shortcuts.groupWorkspace", 1, 10),
+    ...entriesFor("shortcuts.groupAppHelp", 1, 14),
+    ...entriesFor("shortcuts.groupMoveAround", 2, 1),
+    ...entriesFor("shortcuts.groupOpenInspect", 3, 1),
+  ];
+});
+
 function toggleMode() {
   showFullMode.value = !showFullMode.value;
   emit("update:full-mode", showFullMode.value);
@@ -49,6 +96,7 @@ function splitKeys(display: string): string[] {
   }
   return parts;
 }
+
 </script>
 
 <template>
@@ -68,14 +116,23 @@ function splitKeys(display: string): string[] {
 
       <!-- Full mode: grouped columns -->
       <div v-else class="shortcuts-grid">
-        <div v-for="group in groups" :key="group.title" class="shortcut-group">
-          <h4>{{ group.title }}</h4>
-          <div v-for="s in group.shortcuts" :key="s.keys" class="shortcut-row">
-            <span class="shortcut-action">{{ s.action }}</span>
+        <div
+          v-for="entry in fullModeEntries"
+          :key="entry.key"
+          :class="['shortcut-entry', `shortcut-entry--${entry.kind}`]"
+          :style="{ gridColumn: `${entry.column}`, gridRow: `${entry.row}` }"
+          :data-column="entry.column"
+          :data-row="entry.row"
+        >
+          <template v-if="entry.kind === 'section'">
+            <h4>{{ entry.text }}</h4>
+          </template>
+          <template v-else>
+            <span class="shortcut-action">{{ entry.action }}</span>
             <span class="shortcut-keys">
-              <kbd v-for="(k, i) in splitKeys(s.keys)" :key="i">{{ k }}</kbd>
+              <kbd v-for="(k, i) in splitKeys(entry.keys)" :key="i">{{ k }}</kbd>
             </span>
-          </div>
+          </template>
         </div>
       </div>
 
@@ -117,11 +174,23 @@ h3 { margin: 0 0 16px; font-size: 15px; font-weight: 600; }
 .shortcuts-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
+  grid-auto-rows: minmax(28px, auto);
+  row-gap: 9px;
   gap: 0 28px;
 }
-.shortcut-group { margin-bottom: 16px; }
-h4 { color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px; }
-.shortcut-row { display: flex; align-items: center; padding: 3px 0; font-size: 13px; }
+.shortcut-entry {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+}
+.shortcut-entry--section h4 {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+.shortcut-entry--item { font-size: 13px; }
 .shortcut-action { color: #ccc; margin-right: 8px; }
 .shortcut-keys { display: flex; gap: 3px; margin-left: auto; }
 kbd {
