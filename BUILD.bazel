@@ -195,6 +195,15 @@ macos_dmg(
     app = ":kanna_signed_app_release_arm64",
     output_name = "release/Kanna-arm64.dmg",
     volume_name = "Kanna",
+    volume_icon = ":desktop_macos_icon",
+    window_pos = [10, 60],
+    window_size = [500, 350],
+    icon_size = 128,
+    text_size = 16,
+    icon_positions = {
+        "Applications": "352,175",
+        "Kanna.app": "160,175",
+    },
 )
 
 macos_codesign_file(
@@ -248,6 +257,15 @@ macos_dmg(
     app = ":kanna_signed_app_release_x86_64",
     output_name = "release/Kanna-x86_64.dmg",
     volume_name = "Kanna",
+    volume_icon = ":desktop_macos_icon",
+    window_pos = [10, 60],
+    window_size = [500, 350],
+    icon_size = 128,
+    text_size = 16,
+    icon_positions = {
+        "Applications": "352,175",
+        "Kanna.app": "160,175",
+    },
 )
 
 macos_codesign_file(

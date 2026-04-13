@@ -580,11 +580,26 @@ def _macos_dmg_impl(ctx):
     args.add("--app", app.path)
     args.add("--output", output.path)
     args.add("--volume-name", ctx.attr.volume_name)
+    if ctx.file.volume_icon:
+        args.add("--volume-icon", ctx.file.volume_icon.path)
+    if ctx.attr.window_pos:
+        args.add("--window-pos", ",".join([str(value) for value in ctx.attr.window_pos]))
+    if ctx.attr.window_size:
+        args.add("--window-size", ",".join([str(value) for value in ctx.attr.window_size]))
+    if ctx.attr.icon_size:
+        args.add("--icon-size", str(ctx.attr.icon_size))
+    if ctx.attr.text_size:
+        args.add("--text-size", str(ctx.attr.text_size))
+    for name, coords in sorted(ctx.attr.icon_positions.items()):
+        parts = coords.split(",")
+        if len(parts) != 2:
+            fail("icon_positions[%s] must be formatted as x,y" % name)
+        args.add("--icon-position", "%s:%s,%s" % (name, parts[0], parts[1]))
     if ctx.attr.include_applications_link:
         args.add("--include-applications-link")
 
     ctx.actions.run_shell(
-        inputs = depset(direct = [app, tool]),
+        inputs = depset(direct = [app, tool] + ([ctx.file.volume_icon] if ctx.file.volume_icon else [])),
         outputs = [output],
         command = """
 set -euo pipefail
@@ -693,6 +708,15 @@ macos_dmg = rule(
         "app": attr.label(mandatory = True),
         "output_name": attr.string(mandatory = True),
         "volume_name": attr.string(mandatory = True),
+        "volume_icon": attr.label(allow_single_file = [".icns"]),
+        "window_pos": attr.int_list(default = [10, 60]),
+        "window_size": attr.int_list(default = [500, 350]),
+        "icon_size": attr.int(default = 128),
+        "text_size": attr.int(default = 16),
+        "icon_positions": attr.string_dict(default = {
+            "Kanna.app": "160,175",
+            "Applications": "352,175",
+        }),
         "include_applications_link": attr.bool(default = True),
         "_tool": attr.label(
             allow_single_file = True,
