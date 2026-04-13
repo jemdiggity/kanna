@@ -639,6 +639,10 @@ python3 "$@"
         arguments = [tool.path, args],
         mnemonic = "KannaMacosDmg",
         progress_message = "Creating DMG for %s" % ctx.label.name,
+        execution_requirements = {
+            "local": "1",
+            "no-sandbox": "1",
+        },
         use_default_shell_env = True,
     )
 
