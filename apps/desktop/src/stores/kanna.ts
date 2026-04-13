@@ -48,6 +48,10 @@ import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import {
   getAgentPermissionFlags,
 } from "./agent-permissions";
+import {
+  getCreateWorktreeStartPoint,
+  resolveInitialBaseRef,
+} from "./taskBaseBranch";
 import i18n from '../i18n';
 import { resolveDbName } from "./db";
 import { buildKannaCliEnv } from "./kannaCliEnv";
@@ -860,13 +864,13 @@ export const useKannaStore = defineStore("kanna", () => {
           t1 = performance.now();
           try {
             const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
-            // Prefer origin ref if remote exists
-            try {
-              await invoke<string>("git_merge_base", { repoPath, refA: `origin/${defaultBranch}`, refB: "HEAD" });
-              baseRef = `origin/${defaultBranch}`;
-            } catch {
-              baseRef = defaultBranch;
-            }
+            const availableBaseBranches = await invoke<string[]>("git_list_base_branches", { repoPath })
+              .catch(() => [`origin/${defaultBranch}`, defaultBranch]);
+            baseRef = resolveInitialBaseRef({
+              selectedBaseBranch: opts?.baseBranch,
+              availableBaseBranches,
+              defaultBranch,
+            });
           } catch (e) {
             console.warn("[store] failed to compute base_ref:", e);
           }
@@ -1090,16 +1094,12 @@ export const useKannaStore = defineStore("kanna", () => {
     worktreePath: string,
     baseBranch?: string,
   ): Promise<WorktreeBootstrapResult> {
-    const worktreeAddCwd = baseBranch
-      ? `${repoPath}/.kanna-worktrees/${baseBranch}`
-      : repoPath;
     const visibleBootstrapSteps: string[] = [];
 
-    // For new tasks (no baseBranch), fetch origin and branch from origin/{defaultBranch}
-    // so the worktree starts from the latest remote state, not a potentially stale local branch.
-    let startPoint: string | null = baseBranch ? "HEAD" : null;
-    let renderedStartPoint = baseBranch ? "HEAD" : "HEAD";
-    if (!baseBranch) {
+    let startPoint = getCreateWorktreeStartPoint(baseBranch);
+    let renderedStartPoint = startPoint ?? "HEAD";
+
+    if (!startPoint) {
       try {
         const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
         renderedStartPoint = defaultBranch;
@@ -1121,7 +1121,7 @@ export const useKannaStore = defineStore("kanna", () => {
     }
 
     await invoke("git_worktree_add", {
-      repoPath: worktreeAddCwd,
+      repoPath,
       branch,
       path: worktreePath,
       startPoint,
