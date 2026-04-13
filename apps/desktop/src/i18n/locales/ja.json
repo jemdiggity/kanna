@@ -6,6 +6,8 @@
     "blockTask": "タスクをブロック",
     "editBlockedTask": "ブロックタスクを編集",
     "descriptionPlaceholder": "タスクの説明...",
+    "baseBranch": "ベースブランチ",
+    "baseBranchSearchPlaceholder": "ブランチを検索...",
     "untitled": "無題",
     "renameTask": "タスク名を変更"
   },

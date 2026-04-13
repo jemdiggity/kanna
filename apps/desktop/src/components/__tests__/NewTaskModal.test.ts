@@ -207,4 +207,25 @@ describe("NewTaskModal", () => {
 
     expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("main");
   });
+
+  it("emits the default branch name when empty candidates still came from resolved repo branch context", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        defaultAgentProvider: "claude",
+        pipelines: ["default"],
+        defaultPipeline: "default",
+        baseBranches: [],
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get("textarea").setValue("Ship branch fallback");
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
+
+    expect(wrapper.emitted("submit")).toEqual([
+      ["Ship branch fallback", "claude", "default", "main"],
+    ]);
+  });
 });

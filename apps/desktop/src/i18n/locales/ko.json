@@ -6,6 +6,8 @@
     "blockTask": "작업 차단",
     "editBlockedTask": "차단된 작업 편집",
     "descriptionPlaceholder": "작업을 설명하세요...",
+    "baseBranch": "베이스 브랜치",
+    "baseBranchSearchPlaceholder": "브랜치 검색...",
     "untitled": "제목 없음",
     "renameTask": "작업 이름 변경"
   },
