@@ -5,6 +5,7 @@ import { nextTick } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import NewTaskModal from "../NewTaskModal.vue";
 import { clearContextShortcuts, getContextShortcuts } from "../../composables/useShortcutContext";
+import { invoke } from "../../invoke";
 
 async function flushPromises() {
   await Promise.resolve();
@@ -12,7 +13,10 @@ async function flushPromises() {
 }
 
 vi.mock("../../invoke", () => ({
-  invoke: vi.fn(async (command: string, args?: { name?: string }) => {
+  invoke: vi.fn(async (command: string, args?: { name?: string; repoPath?: string }) => {
+    if (command === "git_list_base_branches") {
+      return ["origin/main", "main"];
+    }
     if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) {
       return true;
     }
@@ -121,5 +125,12 @@ describe("NewTaskModal", () => {
       action: "Switch agent",
       keys: "⇧⌘[ / ⇧⌘]",
     });
+  });
+
+  it("exposes base-branch candidates through the invoke layer", async () => {
+    await expect(invoke("git_list_base_branches", { repoPath: "/tmp/repo" })).resolves.toEqual([
+      "origin/main",
+      "main",
+    ]);
   });
 });
