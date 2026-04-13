@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PipelineItem, Repo } from "@kanna/db";
-import { collectTeardownCommands, readRepoConfig } from "./kanna";
+import { collectTeardownCommands, readRepoConfig, readTaskWorktreeConfig } from "./kanna";
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(async (command: string, args?: Record<string, unknown>) => {
@@ -29,16 +29,23 @@ describe("task lifecycle config resolution", () => {
     invokeMock.mockReset();
   });
 
-  it("reads setup commands from the task worktree config", async () => {
-    mockRepoConfigResponse("/repo/.kanna-worktrees/task-123", {
-      setup: ["pnpm install"],
-      teardown: ["pnpm clean"],
+  it("reads setup commands from the task worktree config instead of the repo root config", async () => {
+    invokeMock.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (
+        command === "read_text_file" &&
+        args?.path === "/repo/.kanna-worktrees/task-123/.kanna/config.json"
+      ) {
+        return JSON.stringify({ setup: ["pnpm install"] });
+      }
+      if (command === "read_text_file" && args?.path === "/repo/.kanna/config.json") {
+        return JSON.stringify({ setup: ["pnpm root-install"] });
+      }
+      throw new Error(`unexpected invoke: ${command} ${JSON.stringify(args)}`);
     });
 
-    const config = await readRepoConfig("/repo/.kanna-worktrees/task-123");
-
-    expect(config.setup).toEqual(["pnpm install"]);
-    expect(config.teardown).toEqual(["pnpm clean"]);
+    await expect(readTaskWorktreeConfig("/repo", "task-123")).resolves.toEqual({
+      setup: ["pnpm install"],
+    });
   });
 
   it("reads teardown commands from the task worktree config", async () => {
@@ -87,5 +94,10 @@ describe("task lifecycle config resolution", () => {
     });
 
     await expect(readRepoConfig("/repo/.kanna-worktrees/task-123")).resolves.toEqual({});
+  });
+
+  it("treats missing task branch as empty worktree config", async () => {
+    await expect(readTaskWorktreeConfig("/repo", null)).resolves.toEqual({});
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
