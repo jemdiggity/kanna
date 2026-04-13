@@ -868,6 +868,8 @@ export const useKannaStore = defineStore("kanna", () => {
     try {
       let s1 = performance.now();
       let worktreeBootstrap: WorktreeBootstrapResult | null = null;
+      let ptySpawnEnv: Record<string, string> | null = null;
+      let ptyBootstrapCmd: string | null = null;
       if (agentType === "pty") {
         try {
           worktreeBootstrap = await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
@@ -892,16 +894,8 @@ export const useKannaStore = defineStore("kanna", () => {
             setupCmds,
             agentCmd: bootstrapAgentCmd,
           });
-
-          await invoke("spawn_session", {
-            sessionId: id,
-            cwd: worktreePath,
-            executable: "/bin/zsh",
-            args: ["--login", "-i", "-c", bootstrapCmd],
-            env,
-            cols: 80,
-            rows: 24,
-          });
+          ptySpawnEnv = env;
+          ptyBootstrapCmd = bootstrapCmd;
         } catch (e) {
           console.error("[store] failed to read repo config or create worktree:", e);
           toast.error(tt('toasts.worktreeFailed'));
@@ -935,8 +929,21 @@ export const useKannaStore = defineStore("kanna", () => {
             model: opts?.customTask?.model ?? null,
             allowedTools: opts?.customTask?.allowedTools ?? null,
             disallowedTools: opts?.customTask?.disallowedTools ?? null,
-            maxTurns: opts?.customTask?.maxTurns ?? null,
-            maxBudgetUsd: opts?.customTask?.maxBudgetUsd ?? null,
+              maxTurns: opts?.customTask?.maxTurns ?? null,
+              maxBudgetUsd: opts?.customTask?.maxBudgetUsd ?? null,
+            });
+        } else {
+          if (!ptySpawnEnv || !ptyBootstrapCmd) {
+            throw new Error("PTY bootstrap command not prepared");
+          }
+          await invoke("spawn_session", {
+            sessionId: id,
+            cwd: worktreePath,
+            executable: "/bin/zsh",
+            args: ["--login", "-i", "-c", ptyBootstrapCmd],
+            env: ptySpawnEnv,
+            cols: 80,
+            rows: 24,
           });
         }
       } catch (e) {
@@ -1886,11 +1893,9 @@ export const useKannaStore = defineStore("kanna", () => {
 
       const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
       try {
-        const repoConfig = await readTaskWorktreeConfig(repo.path, item.branch);
-        if (repoConfig.teardown?.length) {
-          for (const cmd of repoConfig.teardown) {
-            await invoke("run_script", { script: cmd, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
-          }
+        const teardownCmds = await collectTeardownCommands(item, repo);
+        for (const cmd of teardownCmds) {
+          await invoke("run_script", { script: cmd, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
         }
       } catch (e) {
         console.error("[store] teardown failed:", e);
