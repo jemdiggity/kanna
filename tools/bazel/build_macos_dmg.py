@@ -8,6 +8,12 @@ import tempfile
 from pathlib import Path
 
 
+DEFAULT_WINDOW_POS = (10, 60)
+DEFAULT_WINDOW_SIZE = (500, 350)
+DEFAULT_ICON_SIZE = 128
+DEFAULT_TEXT_SIZE = 16
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--app", required=True)
@@ -15,6 +21,67 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--volume-name", required=True)
     parser.add_argument("--include-applications-link", action="store_true")
     return parser.parse_args()
+
+
+def parse_icon_positions(entries: list[str]) -> dict[str, tuple[int, int]]:
+    positions: dict[str, tuple[int, int]] = {}
+    for entry in entries:
+        try:
+            name, raw_coords = entry.split(":", 1)
+            raw_x, raw_y = raw_coords.split(",", 1)
+        except ValueError as exc:
+            raise SystemExit(f"invalid icon position: {entry}") from exc
+        positions[name] = (int(raw_x), int(raw_y))
+    return positions
+
+
+def copy_staged_item(source: Path, destination: Path) -> None:
+    if source.is_symlink():
+        os.symlink(os.readlink(source), destination)
+    elif source.is_dir():
+        shutil.copytree(source, destination, symlinks=False)
+    else:
+        shutil.copy2(source, destination, follow_symlinks=False)
+
+
+def build_applescript(
+    *,
+    volume_name: str,
+    window_pos: tuple[int, int],
+    window_size: tuple[int, int],
+    icon_size: int,
+    text_size: int,
+    icon_positions: dict[str, tuple[int, int]],
+) -> str:
+    position_lines = "\n".join(
+        f'            set position of item "{name}" to {{{x}, {y}}}'
+        for name, (x, y) in icon_positions.items()
+    )
+    return f"""on run (volumeName)
+    tell application "Finder"
+        tell disk (volumeName as string)
+            open
+            set theXOrigin to {window_pos[0]}
+            set theYOrigin to {window_pos[1]}
+            set theWidth to {window_size[0]}
+            set theHeight to {window_size[1]}
+            set dsStore to "\\"/Volumes/" & volumeName & "/.DS_Store\\""
+            tell container window
+                set current view to icon view
+                set toolbar visible to false
+                set statusbar visible to false
+                set the bounds to {{theXOrigin, theYOrigin, theXOrigin + theWidth, theYOrigin + theHeight}}
+            end tell
+            tell the icon view options of container window
+                set icon size to {icon_size}
+                set text size to {text_size}
+                set arrangement to not arranged
+            end tell
+{position_lines}
+        end tell
+    end tell
+end run
+"""
 
 
 def main() -> None:
@@ -74,12 +141,7 @@ def main() -> None:
         try:
             for child in staging_dir.iterdir():
                 destination = mount_dir / child.name
-                if child.is_symlink():
-                    os.symlink(os.readlink(child), destination)
-                elif child.is_dir():
-                    shutil.copytree(child, destination, symlinks=False)
-                else:
-                    shutil.copy2(child, destination, follow_symlinks=False)
+                copy_staged_item(child, destination)
         finally:
             subprocess.run(["hdiutil", "detach", str(mount_dir), "-quiet"], check=True)
 
