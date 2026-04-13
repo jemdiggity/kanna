@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import argparse
+import contextlib
+import fcntl
 import os
 import shutil
 import subprocess
@@ -16,6 +18,7 @@ DEFAULT_ICON_SIZE = 128
 DEFAULT_TEXT_SIZE = 16
 FINDER_INFO_LENGTH = 32
 VOLUME_CUSTOM_ICON_FLAG = 0x0400
+FINDER_LAYOUT_LOCK_PATH = Path("/tmp/kanna-build-macos-dmg-finder.lock")
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,6 +75,18 @@ def copy_staged_item(source: Path, destination: Path) -> None:
 
 def run_checked(command: list[str]) -> None:
     subprocess.run(command, check=True)
+
+
+@contextlib.contextmanager
+def finder_layout_lock(lock_path: Optional[Path] = None):
+    target_lock_path = lock_path or FINDER_LAYOUT_LOCK_PATH
+    target_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with target_lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def mark_volume_icon(mount_dir: Path, icon_path: Path) -> None:
@@ -233,13 +248,13 @@ def run_finder_layout(
             time.sleep(1)
         if last_error is not None:
             raise last_error
+        ds_store_path = mount_dir / ".DS_Store"
+        if not ds_store_path.exists():
+            raise SystemExit(
+                f"Finder did not write .DS_Store for mounted volume: {mount_dir}"
+            )
     finally:
         applescript_path.unlink(missing_ok=True)
-    ds_store_path = mount_dir / ".DS_Store"
-    if not ds_store_path.exists():
-        raise SystemExit(
-            f"Finder did not write .DS_Store for mounted volume: {mount_dir}"
-        )
 
 
 def main() -> None:
@@ -320,34 +335,35 @@ def main() -> None:
         finally:
             run_checked(["hdiutil", "detach", str(private_mount_dir), "-quiet"])
 
-        attach_command = [
-            "hdiutil",
-            "attach",
-            str(mounted_dmg),
-            "-readwrite",
-            "-nobrowse",
-        ]
-        attach_result = subprocess.run(
-            attach_command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        mount_dir = parse_mount_dir(attach_result.stdout)
+        with finder_layout_lock():
+            attach_command = [
+                "hdiutil",
+                "attach",
+                str(mounted_dmg),
+                "-readwrite",
+                "-nobrowse",
+            ]
+            attach_result = subprocess.run(
+                attach_command,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            mount_dir = parse_mount_dir(attach_result.stdout)
 
-        try:
-            if has_custom_layout:
-                run_finder_layout(
-                    volume_name=args.volume_name,
-                    mount_dir=mount_dir,
-                    window_pos=window_pos,
-                    window_size=window_size,
-                    icon_size=args.icon_size,
-                    text_size=args.text_size,
-                    icon_positions=icon_positions,
-                )
-        finally:
-            run_checked(["hdiutil", "detach", str(mount_dir), "-quiet"])
+            try:
+                if has_custom_layout:
+                    run_finder_layout(
+                        volume_name=args.volume_name,
+                        mount_dir=mount_dir,
+                        window_pos=window_pos,
+                        window_size=window_size,
+                        icon_size=args.icon_size,
+                        text_size=args.text_size,
+                        icon_positions=icon_positions,
+                    )
+            finally:
+                run_checked(["hdiutil", "detach", str(mount_dir), "-quiet"])
 
         convert_command = [
             "hdiutil",

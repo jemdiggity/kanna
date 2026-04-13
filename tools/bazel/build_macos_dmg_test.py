@@ -1,3 +1,4 @@
+import contextlib
 import sys
 import subprocess
 import tempfile
@@ -222,6 +223,111 @@ class BuildMacosDmgTest(unittest.TestCase):
             )
             subprocess_run.assert_called_once()
             self.assertTrue(ds_store_path.exists())
+
+    def test_finder_layout_lock_serializes_finder_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / "finder-layout.lock"
+
+            with mock.patch.object(build_macos_dmg.fcntl, "flock") as flock:
+                with build_macos_dmg.finder_layout_lock(lock_path):
+                    self.assertTrue(lock_path.exists())
+
+            self.assertEqual(
+                flock.call_args_list,
+                [
+                    mock.call(mock.ANY, build_macos_dmg.fcntl.LOCK_EX),
+                    mock.call(mock.ANY, build_macos_dmg.fcntl.LOCK_UN),
+                ],
+            )
+
+    def test_main_serializes_public_mount_when_custom_layout_is_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_path = root / "Kanna.app"
+            app_path.mkdir()
+            output_path = root / "Kanna.dmg"
+            mounted_dmg = root / "mounted.dmg"
+            compressed_dmg = root / "compressed.dmg"
+            private_mount_dir = root / "private-mount"
+            public_mount_dir = root / "public-mount"
+
+            real_tempdir = tempfile.TemporaryDirectory
+
+            class FakeCompletedProcess:
+                def __init__(self, stdout: str = "") -> None:
+                    self.stdout = stdout
+                    self.returncode = 0
+
+            def fake_tempdir(*args, **kwargs):
+                return real_tempdir(dir=root, *args, **kwargs)
+
+            def fake_run(command, check=False, capture_output=False, text=False):
+                if command[:2] == ["hdiutil", "create"]:
+                    mounted_dmg.write_text("rw-image", encoding="utf-8")
+                    return FakeCompletedProcess()
+                if command[:2] == ["hdiutil", "attach"] and "-mountpoint" in command:
+                    private_mount_dir.mkdir(exist_ok=True)
+                    return FakeCompletedProcess()
+                if command[:2] == ["hdiutil", "attach"] and capture_output:
+                    public_mount_dir.mkdir(exist_ok=True)
+                    return FakeCompletedProcess(
+                        stdout=f"/dev/disk4s1\tApple_HFS\t{public_mount_dir}\n"
+                    )
+                if command[:2] == ["hdiutil", "detach"]:
+                    return FakeCompletedProcess()
+                if command[:2] == ["hdiutil", "convert"]:
+                    Path(command[-1]).write_text("compressed", encoding="utf-8")
+                    return FakeCompletedProcess()
+                raise AssertionError(f"unexpected command: {command}")
+
+            argv = [
+                "build_macos_dmg.py",
+                "--app",
+                str(app_path),
+                "--output",
+                str(output_path),
+                "--volume-name",
+                "Kanna",
+                "--icon-position",
+                "Kanna.app:160,175",
+            ]
+
+            with mock.patch.object(sys, "argv", argv):
+                with mock.patch.object(
+                    build_macos_dmg.tempfile, "TemporaryDirectory", side_effect=fake_tempdir
+                ):
+                    with mock.patch.object(
+                        build_macos_dmg.subprocess, "check_output", return_value="1\tstaging\n"
+                    ):
+                        with mock.patch.object(
+                            build_macos_dmg.subprocess, "run", side_effect=fake_run
+                        ):
+                            with mock.patch.object(
+                                build_macos_dmg, "finder_layout_lock", return_value=contextlib.nullcontext()
+                            ) as finder_layout_lock:
+                                with mock.patch.object(
+                                    build_macos_dmg, "run_finder_layout"
+                                ) as run_finder_layout:
+                                    with mock.patch.object(
+                                        build_macos_dmg.shutil,
+                                        "move",
+                                        side_effect=lambda src, dst: Path(dst).write_text(
+                                            Path(src).read_text(encoding="utf-8"),
+                                            encoding="utf-8",
+                                        ),
+                                    ):
+                                        build_macos_dmg.main()
+
+            finder_layout_lock.assert_called_once_with()
+            run_finder_layout.assert_called_once_with(
+                volume_name="Kanna",
+                mount_dir=public_mount_dir,
+                window_pos=(10, 60),
+                window_size=(500, 350),
+                icon_size=128,
+                text_size=16,
+                icon_positions={"Kanna.app": (160, 175)},
+            )
 
     def test_main_skips_finder_layout_when_no_cosmetic_inputs_are_requested(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
