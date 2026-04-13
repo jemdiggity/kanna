@@ -147,6 +147,10 @@ export function formatAttachFailureMessage(message: string): string {
   return `\r\n\x1b[31mFailed to reconnect to existing session: ${message}\x1b[0m\r\n`;
 }
 
+export function formatMissingInitialTaskSessionMessage(): string {
+  return "\r\n\x1b[33mKnock, knock, Neo. Kanna couldn't find a live agent session for this task.\x1b[0m\r\n";
+}
+
 export function isDaemonHandoffFailure(error: unknown): boolean {
   return getAppErrorCode(error) === HANDOFF_LOST_CODE;
 }
