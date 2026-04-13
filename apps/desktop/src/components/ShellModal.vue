@@ -8,6 +8,7 @@ import { useKannaStore } from "../stores/kanna";
 const props = defineProps<{
   sessionId: string;
   cwd: string;
+  fallbackCwd?: string | null;
   portEnv?: string | null;
   maximized?: boolean;
 }>();
@@ -37,7 +38,7 @@ onActivated(async () => {
 
 async function spawnShell(sessionId: string, cwd: string, _prompt: string, _cols: number, _rows: number) {
   const isWorktree = !sessionId.startsWith("shell-repo-");
-  await store.spawnShellSession(sessionId, cwd, props.portEnv, isWorktree);
+  await store.spawnShellSession(sessionId, cwd, props.portEnv, isWorktree, props.fallbackCwd);
 }
 </script>
 

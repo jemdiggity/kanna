@@ -4,6 +4,18 @@ use std::io::{self, Read};
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::time::Instant;
 
+fn validate_cwd(cwd: &str) -> io::Result<()> {
+    let path = std::path::Path::new(cwd);
+    if !path.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("cwd is not a directory: {}", cwd),
+        ));
+    }
+
+    std::fs::read_dir(path).map(|_| ())
+}
+
 /// A PTY session backed by raw libc calls.
 /// Stores the master fd directly so it can be extracted for handoff.
 pub struct PtySession {
@@ -24,6 +36,8 @@ impl PtySession {
         cols: u16,
         rows: u16,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        validate_cwd(cwd)?;
+
         let mut master_fd: RawFd = -1;
         let mut slave_fd: RawFd = -1;
 
@@ -277,5 +291,28 @@ impl PtySession {
         let cols = self.cols;
         std::mem::forget(self.master_fd);
         (fd, self.child_pid, self.cwd, rows, cols)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PtySession;
+    use std::collections::HashMap;
+
+    #[test]
+    fn spawn_rejects_unreadable_working_directories() {
+        let result = PtySession::spawn(
+            "/bin/sh",
+            &["-lc".to_string(), "exit 0".to_string()],
+            "/path/that/does/not/exist",
+            &HashMap::new(),
+            80,
+            24,
+        );
+
+        match result {
+            Ok(_) => panic!("spawn should fail for a missing cwd"),
+            Err(error) => assert!(error.to_string().contains("cwd is not a directory")),
+        }
     }
 }

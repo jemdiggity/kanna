@@ -72,16 +72,28 @@ const previewHidden = ref(false);
 const previewFromPicker = ref(false);
 const showDiffModal = ref(false);
 const showTreeExplorer = ref(false);
+const currentWorktreePath = computed(() => {
+  if (!store.selectedRepo?.path || !store.currentItem?.branch) return undefined;
+  return `${store.selectedRepo.path}/.kanna-worktrees/${store.currentItem.branch}`;
+});
 const activeWorktreePath = computed(() =>
-  store.currentItem?.branch ? `${store.selectedRepo?.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo?.path ?? ""
+  currentWorktreePath.value ?? store.selectedRepo?.path ?? ""
 );
 const treeExplorerRoot = computed(() => {
-  if (store.currentItem?.branch) return `${store.selectedRepo?.path}/.kanna-worktrees/${store.currentItem.branch}`;
+  if (currentWorktreePath.value) return currentWorktreePath.value;
   if (store.selectedRepo?.path) return store.selectedRepo.path;
   return homePath.value;
 });
 const showShellModal = ref(false);
 const shellRepoRoot = ref(false);
+const shellModalCwd = computed(() => {
+  if (shellRepoRoot.value && !store.selectedRepo) return homePath.value;
+  if (shellRepoRoot.value) return store.selectedRepo?.path ?? homePath.value;
+  return currentWorktreePath.value ?? store.selectedRepo?.path ?? homePath.value;
+});
+const shellModalFallbackCwd = computed(() =>
+  shellRepoRoot.value ? undefined : store.selectedRepo?.path
+);
 const showCommandPalette = ref(false);
 const commandUsageCounts = ref<Record<string, number>>({});
 const showAnalyticsModal = ref(false);
@@ -914,7 +926,8 @@ onMounted(async () => {
         v-if="showShellModal && !isMobile && (store.selectedRepo ? (shellRepoRoot || store.currentItem) : shellRepoRoot)"
         :key="`shell-${shellRepoRoot && !store.selectedRepo ? 'home' : shellRepoRoot ? `repo-${store.selectedRepo!.id}` : `wt-${store.currentItem?.id}`}`"
         :session-id="`shell-${shellRepoRoot && !store.selectedRepo ? 'home' : shellRepoRoot ? `repo-${store.selectedRepo!.id}` : `wt-${store.currentItem?.id}`}`"
-        :cwd="shellRepoRoot && !store.selectedRepo ? homePath : shellRepoRoot ? store.selectedRepo!.path : (store.currentItem?.branch ? `${store.selectedRepo!.path}/.kanna-worktrees/${store.currentItem.branch}` : store.selectedRepo!.path)"
+        :cwd="shellModalCwd"
+        :fallback-cwd="shellModalFallbackCwd"
         :port-env="shellRepoRoot ? undefined : store.currentItem?.port_env"
         :maximized="maximizedModal === 'shell'"
         @close="onShellClose"

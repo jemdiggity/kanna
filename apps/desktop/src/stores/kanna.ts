@@ -25,6 +25,7 @@ import { formatAppWindowTitle, type AppBuildInfo } from "./windowTitle";
 import type { RepoConfig, CustomTaskConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
 import { buildTaskBootstrapCommand } from "../utils/taskBootstrap";
+import { isReadableDirectory, resolveShellSpawnCwd } from "../utils/shellCwd";
 import {
   getPreferredAgentProviders,
   requireResolvedAgentProvider,
@@ -850,7 +851,7 @@ export const useKannaStore = defineStore("kanna", () => {
       try {
         if (agentType !== "pty") {
           // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
-          spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv))
+          spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv), true, repoPath)
             .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
 
           await invoke("create_agent_session", {
@@ -1002,6 +1003,7 @@ export const useKannaStore = defineStore("kanna", () => {
     cwd: string,
     portEnv?: string | null,
     isWorktree = true,
+    fallbackCwd?: string | null,
   ): Promise<void> {
     const env: Record<string, string> = { TERM: "xterm-256color" };
     if (isWorktree) env.KANNA_WORKTREE = "1";
@@ -1017,15 +1019,36 @@ export const useKannaStore = defineStore("kanna", () => {
     } catch (e) {
       console.error("[store] failed to set up term init:", e);
     }
+    const resolvedCwd = await resolveShellSpawnCwd(cwd, fallbackCwd);
+    if (resolvedCwd.fellBack) {
+      console.warn("[store] shell cwd unreadable, falling back:", {
+        sessionId,
+        from: cwd,
+        to: resolvedCwd.cwd,
+      });
+    }
     await invoke("spawn_session", {
       sessionId,
-      cwd,
+      cwd: resolvedCwd.cwd,
       executable: "/bin/zsh",
       args: ["--login"],
       env,
       cols: 80,
       rows: 24,
     });
+  }
+
+  async function prewarmWorktreeShellSession(
+    sessionId: string,
+    worktreePath: string,
+    portEnv?: string | null,
+    fallbackCwd?: string | null,
+  ): Promise<void> {
+    if (!await isReadableDirectory(worktreePath)) {
+      console.warn("[store] skipping shell pre-warm for unreadable worktree:", worktreePath);
+      return;
+    }
+    await spawnShellSession(sessionId, worktreePath, portEnv, true, fallbackCwd);
   }
 
   async function preparePtySession(
@@ -2032,7 +2055,7 @@ export const useKannaStore = defineStore("kanna", () => {
         const repo = eagerRepos.find(r => r.id === item.repo_id);
         if (!repo) continue;
         const wtPath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-        spawnShellSession(`shell-wt-${item.id}`, wtPath, item.port_env, true)
+        prewarmWorktreeShellSession(`shell-wt-${item.id}`, wtPath, item.port_env, repo.path)
           .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
       }
       for (const repo of eagerRepos) {

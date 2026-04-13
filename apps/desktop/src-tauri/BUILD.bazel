@@ -35,8 +35,8 @@ filegroup(
         "Cargo.toml",
         "Info.plist",
         "tauri.conf.json",
-        "capabilities/default.json",
     ] + glob([
+        "capabilities/**",
         "icons/**",
     ]),
 )
