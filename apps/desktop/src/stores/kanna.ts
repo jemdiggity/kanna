@@ -39,6 +39,7 @@ import {
   formatTaskPortAllocationLog,
   type PortAllocationLogEntry,
 } from "./portAllocationLog";
+import { getTaskCloseBehavior } from "./taskCloseBehavior";
 import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import {
@@ -1373,8 +1374,14 @@ export const useKannaStore = defineStore("kanna", () => {
         [item.id]
       );
 
+      const wasBlocked = hasTag(item, "blocked");
+      const closeBehavior = getTaskCloseBehavior({
+        wasBlocked,
+        currentStage: item.stage,
+      });
+
       // Already in teardown — second close kills sessions and finishes
-      if (isTeardownStage(item.stage)) {
+      if (closeBehavior === "finish" && isTeardownStage(item.stage)) {
         await Promise.all([
           invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
             reportCloseSessionError("[store] kill agent session failed:", e)),
@@ -1391,10 +1398,8 @@ export const useKannaStore = defineStore("kanna", () => {
         return;
       }
 
-      const wasBlocked = hasTag(item, "blocked");
-
       // Blocked tasks never started — no teardown needed
-      if (wasBlocked) {
+      if (closeBehavior === "finish" && wasBlocked) {
         await removeAllBlockersForItem(_db, item.id);
         await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
 
@@ -1446,25 +1451,8 @@ export const useKannaStore = defineStore("kanna", () => {
         selectNextItem(nextId);
       }
       bump();
-
-      if (devLingerTerminals.value) {
-        return;
-      }
-
-      if (teardownExit) {
-        await teardownExit;
-      }
-
-      // 4. No linger: kill sessions and close immediately
-      await Promise.all([
-        invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
-          reportCloseSessionError("[store] kill agent session failed:", e)),
-        invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
-          reportCloseSessionError("[store] kill shell session failed:", e)),
-      ]);
-      await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
-      if (opts?.selectNext !== false) selectNextItem(nextId);
-      bump();
+      void teardownExit;
+      return;
     } catch (e) {
       console.error("[store] close failed:", e);
       toast.error(tt('toasts.closeTaskFailed'));
