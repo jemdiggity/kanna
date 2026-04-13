@@ -17,6 +17,11 @@ use tokio::sync::Mutex;
 
 /// Managed state holding the pipeline socket path so the frontend can read it.
 pub type PipelineSocketState = Arc<Mutex<Option<String>>>;
+pub(crate) const KANNA_VERSION: &str = env!("KANNA_VERSION");
+pub(crate) const KANNA_BUILD_BRANCH: &str = env!("KANNA_BUILD_BRANCH");
+pub(crate) const KANNA_BUILD_COMMIT: &str = env!("KANNA_BUILD_COMMIT");
+pub(crate) const KANNA_BUILD_WORKTREE: &str = env!("KANNA_BUILD_WORKTREE");
+pub(crate) const KANNA_BUILD_INFO: &str = env!("KANNA_BUILD_INFO");
 
 /// Install a native macOS event monitor that intercepts fn+F (Globe+F) and
 /// toggles fullscreen.  The fn/Globe modifier sets NSEventModifierFlagFunction
@@ -523,11 +528,9 @@ pub fn run() {
             }
 
             // Build app menu with full version in About
-            let version = env!("KANNA_VERSION");
-            let build_info = env!("KANNA_BUILD_INFO");
             let about = AboutMetadataBuilder::new()
-                .short_version(Some(version))
-                .version(Some(build_info))
+                .short_version(Some(KANNA_VERSION))
+                .version(Some(KANNA_BUILD_INFO))
                 .build();
             let app_submenu = SubmenuBuilder::new(app, "Kanna")
                 .about(Some(about))

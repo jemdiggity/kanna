@@ -113,3 +113,36 @@ describe("release bundle naming", () => {
     expect(rootBuild).not.toContain('bundle_id = "com.kanna.app"');
   });
 });
+
+describe("desktop version wiring", () => {
+  it("routes desktop app version through crate constants so Bazel can override it from VERSION", () => {
+    const desktopLib = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/src/lib.rs"),
+      "utf8",
+    );
+    const fsCommands = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/src/commands/fs.rs"),
+      "utf8",
+    );
+
+    expect(desktopLib).toContain(
+      'pub(crate) const KANNA_VERSION: &str = env!("KANNA_VERSION");',
+    );
+    expect(desktopLib).toContain(".short_version(Some(KANNA_VERSION))");
+    expect(fsCommands).toContain("version: crate::KANNA_VERSION.to_string(),");
+  });
+
+  it("does not hardcode the Bazel desktop app version in BUILD.bazel", () => {
+    const desktopBuild = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/BUILD.bazel"),
+      "utf8",
+    );
+
+    expect(desktopBuild).toContain('name = "kanna_desktop_lib_rs"');
+    expect(desktopBuild).toContain('"//:VERSION"');
+    expect(desktopBuild).toContain(
+      'version = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").strip()',
+    );
+    expect(desktopBuild).not.toContain('"KANNA_VERSION": "0.0.33"');
+  });
+});

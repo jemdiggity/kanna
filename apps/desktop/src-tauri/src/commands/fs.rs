@@ -49,10 +49,10 @@ pub struct AppBuildInfo {
 #[tauri::command]
 pub fn get_app_build_info() -> AppBuildInfo {
     AppBuildInfo {
-        version: env!("KANNA_VERSION").to_string(),
-        branch: env!("KANNA_BUILD_BRANCH").to_string(),
-        commit_hash: env!("KANNA_BUILD_COMMIT").to_string(),
-        worktree: env!("KANNA_BUILD_WORKTREE").to_string(),
+        version: crate::KANNA_VERSION.to_string(),
+        branch: crate::KANNA_BUILD_BRANCH.to_string(),
+        commit_hash: crate::KANNA_BUILD_COMMIT.to_string(),
+        worktree: crate::KANNA_BUILD_WORKTREE.to_string(),
     }
 }
 

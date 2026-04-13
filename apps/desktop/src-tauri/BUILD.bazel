@@ -101,12 +101,13 @@ genrule(
     name = "kanna_desktop_lib_rs",
     srcs = [
         ":full_context_rust_support",
+        "//:VERSION",
         "src/lib.rs",
     ],
     tools = ["//tools/bazel:normalize_tauri_context.py"],
     outs = ["src/lib_bazel.rs"],
     cmd = """
-python3 - "$(location src/lib.rs)" "$(location :full_context_rust_support)" "$(location //tools/bazel:normalize_tauri_context.py)" "$@" <<'PY'
+python3 - "$(location src/lib.rs)" "$(location :full_context_rust_support)" "$(location //:VERSION)" "$(location //tools/bazel:normalize_tauri_context.py)" "$@" <<'PY'
 import json
 import pathlib
 import re
@@ -114,7 +115,8 @@ import sys
 
 src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 support_dir = pathlib.Path(sys.argv[2])
-helper_path = pathlib.Path(sys.argv[3])
+version = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").strip()
+helper_path = pathlib.Path(sys.argv[4])
 sys.path.insert(0, str(helper_path.parent))
 from normalize_tauri_context import normalize_generated_context
 support_dir_literal = json.dumps(f"../{support_dir.name}")
@@ -129,7 +131,11 @@ needle = "tauri::generate_context!()"
 if needle not in src:
     raise SystemExit(f"missing {needle} in src/lib.rs")
 src = src.replace(needle, context, 1)
-pathlib.Path(sys.argv[4]).write_text(
+version_const = 'pub(crate) const KANNA_VERSION: &str = env!("KANNA_VERSION");'
+if version_const not in src:
+    raise SystemExit(f"missing {version_const} in src/lib.rs")
+src = src.replace(version_const, f'pub(crate) const KANNA_VERSION: &str = {json.dumps(version)};', 1)
+pathlib.Path(sys.argv[5]).write_text(
     "// Bazel release builds consume the generated Tauri context directly.\\n" + src,
     encoding="utf-8",
 )
@@ -214,7 +220,6 @@ rust_library(
         "KANNA_BUILD_COMMIT": "",
         "KANNA_BUILD_INFO": "",
         "KANNA_BUILD_WORKTREE": "",
-        "KANNA_VERSION": "0.0.33",
     },
     deps = all_crate_deps(
         normal = True,
