@@ -265,9 +265,7 @@
     "newCustomTask": "새 커스텀 작업",
     "newCustomTaskDesc": "재사용 가능한 에이전트 작업 정의 생성",
     "selectBlockingTasks": "차단 작업 선택",
-    "editBlockingTasks": "차단 작업 편집",
-    "runGc": "워크스페이스 정리",
-    "runGcDesc": "설정된 보관 기간이 지난 완료된 작업 제거"
+    "editBlockingTasks": "차단 작업 편집"
   },
   "common": {
     "loading": "로딩 중..."

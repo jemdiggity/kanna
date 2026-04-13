@@ -431,7 +431,6 @@ export const useKannaStore = defineStore("kanna", () => {
   const suspendAfterMinutes = ref(30);
   const killAfterMinutes = ref(60);
   const ideCommand = ref("code");
-  const gcAfterDays = ref(3);
   const hideShortcutsOnStartup = ref(false);
   const devLingerTerminals = ref(false);
 
@@ -1735,8 +1734,6 @@ export const useKannaStore = defineStore("kanna", () => {
     if (ka) killAfterMinutes.value = parseInt(ka, 10) || 60;
     const ide = await getSetting(_db, "ideCommand");
     if (ide) ideCommand.value = ide;
-    const gc = await getSetting(_db, "gcAfterDays");
-    if (gc) gcAfterDays.value = parseInt(gc, 10) || 3;
     const hs = await getSetting(_db, "hideShortcutsOnStartup");
     hideShortcutsOnStartup.value = hs === "true";
     const dl = await getSetting(_db, "dev.lingerTerminals");
@@ -2247,7 +2244,7 @@ export const useKannaStore = defineStore("kanna", () => {
     repos, items, selectedRepoId, selectedItemId, lastSelectedItemByRepo,
     canGoBack, canGoForward,
     suspendAfterMinutes, killAfterMinutes,
-    ideCommand, gcAfterDays, hideShortcutsOnStartup, devLingerTerminals,
+    ideCommand, hideShortcutsOnStartup, devLingerTerminals,
     lastHiddenRepoId, refreshKey,
     // Getters
     selectedRepo, currentItem, sortedItemsForCurrentRepo, sortedItemsAllRepos, getStageOrder,
