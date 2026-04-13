@@ -253,15 +253,6 @@ export async function readRepoConfig(basePath: string): Promise<RepoConfig> {
   }
 }
 
-export async function readTaskWorktreeConfig(
-  repoPath: string,
-  branch: string | null | undefined,
-): Promise<RepoConfig> {
-  if (!branch) return {};
-  const worktreePath = `${repoPath}/.kanna-worktrees/${branch}`;
-  return readRepoConfig(worktreePath);
-}
-
 export async function collectTeardownCommands(item: PipelineItem, repo: Repo): Promise<string[]> {
   const cmds: string[] = [];
   if (item.display_name) {
@@ -285,7 +276,8 @@ export async function collectTeardownCommands(item: PipelineItem, repo: Repo): P
     } catch (e) { console.error("[store] custom task teardown lookup failed:", e); }
   }
 
-  const repoConfig = await readTaskWorktreeConfig(repo.path, item.branch);
+  const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+  const repoConfig = await readRepoConfig(worktreePath);
   if (repoConfig.teardown?.length) {
     cmds.push(...repoConfig.teardown);
   }
@@ -872,7 +864,7 @@ export const useKannaStore = defineStore("kanna", () => {
       if (agentType === "pty") {
         try {
           worktreeBootstrap = await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
-          const repoConfig = await readTaskWorktreeConfig(repoPath, branch);
+          const repoConfig = await readRepoConfig(worktreePath);
           ptySetupCmds = repoConfig.setup || [];
         } catch (e) {
           console.error("[store] failed to read repo config or create worktree:", e);
@@ -1107,8 +1099,9 @@ export const useKannaStore = defineStore("kanna", () => {
         if (setupCmds.length === 0) {
           try {
             const repo = await getRepo(_db, item.repo_id);
-            if (repo) {
-              const repoConfig = await readTaskWorktreeConfig(repo.path, item.branch);
+            if (repo && item.branch) {
+              const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+              const repoConfig = await readRepoConfig(worktreePath);
               if (repoConfig.setup?.length) setupCmds = repoConfig.setup;
             }
           } catch (e) { console.error("[store] failed to read setup config:", e); }
@@ -1774,7 +1767,7 @@ export const useKannaStore = defineStore("kanna", () => {
 
     let repoConfig: RepoConfig = {};
     try {
-      repoConfig = await readTaskWorktreeConfig(repo.path, branch);
+      repoConfig = await readRepoConfig(worktreePath);
     } catch (e) {
       console.debug("[store] no .kanna/config.json:", e);
     }

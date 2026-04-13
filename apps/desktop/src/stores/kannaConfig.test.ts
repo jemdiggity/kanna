@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PipelineItem, Repo } from "@kanna/db";
-import { collectTeardownCommands, readRepoConfig, readTaskWorktreeConfig } from "./kanna";
+import { collectTeardownCommands, readRepoConfig } from "./kanna";
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(async (command: string, args?: Record<string, unknown>) => {
@@ -43,7 +43,7 @@ describe("task lifecycle config resolution", () => {
       throw new Error(`unexpected invoke: ${command} ${JSON.stringify(args)}`);
     });
 
-    await expect(readTaskWorktreeConfig("/repo", "task-123")).resolves.toEqual({
+    await expect(readRepoConfig("/repo/.kanna-worktrees/task-123")).resolves.toEqual({
       setup: ["pnpm install"],
     });
   });
@@ -94,10 +94,5 @@ describe("task lifecycle config resolution", () => {
     });
 
     await expect(readRepoConfig("/repo/.kanna-worktrees/task-123")).resolves.toEqual({});
-  });
-
-  it("treats missing task branch as empty worktree config", async () => {
-    await expect(readTaskWorktreeConfig("/repo", null)).resolves.toEqual({});
-    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
