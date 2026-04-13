@@ -582,8 +582,8 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
 }
 
 .pipeline-item.selected {
-  background: #0066cc22;
-  outline: 1px solid #0066cc44;
+  background: rgba(59, 142, 234, 0.28);
+  outline: 1px solid rgba(59, 142, 234, 0.62);
 }
 
 .item-title {
