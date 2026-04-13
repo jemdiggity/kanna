@@ -868,34 +868,12 @@ export const useKannaStore = defineStore("kanna", () => {
     try {
       let s1 = performance.now();
       let worktreeBootstrap: WorktreeBootstrapResult | null = null;
-      let ptySpawnEnv: Record<string, string> | null = null;
-      let ptyBootstrapCmd: string | null = null;
+      let ptySetupCmds: string[] = [];
       if (agentType === "pty") {
         try {
           worktreeBootstrap = await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
           const repoConfig = await readTaskWorktreeConfig(repoPath, branch);
-          const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(id, prompt, {
-            agentProvider,
-            model: opts?.customTask?.model,
-            permissionMode: opts?.customTask?.permissionMode,
-            allowedTools: opts?.customTask?.allowedTools,
-            disallowedTools: opts?.customTask?.disallowedTools,
-            maxTurns: opts?.customTask?.maxTurns,
-            maxBudgetUsd: opts?.customTask?.maxBudgetUsd,
-            setupCmdsOverride: opts?.customTask?.setup,
-            portEnv,
-            setupCmds: repoConfig.setup || [],
-          });
-          const bootstrapAgentCmd = buildTaskShellCommand(agentCmd, [], { kannaCliPath });
-
-          const bootstrapCmd = buildTaskBootstrapCommand({
-            worktreePath,
-            visibleBootstrapSteps: worktreeBootstrap?.visibleBootstrapSteps ?? [],
-            setupCmds,
-            agentCmd: bootstrapAgentCmd,
-          });
-          ptySpawnEnv = env;
-          ptyBootstrapCmd = bootstrapCmd;
+          ptySetupCmds = repoConfig.setup || [];
         } catch (e) {
           console.error("[store] failed to read repo config or create worktree:", e);
           toast.error(tt('toasts.worktreeFailed'));
@@ -933,15 +911,31 @@ export const useKannaStore = defineStore("kanna", () => {
               maxBudgetUsd: opts?.customTask?.maxBudgetUsd ?? null,
             });
         } else {
-          if (!ptySpawnEnv || !ptyBootstrapCmd) {
-            throw new Error("PTY bootstrap command not prepared");
-          }
+          const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(id, prompt, {
+            agentProvider,
+            model: opts?.customTask?.model,
+            permissionMode: opts?.customTask?.permissionMode,
+            allowedTools: opts?.customTask?.allowedTools,
+            disallowedTools: opts?.customTask?.disallowedTools,
+            maxTurns: opts?.customTask?.maxTurns,
+            maxBudgetUsd: opts?.customTask?.maxBudgetUsd,
+            setupCmdsOverride: opts?.customTask?.setup,
+            portEnv,
+            setupCmds: ptySetupCmds,
+          });
+          const bootstrapAgentCmd = buildTaskShellCommand(agentCmd, [], { kannaCliPath });
+          const bootstrapCmd = buildTaskBootstrapCommand({
+            worktreePath,
+            visibleBootstrapSteps: worktreeBootstrap?.visibleBootstrapSteps ?? [],
+            setupCmds,
+            agentCmd: bootstrapAgentCmd,
+          });
           await invoke("spawn_session", {
             sessionId: id,
             cwd: worktreePath,
             executable: "/bin/zsh",
-            args: ["--login", "-i", "-c", ptyBootstrapCmd],
-            env: ptySpawnEnv,
+            args: ["--login", "-i", "-c", bootstrapCmd],
+            env,
             cols: 80,
             rows: 24,
           });
