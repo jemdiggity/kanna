@@ -3,6 +3,7 @@ dist/
 target/
 .build/
 .kanna-daemon/
+.kanna-daemon-e2e/
 *.sqlite
 *.sqlite-journal
 .DS_Store
