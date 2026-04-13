@@ -33,6 +33,7 @@ import { useToast } from "./composables/useToast";
 import { useRestoreFocus } from "./composables/useRestoreFocus";
 import { isTopModal } from "./composables/useModalZIndex";
 import { selectTaskByActivity } from "./utils/selectTaskByActivity";
+import { getDefaultBaseBranch } from "./utils/baseBranchPicker";
 import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
@@ -705,7 +706,8 @@ async function openNewTaskModal(repoId?: string) {
     }
     repoDefaultBranchName.value = defaultBranch || undefined;
     availableBaseBranches.value = baseBranches;
-    defaultBaseBranchName.value = baseBranches[0] ?? (defaultBranch || undefined);
+    defaultBaseBranchName.value =
+      getDefaultBaseBranch(baseBranches, defaultBranch || "main") || (defaultBranch || undefined);
   } else {
     availablePipelines.value = [];
     defaultPipelineName.value = undefined;
