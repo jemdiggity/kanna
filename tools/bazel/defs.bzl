@@ -58,6 +58,20 @@ def _strip_target_triple_suffix(path, target_triple):
         return filename[:-len(suffix)]
     return filename
 
+def _parse_icon_position(name, coords):
+    parts = coords.split(",")
+    if len(parts) != 2:
+        fail("icon_positions[%s] must be formatted as x,y" % name)
+
+    x = parts[0].strip()
+    y = parts[1].strip()
+    if x == "" or y == "":
+        fail("icon_positions[%s] must be formatted as x,y" % name)
+
+    x_value = int(x)
+    y_value = int(y)
+    return "%s:%s,%s" % (name, x_value, y_value)
+
 def _default_plist_inputs(bundle_id, product_name, version, main_binary_name):
     return {
         "bundle_id": bundle_id,
@@ -591,10 +605,7 @@ def _macos_dmg_impl(ctx):
     if ctx.attr.text_size:
         args.add("--text-size", str(ctx.attr.text_size))
     for name, coords in sorted(ctx.attr.icon_positions.items()):
-        parts = coords.split(",")
-        if len(parts) != 2:
-            fail("icon_positions[%s] must be formatted as x,y" % name)
-        args.add("--icon-position", "%s:%s,%s" % (name, parts[0], parts[1]))
+        args.add("--icon-position", _parse_icon_position(name, coords))
     if ctx.attr.include_applications_link:
         args.add("--include-applications-link")
 
