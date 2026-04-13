@@ -241,6 +241,49 @@ async function waitForSessionExit(sessionId: string): Promise<void> {
 
 function tt(key: string): string { return i18n.global.t(key); }
 
+export async function readRepoConfig(basePath: string): Promise<RepoConfig> {
+  try {
+    const content = await invoke<string>("read_text_file", {
+      path: `${basePath}/.kanna/config.json`,
+    });
+    return content ? parseRepoConfig(content) : {};
+  } catch (e) {
+    console.debug("[store] no .kanna/config.json:", e);
+    return {};
+  }
+}
+
+export async function collectTeardownCommands(item: PipelineItem, repo: Repo): Promise<string[]> {
+  const cmds: string[] = [];
+  if (item.display_name) {
+    try {
+      const tasksDir = `${repo.path}/.kanna/tasks`;
+      const entries = await invoke<string[]>("list_dir", { path: tasksDir }).catch(() => [] as string[]);
+      for (const entry of entries) {
+        const agentMdPath = `${tasksDir}/${entry}/agent.md`;
+        let content: string;
+        try {
+          content = await invoke<string>("read_text_file", { path: agentMdPath });
+        } catch {
+          continue;
+        }
+        const config = parseAgentMd(content, entry);
+        if (config && config.name === item.display_name && config.teardown?.length) {
+          cmds.push(...config.teardown);
+          break;
+        }
+      }
+    } catch (e) { console.error("[store] custom task teardown lookup failed:", e); }
+  }
+
+  const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+  const repoConfig = await readRepoConfig(worktreePath);
+  if (repoConfig.teardown?.length) {
+    cmds.push(...repoConfig.teardown);
+  }
+  return cmds;
+}
+
 export const useKannaStore = defineStore("kanna", () => {
   const toast = useToast();
 
@@ -816,57 +859,11 @@ export const useKannaStore = defineStore("kanna", () => {
     const s0 = performance.now();
     try {
       let s1 = performance.now();
-      let repoConfig: RepoConfig;
       let worktreeBootstrap: WorktreeBootstrapResult | null = null;
       if (agentType === "pty") {
         try {
-          const [config, bootstrap] = await Promise.all([
-            readRepoConfig(repoPath),
-            createWorktree(repoPath, branch, worktreePath, opts?.baseBranch),
-          ]);
-          repoConfig = config;
-          worktreeBootstrap = bootstrap;
-        } catch (e) {
-          console.error("[store] failed to read repo config or create worktree:", e);
-          toast.error(tt('toasts.worktreeFailed'));
-          return;
-        }
-        console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
-      } else {
-        try {
-          const [config] = await Promise.all([
-            readRepoConfig(repoPath),
-            createWorktree(repoPath, branch, worktreePath, opts?.baseBranch),
-          ]);
-          repoConfig = config;
-        } catch (e) {
-          console.error("[store] git_worktree_add failed:", e);
-          toast.error(tt('toasts.worktreeFailed'));
-          return;
-        }
-        console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
-      }
-
-      s1 = performance.now();
-      try {
-        if (agentType !== "pty") {
-          // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
-          spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv), true, repoPath)
-            .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
-
-          await invoke("create_agent_session", {
-            sessionId: id,
-            cwd: worktreePath,
-            prompt,
-            systemPrompt: null,
-            permissionMode: opts?.customTask?.permissionMode ?? null,
-            model: opts?.customTask?.model ?? null,
-            allowedTools: opts?.customTask?.allowedTools ?? null,
-            disallowedTools: opts?.customTask?.disallowedTools ?? null,
-            maxTurns: opts?.customTask?.maxTurns ?? null,
-            maxBudgetUsd: opts?.customTask?.maxBudgetUsd ?? null,
-          });
-        } else {
+          worktreeBootstrap = await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
+          const repoConfig = await readRepoConfig(worktreePath);
           const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(id, prompt, {
             agentProvider,
             model: opts?.customTask?.model,
@@ -896,6 +893,42 @@ export const useKannaStore = defineStore("kanna", () => {
             env,
             cols: 80,
             rows: 24,
+          });
+        } catch (e) {
+          console.error("[store] failed to read repo config or create worktree:", e);
+          toast.error(tt('toasts.worktreeFailed'));
+          return;
+        }
+        console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
+      } else {
+        try {
+          await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
+        } catch (e) {
+          console.error("[store] git_worktree_add failed:", e);
+          toast.error(tt('toasts.worktreeFailed'));
+          return;
+        }
+        console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
+      }
+
+      s1 = performance.now();
+      try {
+        if (agentType !== "pty") {
+          // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
+          spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv), true, repoPath)
+            .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
+
+          await invoke("create_agent_session", {
+            sessionId: id,
+            cwd: worktreePath,
+            prompt,
+            systemPrompt: null,
+            permissionMode: opts?.customTask?.permissionMode ?? null,
+            model: opts?.customTask?.model ?? null,
+            allowedTools: opts?.customTask?.allowedTools ?? null,
+            disallowedTools: opts?.customTask?.disallowedTools ?? null,
+            maxTurns: opts?.customTask?.maxTurns ?? null,
+            maxBudgetUsd: opts?.customTask?.maxBudgetUsd ?? null,
           });
         }
       } catch (e) {
@@ -1077,14 +1110,10 @@ export const useKannaStore = defineStore("kanna", () => {
         if (setupCmds.length === 0) {
           try {
             const repo = await getRepo(_db, item.repo_id);
-            if (repo) {
-              const configContent = await invoke<string>("read_text_file", {
-                path: `${repo.path}/.kanna/config.json`,
-              });
-              if (configContent) {
-                const repoConfig = parseRepoConfig(configContent);
-                if (repoConfig.setup?.length) setupCmds = repoConfig.setup;
-              }
+            if (repo && item.branch) {
+              const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+              const repoConfig = await readRepoConfig(worktreePath);
+              if (repoConfig.setup?.length) setupCmds = repoConfig.setup;
             }
           } catch (e) { console.error("[store] failed to read setup config:", e); }
         }
@@ -1221,34 +1250,6 @@ export const useKannaStore = defineStore("kanna", () => {
       cols,
       rows,
     });
-  }
-
-  /** Collect all teardown commands for a task (custom task + repo-level). */
-  async function collectTeardownCommands(item: PipelineItem, repo: Repo): Promise<string[]> {
-    const cmds: string[] = [];
-    if (item.display_name) {
-      try {
-        const tasksDir = `${repo.path}/.kanna/tasks`;
-        const entries = await invoke<string[]>("list_dir", { path: tasksDir }).catch(() => [] as string[]);
-        for (const entry of entries) {
-          const agentMdPath = `${tasksDir}/${entry}/agent.md`;
-          let content: string;
-          try {
-            content = await invoke<string>("read_text_file", { path: agentMdPath });
-          } catch { continue; }
-          const config = parseAgentMd(content, entry);
-          if (config && config.name === item.display_name && config.teardown?.length) {
-            cmds.push(...config.teardown);
-            break;
-          }
-        }
-      } catch (e) { console.error("[store] custom task teardown lookup failed:", e); }
-    }
-    const repoConfig = await readRepoConfig(repo.path);
-    if (repoConfig.teardown?.length) {
-      cmds.push(...repoConfig.teardown);
-    }
-    return cmds;
   }
 
   function computeNextItemId(closingId: string): string | null {
@@ -1777,10 +1778,7 @@ export const useKannaStore = defineStore("kanna", () => {
 
     let repoConfig: RepoConfig = {};
     try {
-      const configContent = await invoke<string>("read_text_file", {
-        path: `${repo.path}/.kanna/config.json`,
-      });
-      if (configContent) repoConfig = parseRepoConfig(configContent);
+      repoConfig = await readRepoConfig(worktreePath);
     } catch (e) {
       console.debug("[store] no .kanna/config.json:", e);
     }
@@ -1893,15 +1891,10 @@ export const useKannaStore = defineStore("kanna", () => {
 
       const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
       try {
-        const configContent = await invoke<string>("read_text_file", {
-          path: `${repo.path}/.kanna/config.json`,
-        });
-        if (configContent) {
-          const repoConfig = parseRepoConfig(configContent);
-          if (repoConfig.teardown?.length) {
-            for (const cmd of repoConfig.teardown) {
-              await invoke("run_script", { script: cmd, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
-            }
+        const repoConfig = await readRepoConfig(worktreePath);
+        if (repoConfig.teardown?.length) {
+          for (const cmd of repoConfig.teardown) {
+            await invoke("run_script", { script: cmd, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
           }
         }
       } catch (e) {
