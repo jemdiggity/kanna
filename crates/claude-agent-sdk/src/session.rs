@@ -25,7 +25,10 @@ const MESSAGE_CHANNEL_SIZE: usize = 256;
 ///
 /// Receives the tool name, input, and should return a `PermissionResult`.
 pub type PermissionCallback = Box<
-    dyn Fn(String, serde_json::Value) -> std::pin::Pin<Box<dyn std::future::Future<Output = PermissionResult> + Send>>
+    dyn Fn(
+            String,
+            serde_json::Value,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = PermissionResult> + Send>>
         + Send
         + Sync,
 >;
@@ -177,8 +180,7 @@ impl Session {
                                 let request_id = envelope.response.request_id().to_string();
                                 match envelope.response {
                                     ControlResponse::Success { response, .. } => {
-                                        if let Some((_, sender)) =
-                                            pending_clone.remove(&request_id)
+                                        if let Some((_, sender)) = pending_clone.remove(&request_id)
                                         {
                                             let _ = sender.send(response);
                                         } else {
@@ -189,8 +191,7 @@ impl Session {
                                         }
                                     }
                                     ControlResponse::Error { error, .. } => {
-                                        if let Some((_, sender)) =
-                                            pending_clone.remove(&request_id)
+                                        if let Some((_, sender)) = pending_clone.remove(&request_id)
                                         {
                                             // Send an error marker as a JSON value
                                             let err_val = serde_json::json!({"error": error});
@@ -260,9 +261,7 @@ impl Session {
 
                     "control_cancel_request" => {
                         // CLI is cancelling a pending request — remove from pending map
-                        if let Some(request_id) =
-                            value.get("request_id").and_then(|v| v.as_str())
-                        {
+                        if let Some(request_id) = value.get("request_id").and_then(|v| v.as_str()) {
                             pending_clone.remove(request_id);
                             tracing::debug!("Control request cancelled: {}", request_id);
                         }
@@ -277,7 +276,12 @@ impl Session {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("[SDK DEBUG] Failed to parse '{}': {} — raw: {}", msg_type, e, &value.to_string()[..200.min(value.to_string().len())]);
+                                eprintln!(
+                                    "[SDK DEBUG] Failed to parse '{}': {} — raw: {}",
+                                    msg_type,
+                                    e,
+                                    &value.to_string()[..200.min(value.to_string().len())]
+                                );
                                 tracing::warn!(
                                     "Unknown message type '{}', skipping: {}",
                                     msg_type,
@@ -414,8 +418,7 @@ impl Session {
         // Wait for the child process to exit
         let mut child_guard = self.child.lock().await;
         if let Some(ref mut child) = *child_guard {
-            let timeout_result =
-                tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+            let timeout_result = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
 
             match timeout_result {
                 Ok(Ok(status)) => {
@@ -459,10 +462,7 @@ pub fn find_claude_binary() -> Result<PathBuf, Error> {
     }
 
     // Fall back to `which claude`
-    match std::process::Command::new("which")
-        .arg("claude")
-        .output()
-    {
+    match std::process::Command::new("which").arg("claude").output() {
         Ok(output) if output.status.success() => {
             let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path_str.is_empty() {

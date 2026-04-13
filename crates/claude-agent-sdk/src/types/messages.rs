@@ -197,18 +197,10 @@ impl ResultMessage {
     /// Returns the total cost in USD regardless of result subtype.
     pub fn total_cost_usd(&self) -> f64 {
         match self {
-            ResultMessage::Success {
-                total_cost_usd, ..
-            } => *total_cost_usd,
-            ResultMessage::ErrorDuringExecution {
-                total_cost_usd, ..
-            } => *total_cost_usd,
-            ResultMessage::ErrorMaxTurns {
-                total_cost_usd, ..
-            } => *total_cost_usd,
-            ResultMessage::ErrorMaxBudget {
-                total_cost_usd, ..
-            } => *total_cost_usd,
+            ResultMessage::Success { total_cost_usd, .. } => *total_cost_usd,
+            ResultMessage::ErrorDuringExecution { total_cost_usd, .. } => *total_cost_usd,
+            ResultMessage::ErrorMaxTurns { total_cost_usd, .. } => *total_cost_usd,
+            ResultMessage::ErrorMaxBudget { total_cost_usd, .. } => *total_cost_usd,
         }
     }
 
