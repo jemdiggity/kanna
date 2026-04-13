@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { invoke } from "../invoke";
 import type { AgentProvider } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
 import { registerContextShortcuts } from "../composables/useShortcutContext";
 import { macOsTextInputAttrs } from "../utils/textInput";
+import {
+  filterBaseBranchCandidates,
+  getDefaultBaseBranch,
+} from "../utils/baseBranchPicker";
 const { zIndex } = useModalZIndex();
 
 registerContextShortcuts("newTask", [
@@ -15,16 +19,34 @@ const props = defineProps<{
   defaultAgentProvider?: AgentProvider;
   pipelines?: string[];
   defaultPipeline?: string;
+  baseBranches?: string[];
+  defaultBaseBranch?: string;
+  defaultBranchName?: string;
 }>();
 
 const emit = defineEmits<{
-  submit: [prompt: string, agentProvider: AgentProvider, pipelineName: string];
+  submit: [prompt: string, agentProvider: AgentProvider, pipelineName: string, baseBranch: string];
   cancel: [];
 }>();
 
 const prompt = ref("");
 const agentProvider = ref<AgentProvider>(props.defaultAgentProvider ?? "claude");
 const selectedPipeline = ref<string>(props.defaultPipeline ?? props.pipelines?.[0] ?? "default");
+const defaultBranchName = computed(() => props.defaultBranchName ?? "main");
+const selectedBaseBranch = ref(
+  props.defaultBaseBranch ||
+  getDefaultBaseBranch(props.baseBranches ?? [], defaultBranchName.value) ||
+  defaultBranchName.value,
+);
+const showBaseBranchPicker = ref(false);
+const baseBranchQuery = ref("");
+const visibleBaseBranches = computed(() =>
+  filterBaseBranchCandidates(
+    props.baseBranches ?? [],
+    baseBranchQuery.value,
+    defaultBranchName.value,
+  ),
+);
 const textareaRef = ref<HTMLTextAreaElement>();
 
 const providers: Array<AgentProvider> = ["claude", "copilot", "codex"];
@@ -62,7 +84,7 @@ onMounted(async () => {
 function handleSubmit() {
   const text = prompt.value.trim();
   if (!text) return;
-  emit("submit", text, agentProvider.value, selectedPipeline.value);
+  emit("submit", text, agentProvider.value, selectedPipeline.value, selectedBaseBranch.value);
   prompt.value = "";
 }
 
@@ -127,6 +149,44 @@ function handleKeydown(e: KeyboardEvent) {
               :value="name"
             >{{ name }}</option>
           </select>
+        </div>
+        <div class="pipeline-row">
+          <label class="pipeline-label">{{ $t("tasks.baseBranch") }}</label>
+          <div class="base-branch-row">
+            <span class="base-branch-value" data-testid="base-branch-value">{{ selectedBaseBranch }}</span>
+            <button
+              type="button"
+              class="change-link"
+              data-testid="base-branch-toggle"
+              @mousedown.prevent
+              @click="showBaseBranchPicker = !showBaseBranchPicker"
+            >
+              {{ $t("addRepo.change") }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="showBaseBranchPicker" class="base-branch-picker">
+          <input
+            v-model="baseBranchQuery"
+            v-bind="macOsTextInputAttrs"
+            class="text-input"
+            type="text"
+            :placeholder="$t('tasks.baseBranchSearchPlaceholder')"
+            data-testid="base-branch-search"
+          />
+          <button
+            v-for="branch in visibleBaseBranches"
+            :key="branch"
+            type="button"
+            class="base-branch-option"
+            :class="{ selected: branch === selectedBaseBranch }"
+            :data-testid="`base-branch-option-${branch}`"
+            @mousedown.prevent
+            @click="selectedBaseBranch = branch"
+          >
+            {{ branch }}
+          </button>
         </div>
       </div>
       <div class="modal-footer">
@@ -246,6 +306,74 @@ function handleKeydown(e: KeyboardEvent) {
 
 .pipeline-select:focus {
   border-color: #0066cc;
+}
+
+.base-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.base-branch-value {
+  color: #e0e0e0;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.change-link {
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #0066cc;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.change-link:hover {
+  color: #0077ee;
+  text-decoration: underline;
+}
+
+.base-branch-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.text-input {
+  width: 100%;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.text-input:focus {
+  border-color: #0066cc;
+}
+
+.base-branch-option {
+  width: 100%;
+  padding: 6px 8px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #b8b8b8;
+  cursor: pointer;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  text-align: left;
+}
+
+.base-branch-option:hover,
+.base-branch-option.selected {
+  border-color: #0066cc;
+  color: #e0e0e0;
 }
 
 .modal-footer {

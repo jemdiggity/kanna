@@ -57,6 +57,9 @@ useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 const showNewTaskModal = ref(false);
 const availablePipelines = ref<string[]>([]);
 const defaultPipelineName = ref<string | undefined>(undefined);
+const availableBaseBranches = ref<string[]>([]);
+const defaultBaseBranchName = ref<string | undefined>(undefined);
+const repoDefaultBranchName = ref<string | undefined>(undefined);
 const showAddRepoModal = ref(false);
 const addRepoInitialTab = ref<"create" | "import">("create");
 const showShortcutsModal = ref(false);
@@ -681,11 +684,15 @@ async function openNewTaskModal(repoId?: string) {
   const repoPath = store.repos.find((r) => r.id === (repoId ?? store.selectedRepoId))?.path;
   if (repoPath) {
     const pipelinesDir = `${repoPath}/.kanna/pipelines`;
-    const files = await invoke<string[]>("list_dir", { path: pipelinesDir }).catch(() => [] as string[]);
+    const [files, configContent, defaultBranch, baseBranches] = await Promise.all([
+      invoke<string[]>("list_dir", { path: pipelinesDir }).catch(() => [] as string[]),
+      invoke<string>("read_text_file", { path: `${repoPath}/.kanna/config.json` }).catch(() => ""),
+      invoke<string>("git_default_branch", { repoPath }).catch(() => ""),
+      invoke<string[]>("git_list_base_branches", { repoPath }).catch(() => [] as string[]),
+    ]);
     availablePipelines.value = files
       .filter((f) => f.endsWith(".json"))
       .map((f) => f.replace(/\.json$/, ""));
-    const configContent = await invoke<string>("read_text_file", { path: `${repoPath}/.kanna/config.json` }).catch(() => "");
     if (configContent) {
       try {
         const config = parseRepoConfig(configContent);
@@ -696,15 +703,26 @@ async function openNewTaskModal(repoId?: string) {
     } else {
       defaultPipelineName.value = undefined;
     }
+    repoDefaultBranchName.value = defaultBranch || undefined;
+    availableBaseBranches.value = baseBranches;
+    defaultBaseBranchName.value = baseBranches[0] ?? (defaultBranch || undefined);
   } else {
     availablePipelines.value = [];
     defaultPipelineName.value = undefined;
+    availableBaseBranches.value = [];
+    defaultBaseBranchName.value = undefined;
+    repoDefaultBranchName.value = undefined;
   }
   showNewTaskModal.value = true;
 }
 
 // Handlers that mix UI state + store
-async function handleNewTaskSubmit(prompt: string, agentProvider: AgentProvider, pipelineName?: string) {
+async function handleNewTaskSubmit(
+  prompt: string,
+  agentProvider: AgentProvider,
+  pipelineName?: string,
+  baseBranch?: string,
+) {
   if (!store.selectedRepoId) {
     if (store.repos.length === 1) {
       store.selectedRepoId = store.repos[0].id;
@@ -717,7 +735,11 @@ async function handleNewTaskSubmit(prompt: string, agentProvider: AgentProvider,
   if (!repo) return;
   showNewTaskModal.value = false;
   try {
-    await store.createItem(store.selectedRepoId, repo.path, prompt, "pty", { agentProvider, pipelineName });
+    await store.createItem(store.selectedRepoId, repo.path, prompt, "pty", {
+      agentProvider,
+      pipelineName,
+      baseBranch,
+    });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("Task creation failed:", e);
@@ -876,7 +898,10 @@ onMounted(async () => {
       :default-agent-provider="preferences.defaultAgentProvider"
       :pipelines="availablePipelines"
       :default-pipeline="defaultPipelineName"
-      @submit="(prompt, agentProvider, pipelineName) => handleNewTaskSubmit(prompt, agentProvider, pipelineName)"
+      :base-branches="availableBaseBranches"
+      :default-base-branch="defaultBaseBranchName"
+      :default-branch-name="repoDefaultBranchName"
+      @submit="(prompt, agentProvider, pipelineName, baseBranch) => handleNewTaskSubmit(prompt, agentProvider, pipelineName, baseBranch)"
       @cancel="showNewTaskModal = false"
     />
     <AddRepoModal

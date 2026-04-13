@@ -6,6 +6,8 @@
     "blockTask": "Block Task",
     "editBlockedTask": "Edit Blocked Task",
     "descriptionPlaceholder": "Describe the task...",
+    "baseBranch": "Base branch",
+    "baseBranchSearchPlaceholder": "Search branches...",
     "untitled": "Untitled",
     "renameTask": "Rename Task"
   },
