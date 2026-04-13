@@ -36,6 +36,7 @@ import {
   formatTaskPortAllocationLog,
   type PortAllocationLogEntry,
 } from "./portAllocationLog";
+import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import i18n from '../i18n';
 import { resolveDbName } from "./db";
 import { buildKannaCliEnv } from "./kannaCliEnv";
@@ -849,11 +850,13 @@ export const useKannaStore = defineStore("kanna", () => {
 
       s1 = performance.now();
       try {
-        if (agentType !== "pty") {
+        if (shouldPrewarmTaskShellOnCreate(agentType)) {
           // Pre-warm shell for ⌘J — fire-and-forget, runs in parallel with agent spawn
-          spawnShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv), true, repoPath)
+          prewarmWorktreeShellSession(`shell-wt-${id}`, worktreePath, JSON.stringify(portEnv), repoPath)
             .catch(e => reportPrewarmSessionError("[store] shell pre-warm failed:", e));
+        }
 
+        if (agentType !== "pty") {
           await invoke("create_agent_session", {
             sessionId: id,
             cwd: worktreePath,
