@@ -41,7 +41,7 @@ Available frontmatter fields (all optional, defaults shown):
 - agent: name of an existing \`.kanna/agents/<name>/AGENT.md\` to run
 - agent_provider: "claude" | "copilot" | "codex" (optional)
 - model: null (uses Kanna default)
-- permission_mode: "dontAsk" | "acceptEdits" | "default" (default: dontAsk)
+- permission_mode: "dontAsk" | "acceptEdits" | "default" (default: provider-specific yolo-equivalent: Claude -> --dangerously-skip-permissions, Copilot -> --yolo, Codex -> --yolo)
 - execution_mode: "pty" | "sdk" (default: pty)
 - allowed_tools: [] (empty = all allowed)
 - disallowed_tools: []

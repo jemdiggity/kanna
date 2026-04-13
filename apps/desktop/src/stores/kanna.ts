@@ -41,6 +41,9 @@ import {
 } from "./portAllocationLog";
 import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
+import {
+  getAgentPermissionFlags,
+} from "./agent-permissions";
 import i18n from '../i18n';
 import { resolveDbName } from "./db";
 import { buildKannaCliEnv } from "./kannaCliEnv";
@@ -1244,17 +1247,11 @@ export const useKannaStore = defineStore("kanna", () => {
     }
     const escapedPrompt = prompt.replace(/'/g, "'\\''");
     let agentCmd: string;
+    const permissionFlags = getAgentPermissionFlags(provider, options?.permissionMode);
 
     if (provider === "copilot") {
       // Build Copilot flags
-      const copilotFlags: string[] = [];
-      if (!options?.permissionMode || options.permissionMode === "dontAsk") {
-        copilotFlags.push("--yolo");
-      } else {
-        // Copilot doesn't have an exact equivalent of --permission-mode acceptEdits.
-        // Fall back to --yolo for now; users can use --allow-tool/--deny-tool for finer control.
-        copilotFlags.push("--yolo");
-      }
+      const copilotFlags: string[] = [...permissionFlags];
       if (options?.model) copilotFlags.push(`--model=${options.model}`);
       if (options?.allowedTools?.length) {
         for (const tool of options.allowedTools) copilotFlags.push(`--allow-tool=${tool}`);
@@ -1277,14 +1274,7 @@ export const useKannaStore = defineStore("kanna", () => {
         : `copilot ${copilotFlags.join(" ")} -i '${escapedPrompt}'`;
     } else if (provider === "codex") {
       // Build Codex flags
-      const codexFlags: string[] = [];
-      if (!options?.permissionMode || options.permissionMode === "dontAsk") {
-        // Skip all approvals and sandbox — equivalent to Claude's --dangerously-skip-permissions
-        codexFlags.push("--dangerously-bypass-approvals-and-sandbox");
-      } else {
-        // Auto-approve with workspace-write sandbox (allows edits, asks for risky commands)
-        codexFlags.push("--full-auto");
-      }
+      const codexFlags: string[] = [...permissionFlags];
       if (options?.model) codexFlags.push(`-m ${options.model}`);
       // maxTurns and maxBudgetUsd have no Codex equivalent — skip silently
 
@@ -1293,12 +1283,7 @@ export const useKannaStore = defineStore("kanna", () => {
         : `codex ${codexFlags.join(" ")}`;
     } else {
       // Claude: inject hooks via --settings flag
-      const flags: string[] = [];
-      if (options?.permissionMode) {
-        flags.push(`--permission-mode ${options.permissionMode}`);
-      } else {
-        flags.push("--dangerously-skip-permissions");
-      }
+      const flags: string[] = [...permissionFlags];
       if (options?.model) flags.push(`--model ${options.model}`);
       if (options?.maxTurns != null) flags.push(`--max-turns ${options.maxTurns}`);
       if (options?.maxBudgetUsd != null) flags.push(`--max-budget-usd ${options.maxBudgetUsd}`);

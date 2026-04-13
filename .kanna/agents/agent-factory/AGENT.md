@@ -17,7 +17,7 @@ name: <agent-identifier>
 description: <what this agent does>
 agent_provider: codex, claude, copilot   # or just: codex
 model: <provider-default-override> # optional: provider-specific model override
-permission_mode: default           # optional: default | acceptEdits | dontAsk
+permission_mode: default           # optional: default=yolo-equivalent | acceptEdits | dontAsk
 allowed_tools: []                  # optional: tool allowlist (provider-specific)
 ---
 
@@ -32,7 +32,7 @@ allowed_tools: []                  # optional: tool allowlist (provider-specific
 | `description` | string | yes | Short description of what this agent does |
 | `agent_provider` | string or list | no | Compatible providers: `codex`, `claude`, `copilot`, or any ordered subset of them. |
 | `model` | string | no | Optional model override for the selected provider. Falls back to provider default. |
-| `permission_mode` | string | no | `default`, `acceptEdits`, or `dontAsk`. Falls back to `default`. |
+| `permission_mode` | string | no | `default`, `acceptEdits`, or `dontAsk`. `default` and omitted values use the provider's yolo-equivalent mode. |
 | `allowed_tools` | list | no | Tool allowlist (provider-specific). Empty = provider defaults. |
 
 ### Stage-Complete Signal
