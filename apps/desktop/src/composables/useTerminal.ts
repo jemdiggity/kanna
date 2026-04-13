@@ -371,7 +371,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
   async function waitForReconnectRedrawSettle() {
     const policy = getReconnectRedrawPolicy(options)
-    if (!policy.waitForIdleEvent) return
+    if (!policy.waitForIdleStatus) return
 
     await new Promise<void>((resolve) => {
       let settled = false
@@ -390,9 +390,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         finish(policy.settleDelayMs)
       }
 
-      listen("hook_event", (event) => {
+      listen("status_changed", (event) => {
         const payload = event.payload || event
-        if (payload?.session_id === sessionId && payload?.event === policy.waitForIdleEvent) {
+        if (payload?.session_id === sessionId && payload?.status === policy.waitForIdleStatus) {
           completeFromIdle()
         }
       }).then((unlisten) => {

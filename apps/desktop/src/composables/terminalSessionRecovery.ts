@@ -3,7 +3,7 @@ import { getAppErrorCode } from "../appError";
 
 export type TerminalRecoveryMode = "attach-only" | "spawn-on-missing";
 export interface ReconnectRedrawPolicy {
-  waitForIdleEvent: string | null;
+  waitForIdleStatus: string | null;
   settleDelayMs: number;
   fallbackDelayMs: number;
 }
@@ -200,13 +200,13 @@ export function shouldSkipReconnect(connecting: boolean, attached: boolean): boo
 export function getReconnectRedrawPolicy(options?: TerminalOptions): ReconnectRedrawPolicy {
   if (options?.agentProvider === "claude") {
     return {
-      waitForIdleEvent: "ClaudeIdle",
+      waitForIdleStatus: "idle",
       settleDelayMs: 200,
       fallbackDelayMs: 2000,
     };
   }
   return {
-    waitForIdleEvent: null,
+    waitForIdleStatus: null,
     settleDelayMs: 0,
     fallbackDelayMs: 0,
   };

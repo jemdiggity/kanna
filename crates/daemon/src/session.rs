@@ -6,7 +6,7 @@ use std::sync::{
 
 use crate::pty::PtySession;
 use crate::sidecar::TerminalSidecar;
-use kanna_daemon::protocol::{SessionInfo, SessionState};
+use kanna_daemon::protocol::{AgentProvider, SessionInfo, SessionState, SessionStatus};
 
 #[derive(Clone)]
 pub struct StreamControl {
@@ -43,6 +43,8 @@ pub struct SessionRecord {
     pub pty: PtySession,
     pub sidecar: TerminalSidecar,
     pub stream_control: Option<StreamControl>,
+    pub agent_provider: Option<AgentProvider>,
+    pub status: SessionStatus,
 }
 
 pub struct SessionManager {
@@ -87,9 +89,21 @@ impl SessionManager {
                     cwd: session.pty.cwd.clone(),
                     state,
                     idle_seconds,
+                    status: session.status,
                 }
             })
             .collect()
+    }
+
+    pub fn update_status(&mut self, session_id: &str, status: SessionStatus) -> bool {
+        match self.sessions.get_mut(session_id) {
+            Some(session) if session.status != status => {
+                session.status = status;
+                true
+            }
+            Some(_) => false,
+            None => false,
+        }
     }
 
     pub fn resize(
