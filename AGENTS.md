@@ -46,7 +46,7 @@ Kanna is a product distributed to end users as a signed macOS app. All dependenc
 2. Marks the task as `done` in the DB
 3. Selects the next task in the sidebar
 4. Tasks with `stage = 'done'` are hidden from the sidebar. The sidebar shows all tasks whose stage is not `done`.
-5. **Garbage collection:** Tasks closed longer than `gcAfterDays` (default: 3, configurable in preferences) are permanently deleted — worktree removed, DB row deleted. GC runs hourly.
+5. Closed tasks remain in the database and on disk until a future explicit cleanup workflow removes them.
 
 ### Task activity
 
@@ -192,7 +192,7 @@ The first `./scripts/dev.sh start` in a fresh worktree compiles ~523 Rust crates
 
 - **Tauri commands** in `apps/desktop/src-tauri/src/commands/` — agent, daemon, git, fs, shell
 - **Tauri app core** in `apps/desktop/src-tauri/src/lib.rs` — event bridge, reattach coordinator, daemon spawn, macOS integrations
-- **Vue composables** in `apps/desktop/src/composables/` — useTerminal, useKeyboardShortcuts, useBackup, useGc, etc.
+- **Vue composables** in `apps/desktop/src/composables/` — useTerminal, useKeyboardShortcuts, useBackup, etc.
 - **Daemon** in `crates/daemon/` — standalone PTY session manager. See `crates/daemon/SPEC.md` for full spec.
 - **Agent SDK** wraps Claude CLI via `--output-format stream-json`, communicates via NDJSON on stdin/stdout
 - **Agent providers** — supports both Claude and Copilot via `agent_provider` field (`"claude"` | `"copilot"`)
@@ -228,7 +228,6 @@ User makes PR → GitHub API → DB update → stage transition
 | `useBackup` | Timestamped DB backups with WAL flush, 7-day retention, periodic interval (4h) |
 | `useClaudeUsage` | Regex parser for Claude CLI `/usage` output (session %, week %, dollar spend) |
 | `useCustomTasks` | Scans `.kanna/tasks/` for `agent.md` files, abortable via AbortController |
-| `useGc` | Garbage collection of old tasks/sessions |
 | `useInlineSearch` | Search/filtering for task lists |
 | `useKeyboardShortcuts` | Central shortcut registry (30+ actions), context-aware, modifier matching, terminal passthrough filtering |
 | `useLessScroll` | Vim/less-style scroll navigation (j/k/f/b/d/u/g/G), skips input elements |
