@@ -179,4 +179,32 @@ describe("NewTaskModal", () => {
 
     expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("origin/main");
   });
+
+  it("prefers origin default branch when no explicit default base branch is provided", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        baseBranches: ["feature/x", "main", "origin/main"],
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("origin/main");
+  });
+
+  it("falls back to the default branch name when no base branch candidates exist", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        baseBranches: [],
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("main");
+  });
 });
