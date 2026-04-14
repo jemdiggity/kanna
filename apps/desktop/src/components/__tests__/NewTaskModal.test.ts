@@ -193,6 +193,52 @@ describe("NewTaskModal", () => {
     expect(wrapper.emitted("submit")).toEqual([["Ship pipeline picker", "claude", "review", undefined]]);
   });
 
+  it("supports keyboard navigation in the pipeline picker and returns focus to the toggle", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        pipelines: ["default", "review"],
+        defaultPipeline: "default",
+      },
+      attachTo: document.body,
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="pipeline-toggle"]');
+    await toggle.trigger("focus");
+
+    await toggle.trigger("keydown", { key: "ArrowDown" });
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="pipeline-toggle"]').attributes("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(wrapper.get('[data-testid="pipeline-option-default"]').element);
+
+    await wrapper.get('[data-testid="pipeline-option-default"]').trigger("keydown", { key: "ArrowDown" });
+    await flushPromises();
+
+    expect(document.activeElement).toBe(wrapper.get('[data-testid="pipeline-option-review"]').element);
+
+    await wrapper.get('[data-testid="pipeline-option-review"]').trigger("keydown", { key: "Enter" });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="pipeline-option-review"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(toggle.element);
+
+    await toggle.trigger("keydown", { key: "ArrowDown" });
+    await flushPromises();
+
+    expect(document.activeElement).toBe(wrapper.get('[data-testid="pipeline-option-review"]').element);
+
+    await wrapper.get('[data-testid="pipeline-option-review"]').trigger("keydown", { key: "Escape" });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="pipeline-option-review"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(toggle.element);
+
+    wrapper.unmount();
+  });
+
   it("uses a default pipeline option when no pipelines are provided", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {},
