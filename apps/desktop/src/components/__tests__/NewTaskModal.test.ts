@@ -219,7 +219,10 @@ describe("NewTaskModal", () => {
 
     expect(document.activeElement).toBe(wrapper.get('[data-testid="pipeline-option-review"]').element);
 
-    await wrapper.get('[data-testid="pipeline-option-review"]').trigger("keydown", { key: "Enter" });
+    wrapper.get('[data-testid="pipeline-option-review"]').element.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    wrapper.get('[data-testid="pipeline-option-review"]').element.click();
     await flushPromises();
 
     expect(wrapper.find('[data-testid="pipeline-option-review"]').exists()).toBe(false);

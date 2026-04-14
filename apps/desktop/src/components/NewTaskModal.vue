@@ -40,10 +40,8 @@ const showPipelinePicker = ref(false);
 const pipelineLabelId = "pipeline-label";
 const pipelineActionLabelId = "pipeline-action-label";
 const pipelineValueId = "pipeline-value";
-const pipelineCurrentValueId = "pipeline-current-value";
 const pipelineToggleId = "pipeline-toggle";
 const pipelinePickerId = "pipeline-picker";
-const suppressNextPipelineOptionClick = ref(false);
 const defaultBranchName = computed(() => props.defaultBranchName ?? "main");
 const resolvedBaseBranch = computed(() => {
   if (props.defaultBaseBranch) return props.defaultBaseBranch;
@@ -179,9 +177,6 @@ function handlePipelineOptionKeydown(e: KeyboardEvent, index: number) {
   }
 
   if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    suppressNextPipelineOptionClick.value = true;
-    handlePipelineSelect(options[index]);
     return;
   }
 
@@ -190,15 +185,6 @@ function handlePipelineOptionKeydown(e: KeyboardEvent, index: number) {
     showPipelinePicker.value = false;
     document.getElementById(pipelineToggleId)?.focus();
   }
-}
-
-function handlePipelineOptionClick(pipeline: string) {
-  if (suppressNextPipelineOptionClick.value) {
-    suppressNextPipelineOptionClick.value = false;
-    return;
-  }
-
-  handlePipelineSelect(pipeline);
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -250,7 +236,6 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="base-branch-row pipeline-value-row">
             <span :id="pipelineActionLabelId" class="sr-only">{{ $t("addRepo.change") }}</span>
             <span :id="pipelineValueId" class="base-branch-value" data-testid="pipeline-value">{{ selectedPipeline }}</span>
-            <span :id="pipelineCurrentValueId" class="sr-only">current {{ selectedPipeline }}</span>
             <button
               :id="pipelineToggleId"
               type="button"
@@ -259,7 +244,7 @@ function handleKeydown(e: KeyboardEvent) {
               :aria-controls="pipelinePickerId"
               :aria-expanded="showPipelinePicker"
               aria-haspopup="listbox"
-              :aria-labelledby="`${pipelineActionLabelId} ${pipelineLabelId} ${pipelineCurrentValueId}`"
+              :aria-labelledby="`${pipelineActionLabelId} ${pipelineLabelId} ${pipelineValueId}`"
               @mousedown.prevent
               @click="handlePipelineToggle"
               @keydown="handlePipelineToggleKeydown"
@@ -288,7 +273,7 @@ function handleKeydown(e: KeyboardEvent) {
             :data-testid="`pipeline-option-${name}`"
             :tabindex="name === selectedPipeline ? 0 : -1"
             @mousedown.prevent
-            @click="handlePipelineOptionClick(name)"
+            @click="handlePipelineSelect(name)"
             @keydown="handlePipelineOptionKeydown($event, index)"
           >
             {{ name }}
