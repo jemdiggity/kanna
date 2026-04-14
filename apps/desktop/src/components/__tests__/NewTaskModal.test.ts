@@ -161,10 +161,12 @@ describe("NewTaskModal", () => {
     expect(wrapper.get('[data-testid="pipeline-value"]').text()).toContain("review");
     expect(wrapper.find('[data-testid="pipeline-option-default"]').exists()).toBe(false);
     expect(wrapper.find("#pipeline-select").exists()).toBe(false);
+    expect(wrapper.get('[data-testid="pipeline-toggle"]').attributes("aria-expanded")).toBe("false");
 
     await wrapper.get('[data-testid="pipeline-toggle"]').trigger("click");
 
     expect(wrapper.get('[data-testid="pipeline-option-default"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="pipeline-toggle"]').attributes("aria-expanded")).toBe("true");
     expect(wrapper.get('[data-testid="pipeline-option-review"]').classes()).toContain("selected");
   });
 
@@ -185,6 +187,7 @@ describe("NewTaskModal", () => {
     await wrapper.get("textarea").setValue("Ship pipeline picker");
     await wrapper.get('[data-testid="pipeline-toggle"]').trigger("click");
     await wrapper.get('[data-testid="pipeline-option-review"]').trigger("click");
+    expect(wrapper.find('[data-testid="pipeline-option-review"]').exists()).toBe(false);
     await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
 
     expect(wrapper.emitted("submit")).toEqual([["Ship pipeline picker", "claude", "review", undefined]]);

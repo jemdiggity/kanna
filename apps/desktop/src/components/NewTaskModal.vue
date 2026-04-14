@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { invoke } from "../invoke";
 import type { AgentProvider } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
@@ -37,6 +37,10 @@ const pipelineOptions = computed(() => {
 });
 const selectedPipeline = ref<string>(props.defaultPipeline ?? pipelineOptions.value[0] ?? "default");
 const showPipelinePicker = ref(false);
+const pipelineLabelId = "pipeline-label";
+const pipelineValueId = "pipeline-value";
+const pipelineToggleId = "pipeline-toggle";
+const pipelinePickerId = "pipeline-picker";
 const defaultBranchName = computed(() => props.defaultBranchName ?? "main");
 const resolvedBaseBranch = computed(() => {
   if (props.defaultBaseBranch) return props.defaultBaseBranch;
@@ -107,6 +111,81 @@ function handleBaseBranchSelect(branch: string) {
 function handlePipelineSelect(pipeline: string) {
   selectedPipeline.value = pipeline;
   showPipelinePicker.value = false;
+  nextTick(() => {
+    document.getElementById(pipelineToggleId)?.focus();
+  });
+}
+
+function focusPipelineOption(pipeline: string) {
+  nextTick(() => {
+    document.getElementById(`pipeline-option-${pipeline}`)?.focus();
+  });
+}
+
+function focusSelectedPipelineOption() {
+  focusPipelineOption(selectedPipeline.value);
+}
+
+function handlePipelineToggle() {
+  showPipelinePicker.value = !showPipelinePicker.value;
+  if (showPipelinePicker.value) focusSelectedPipelineOption();
+}
+
+function handlePipelineToggleKeydown(e: KeyboardEvent) {
+  if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    if (!showPipelinePicker.value) showPipelinePicker.value = true;
+    focusSelectedPipelineOption();
+    return;
+  }
+
+  if (e.key === "Escape" && showPipelinePicker.value) {
+    e.preventDefault();
+    showPipelinePicker.value = false;
+  }
+}
+
+function handlePipelineOptionKeydown(e: KeyboardEvent, index: number) {
+  const options = pipelineOptions.value;
+  const lastIndex = options.length - 1;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    const nextIndex = index === lastIndex ? 0 : index + 1;
+    focusPipelineOption(options[nextIndex]);
+    return;
+  }
+
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    const nextIndex = index === 0 ? lastIndex : index - 1;
+    focusPipelineOption(options[nextIndex]);
+    return;
+  }
+
+  if (e.key === "Home") {
+    e.preventDefault();
+    focusPipelineOption(options[0]);
+    return;
+  }
+
+  if (e.key === "End") {
+    e.preventDefault();
+    focusPipelineOption(options[lastIndex]);
+    return;
+  }
+
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    handlePipelineSelect(options[index]);
+    return;
+  }
+
+  if (e.key === "Escape") {
+    e.preventDefault();
+    showPipelinePicker.value = false;
+    document.getElementById(pipelineToggleId)?.focus();
+  }
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -154,31 +233,47 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown="handleKeydown"
         />
         <div class="pipeline-row">
-          <label class="pipeline-label">Pipeline</label>
-          <div class="pipeline-value-row">
-            <span class="pipeline-value" data-testid="pipeline-value">{{ selectedPipeline }}</span>
+          <label :id="pipelineLabelId" class="pipeline-label">Pipeline</label>
+          <div class="base-branch-row pipeline-value-row">
+            <span :id="pipelineValueId" class="base-branch-value" data-testid="pipeline-value">{{ selectedPipeline }}</span>
             <button
+              :id="pipelineToggleId"
               type="button"
               class="change-link"
               data-testid="pipeline-toggle"
+              :aria-controls="pipelinePickerId"
+              :aria-expanded="showPipelinePicker"
+              aria-haspopup="listbox"
+              :aria-labelledby="`${pipelineLabelId} ${pipelineValueId}`"
               @mousedown.prevent
-              @click="showPipelinePicker = !showPipelinePicker"
+              @click="handlePipelineToggle"
+              @keydown="handlePipelineToggleKeydown"
             >
               {{ $t("addRepo.change") }}
             </button>
           </div>
         </div>
 
-        <div v-if="showPipelinePicker" class="pipeline-picker">
+        <div
+          v-if="showPipelinePicker"
+          :id="pipelinePickerId"
+          class="base-branch-picker"
+          role="listbox"
+          :aria-labelledby="pipelineLabelId"
+        >
           <button
-            v-for="name in pipelineOptions"
+            v-for="(name, index) in pipelineOptions"
             :key="name"
             type="button"
-            class="pipeline-option"
+            class="base-branch-option"
+            role="option"
             :class="{ selected: name === selectedPipeline }"
+            :aria-selected="name === selectedPipeline"
             :data-testid="`pipeline-option-${name}`"
+            :tabindex="name === selectedPipeline ? 0 : -1"
             @mousedown.prevent
             @click="handlePipelineSelect(name)"
+            @keydown="handlePipelineOptionKeydown($event, index)"
           >
             {{ name }}
           </button>
@@ -326,42 +421,7 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .pipeline-value-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.pipeline-value {
-  color: #e0e0e0;
-  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
-  font-size: 12px;
-}
-
-.pipeline-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.pipeline-option {
-  width: 100%;
-  padding: 6px 8px;
-  background: #1a1a1a;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #b8b8b8;
-  cursor: pointer;
-  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
-  font-size: 12px;
-  text-align: left;
-}
-
-.pipeline-option:hover,
-.pipeline-option.selected {
-  border-color: #0066cc;
-  color: #e0e0e0;
+  flex: 1;
 }
 
 .base-branch-row {
