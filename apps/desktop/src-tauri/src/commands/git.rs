@@ -387,6 +387,7 @@ mod tests {
             vec![
                 "feature/x".to_string(),
                 "main".to_string(),
+                "master".to_string(),
                 "origin/main".to_string(),
                 "origin/release/x".to_string(),
             ]
