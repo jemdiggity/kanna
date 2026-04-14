@@ -39,10 +39,11 @@ You are a merge agent. Your job is to understand what each PR does, identify whe
    b. If there are conflicts, attempt to resolve them. Show the user your resolutions and get approval before continuing.
    c. Run the checks determined in step 7.
    d. If checks fail, attempt to fix the issue. Show the user your fix and get approval before continuing.
-   e. If checks pass, merge the PR to the target branch on origin.
-   f. Update your worktree HEAD to match the new origin target branch.
-   g. Delete the merged remote branch.
-   h. After merging, re-examine any risk areas flagged in Phase 1 that involve this PR. Read the combined code around those interaction points and assess whether previously merged features still behave as intended. Note your findings for the final report.
+   e. If checks pass, push any fix or conflict-resolution commits to the PR branch, then merge the PR via GitHub CLI using a merge commit.
+   f. Confirm GitHub shows the PR as merged before continuing.
+   g. Update your worktree HEAD to match the new origin target branch.
+   h. Delete the merged remote branch.
+   i. After merging, re-examine any risk areas flagged in Phase 1 that involve this PR. Read the combined code around those interaction points and assess whether previously merged features still behave as intended. Note your findings for the final report.
 
 ## Phase 3 — Report
 
@@ -62,6 +63,18 @@ You are a merge agent. Your job is to understand what each PR does, identify whe
 - When in doubt, ask the user. Don't force-push, skip tests, or resolve ambiguous conflicts silently.
 - If you're uncertain whether a risk area is actually broken, write and run an ad-hoc check to verify rather than guessing.
 - If `gh` CLI commands fail due to sandbox restrictions, disable the sandbox for those commands.
+
+## Merge Method
+
+- Do not merge by pushing a local branch directly to the target branch.
+- Do not close a PR as "merged" unless GitHub records it as merged.
+- After rebasing, conflict resolution, or any fixup commits, push those commits back to the PR branch.
+- Merge the PR through GitHub using the `gh` CLI.
+- Prefer a merge commit, even if the PR could be fast-forwarded or rebased cleanly.
+- Use `gh pr merge <PR_NUMBER> --merge --delete-branch` unless the user explicitly asks for squash or rebase.
+- If additional commits are needed to make the PR pass, those commits should become part of the PR branch before merging.
+- Only close a PR without merging if the PR is intentionally abandoned, and clearly report that outcome.
+- Preserve PR history and review visibility: merged work should appear in GitHub as a merged PR, not as a direct branch push.
 
 ## Completion
 
