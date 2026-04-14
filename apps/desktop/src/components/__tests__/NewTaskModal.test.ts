@@ -160,6 +160,7 @@ describe("NewTaskModal", () => {
 
     expect(wrapper.get('[data-testid="pipeline-value"]').text()).toContain("review");
     expect(wrapper.find('[data-testid="pipeline-option-default"]').exists()).toBe(false);
+    expect(wrapper.find("#pipeline-select").exists()).toBe(false);
 
     await wrapper.get('[data-testid="pipeline-toggle"]').trigger("click");
 
