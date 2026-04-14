@@ -270,26 +270,128 @@ pub fn git_default_branch(repo_path: String) -> Result<String, String> {
 #[tauri::command]
 pub fn git_list_base_branches(repo_path: String) -> Result<Vec<String>, String> {
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
-    let default_branch = git_default_branch(repo_path.clone())?;
     let mut refs = BTreeSet::new();
 
-    let branches = repo
-        .branches(Some(git2::BranchType::Local))
-        .map_err(|e| e.to_string())?;
+    for branch_type in [git2::BranchType::Local, git2::BranchType::Remote] {
+        let branches = repo
+            .branches(Some(branch_type))
+            .map_err(|e| e.to_string())?;
 
-    for branch_result in branches {
-        let (branch, _) = branch_result.map_err(|e| e.to_string())?;
-        if let Some(name) = branch.name().map_err(|e| e.to_string())? {
-            refs.insert(name.to_string());
+        for branch_result in branches {
+            let (branch, _) = branch_result.map_err(|e| e.to_string())?;
+            if branch.get().symbolic_target().is_some() {
+                continue;
+            }
+            if let Some(name) = branch.name().map_err(|e| e.to_string())? {
+                refs.insert(name.to_string());
+            }
         }
     }
 
-    let origin_default_ref = format!("refs/remotes/origin/{}", default_branch);
-    if repo.find_reference(&origin_default_ref).is_ok() {
-        refs.insert(format!("origin/{}", default_branch));
+    Ok(refs.into_iter().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::git_list_base_branches;
+    use git2::{Repository, Signature};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct TempRepo {
+        path: PathBuf,
     }
 
-    Ok(refs.into_iter().collect())
+    impl TempRepo {
+        fn new(prefix: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should be monotonic")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "kanna-git-base-branches-{}-{}-{}",
+                prefix,
+                std::process::id(),
+                unique
+            ));
+            fs::create_dir_all(&path).expect("temp repo dir should be created");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn create_commit(repo: &Repository, repo_path: &Path) -> git2::Oid {
+        fs::write(repo_path.join("README.md"), "test\n").expect("seed file should be written");
+
+        let mut index = repo.index().expect("index should open");
+        index
+            .add_path(Path::new("README.md"))
+            .expect("file should be added to index");
+        let tree_id = index.write_tree().expect("tree should be written");
+        let tree = repo.find_tree(tree_id).expect("tree should exist");
+        let signature =
+            Signature::now("Kanna Tests", "tests@kanna.dev").expect("signature should build");
+
+        repo.commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .expect("initial commit should succeed")
+    }
+
+    #[test]
+    fn git_list_base_branches_includes_remote_tracking_refs_and_skips_symbolic_head() {
+        let temp_repo = TempRepo::new("refs");
+        let repo = Repository::init(&temp_repo.path).expect("repo should initialize");
+        let commit_id = create_commit(&repo, &temp_repo.path);
+        let commit = repo
+            .find_commit(commit_id)
+            .expect("commit should be readable");
+
+        repo.branch("main", &commit, true)
+            .expect("main branch should exist");
+        repo.branch("feature/x", &commit, false)
+            .expect("feature branch should exist");
+        repo.reference(
+            "refs/remotes/origin/main",
+            commit_id,
+            true,
+            "create origin main tracking ref",
+        )
+        .expect("origin/main should exist");
+        repo.reference(
+            "refs/remotes/origin/release/x",
+            commit_id,
+            true,
+            "create origin release tracking ref",
+        )
+        .expect("origin/release/x should exist");
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+            true,
+            "create symbolic origin/HEAD",
+        )
+        .expect("origin/HEAD should exist");
+
+        let refs = git_list_base_branches(temp_repo.path.to_string_lossy().into_owned())
+            .expect("branch listing should succeed");
+
+        assert_eq!(
+            refs,
+            vec![
+                "feature/x".to_string(),
+                "main".to_string(),
+                "origin/main".to_string(),
+                "origin/release/x".to_string(),
+            ]
+        );
+    }
 }
 
 #[tauri::command]

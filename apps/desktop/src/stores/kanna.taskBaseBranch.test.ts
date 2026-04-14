@@ -410,6 +410,38 @@ describe("kanna store task base branch integration", () => {
         base_ref: "origin/main",
       }),
     );
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith("git_fetch", {
+        repoPath: "/tmp/repo",
+        branch: "main",
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "git_worktree_add",
+        expect.objectContaining({
+          repoPath: "/tmp/repo",
+          startPoint: "origin/main",
+        }),
+      );
+    });
+
+    const gitFetchCallIndex = mockState.invokeMock.mock.calls.findIndex(([command]) => command === "git_fetch");
+    const gitWorktreeAddCallIndex = mockState.invokeMock.mock.calls.findIndex(([command]) => command === "git_worktree_add");
+
+    expect(gitFetchCallIndex).toBeGreaterThanOrEqual(0);
+    expect(gitWorktreeAddCallIndex).toBeGreaterThan(gitFetchCallIndex);
+    expect(
+      mockState.invokeMock.mock.calls.some(([command, args]) =>
+        command === "git_worktree_add" &&
+        typeof args === "object" &&
+        args !== null &&
+        "startPoint" in args &&
+        (args as { startPoint?: unknown }).startPoint === "main"
+      ),
+    ).toBe(false);
   });
 
   it("falls back to the local default branch for base_ref when base branch enumeration fails", async () => {
