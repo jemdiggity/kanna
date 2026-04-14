@@ -199,6 +199,31 @@ describe("App", () => {
     expect(wrapper.get('[data-testid="base-branch-value"]').text()).toBe("origin/main");
   });
 
+  it("submits undefined baseBranch when the resolved default branch was never explicitly changed", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+
+    await flushPromises();
+    await wrapper.get('[data-testid="open-new-task"]').trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    await wrapper.get("textarea").setValue("Create default-base task");
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
+    await flushPromises();
+
+    expect(store.createItem).toHaveBeenCalledWith(
+      "repo-1",
+      "/tmp/repo",
+      "Create default-base task",
+      "pty",
+      expect.objectContaining({
+        agentProvider: "claude",
+        pipelineName: "default",
+        baseBranch: undefined,
+      }),
+    );
+  });
+
   it("does not pass an explicit fallback base branch when repo branch data was unresolved", async () => {
     store.selectedRepoId = null;
     store.selectedRepo = null;

@@ -33,11 +33,6 @@ const prompt = ref("");
 const agentProvider = ref<AgentProvider>(props.defaultAgentProvider ?? "claude");
 const selectedPipeline = ref<string>(props.defaultPipeline ?? props.pipelines?.[0] ?? "default");
 const defaultBranchName = computed(() => props.defaultBranchName ?? "main");
-const hasResolvedBaseBranchContext = computed(() =>
-  props.defaultBaseBranch !== undefined ||
-  props.defaultBranchName !== undefined ||
-  (props.baseBranches?.length ?? 0) > 0,
-);
 const resolvedBaseBranch = computed(() => {
   if (props.defaultBaseBranch) return props.defaultBaseBranch;
   if (props.defaultBranchName) {
@@ -47,6 +42,7 @@ const resolvedBaseBranch = computed(() => {
   return getDefaultBaseBranch(props.baseBranches ?? [], defaultBranchName.value) || undefined;
 });
 const selectedBaseBranch = ref(resolvedBaseBranch.value ?? defaultBranchName.value);
+const hasExplicitBaseBranchSelection = ref(false);
 const showBaseBranchPicker = ref(false);
 const baseBranchQuery = ref("");
 const visibleBaseBranches = computed(() =>
@@ -93,9 +89,14 @@ onMounted(async () => {
 function handleSubmit() {
   const text = prompt.value.trim();
   if (!text) return;
-  const emittedBaseBranch = hasResolvedBaseBranchContext.value ? selectedBaseBranch.value : undefined;
+  const emittedBaseBranch = hasExplicitBaseBranchSelection.value ? selectedBaseBranch.value : undefined;
   emit("submit", text, agentProvider.value, selectedPipeline.value, emittedBaseBranch);
   prompt.value = "";
+}
+
+function handleBaseBranchSelect(branch: string) {
+  selectedBaseBranch.value = branch;
+  hasExplicitBaseBranchSelection.value = true;
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -193,7 +194,7 @@ function handleKeydown(e: KeyboardEvent) {
             :class="{ selected: branch === selectedBaseBranch }"
             :data-testid="`base-branch-option-${branch}`"
             @mousedown.prevent
-            @click="selectedBaseBranch = branch"
+            @click="handleBaseBranchSelect(branch)"
           >
             {{ branch }}
           </button>

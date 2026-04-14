@@ -208,13 +208,14 @@ describe("NewTaskModal", () => {
     expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("main");
   });
 
-  it("emits the default branch name when empty candidates still came from resolved repo branch context", async () => {
+  it("does not emit an explicit base branch when submit leaves a resolved default untouched", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {
         defaultAgentProvider: "claude",
         pipelines: ["default"],
         defaultPipeline: "default",
-        baseBranches: [],
+        baseBranches: ["feature/task-base-branch", "main", "origin/main"],
+        defaultBaseBranch: "origin/main",
         defaultBranchName: "main",
       },
       global: { mocks: { $t: (key: string) => key } },
@@ -225,7 +226,7 @@ describe("NewTaskModal", () => {
     await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
 
     expect(wrapper.emitted("submit")).toEqual([
-      ["Ship branch fallback", "claude", "default", "main"],
+      ["Ship branch fallback", "claude", "default", undefined],
     ]);
   });
 });
