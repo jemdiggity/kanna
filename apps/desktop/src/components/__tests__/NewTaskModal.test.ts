@@ -147,6 +147,61 @@ describe("NewTaskModal", () => {
     ]);
   });
 
+  it("shows the selected pipeline inline before the picker is opened", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        pipelines: ["default", "review"],
+        defaultPipeline: "review",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="pipeline-value"]').text()).toContain("review");
+    expect(wrapper.find('[data-testid="pipeline-option-default"]').exists()).toBe(false);
+
+    await wrapper.get('[data-testid="pipeline-toggle"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="pipeline-option-default"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="pipeline-option-review"]').classes()).toContain("selected");
+  });
+
+  it("updates the selected pipeline through the inline picker before submit", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        defaultAgentProvider: "claude",
+        pipelines: ["default", "review"],
+        defaultPipeline: "default",
+        baseBranches: ["origin/main", "main"],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get("textarea").setValue("Ship pipeline picker");
+    await wrapper.get('[data-testid="pipeline-toggle"]').trigger("click");
+    await wrapper.get('[data-testid="pipeline-option-review"]').trigger("click");
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
+
+    expect(wrapper.emitted("submit")).toEqual([["Ship pipeline picker", "claude", "review", undefined]]);
+  });
+
+  it("uses a default pipeline option when no pipelines are provided", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {},
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get('[data-testid="pipeline-toggle"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="pipeline-value"]').text()).toContain("default");
+    expect(wrapper.get('[data-testid="pipeline-option-default"]').exists()).toBe(true);
+  });
+
   it("filters branch options with fuzzy search", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {
