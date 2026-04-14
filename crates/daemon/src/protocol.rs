@@ -78,9 +78,13 @@ pub enum Command {
     },
     Attach {
         session_id: String,
+        #[serde(default)]
+        emulate_terminal: bool,
     },
     AttachSnapshot {
         session_id: String,
+        #[serde(default)]
+        emulate_terminal: bool,
     },
     Detach {
         session_id: String,

@@ -509,7 +509,11 @@ pub async fn attach_session_inner(
     let mut stream_client = DaemonClient::connect(&socket_path).await?;
 
     // Send Attach command
-    let cmd = serde_json::json!({ "type": "Attach", "session_id": session_id });
+    let cmd = serde_json::json!({
+        "type": "Attach",
+        "session_id": session_id,
+        "emulate_terminal": true,
+    });
     stream_client
         .send_command(&serde_json::to_string(&cmd).unwrap())
         .await?;
@@ -546,7 +550,11 @@ pub async fn attach_session_with_snapshot(
 ) -> Result<TerminalSnapshotPayload, DaemonCommandError> {
     let socket_path = daemon_socket_path();
     let mut stream_client = DaemonClient::connect(&socket_path).await?;
-    let cmd = serde_json::json!({ "type": "AttachSnapshot", "session_id": session_id });
+    let cmd = serde_json::json!({
+        "type": "AttachSnapshot",
+        "session_id": session_id,
+        "emulate_terminal": true,
+    });
     stream_client
         .send_command(&serde_json::to_string(&cmd).unwrap())
         .await?;

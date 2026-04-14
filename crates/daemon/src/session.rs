@@ -136,12 +136,17 @@ impl SessionManager {
         &mut self,
         session_id: &str,
         data: &[u8],
+        allow_sidecar_replies: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match self.sessions.get_mut(session_id) {
             Some(session) => {
                 session.sidecar.write(data);
-                for reply in session.sidecar.drain_pty_writes() {
-                    session.pty.write_input(&reply)?;
+                if allow_sidecar_replies {
+                    for reply in session.sidecar.drain_pty_writes() {
+                        session.pty.write_input(&reply)?;
+                    }
+                } else {
+                    session.sidecar.drain_pty_writes();
                 }
                 Ok(())
             }

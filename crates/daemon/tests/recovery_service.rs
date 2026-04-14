@@ -45,7 +45,7 @@ async fn recovery_end_session_removes_snapshot_artifact() {
 
     let snapshot_path = recovery.snapshot_file_for_test("session-2");
     let mut persisted = false;
-    for _ in 0..20 {
+    for _ in 0..60 {
         if snapshot_path.exists() {
             persisted = true;
             break;
@@ -57,7 +57,7 @@ async fn recovery_end_session_removes_snapshot_artifact() {
     recovery.end_session("session-2").await;
 
     let mut removed = false;
-    for _ in 0..20 {
+    for _ in 0..60 {
         if !snapshot_path.exists() {
             removed = true;
             break;

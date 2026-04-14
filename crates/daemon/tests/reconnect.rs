@@ -12,6 +12,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,8 @@ enum Cmd {
     },
     Attach {
         session_id: String,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        emulate_terminal: bool,
     },
     Input {
         session_id: String,
@@ -73,6 +76,8 @@ enum Evt {
 
 // ---- Test harness ----
 
+static TEST_INSTANCE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 /// Compute the socket path using the same hash the daemon uses.
 fn compute_socket_path(dir: &PathBuf) -> PathBuf {
     use std::collections::hash_map::DefaultHasher;
@@ -91,7 +96,12 @@ struct DaemonHandle {
 
 impl DaemonHandle {
     fn start() -> Self {
-        let dir = std::env::temp_dir().join(format!("kanna-daemon-test-{}", std::process::id()));
+        let instance = TEST_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "kanna-daemon-test-{}-{}",
+            std::process::id(),
+            instance
+        ));
         std::fs::create_dir_all(&dir).unwrap();
 
         let socket_path = compute_socket_path(&dir);
@@ -233,6 +243,20 @@ fn spawn_echo_session(conn: &mut ClientConn, session_id: &str) {
 fn attach(conn: &mut ClientConn, session_id: &str) {
     conn.send(&Cmd::Attach {
         session_id: session_id.to_string(),
+        emulate_terminal: false,
+    });
+
+    match conn.recv() {
+        Evt::Ok => {}
+        Evt::Error { message } => panic!("attach failed: {}", message),
+        other => panic!("expected Ok, got: {:?}", other),
+    }
+}
+
+fn attach_emulating_terminal(conn: &mut ClientConn, session_id: &str) {
+    conn.send(&Cmd::Attach {
+        session_id: session_id.to_string(),
+        emulate_terminal: true,
     });
 
     match conn.recv() {
@@ -429,6 +453,47 @@ fn test_broadcast_both_clients_receive_output() {
         String::from_utf8_lossy(&output_b).contains("BROADCAST"),
         "client B should receive broadcast output, got: {:?}",
         String::from_utf8_lossy(&output_b)
+    );
+}
+
+/// When a live client is attached, the daemon-side recovery terminal must not
+/// inject its own terminal-query replies into the PTY. The real frontend
+/// terminal will answer those queries itself.
+#[test]
+fn test_attached_client_suppresses_sidecar_terminal_replies() {
+    let daemon = DaemonHandle::start();
+
+    let mut shared = daemon.connect();
+    shared.send(&Cmd::Spawn {
+        session_id: "sess-terminal-query".to_string(),
+        executable: "/usr/bin/perl".to_string(),
+        args: vec![
+            "-e".to_string(),
+            r#"$|=1; system('stty raw -echo'); my $start = ''; sysread(STDIN, $start, 1); print "\e[c"; my $rin = ''; vec($rin, fileno(STDIN), 1) = 1; my $rout = $rin; if (select($rout, undef, undef, 0.2) > 0) { my $buf = ''; sysread(STDIN, $buf, 64); print $buf if length $buf; }"#.to_string(),
+        ],
+        cwd: "/tmp".to_string(),
+        env: HashMap::new(),
+        cols: 80,
+        rows: 24,
+    });
+    match shared.recv() {
+        Evt::SessionCreated { session_id } => assert_eq!(session_id, "sess-terminal-query"),
+        other => panic!("expected SessionCreated, got: {:?}", other),
+    }
+
+    let mut attached = daemon.connect();
+    attach_emulating_terminal(&mut attached, "sess-terminal-query");
+    attached.drain_output(Duration::from_millis(200));
+
+    // Kick the helper process after the live client is attached so any reply it
+    // sees can only come from the daemon-side sidecar.
+    send_input(&mut shared, "sess-terminal-query", b"x");
+
+    let query = b"\x1b[c";
+    let output = attached.drain_output(Duration::from_millis(300));
+    assert_eq!(
+        output, query,
+        "attached sessions should not receive extra daemon-generated terminal replies"
     );
 }
 
