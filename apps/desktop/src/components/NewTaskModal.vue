@@ -31,7 +31,12 @@ const emit = defineEmits<{
 
 const prompt = ref("");
 const agentProvider = ref<AgentProvider>(props.defaultAgentProvider ?? "claude");
-const selectedPipeline = ref<string>(props.defaultPipeline ?? props.pipelines?.[0] ?? "default");
+const pipelineOptions = computed(() => {
+  if (props.pipelines && props.pipelines.length > 0) return props.pipelines;
+  return ["default"];
+});
+const selectedPipeline = ref<string>(props.defaultPipeline ?? pipelineOptions.value[0] ?? "default");
+const showPipelinePicker = ref(false);
 const defaultBranchName = computed(() => props.defaultBranchName ?? "main");
 const resolvedBaseBranch = computed(() => {
   if (props.defaultBaseBranch) return props.defaultBaseBranch;
@@ -99,6 +104,11 @@ function handleBaseBranchSelect(branch: string) {
   hasExplicitBaseBranchSelection.value = true;
 }
 
+function handlePipelineSelect(pipeline: string) {
+  selectedPipeline.value = pipeline;
+  showPipelinePicker.value = false;
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
     e.preventDefault();
@@ -144,22 +154,34 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown="handleKeydown"
         />
         <div class="pipeline-row">
-          <label class="pipeline-label" for="pipeline-select">Pipeline</label>
-          <select
-            id="pipeline-select"
-            v-model="selectedPipeline"
-            class="pipeline-select"
+          <label class="pipeline-label">Pipeline</label>
+          <div class="pipeline-value-row">
+            <span class="pipeline-value" data-testid="pipeline-value">{{ selectedPipeline }}</span>
+            <button
+              type="button"
+              class="change-link"
+              data-testid="pipeline-toggle"
+              @mousedown.prevent
+              @click="showPipelinePicker = !showPipelinePicker"
+            >
+              {{ $t("addRepo.change") }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="showPipelinePicker" class="pipeline-picker">
+          <button
+            v-for="name in pipelineOptions"
+            :key="name"
+            type="button"
+            class="pipeline-option"
+            :class="{ selected: name === selectedPipeline }"
+            :data-testid="`pipeline-option-${name}`"
+            @mousedown.prevent
+            @click="handlePipelineSelect(name)"
           >
-            <option
-              v-if="!pipelines || pipelines.length === 0"
-              value="default"
-            >default</option>
-            <option
-              v-for="name in pipelines"
-              :key="name"
-              :value="name"
-            >{{ name }}</option>
-          </select>
+            {{ name }}
+          </button>
         </div>
         <div class="pipeline-row">
           <label class="pipeline-label">{{ $t("tasks.baseBranch") }}</label>
@@ -303,20 +325,43 @@ function handleKeydown(e: KeyboardEvent) {
   white-space: nowrap;
 }
 
-.pipeline-select {
-  flex: 1;
+.pipeline-value-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pipeline-value {
+  color: #e0e0e0;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.pipeline-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pipeline-option {
+  width: 100%;
+  padding: 6px 8px;
   background: #1a1a1a;
   border: 1px solid #444;
   border-radius: 4px;
-  color: #e0e0e0;
-  font-size: 12px;
-  padding: 4px 8px;
-  outline: none;
+  color: #b8b8b8;
   cursor: pointer;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  text-align: left;
 }
 
-.pipeline-select:focus {
+.pipeline-option:hover,
+.pipeline-option.selected {
   border-color: #0066cc;
+  color: #e0e0e0;
 }
 
 .base-branch-row {
