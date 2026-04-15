@@ -307,6 +307,26 @@ function cancelLocalRepoRename() {
   localRepoNameDraft.value = "";
 }
 
+function isMetaEnter(event: KeyboardEvent): boolean {
+  return event.key === "Enter" && event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
+function submitFromInput(event: KeyboardEvent) {
+  if (!isMetaEnter(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  handleSubmit();
+}
+
+function commitLocalRepoRenameAndSubmit(event: KeyboardEvent) {
+  if (!isMetaEnter(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  commitLocalRepoRename();
+  handleSubmit();
+}
+
 async function handleChangeCreateDir() {
   const result = await open({ directory: true, multiple: false, title: t('modals.chooseDirectory') });
   if (!result) return;
@@ -411,6 +431,7 @@ function switchTab(tab: "create" | "import") {
           class="text-input"
           type="text"
           :placeholder="$t('addRepo.namePlaceholder')"
+          @keydown="submitFromInput"
         />
         <div class="path-hint">
           <span class="path-text">{{ displayCreatePath }}</span>
@@ -428,6 +449,7 @@ function switchTab(tab: "create" | "import") {
             type="text"
             :placeholder="$t('addRepo.importPlaceholder')"
             :disabled="cloning"
+            @keydown="submitFromInput"
           />
           <template v-if="parsed.type === 'clone' && parsed.owner && parsed.repo">
             <div class="resolved-url">↳ github.com/{{ parsed.owner }}/{{ parsed.repo }}</div>
@@ -456,6 +478,7 @@ function switchTab(tab: "create" | "import") {
                   class="text-input"
                   type="text"
                   :placeholder="$t('addRepo.repoNamePlaceholder')"
+                  @keydown="commitLocalRepoRenameAndSubmit"
                   @blur="commitLocalRepoRename"
                   @keydown.enter.stop.prevent="commitLocalRepoRename"
                   @keydown.escape.stop.prevent="cancelLocalRepoRename"
@@ -496,6 +519,7 @@ function switchTab(tab: "create" | "import") {
                 class="text-input"
                 type="text"
                 :placeholder="$t('addRepo.repoNamePlaceholder')"
+                @keydown="commitLocalRepoRenameAndSubmit"
                 @blur="commitLocalRepoRename"
                 @keydown.enter.stop.prevent="commitLocalRepoRename"
                 @keydown.escape.stop.prevent="cancelLocalRepoRename"
