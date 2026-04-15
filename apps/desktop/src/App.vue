@@ -181,6 +181,15 @@ function navigateRepos(direction: -1 | 1) {
   }
 }
 
+function selectReadTask(mode: "oldest" | "newest") {
+  const target = selectTaskByActivity(
+    store.sortedItemsForCurrentRepo.filter((item) => !hasTag(item, "blocked")),
+    mode,
+    "idle",
+  );
+  if (target) void store.selectItem(target.id);
+}
+
 function handleBlockTask() {
   blockerSelectMode.value = "block";
   showBlockerSelect.value = true;
@@ -501,14 +510,8 @@ const keyboardActions = {
     const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "newest", "unread");
     if (target) store.selectItem(target.id);
   },
-  goToOldestRead: () => {
-    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "oldest", "idle");
-    if (target) store.selectItem(target.id);
-  },
-  goToNewestRead: () => {
-    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "newest", "idle");
-    if (target) store.selectItem(target.id);
-  },
+  goToOldestRead: () => { selectReadTask("oldest"); },
+  goToNewestRead: () => { selectReadTask("newest"); },
   navigateRepoUp: () => navigateRepos(-1),
   navigateRepoDown: () => navigateRepos(1),
   toggleSidebar: () => { sidebarHidden.value = !sidebarHidden.value; },

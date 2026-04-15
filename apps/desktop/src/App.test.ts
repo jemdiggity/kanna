@@ -3,6 +3,7 @@
 import { defineComponent, nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { KeyboardActions } from "./composables/useKeyboardShortcuts";
 
 async function flushPromises() {
   await Promise.resolve();
@@ -16,6 +17,7 @@ const store = {
   selectedItemId: null,
   selectedRepo: { id: "repo-1", path: "/tmp/repo", name: "repo" } as { id: string; path: string; name: string } | null,
   currentItem: null,
+  sortedItemsForCurrentRepo: [],
   sortedItemsAllRepos: [],
   lastSelectedItemByRepo: {},
   suspendAfterMinutes: 30,
@@ -44,6 +46,8 @@ const store = {
   hideRepo: vi.fn(async () => {}),
   spawnPtySession: vi.fn(async () => {}),
 };
+
+let capturedKeyboardActions: KeyboardActions | null = null;
 
 const invokeMock = vi.fn(async (command: string, args?: { name?: string; repoPath?: string }) => {
   if (command === "list_dir") return ["default.json"];
@@ -98,7 +102,9 @@ vi.mock("./composables/useOperatorEvents", () => ({
 }));
 
 vi.mock("./composables/useKeyboardShortcuts", () => ({
-  useKeyboardShortcuts: vi.fn(),
+  useKeyboardShortcuts: vi.fn((actions: KeyboardActions) => {
+    capturedKeyboardActions = actions;
+  }),
 }));
 
 vi.mock("./composables/useCustomTasks", () => ({
@@ -176,6 +182,9 @@ describe("App", () => {
     store.createItem.mockClear();
     store.selectedRepoId = "repo-1";
     store.selectedRepo = { id: "repo-1", path: "/tmp/repo", name: "repo" };
+    store.sortedItemsForCurrentRepo = [];
+    store.sortedItemsAllRepos = [];
+    capturedKeyboardActions = null;
     invokeMock.mockClear();
     invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
       if (command === "list_dir") return ["default.json"];
@@ -252,5 +261,24 @@ describe("App", () => {
         baseBranch: undefined,
       }),
     );
+  });
+
+  it("skips blocked tasks when navigating to the oldest and newest read task", async () => {
+    store.sortedItemsForCurrentRepo = [
+      { id: "blocked-oldest", activity: "idle", created_at: "2026-03-31T00:00:00.000Z", tags: '["blocked"]' },
+      { id: "read-oldest", activity: "idle", created_at: "2026-03-31T01:00:00.000Z", tags: "[]" },
+      { id: "read-newest", activity: "idle", created_at: "2026-03-31T03:00:00.000Z", tags: "[]" },
+      { id: "blocked-newest", activity: "idle", created_at: "2026-03-31T04:00:00.000Z", tags: '["blocked"]' },
+    ];
+
+    await mountApp(SidebarWithRepoStub);
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.goToOldestRead();
+    expect(store.selectItem).toHaveBeenCalledWith("read-oldest");
+
+    store.selectItem.mockClear();
+    capturedKeyboardActions?.goToNewestRead();
+    expect(store.selectItem).toHaveBeenCalledWith("read-newest");
   });
 });
