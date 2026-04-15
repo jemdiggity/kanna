@@ -1985,6 +1985,37 @@ export const useKannaStore = defineStore("kanna", () => {
       await insertTaskBlocker(_db, newId, blockerId);
     }
 
+    const now = new Date().toISOString();
+    const blockedReplacement: PipelineItem = {
+      ...item,
+      id: newId,
+      issue_number: null,
+      issue_title: null,
+      stage_result: null,
+      tags: JSON.stringify(["blocked"]),
+      pr_number: null,
+      pr_url: null,
+      branch: null,
+      claude_session_id: null,
+      port_offset: null,
+      port_env: null,
+      activity: "idle",
+      activity_changed_at: now,
+      unread_at: null,
+      closed_at: null,
+      base_ref: null,
+      previous_stage: null,
+      pinned: 0,
+      pin_order: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    items.value = items.value
+      .filter((candidate) => candidate.id !== originalId)
+      .concat(blockedReplacement);
+    await selectItem(newId);
+
     // Transfer: any task that was blocked by the original now depends on
     // the new blocked replacement instead. Without this, blocking B when
     // A' depends on B would leave A' pointing at the dead original B.
@@ -2024,10 +2055,10 @@ export const useKannaStore = defineStore("kanna", () => {
     } catch (e) {
       console.error("[store] blockTask close failed:", e);
       toast.error(tt('toasts.blockTaskFailed'));
+      bump();
     }
 
     bump();
-    await selectItem(newId);
   }
 
   async function editBlockedTask(itemId: string, newBlockerIds: string[]) {
