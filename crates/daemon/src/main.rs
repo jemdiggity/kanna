@@ -4,7 +4,7 @@ mod session;
 mod sidecar;
 mod socket;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
@@ -28,6 +28,7 @@ type SessionWriter = Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>;
 
 /// Map of session_id → all attached writers (broadcast to all on output).
 type SessionWriters = Arc<Mutex<HashMap<String, Vec<SessionWriter>>>>;
+type TerminalEmulatorClients = Arc<Mutex<HashMap<String, HashSet<usize>>>>;
 
 /// Pre-attach buffer: collects output between Spawn and first Attach.
 /// Flushed to the client on Attach, then set to None.
@@ -288,6 +289,7 @@ async fn main() {
 
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
     let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
+    let terminal_emulator_clients: TerminalEmulatorClients = Arc::new(Mutex::new(HashMap::new()));
     let pre_attach_buffers: PreAttachBuffers = Arc::new(Mutex::new(HashMap::new()));
     let session_sizes: SessionSizes = Arc::new(Mutex::new(HashMap::new()));
     let session_observers: SessionObservers = Arc::new(Mutex::new(HashMap::new()));
@@ -402,6 +404,7 @@ async fn main() {
                 let sessions_clone = sessions.clone();
                 let broadcast_tx_clone = broadcast_tx.clone();
                 let writers_clone = session_writers.clone();
+                let terminal_clients_clone = terminal_emulator_clients.clone();
                 let buffers_clone = pre_attach_buffers.clone();
                 let sizes_clone = session_sizes.clone();
                 let observers_clone = session_observers.clone();
@@ -413,6 +416,7 @@ async fn main() {
                         sessions_clone,
                         broadcast_tx_clone,
                         writers_clone,
+                        terminal_clients_clone,
                         buffers_clone,
                         sizes_clone,
                         observers_clone,
@@ -590,6 +594,7 @@ async fn handle_connection(
     sessions: Arc<Mutex<SessionManager>>,
     broadcast_tx: broadcast::Sender<String>,
     session_writers: SessionWriters,
+    terminal_emulator_clients: TerminalEmulatorClients,
     pre_attach_buffers: PreAttachBuffers,
     session_sizes: SessionSizes,
     session_observers: SessionObservers,
@@ -677,6 +682,7 @@ async fn handle_connection(
                     writer.clone(),
                     broadcast_tx.clone(),
                     session_writers.clone(),
+                    terminal_emulator_clients.clone(),
                     pre_attach_buffers.clone(),
                     session_sizes.clone(),
                     session_observers.clone(),
@@ -695,6 +701,12 @@ async fn handle_connection(
     for (_sid, client_sizes) in sizes.iter_mut() {
         client_sizes.remove(&writer_id);
     }
+    drop(sizes);
+    let mut terminal_clients = terminal_emulator_clients.lock().await;
+    for client_ids in terminal_clients.values_mut() {
+        client_ids.remove(&writer_id);
+    }
+    terminal_clients.retain(|_, client_ids| !client_ids.is_empty());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -704,6 +716,7 @@ async fn handle_command(
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     broadcast_tx: broadcast::Sender<String>,
     session_writers: SessionWriters,
+    terminal_emulator_clients: TerminalEmulatorClients,
     pre_attach_buffers: PreAttachBuffers,
     session_sizes: SessionSizes,
     session_observers: SessionObservers,
@@ -797,6 +810,7 @@ async fn handle_command(
                         let sid = session_id.clone();
                         let sessions_exit = sessions.clone();
                         let writers_for_stream = session_writers.clone();
+                        let terminal_clients_for_stream = terminal_emulator_clients.clone();
                         let sizes_for_stream = session_sizes.clone();
                         let observers_for_stream = session_observers.clone();
                         let recovery_for_stream = recovery_manager.clone();
@@ -807,6 +821,7 @@ async fn handle_command(
                                 stream_control,
                                 broadcast_tx.clone(),
                                 writers_for_stream,
+                                terminal_clients_for_stream,
                                 buffer,
                                 sessions_exit,
                                 sizes_for_stream,
@@ -831,7 +846,10 @@ async fn handle_command(
             }
         }
 
-        Command::Attach { session_id } => {
+        Command::Attach {
+            session_id,
+            emulate_terminal,
+        } => {
             log::info!("[attach] session={}", session_id);
             let mut mgr = sessions.lock().await;
             if !mgr.contains(&session_id) {
@@ -865,6 +883,15 @@ async fn handle_command(
                     if let Some(vec) = writers.get_mut(&session_id) {
                         vec.push(writer.clone());
                     }
+                }
+                if emulate_terminal {
+                    let writer_id = Arc::as_ptr(&writer) as usize;
+                    terminal_emulator_clients
+                        .lock()
+                        .await
+                        .entry(session_id.clone())
+                        .or_default()
+                        .insert(writer_id);
                 }
 
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
@@ -945,12 +972,22 @@ async fn handle_command(
                     .lock()
                     .await
                     .insert(session_id.clone(), vec![writer.clone()]);
+                if emulate_terminal {
+                    let writer_id = Arc::as_ptr(&writer) as usize;
+                    terminal_emulator_clients
+                        .lock()
+                        .await
+                        .entry(session_id.clone())
+                        .or_default()
+                        .insert(writer_id);
+                }
 
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
 
                 let sid = session_id.clone();
                 let sessions_exit = sessions.clone();
                 let writers_for_stream = session_writers.clone();
+                let terminal_clients_for_stream = terminal_emulator_clients.clone();
                 let sizes_for_stream = session_sizes.clone();
                 let observers_for_stream = session_observers.clone();
                 let recovery_for_stream = recovery_manager.clone();
@@ -962,6 +999,7 @@ async fn handle_command(
                         stream_control,
                         broadcast_tx.clone(),
                         writers_for_stream,
+                        terminal_clients_for_stream,
                         no_buffer,
                         sessions_exit,
                         sizes_for_stream,
@@ -1005,6 +1043,16 @@ async fn handle_command(
                         }
                     }
                 }
+                {
+                    let writer_id = Arc::as_ptr(&writer) as usize;
+                    let mut terminal_clients = terminal_emulator_clients.lock().await;
+                    if let Some(client_ids) = terminal_clients.get_mut(&session_id) {
+                        client_ids.remove(&writer_id);
+                        if client_ids.is_empty() {
+                            terminal_clients.remove(&session_id);
+                        }
+                    }
+                }
 
                 Event::Ok
             } else {
@@ -1044,7 +1092,10 @@ async fn handle_command(
             }
         }
 
-        Command::AttachSnapshot { session_id } => {
+        Command::AttachSnapshot {
+            session_id,
+            emulate_terminal,
+        } => {
             log::info!("[attach_snapshot] session={}", session_id);
             let mut mgr = sessions.lock().await;
             if !mgr.contains(&session_id) {
@@ -1115,6 +1166,7 @@ async fn handle_command(
                 }
 
                 let writers_for_stream = session_writers.clone();
+                let terminal_clients_for_stream = terminal_emulator_clients.clone();
                 let sizes_for_stream = session_sizes.clone();
                 let observers_for_stream = session_observers.clone();
                 let recovery_for_stream = recovery_manager.clone();
@@ -1128,6 +1180,7 @@ async fn handle_command(
                         stream_control,
                         broadcast_tx.clone(),
                         writers_for_stream,
+                        terminal_clients_for_stream,
                         no_buffer,
                         sessions_for_stream,
                         sizes_for_stream,
@@ -1172,6 +1225,15 @@ async fn handle_command(
                     .entry(session_id.clone())
                     .or_default()
                     .push(writer.clone());
+                if emulate_terminal {
+                    let writer_id = Arc::as_ptr(&writer) as usize;
+                    terminal_emulator_clients
+                        .lock()
+                        .await
+                        .entry(session_id.clone())
+                        .or_default()
+                        .insert(writer_id);
+                }
                 let evt = Event::Snapshot {
                     session_id: session_id.clone(),
                     snapshot,
@@ -1258,6 +1320,7 @@ async fn handle_command(
             }
             drop(mgr);
             session_writers.lock().await.remove(&session_id);
+            terminal_emulator_clients.lock().await.remove(&session_id);
             session_sizes.lock().await.remove(&session_id);
             session_observers.lock().await.remove(&session_id);
             if success {
@@ -1298,10 +1361,40 @@ async fn handle_command(
                         snapshot: recovery_snapshot_to_terminal_snapshot(snapshot),
                     }
                 }
-                Ok(None) => error_event(
-                    Some(protocol::ErrorCode::SessionNotFound),
-                    format!("session not found: {}", session_id),
-                ),
+                Ok(None) => {
+                    let mut mgr = sessions.lock().await;
+                    match mgr.get_mut(&session_id) {
+                        Some(session) => match session.sidecar.snapshot() {
+                            Ok(snapshot) => {
+                                log::info!(
+                                    "[snapshot] session={} served from live sidecar rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
+                                    session_id,
+                                    snapshot.rows,
+                                    snapshot.cols,
+                                    snapshot.cursor_row,
+                                    snapshot.cursor_col,
+                                    snapshot.cursor_visible,
+                                    snapshot.vt.len()
+                                );
+                                Event::Snapshot {
+                                    session_id,
+                                    snapshot,
+                                }
+                            }
+                            Err(error) => error_event(
+                                None,
+                                format!(
+                                    "failed to snapshot live session {}: {}",
+                                    session_id, error
+                                ),
+                            ),
+                        },
+                        None => error_event(
+                            Some(protocol::ErrorCode::SessionNotFound),
+                            format!("session not found: {}", session_id),
+                        ),
+                    }
+                }
                 Err(e) => error_event(None, e),
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
@@ -1607,6 +1700,7 @@ fn stream_output(
     stream_control: StreamControl,
     broadcast_tx: broadcast::Sender<String>,
     session_writers: SessionWriters,
+    terminal_emulator_clients: TerminalEmulatorClients,
     pre_attach_buffer: PreAttachBuffer,
     sessions: Arc<Mutex<SessionManager>>,
     session_sizes: SessionSizes,
@@ -1676,9 +1770,15 @@ fn stream_output(
                     );
                 }
                 let data = buf[..n].to_vec();
+                let allow_sidecar_replies = rt.block_on(async {
+                    let terminal_clients = terminal_emulator_clients.lock().await;
+                    terminal_clients
+                        .get(&session_id)
+                        .is_none_or(|client_ids| client_ids.is_empty())
+                });
                 if let Err(e) = rt.block_on(async {
                     let mut mgr = sessions.lock().await;
-                    mgr.mirror_output(&session_id, &data)
+                    mgr.mirror_output(&session_id, &data, allow_sidecar_replies)
                 }) {
                     log::error!(
                         "failed to mirror PTY output into sidecar for session {}: {}",
@@ -1766,6 +1866,16 @@ fn stream_output(
                             if let Some(client_sizes) = sizes.get_mut(&session_id) {
                                 for wid in &failed_ids {
                                     client_sizes.remove(wid);
+                                }
+                            }
+                            drop(sizes);
+                            let mut terminal_clients = terminal_emulator_clients.lock().await;
+                            if let Some(client_ids) = terminal_clients.get_mut(&session_id) {
+                                for wid in &failed_ids {
+                                    client_ids.remove(wid);
+                                }
+                                if client_ids.is_empty() {
+                                    terminal_clients.remove(&session_id);
                                 }
                             }
                         }
@@ -1860,6 +1970,7 @@ fn stream_output(
         }
         writers.remove(&session_id);
         drop(writers);
+        terminal_emulator_clients.lock().await.remove(&session_id);
         session_sizes.lock().await.remove(&session_id);
 
         // Tee Exit event to passive observers concurrently, then clean up
