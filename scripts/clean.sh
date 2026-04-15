@@ -1,8 +1,8 @@
 #!/bin/bash
-# Clean Tauri/Rust build artifacts to reclaim disk space.
+# Clean Tauri/Rust/Bazel build artifacts to reclaim disk space.
 #
 # Usage:
-#   ./scripts/clean.sh          # clean Rust target dirs only (~16 GB)
+#   ./scripts/clean.sh          # clean Rust target dirs + local Bazel output
 #   ./scripts/clean.sh --all    # also remove node_modules, dist, .turbo
 #   ./scripts/clean.sh --dry    # show what would be removed and sizes
 set -e
@@ -40,10 +40,25 @@ remove() {
   fi
 }
 
+bazel_output_base() {
+  local user_name hash
+
+  if ! command -v md5 >/dev/null 2>&1; then
+    echo "error: md5 is required to derive the Bazel output base" >&2
+    exit 1
+  fi
+
+  user_name="${USER:-$(id -un)}"
+  hash="$(printf %s "$ROOT" | md5)"
+  printf '%s/Library/Caches/bazel/_bazel_%s/%s\n' "$HOME" "$user_name" "$hash"
+}
+
 # Rust build output (.cargo/config.toml sets target-dir = ".build")
 remove "$ROOT/.build"
 # Tauri CLI runs cargo from apps/desktop/src-tauri/, which uses default target dir
 remove "$ROOT/apps/desktop/src-tauri/target"
+# Bazel local output base for this workspace only
+remove "$(bazel_output_base)"
 
 if $ALL; then
   # Frontend build output
