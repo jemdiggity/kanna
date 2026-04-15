@@ -476,13 +476,13 @@ def _target_files(targets):
 
 def _tauri_acl_prep_dir_impl(ctx):
     out = ctx.actions.declare_directory(ctx.label.name + ".out_dir")
-    config = _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
+    config = _single_output(ctx.attr.config, "config") if ctx.attr.config else _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
     frontend_dist = _single_output(ctx.attr.frontend_dist, "frontend_dist")
     dep_target_files = _target_files(ctx.attr.dep_env_targets)
     dep_env_files = [file for file in dep_target_files if file.basename.endswith(".depenv")]
     dep_out_dirs = [file for file in dep_target_files if file.is_directory]
     inputs = depset(
-        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [frontend_dist] + dep_target_files,
+        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, frontend_dist] + dep_target_files,
     )
 
     args = ctx.actions.args()
@@ -509,6 +509,7 @@ tauri_acl_prep_dir = rule(
     implementation = _tauri_acl_prep_dir_impl,
     attrs = {
         "cargo_srcs": attr.label(mandatory = True),
+        "config": attr.label(allow_single_file = True),
         "dep_env_targets": attr.label_list(),
         "frontend_dist": attr.label(mandatory = True),
         "tauri_build_data": attr.label(mandatory = True),
@@ -522,11 +523,11 @@ tauri_acl_prep_dir = rule(
 
 def _tauri_context_rust_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".rs")
-    config = _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
+    config = _single_output(ctx.attr.config, "config") if ctx.attr.config else _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
     embedded_assets_rust = _single_output(ctx.attr.embedded_assets_rust, "embedded_assets_rust")
     acl_out_dir = _single_output(ctx.attr.acl_out_dir, "acl_out_dir")
     inputs = depset(
-        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [embedded_assets_rust, acl_out_dir],
+        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, embedded_assets_rust, acl_out_dir],
     )
 
     args = ctx.actions.args()
@@ -551,6 +552,7 @@ tauri_context_rust = rule(
     attrs = {
         "acl_out_dir": attr.label(mandatory = True),
         "cargo_srcs": attr.label(mandatory = True),
+        "config": attr.label(allow_single_file = True),
         "embedded_assets_rust": attr.label(mandatory = True),
         "tauri_build_data": attr.label(mandatory = True),
         "_tool": attr.label(
@@ -563,11 +565,11 @@ tauri_context_rust = rule(
 
 def _tauri_context_support_dir_impl(ctx):
     out = ctx.actions.declare_directory(ctx.label.name)
-    config = _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
+    config = _single_output(ctx.attr.config, "config") if ctx.attr.config else _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
     embedded_assets_rust = _single_output(ctx.attr.embedded_assets_rust, "embedded_assets_rust")
     acl_out_dir = _single_output(ctx.attr.acl_out_dir, "acl_out_dir")
     inputs = depset(
-        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [embedded_assets_rust, acl_out_dir],
+        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, embedded_assets_rust, acl_out_dir],
     )
 
     args = ctx.actions.args()
@@ -592,6 +594,7 @@ tauri_context_support_dir = rule(
     attrs = {
         "acl_out_dir": attr.label(mandatory = True),
         "cargo_srcs": attr.label(mandatory = True),
+        "config": attr.label(allow_single_file = True),
         "embedded_assets_rust": attr.label(mandatory = True),
         "tauri_build_data": attr.label(mandatory = True),
         "_tool": attr.label(

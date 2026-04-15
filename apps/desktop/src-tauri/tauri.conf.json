@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "macOS": {
       "infoPlist": "Info.plist"
     },
@@ -53,6 +54,12 @@
     "shell": {
       "open": true
     },
-    "sql": {}
+    "sql": {},
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/jemdiggity/kanna/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
