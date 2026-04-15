@@ -281,7 +281,20 @@
     "newCustomTask": "New Custom Task",
     "newCustomTaskDesc": "Create a new reusable agent task definition",
     "selectBlockingTasks": "Select blocking tasks",
-    "editBlockingTasks": "Edit blocking tasks"
+    "editBlockingTasks": "Edit blocking tasks",
+    "update": {
+      "title": "App Update",
+      "available": "Update available",
+      "downloading": "Downloading update",
+      "readyToRestart": "Ready to restart",
+      "restartReady": "The update is installed and ready to apply.",
+      "error": "Update failed",
+      "errorFallback": "The update could not be installed.",
+      "install": "Install",
+      "retry": "Retry",
+      "restartNow": "Restart now",
+      "later": "Later"
+    }
   },
   "common": {
     "loading": "Loading..."
