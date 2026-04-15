@@ -122,6 +122,36 @@ describe("AddRepoModal", () => {
     ]);
   });
 
+  it("creates a repo with Cmd+Enter in the name input", async () => {
+    const wrapper = mountModal("create");
+
+    await flushPromises();
+
+    const createInput = wrapper.get('input[placeholder="addRepo.namePlaceholder"]');
+    await createInput.setValue("my-app");
+    await createInput.trigger("keydown", { key: "Enter", metaKey: true });
+    await flushPromises();
+
+    expect(wrapper.emitted("create")).toEqual([
+      ["my-app", "/Users/me/.kanna/repos/my-app"],
+    ]);
+  });
+
+  it("clones a repo with Cmd+Enter in the import input", async () => {
+    const wrapper = mountModal();
+
+    await flushPromises();
+
+    const importInput = wrapper.get('input[placeholder="addRepo.importPlaceholder"]');
+    await importInput.setValue("owner/repo");
+    await importInput.trigger("keydown", { key: "Enter", metaKey: true });
+    await flushPromises();
+
+    expect(wrapper.emitted("clone")).toEqual([
+      ["https://github.com/owner/repo.git", "/Users/me/.kanna/repos/repo"],
+    ]);
+  });
+
   it("expands a pasted tilde path before importing", async () => {
     const wrapper = mountModal();
 
@@ -170,6 +200,28 @@ describe("AddRepoModal", () => {
     expect(wrapper.get(".repo-name-value").text()).toBe("Project Desktop");
 
     await wrapper.get(".btn-primary").trigger("click");
+
+    expect(wrapper.emitted("import")).toEqual([
+      ["/Users/me/code/project", "Project Desktop", "main"],
+    ]);
+  });
+
+  it("imports a local repo rename with Cmd+Enter in rename mode", async () => {
+    const wrapper = mountModal();
+
+    await flushPromises();
+
+    const importInput = wrapper.get('input[placeholder="addRepo.importPlaceholder"]');
+    await importInput.setValue("/Users/me/code/project");
+    await flushPromises();
+
+    await wrapper.get(".repo-name-change").trigger("click");
+    await flushPromises();
+
+    const repoNameInput = wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]');
+    await repoNameInput.setValue("Project Desktop");
+    await repoNameInput.trigger("keydown", { key: "Enter", metaKey: true });
+    await flushPromises();
 
     expect(wrapper.emitted("import")).toEqual([
       ["/Users/me/code/project", "Project Desktop", "main"],
