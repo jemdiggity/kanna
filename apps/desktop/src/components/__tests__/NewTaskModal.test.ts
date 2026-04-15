@@ -147,6 +147,25 @@ describe("NewTaskModal", () => {
     ]);
   });
 
+  it("renders the base branch row before the pipeline row", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        pipelines: ["default"],
+        defaultPipeline: "default",
+        baseBranches: ["origin/main", "main"],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+
+    const labels = wrapper.findAll(".pipeline-row .pipeline-label").map((label) => label.text());
+
+    expect(labels).toEqual(["tasks.baseBranch", "Pipeline"]);
+  });
+
   it("shows the selected pipeline inline before the picker is opened", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {

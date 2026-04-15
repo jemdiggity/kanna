@@ -232,6 +232,45 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown="handleKeydown"
         />
         <div class="pipeline-row">
+          <label class="pipeline-label">{{ $t("tasks.baseBranch") }}</label>
+          <div class="base-branch-row">
+            <span class="base-branch-value" data-testid="base-branch-value">{{ selectedBaseBranch }}</span>
+            <button
+              type="button"
+              class="change-link"
+              data-testid="base-branch-toggle"
+              @mousedown.prevent
+              @click="showBaseBranchPicker = !showBaseBranchPicker"
+            >
+              {{ $t("addRepo.change") }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="showBaseBranchPicker" class="base-branch-picker">
+          <input
+            v-model="baseBranchQuery"
+            v-bind="macOsTextInputAttrs"
+            class="text-input"
+            type="text"
+            :placeholder="$t('tasks.baseBranchSearchPlaceholder')"
+            data-testid="base-branch-search"
+          />
+          <button
+            v-for="branch in visibleBaseBranches"
+            :key="branch"
+            type="button"
+            class="base-branch-option"
+            :class="{ selected: branch === selectedBaseBranch }"
+            :data-testid="`base-branch-option-${branch}`"
+            @mousedown.prevent
+            @click="handleBaseBranchSelect(branch)"
+          >
+            {{ branch }}
+          </button>
+        </div>
+
+        <div class="pipeline-row">
           <label :id="pipelineLabelId" class="pipeline-label">Pipeline</label>
           <div class="base-branch-row pipeline-value-row">
             <span :id="pipelineActionLabelId" class="sr-only">{{ $t("addRepo.change") }}</span>
@@ -277,44 +316,6 @@ function handleKeydown(e: KeyboardEvent) {
             @keydown="handlePipelineOptionKeydown($event, index)"
           >
             {{ name }}
-          </button>
-        </div>
-        <div class="pipeline-row">
-          <label class="pipeline-label">{{ $t("tasks.baseBranch") }}</label>
-          <div class="base-branch-row">
-            <span class="base-branch-value" data-testid="base-branch-value">{{ selectedBaseBranch }}</span>
-            <button
-              type="button"
-              class="change-link"
-              data-testid="base-branch-toggle"
-              @mousedown.prevent
-              @click="showBaseBranchPicker = !showBaseBranchPicker"
-            >
-              {{ $t("addRepo.change") }}
-            </button>
-          </div>
-        </div>
-
-        <div v-if="showBaseBranchPicker" class="base-branch-picker">
-          <input
-            v-model="baseBranchQuery"
-            v-bind="macOsTextInputAttrs"
-            class="text-input"
-            type="text"
-            :placeholder="$t('tasks.baseBranchSearchPlaceholder')"
-            data-testid="base-branch-search"
-          />
-          <button
-            v-for="branch in visibleBaseBranches"
-            :key="branch"
-            type="button"
-            class="base-branch-option"
-            :class="{ selected: branch === selectedBaseBranch }"
-            :data-testid="`base-branch-option-${branch}`"
-            @mousedown.prevent
-            @click="handleBaseBranchSelect(branch)"
-          >
-            {{ branch }}
           </button>
         </div>
       </div>
