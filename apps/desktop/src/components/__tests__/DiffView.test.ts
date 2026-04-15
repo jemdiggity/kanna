@@ -12,6 +12,10 @@ const setLanguageOverrideMock = vi.fn((fileMeta: { [key: string]: unknown }, lan
   languageOverride: lang,
 }));
 const renderMock = vi.fn();
+const diffMocks = vi.hoisted(() => ({
+  actualParsePatchFiles: undefined as undefined | typeof import("@pierre/diffs").parsePatchFiles,
+  parsePatchFilesMock: vi.fn<(typeof import("@pierre/diffs"))["parsePatchFiles"]>(),
+}));
 
 vi.mock("../../invoke", () => ({
   invoke: (...args: [string, Record<string, unknown> | undefined]) => invokeMock(...args),
@@ -23,23 +27,19 @@ vi.mock("vue-i18n", () => ({
   }),
 }));
 
-vi.mock("@pierre/diffs", () => ({
-  parsePatchFiles: vi.fn(() => [
-    {
-      files: [
-        {
-          oldName: "BUILD.bazel",
-          newName: "BUILD.bazel",
-          hunks: [],
-        },
-      ],
+vi.mock("@pierre/diffs", async () => {
+  const actual = await vi.importActual<typeof import("@pierre/diffs")>("@pierre/diffs");
+  diffMocks.actualParsePatchFiles = actual.parsePatchFiles;
+  diffMocks.parsePatchFilesMock.mockImplementation(actual.parsePatchFiles);
+  return {
+    ...actual,
+    parsePatchFiles: (...args: Parameters<typeof actual.parsePatchFiles>) => diffMocks.parsePatchFilesMock(...args),
+    FileDiff: class {
+      render = (...args: [Record<string, unknown>]) => renderMock(...args);
     },
-  ]),
-  FileDiff: class {
-    render = (...args: [Record<string, unknown>]) => renderMock(...args);
-  },
-  setLanguageOverride: (...args: [Record<string, unknown>, string]) => setLanguageOverrideMock(...args),
-}));
+    setLanguageOverride: (...args: [Record<string, unknown>, string]) => setLanguageOverrideMock(...args),
+  };
+});
 
 vi.mock("@pierre/diffs/worker", () => ({
   getOrCreateWorkerPoolSingleton: vi.fn(() => null),
@@ -54,6 +54,10 @@ describe("DiffView", () => {
   afterEach(() => {
     invokeMock.mockReset();
     setLanguageOverrideMock.mockReset();
+    diffMocks.parsePatchFilesMock.mockReset();
+    if (diffMocks.actualParsePatchFiles) {
+      diffMocks.parsePatchFilesMock.mockImplementation(diffMocks.actualParsePatchFiles);
+    }
     renderMock.mockReset();
     clearContextShortcuts("diff");
     resetContext();
@@ -61,6 +65,18 @@ describe("DiffView", () => {
   });
 
   it("forces Bazel diffs to use python highlighting", async () => {
+    diffMocks.parsePatchFilesMock.mockReturnValueOnce([
+      {
+        files: [
+          {
+            oldName: "BUILD.bazel",
+            newName: "BUILD.bazel",
+            hunks: [],
+          },
+        ],
+      },
+    ]);
+
     invokeMock.mockImplementation(async (command) => {
       if (command === "git_diff") return "diff --git a/BUILD.bazel b/BUILD.bazel";
       return "";
@@ -94,6 +110,49 @@ describe("DiffView", () => {
       oldName: "BUILD.bazel",
       newName: "BUILD.bazel",
       languageOverride: "python",
+    });
+
+    wrapper.unmount();
+  });
+
+  it("renders branch diffs with quoted Git patch paths", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "git_merge_base") return "abc123";
+      if (command === "git_diff_range") {
+        return [
+          'diff --git "a/file name.txt" "b/file name.txt"',
+          "index 7898192..6178079 100644",
+          '--- "a/file name.txt"',
+          '+++ "b/file name.txt"',
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+          "",
+        ].join("\n");
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const wrapper = mount(DiffView, {
+      props: {
+        repoPath: "/repo",
+        initialScope: "branch",
+        baseRef: "origin/main",
+      },
+      attachTo: document.body,
+      global: {
+        mocks: {
+          $t: (key: string) => key,
+        },
+      },
+    });
+
+    await flushPromises();
+    await flushPromises();
+
+    const renderArg = renderMock.mock.calls.at(-1)?.[0];
+    expect(renderArg?.fileDiff).toMatchObject({
+      name: "file name.txt",
     });
 
     wrapper.unmount();

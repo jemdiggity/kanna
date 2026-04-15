@@ -9,6 +9,7 @@ import {
   getSyntaxLanguageForPath,
   isBazelSyntaxPath,
 } from "../utils/syntaxLanguage";
+import { normalizeGitPatchForDiffParser } from "../utils/normalizeGitPatch";
 import {
   getOrCreateWorkerPoolSingleton,
   type WorkerPoolManager,
@@ -67,6 +68,47 @@ interface DiffFilePathMetadata {
   fileName?: string;
 }
 
+interface DiffWorkerPoolStats {
+  managerState?: string;
+  totalWorkers?: number;
+  workersFailed?: boolean;
+  busyWorkers?: number;
+  queuedTasks?: number;
+  pendingTasks?: number;
+  diffCacheSize?: number;
+}
+
+interface DiffWorkerPoolInspector {
+  getStats?: () => DiffWorkerPoolStats;
+  isInitialized?: () => boolean;
+}
+
+interface DiffRenderContext {
+  loadId: number;
+  loadStartedAt: number;
+}
+
+let nextDiffLoadId = 0;
+
+function roundDuration(durationMs: number): number {
+  return Math.round(durationMs * 10) / 10;
+}
+
+function getWorkerPoolStatsSnapshot(pool: WorkerPoolManager | null): DiffWorkerPoolStats | null {
+  if (pool == null) return null;
+  const inspector = pool as WorkerPoolManager & DiffWorkerPoolInspector;
+  if (typeof inspector.getStats !== "function") return null;
+  return inspector.getStats();
+}
+
+function logDiffPerf(
+  loadId: number,
+  stage: string,
+  details: Record<string, unknown>,
+) {
+  console.warn(`[DiffView][perf] load#${loadId} ${stage}`, details);
+}
+
 async function initWorkerPool() {
   if (workerPool) return workerPool;
   try {
@@ -93,27 +135,61 @@ async function initWorkerPool() {
 async function loadDiff() {
   emit("scope-change", scope.value);
   const path = props.worktreePath || props.repoPath;
+  const loadId = ++nextDiffLoadId;
+  const loadStartedAt = performance.now();
+  const renderContext: DiffRenderContext = {
+    loadId,
+    loadStartedAt,
+  };
   loading.value = true;
   error.value = null;
   noDiff.value = false;
+  logDiffPerf(loadId, "start", {
+    scope: scope.value,
+    path,
+    hasExplicitBaseRef: Boolean(props.baseRef),
+    workingFilter: scope.value === "working" ? workingFilter.value : undefined,
+  });
 
   try {
     let patch = "";
 
     if (scope.value === "working") {
+      const diffStartedAt = performance.now();
       patch = await invoke<string>("git_diff", { repoPath: path, mode: workingFilter.value });
+      logDiffPerf(loadId, "git_diff:done", {
+        durationMs: roundDuration(performance.now() - diffStartedAt),
+        mode: workingFilter.value,
+      });
     } else {
       // "branch" scope — diff from merge base
+      const baseRefStartedAt = performance.now();
       const baseRef = props.baseRef || await detectBaseRef(path);
+      logDiffPerf(loadId, "base_ref:done", {
+        durationMs: roundDuration(performance.now() - baseRefStartedAt),
+        baseRef,
+        source: props.baseRef ? "prop" : "detected",
+      });
+
+      const mergeBaseStartedAt = performance.now();
       const mergeBase = await invoke<string>("git_merge_base", {
         repoPath: path,
         refA: baseRef,
         refB: "HEAD",
       });
+      logDiffPerf(loadId, "merge_base:done", {
+        durationMs: roundDuration(performance.now() - mergeBaseStartedAt),
+        mergeBase,
+      });
+
+      const diffRangeStartedAt = performance.now();
       patch = await invoke<string>("git_diff_range", {
         repoPath: path,
         from: mergeBase,
         to: "HEAD",
+      });
+      logDiffPerf(loadId, "git_diff_range:done", {
+        durationMs: roundDuration(performance.now() - diffRangeStartedAt),
       });
     }
 
@@ -121,13 +197,26 @@ async function loadDiff() {
       noDiff.value = true;
       diffContent.value = "";
       cleanupInstance();
+      logDiffPerf(loadId, "empty", {
+        totalMs: roundDuration(performance.now() - loadStartedAt),
+      });
       return;
     }
 
+    logDiffPerf(loadId, "patch:ready", {
+      durationMs: roundDuration(performance.now() - loadStartedAt),
+      bytes: patch.length,
+      lines: patch.split("\n").length,
+    });
+
     diffContent.value = patch;
-    await renderDiff(diffContent.value);
+    await renderDiff(diffContent.value, renderContext);
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e);
+    logDiffPerf(loadId, "error", {
+      totalMs: roundDuration(performance.now() - loadStartedAt),
+      error: error.value,
+    });
   } finally {
     loading.value = false;
   }
@@ -161,29 +250,62 @@ function cleanupInstance() {
   }
 }
 
-async function renderDiff(patch: string) {
+async function renderDiff(patch: string, context: DiffRenderContext) {
   if (!containerRef.value) return;
 
-  const patches = parsePatchFiles(patch);
+  const normalizedPatchStartedAt = performance.now();
+  const normalizedPatch = normalizeGitPatchForDiffParser(patch);
+  const normalizedPatchDurationMs = performance.now() - normalizedPatchStartedAt;
+
+  const parseStartedAt = performance.now();
+  const patches = parsePatchFiles(normalizedPatch);
+  const parseDurationMs = performance.now() - parseStartedAt;
   const allFiles = patches?.flatMap((p) => p.files || []) || [];
   if (allFiles.length === 0) {
     noDiff.value = true;
     cleanupInstance();
+    logDiffPerf(context.loadId, "parse:empty", {
+      totalMs: roundDuration(performance.now() - context.loadStartedAt),
+      normalizeMs: roundDuration(normalizedPatchDurationMs),
+      parseMs: roundDuration(parseDurationMs),
+    });
     return;
   }
 
-  const pool = await initWorkerPool();
+  logDiffPerf(context.loadId, "parse:done", {
+    normalizeMs: roundDuration(normalizedPatchDurationMs),
+    parseMs: roundDuration(parseDurationMs),
+    patchCount: patches.length,
+    fileCount: allFiles.length,
+  });
 
+  const workerInitStartedAt = performance.now();
+  const pool = await initWorkerPool();
+  logDiffPerf(context.loadId, "worker_pool:ready", {
+    durationMs: roundDuration(performance.now() - workerInitStartedAt),
+    stats: getWorkerPoolStatsSnapshot(pool),
+  });
+
+  const cleanupStartedAt = performance.now();
   cleanupInstance();
+  logDiffPerf(context.loadId, "cleanup:done", {
+    durationMs: roundDuration(performance.now() - cleanupStartedAt),
+  });
 
   // Render each file diff
-  for (const rawFileMeta of allFiles) {
+  let completedFiles = 0;
+  let firstCompletedAt: number | null = null;
+  let completedAllLogged = false;
+
+  for (const [fileIndex, rawFileMeta] of allFiles.entries()) {
+    const fileRenderStartedAt = performance.now();
     const pathMeta = rawFileMeta as typeof rawFileMeta & DiffFilePathMetadata;
     const displayPath =
       pathMeta.newName ||
       pathMeta.oldName ||
       pathMeta.fileName ||
       "";
+    let didLogPostRender = false;
 
     const fileMeta = isBazelSyntaxPath(displayPath)
       ? setLanguageOverride(
@@ -201,6 +323,45 @@ async function renderDiff(patch: string) {
         theme: "github-dark",
         diffStyle: "unified",
         diffIndicators: "classic",
+        onPostRender: () => {
+          if (didLogPostRender) return;
+          didLogPostRender = true;
+          const completedAt = performance.now();
+          const sinceFileStartMs = completedAt - fileRenderStartedAt;
+          const sinceLoadStartMs = completedAt - context.loadStartedAt;
+          completedFiles += 1;
+          if (firstCompletedAt == null) {
+            firstCompletedAt = completedAt;
+            logDiffPerf(context.loadId, "content:first_file_ready", {
+              durationMs: roundDuration(sinceLoadStartMs),
+              fileIndex,
+              fileCount: allFiles.length,
+              path: displayPath,
+              workerStats: getWorkerPoolStatsSnapshot(pool),
+            });
+          }
+          if (sinceFileStartMs >= 250) {
+            logDiffPerf(context.loadId, "content:file_ready", {
+              fileIndex,
+              fileCount: allFiles.length,
+              path: displayPath,
+              sinceFileStartMs: roundDuration(sinceFileStartMs),
+              sinceLoadStartMs: roundDuration(sinceLoadStartMs),
+              workerStats: getWorkerPoolStatsSnapshot(pool),
+            });
+          }
+          if (!completedAllLogged && completedFiles === allFiles.length) {
+            completedAllLogged = true;
+            logDiffPerf(context.loadId, "content:all_files_ready", {
+              durationMs: roundDuration(sinceLoadStartMs),
+              fileCount: allFiles.length,
+              firstContentMs: roundDuration(
+                (firstCompletedAt ?? completedAt) - context.loadStartedAt,
+              ),
+              workerStats: getWorkerPoolStatsSnapshot(pool),
+            });
+          }
+        },
       },
       pool || undefined
     );
@@ -212,7 +373,21 @@ async function renderDiff(patch: string) {
 
     // Keep last instance for cleanup
     fileDiffInstance = instance;
+
+    logDiffPerf(context.loadId, "render:file_invoked", {
+      fileIndex,
+      fileCount: allFiles.length,
+      path: displayPath,
+      syncMs: roundDuration(performance.now() - fileRenderStartedAt),
+      workerStats: getWorkerPoolStatsSnapshot(pool),
+    });
   }
+
+  logDiffPerf(context.loadId, "render:scheduled", {
+    totalMs: roundDuration(performance.now() - context.loadStartedAt),
+    fileCount: allFiles.length,
+    workerStats: getWorkerPoolStatsSnapshot(pool),
+  });
 }
 
 watch(
