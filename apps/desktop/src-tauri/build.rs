@@ -28,9 +28,7 @@ fn merge_updater_pubkey_into_tauri_config() {
     let mut tauri_config = match std::env::var("TAURI_CONFIG") {
         Ok(raw) => serde_json::from_str::<serde_json::Value>(&raw)
             .unwrap_or_else(|error| panic!("failed to parse TAURI_CONFIG as JSON: {error}")),
-        Err(std::env::VarError::NotPresent) => {
-            serde_json::Value::Object(serde_json::Map::new())
-        }
+        Err(std::env::VarError::NotPresent) => serde_json::Value::Object(serde_json::Map::new()),
         Err(error) => panic!("failed to read TAURI_CONFIG: {error}"),
     };
 
