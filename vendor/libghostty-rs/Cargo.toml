@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/libghostty-vt", "crates/libghostty-vt-sys", "example/ghostling_rs"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/uzaaft/libghostty-rs"
+rust-version = "1.93"
+version = "0.1.1"
+
+[workspace.dependencies]
+libghostty-vt = { path = "crates/libghostty-vt", version = "0.1.1" }
+libghostty-vt-sys = { path = "crates/libghostty-vt-sys", version = "0.1.1" }

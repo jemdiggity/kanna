@@ -8,3 +8,7 @@ members = [
     "packages/terminal-recovery",
 ]
 resolver = "2"
+
+[patch."https://github.com/jemdiggity/libghostty-rs.git"]
+libghostty-vt = { path = "vendor/libghostty-rs/crates/libghostty-vt" }
+libghostty-vt-sys = { path = "vendor/libghostty-rs/crates/libghostty-vt-sys" }

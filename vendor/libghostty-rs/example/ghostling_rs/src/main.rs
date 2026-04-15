@@ -1,0 +1,973 @@
+//! A Rust port of Ghostling, using the `ghostty` crate for safe, idiomatic
+//! `libghostty-vt` Rust bindings, and macroquad instead of raylib for
+//! window management and rendering.
+//!
+//! This is quite a feature-rich implementation of a terminal emulator in
+//! spite of its under-1kLoC size, which goes to show how much heavy-lifting
+//! `libghostty-vt` is able to achieve behind a simple interface.
+
+#![deny(unsafe_code)] // Well, almost.
+use std::{cell::Cell, error::Error, rc::Rc};
+
+use macroquad::{
+    miniquad::{conf, window::order_quit},
+    prelude::*,
+};
+use nix::sys::wait;
+
+use libghostty_vt::{
+    RenderState, Terminal, TerminalOptions, build_info,
+    key::{self, Key},
+    mouse,
+    render::{CellIterator, Colors, Dirty, RowIterator, Snapshot},
+    style::RgbColor,
+    terminal::{
+        ConformanceLevel, DeviceAttributeFeature, DeviceAttributes, DeviceType, Mode,
+        PrimaryDeviceAttributes, ScrollViewport, SecondaryDeviceAttributes, SizeReportSize,
+    },
+};
+
+use crate::pty::{Child, Pty, PtyError};
+
+// ---------------------------------------------------------------------------
+// Adjustable constants for the renderer. All of these are chosen empirically,
+// so feel free to tweak and tune these settings to your liking :)
+// ---------------------------------------------------------------------------
+
+/// Desired font size in logical (screen) points — the actual texture
+/// will be rasterized at font_size * dpi_scale so glyphs stay crisp on
+/// HiDPI / Retina displays.
+const FONT_SIZE: u16 = 11;
+
+/// Small padding from window edges
+const PADDING: f32 = 6.0;
+
+/// Horizontal gap between cells. This is usually not necessary for
+/// TrueType fonts, but for bitmap fonts like macroquad's builtin font
+/// this should be set to a positive value.
+const CELL_GAP: f32 = 0.0;
+
+/// Vertical gap between rows.
+const ROW_GAP: f32 = 12.0;
+
+#[macroquad::main(macroquad_conf)]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let font = load_ttf_font_from_bytes(include_bytes!("../fonts/JetBrainsMono-Medium.ttf"))?;
+
+    // Compute the initial grid from the window size
+    // and measured cell metrics.
+    let mut dims = Dimensions::new(Some(&font));
+    let (cols, rows) = dims.grid_size();
+
+    // Spawn a child shell connected to a pseudo-terminal.
+    let (pty, mut child) = Pty::new(dims)?;
+
+    // Create a ghostty virtual terminal with the computed grid and 1000
+    // lines of scrollback.  This holds all the parsed screen state (cells,
+    // cursor, styles, modes) but knows nothing about the pty or the window.
+    let mut terminal = Terminal::new(TerminalOptions {
+        cols,
+        rows,
+        max_scrollback: 1000,
+    })?;
+
+    // Track window size so we only recalculate the grid on actual changes.
+    //
+    // This is kept in a Rc<Cell<T>> since the terminal effect handler
+    // has to keep a reference to it, and we also want to modify it in the
+    // main loop below. Don't worry, this is completely safe and is just
+    // here to make the Rust compiler happy.
+    let grid_size = Rc::new(Cell::new((cols, rows)));
+
+    // Register effects so the terminal can respond to VT queries (device
+    // attributes, mode reports, size queries, etc.) that programs like
+    // vim, tmux, and htop send during startup.  Without these, query
+    // sequences are silently dropped and those programs may hang or
+    // fall back to degraded behavior.
+    terminal
+        // write_pty effect — the terminal calls this whenever a VT sequence
+        // requires a response back to the application (device status reports,
+        // mode queries, device attributes, etc.).  Without this, programs like
+        // vim and tmux that probe terminal capabilities would hang.
+        .on_pty_write(|_t, data| pty.write(data))?
+        // size effect — responds to XTWINOPS size queries (CSI 14/16/18 t)
+        // so programs can discover the terminal geometry in cells and pixels.
+        .on_size({
+            let grid_size = grid_size.clone();
+            move |_term| {
+                let (columns, rows) = grid_size.get();
+                Some(SizeReportSize {
+                    rows,
+                    columns,
+                    cell_width: dims.cell_width as u32,
+                    cell_height: dims.cell_height as u32,
+                })
+            }
+        })?
+        // device_attributes effect — responds to DA1/DA2/DA3 queries so
+        // terminal applications can identify the terminal's capabilities.
+        // We report VT220-level conformance with a modest feature set.
+        .on_device_attributes(|_term| {
+            Some(DeviceAttributes {
+                // DA1: VT220-level with a few common features.
+                primary: PrimaryDeviceAttributes::new(
+                    ConformanceLevel::VT220,
+                    [
+                        DeviceAttributeFeature::COLUMNS_132,
+                        DeviceAttributeFeature::SELECTIVE_ERASE,
+                        DeviceAttributeFeature::ANSI_COLOR,
+                    ],
+                ),
+                // DA2: VT220-type, version 1, no ROM cartridge.
+                secondary: SecondaryDeviceAttributes {
+                    device_type: DeviceType::VT220,
+                    firmware_version: 1,
+                    rom_cartridge: 0,
+                },
+                // DA3: default unit id (0).
+                tertiary: Default::default(),
+            })
+        })?
+        // xtversion effect — responds to CSI > q with our application name.
+        .on_xtversion(|_term| Some("ghostling-rs"))?
+        // color_scheme effect — responds to CSI ? 996 n.
+        // We don't have any API to query the OS color scheme, so we return
+        // false to silently ignore the query rather than guessing.
+        .on_color_scheme(|_term| None)?;
+
+    // Create the render state and its reusable iterator/cells handles once
+    // up front.  These are updated each frame rather than recreated.
+    let mut render_state = RenderState::new()?;
+    let mut row_it = RowIterator::new()?;
+    let mut cell_it = CellIterator::new()?;
+
+    // Create the key encoder and a reusable key event for input handling.
+    // The encoder translates key events into the correct VT escape
+    // sequences, respecting terminal modes like application cursor keys
+    // and the Kitty keyboard protocol.
+    let mut key_encoder = key::Encoder::new()?;
+    let mut key_event = key::Event::new()?;
+
+    // Create the mouse encoder and a reusable mouse event for input
+    // handling.  The encoder translates mouse events into the correct
+    // VT escape sequences, respecting terminal modes like SGR mouse
+    // reporting and tracking mode (normal, button, any-event).
+    let mut mouse_encoder = mouse::Encoder::new()?;
+    let mut mouse_event = mouse::Event::new()?;
+
+    // Byte buffer that holds escape sequences that are used to
+    // notify the PTY of new key and mouse input events.
+    let mut response = Vec::<u8>::with_capacity(64);
+
+    println!(
+        "ghostling-rs | simd: {}, optimize: {:?}",
+        if build_info::supports_simd()? {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        build_info::optimize_mode()?,
+    );
+    println!("Initialized terminal with size {cols}x{rows}");
+
+    // Each frame: handle resize → read pty → process input → render.
+    loop {
+        // Recalculate grid dimensions when the window is resized.
+        // We update both the ghostty terminal (so it reflows text) and the
+        // pty's winsize (so the child shell knows about the new size and
+        // can send SIGWINCH to its foreground process group).
+        if dims.update() {
+            let (cols, rows) = dims.grid_size();
+            grid_size.set((cols, rows));
+            terminal.resize(cols, rows, dims.cell_width as u32, dims.cell_height as u32)?;
+            pty.resize(dims);
+        }
+
+        // Do different things based on whether the child process
+        // (the user shell) is still active or not. We only want to keep
+        // processing inputs and communicate with the child when it's
+        // alive, and when it's exited we should handle cleanup properly.
+        match child {
+            Child::Active(pid) => {
+                // Forward keyboard/mouse input only while the child is alive.
+                handle_keyboard_input(&mut key_encoder, &mut key_event, &terminal, &mut response)?;
+
+                handle_mouse_input(
+                    &mut mouse_encoder,
+                    &mut mouse_event,
+                    &mut terminal,
+                    dims,
+                    &mut response,
+                )?;
+
+                // Write the composed response back to the PTY,
+                // and clear it in preparation of the next frame.
+                pty.write(&response);
+                response.clear();
+
+                match pty.read(&mut terminal) {
+                    Ok(_) => {}
+                    Err(PtyError::EndOfStream) => {
+                        // EOF — the child's side of the pty is closed.
+                        child = Child::Exited(pid);
+                    }
+                    Err(PtyError::OtherError(e)) => {
+                        // Other error — the child's side of the pty is closed.
+                        eprintln!("failed to read from pty: {e}");
+                        child = Child::Exited(pid);
+                    }
+                }
+            }
+            // Try to reap the child if it had already exited.
+            //
+            // EOF can arrive before the child is waitable, so a single
+            // WNOHANG attempt right at EOF may miss.  We also check for
+            // signal death so the banner can report it properly.
+            Child::Exited(pid) => {
+                if let Ok(wp) = wait::waitpid(pid, Some(wait::WaitPidFlag::WNOHANG)) {
+                    child = Child::Reaped(wp);
+                }
+                // FIXME: For some reason the child isn't being reaped properly.
+                // Let's just unconditionally quit for now.
+                order_quit();
+            }
+            Child::Reaped(status) => {
+                println!("Child process exited: {status:?}");
+                order_quit();
+            }
+        }
+
+        // Snapshot the terminal state into our render state. This is the
+        // only point where we need access to the terminal; after this the
+        // snapshot owns everything we need to draw the frame.
+        //
+        // When a snapshot is active, the render state cannot be updated —
+        // this is upheld in the Rust API by making the snapshot take an
+        // exclusive (mutable) reference to the render state.
+        let snapshot = render_state.update(&terminal)?;
+
+        // Get the terminal's background color from the render state snapshot.
+        let colors = snapshot.colors()?;
+        clear_background(color(colors.background));
+
+        // Draw the current terminal screen.
+        render_terminal(
+            &snapshot,
+            &mut row_it,
+            &mut cell_it,
+            dims,
+            &colors,
+            Some(&font),
+        )?;
+        next_frame().await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
+/// Render the current terminal screen using the RenderState API.
+///
+/// For each row/cell we read the grapheme codepoints and the cell's style,
+/// resolve foreground/background colors via the palette, and draw each
+/// character individually with `draw_text_ex`.  This supports per-cell colors
+/// from SGR sequences (bold, 256-color, 24-bit RGB, etc.).
+///
+/// cell_width and cell_height are the measured dimensions of a single
+/// monospace glyph at the current font size, in screen (logical) pixels.
+/// font_size is the logical font size (before DPI scaling).
+fn render_terminal<'alloc>(
+    snapshot: &Snapshot<'alloc, '_>,
+    row_it: &mut RowIterator<'alloc>,
+    cell_it: &mut CellIterator<'alloc>,
+    dims: Dimensions,
+    colors: &Colors,
+    font: Option<&Font>,
+) -> Result<(), libghostty_vt::Error> {
+    // Populate the row iterator from the current render state snapshot,
+    // resulting in a row *iteration* object, which can be thought of as
+    // a cursor into a row of the snapshot. Attributes of the current row
+    // can be read from it via a shared reference, or it can be moved
+    // to point at the next row via a mutable reference.
+    let mut y = PADDING;
+    let mut row_it = row_it.update(snapshot)?;
+
+    // For convenience, `next` gives you the same iteration back only
+    // as a shared pointer, so you can simultaneously iterate through
+    // all rows while having a handle to query data for each row.
+    while let Some(row) = row_it.next() {
+        let mut x = PADDING;
+
+        // Cell iterators work similarly as they create a cell *iteration*
+        // from a row iteration, which can then be used in a similar pattern.
+        let mut cell_it = cell_it.update(row)?;
+
+        while let Some(cell) = cell_it.next() {
+            let graphemes = cell.graphemes_len()?;
+            let bg = cell.bg_color()?;
+
+            if graphemes == 0 {
+                // The cell has no text, but it might have a background
+                // color (e.g. from an erase with a color set).
+                if let Some(bg) = bg {
+                    draw_rectangle(x, y, dims.cell_width, dims.cell_height, color(bg));
+                }
+            } else {
+                // Convert read grapheme codepoints into UTF-8 text.
+                let text: String = cell.graphemes()?.into_iter().collect();
+
+                // Resolve foreground and background colors using the new
+                // per-cell color queries. These flatten style colors,
+                // content-tag colors, and palette lookups into a single RGB
+                // value, returning `None` when the cell has no explicit color
+                // (in which case we use the terminal default).
+                let mut fg = cell.fg_color()?.unwrap_or(colors.foreground);
+                let mut has_bg = bg.is_some();
+                let mut bg = bg.unwrap_or(colors.background);
+
+                // Read the style for flags (inverse, bold, italic) — color
+                // resolution is handled above via the new API.
+                let style = cell.style()?;
+
+                // Inverse (reverse video): swap foreground and background colors.
+                if style.inverse {
+                    std::mem::swap(&mut fg, &mut bg);
+                    has_bg = true;
+                }
+
+                // Draw a background rectangle if the cell has a non-default bg
+                // or if inverse mode forced a swap.
+                if has_bg {
+                    draw_rectangle(x, y, dims.cell_width, dims.cell_height, color(bg));
+                }
+
+                // Draw the text for the cell.
+                draw_text_ex(
+                    &text,
+                    x,
+                    y + FONT_SIZE as f32 + ROW_GAP,
+                    TextParams {
+                        font,
+                        font_size: (FONT_SIZE as f32 * screen_dpi_scale()) as u16,
+                        color: color(fg),
+                        ..Default::default()
+                    },
+                );
+
+                // Bold: draw the text a second time shifted 1 pixel to the
+                // right to thicken the strokes ("fake bold").
+                //
+                // In a more sophisticated terminal one would obviously use the
+                // correct bold version of the font using font discovery, but
+                // let's do it the hackier way here.
+                if style.bold {
+                    draw_text_ex(
+                        &text,
+                        x + 1.0,
+                        y + FONT_SIZE as f32 + ROW_GAP,
+                        TextParams {
+                            font,
+                            font_size: (FONT_SIZE as f32 * screen_dpi_scale()) as u16,
+                            color: color(fg),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+
+            x += dims.cell_width;
+            continue;
+        }
+
+        // Clear per-row dirty flag after rendering it.
+        row.set_dirty(false)?;
+        y += dims.cell_height;
+    }
+
+    // Reset global dirty state so the next update reports changes accurately.
+    snapshot.set_dirty(Dirty::Clean)?;
+
+    // Draw the cursor if visible.
+    if snapshot.cursor_visible()?
+        && let Some(vp) = snapshot.cursor_viewport()?
+    {
+        // Draw the cursor using the foreground color (or explicit cursor
+        // color if the terminal set one).
+        let cursor_color = colors.cursor.unwrap_or(colors.foreground);
+
+        draw_rectangle(
+            PADDING + vp.x as f32 * dims.cell_width,
+            PADDING + vp.y as f32 * dims.cell_height,
+            dims.cell_width,
+            dims.cell_height,
+            color(cursor_color),
+        );
+    }
+    Ok(())
+}
+
+/// Convert Ghostty colors to macroquad colors
+fn color(rgb: RgbColor) -> Color {
+    let RgbColor { r, g, b } = rgb;
+    color_u8!(r, g, b, 255)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Dimensions {
+    window_width: f32,
+    window_height: f32,
+    cell_width: f32,
+    cell_height: f32,
+}
+
+impl Dimensions {
+    fn new(font: Option<&Font>) -> Self {
+        // Measure a representative glyph to derive the monospace cell size.
+        let glyph_size = measure_text("M", font, FONT_SIZE, screen_dpi_scale());
+
+        // Guard against zero cell dimensions — these would cause division
+        // by zero when computing the terminal grid.
+        // Add in the cell and row gaps here too to make calculations easier.
+        Self {
+            cell_width: glyph_size.width.max(1.0) + CELL_GAP,
+            cell_height: glyph_size.height.max(1.0) + ROW_GAP,
+            window_width: screen_width(),
+            window_height: screen_height(),
+        }
+    }
+
+    fn grid_size(self) -> (u16, u16) {
+        let cols = ((self.window_width - 2.0 * PADDING) / self.cell_width).max(1.0) as u16;
+        let rows = ((self.window_height - 2.0 * PADDING) / self.cell_height).max(1.0) as u16;
+        (cols, rows)
+    }
+    fn update(&mut self) -> bool {
+        if screen_width() == self.window_width && screen_height() == self.window_height {
+            return false;
+        }
+        self.window_width = screen_width();
+        self.window_height = screen_height();
+        true
+    }
+    fn to_winsize(self) -> nix::pty::Winsize {
+        let (cols, rows) = self.grid_size();
+        nix::pty::Winsize {
+            ws_col: cols,
+            ws_row: rows,
+            ws_xpixel: self.window_width as u16,
+            ws_ypixel: self.window_height as u16,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Input handling
+// ---------------------------------------------------------------------------
+
+/// Poll macroquad for keyboard events and use the libghostty key encoder
+/// to produce the correct VT escape sequences, which are then written
+/// to the pty.  The encoder respects terminal modes (cursor key
+/// application mode, Kitty keyboard protocol, etc.) so we don't need
+/// to maintain our own escape-sequence tables.
+fn handle_keyboard_input<'alloc>(
+    encoder: &mut key::Encoder<'alloc>,
+    event: &mut key::Event<'alloc>,
+    terminal: &Terminal<'alloc, '_>,
+    response: &mut Vec<u8>,
+) -> Result<(), libghostty_vt::Error> {
+    // Drain printable characters from macroquad's input queue.  We collect
+    // them into a single UTF-8 buffer so the encoder can attach text
+    // to the key event.
+    let mut chars_pressed = Vec::<char>::with_capacity(4);
+    while let Some(ch) = get_char_pressed() {
+        chars_pressed.push(ch);
+    }
+    let mut text: String = chars_pressed.into_iter().collect();
+
+    for (kc, key, ucp) in ALL_KEYS {
+        let action = if is_key_released(kc) {
+            key::Action::Release
+        } else if is_key_pressed(kc) {
+            key::Action::Press
+        } else {
+            continue;
+        };
+
+        // Conditionally attach any UTF-8 text that macroquad produced for this frame.
+        // For unmodified printable keys this is the character itself;
+        // for special keys or ctrl combos there's typically no text.
+        // Release events never carry text.
+        let maybe_text = if !text.is_empty() && !is_key_released(kc) {
+            Some(text.as_str())
+        } else {
+            None
+        };
+
+        let mods = keyboard_mods();
+
+        // Consumed mods are modifiers the platform's text input
+        // already accounted for when producing the UTF-8 text.
+        // For printable keys, shift is consumed (it turns 'a' → 'A').
+        // For non-printable keys nothing is consumed.
+        let mut consumed = key::Mods::empty();
+        if ucp != '\0' && mods.contains(key::Mods::SHIFT) {
+            consumed |= key::Mods::SHIFT;
+        }
+
+        event
+            .set_action(action)
+            .set_key(key)
+            .set_mods(mods)
+            .set_consumed_mods(consumed)
+            // The unshifted codepoint is the character the key produces
+            // with no modifiers.  The Kitty protocol needs it to identify
+            // keys independent of the current shift state.
+            .set_unshifted_codepoint(ucp)
+            .set_utf8(maybe_text);
+
+        if maybe_text.is_some() {
+            text.clear();
+        }
+
+        encoder
+            // Sync encoder options from the terminal so mode changes (e.g.
+            // application cursor keys, Kitty keyboard protocol) are honoured.
+            .set_options_from_terminal(terminal)
+            .encode_to_vec(event, response)?;
+
+        if !response.is_empty() {
+            // Text was consumed by the encoder — clear it so the
+            // fallback below doesn't double-send.
+            text.clear();
+        }
+    }
+
+    // Fallback: on some platforms (e.g. VMs) the character event arrives
+    // a frame after the key-press event.  If we collected UTF-8 text but
+    // no key event consumed it, write it directly to the PTY so input
+    // isn't silently dropped.
+    if !text.is_empty() {
+        response.extend_from_slice(text.as_bytes());
+    }
+    Ok(())
+}
+
+/// Poll macroquad for mouse events and use the libghostty mouse encoder
+/// to produce the correct VT escape sequences, which are then written
+/// to the pty.  The encoder handles tracking mode (X10, normal, button,
+/// any-event) and output format (X10, UTF8, SGR, URxvt, SGR-Pixels)
+/// based on what the terminal application has requested.
+fn handle_mouse_input<'alloc>(
+    encoder: &mut mouse::Encoder<'alloc>,
+    event: &mut mouse::Event<'alloc>,
+    terminal: &mut Terminal<'alloc, '_>,
+    dims: Dimensions,
+    response: &mut Vec<u8>,
+) -> Result<(), libghostty_vt::Error> {
+    // Track whether any button is currently held — the encoder uses
+    // this to distinguish drags from plain motion.
+    let any_pressed = ALL_MOUSE_BUTTONS
+        .into_iter()
+        .any(|(m, _)| is_mouse_button_down(m));
+
+    let (x, y) = mouse_position();
+    event
+        .set_mods(keyboard_mods())
+        .set_position(mouse::Position { x, y });
+
+    encoder
+        // Sync encoder tracking mode and format from terminal state so
+        // mode changes (e.g. applications enabling SGR mouse reporting)
+        // are honoured automatically.
+        .set_options_from_terminal(terminal)
+        // Provide the encoder with the current terminal geometry so it
+        // can convert pixel positions to cell coordinates.
+        .set_size(mouse::EncoderSize {
+            screen_width: dims.window_width as u32,
+            screen_height: dims.window_height as u32,
+            cell_width: dims.cell_width as u32,
+            cell_height: dims.cell_height as u32,
+            padding_top: PADDING as u32,
+            padding_bottom: PADDING as u32,
+            padding_left: PADDING as u32,
+            padding_right: PADDING as u32,
+        })
+        .set_any_button_pressed(any_pressed)
+        // Enable motion deduplication so the encoder suppresses redundant
+        // motion events within the same cell.
+        .set_track_last_cell(true);
+
+    // Check each mouse button for press/release events.
+    for (mb, btn) in ALL_MOUSE_BUTTONS {
+        let action = if is_mouse_button_released(mb) {
+            mouse::Action::Release
+        } else if is_mouse_button_pressed(mb) {
+            mouse::Action::Press
+        } else {
+            continue;
+        };
+
+        event.set_action(action).set_button(Some(btn));
+        encoder.encode_to_vec(event, response)?;
+    }
+
+    // Mouse motion — send a motion event with whatever button is held
+    // (or no button for pure motion in any-event tracking mode).
+    let delta = mouse_delta_position();
+    if delta.x.abs() > 1e-6 || delta.y.abs() > 1e-6 {
+        event.set_action(mouse::Action::Motion).set_button(
+            ALL_MOUSE_BUTTONS
+                .into_iter()
+                .find(|(mb, _)| is_mouse_button_down(*mb))
+                .map(|(_, btn)| btn),
+        );
+        encoder.encode_to_vec(event, response)?;
+    }
+
+    // Scroll wheel handling.  When a mouse tracking mode is active the
+    // wheel events are forwarded to the application as button 4/5
+    // press+release pairs.  Otherwise we scroll the viewport through
+    // the scrollback buffer so the user can review history.
+    let (wheel_x, wheel_y) = mouse_wheel();
+    if wheel_x.abs() > 1e-6 || wheel_y.abs() > 1e-6 {
+        // Check whether any mouse tracking mode is enabled.  If so,
+        // the application wants to handle scroll events itself.
+        let is_mouse_tracking = [
+            Mode::X10_MOUSE,
+            Mode::NORMAL_MOUSE,
+            Mode::BUTTON_MOUSE,
+            Mode::ANY_MOUSE,
+        ]
+        .into_iter()
+        .any(|mode| matches!(terminal.mode(mode), Ok(true)));
+
+        if is_mouse_tracking {
+            let scroll_btn = if wheel_y > 0.0 {
+                mouse::Button::Four
+            } else {
+                mouse::Button::Five
+            };
+
+            event
+                .set_button(Some(scroll_btn))
+                .set_action(mouse::Action::Press);
+            encoder.encode_to_vec(event, response)?;
+
+            event.set_action(mouse::Action::Release);
+            encoder.encode_to_vec(event, response)?;
+        } else {
+            // Scroll the viewport through scrollback. Adapt
+            // the scroll delta to the wheel/touchpad velocity
+            // for a comfortable pace.  Delta is negative to scroll
+            // up (into history), positive to scroll down.
+            let scroll_delta: isize = (wheel_y * -2.5) as isize;
+            terminal.scroll_viewport(ScrollViewport::Delta(scroll_delta));
+        }
+    }
+    Ok(())
+}
+
+// Build a Mods bitmask from the current macroquad modifier key state.
+fn keyboard_mods() -> key::Mods {
+    let mut mods = key::Mods::empty();
+    if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
+        mods |= key::Mods::SHIFT;
+    }
+    if is_key_down(KeyCode::LeftAlt) || is_key_down(KeyCode::RightAlt) {
+        mods |= key::Mods::ALT;
+    }
+    if is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl) {
+        mods |= key::Mods::CTRL;
+    }
+    if is_key_down(KeyCode::LeftSuper) || is_key_down(KeyCode::RightSuper) {
+        mods |= key::Mods::SUPER;
+    }
+    mods
+}
+
+/// All macroquad mouse buttons we want to check with their libghostty equivalent.
+const ALL_MOUSE_BUTTONS: [(MouseButton, mouse::Button); 3] = [
+    (MouseButton::Left, mouse::Button::Left),
+    (MouseButton::Right, mouse::Button::Right),
+    (MouseButton::Middle, mouse::Button::Middle),
+];
+
+/// All macroquad keys we want to check for press/repeat/release events,
+/// with their libghostty equivalent and their unshifted Unicode codepoint,
+/// i.e. character the key produces with no modifiers on a US layout. The
+/// Kitty keyboard protocol requires this to identify keys. Returns NUL
+/// for keys that don't have a natural codepoint (arrows, F-keys, etc.).
+const ALL_KEYS: [(KeyCode, Key, char); 74] = [
+    (KeyCode::A, Key::A, 'a'),
+    (KeyCode::B, Key::B, 'b'),
+    (KeyCode::C, Key::C, 'c'),
+    (KeyCode::D, Key::D, 'd'),
+    (KeyCode::E, Key::E, 'e'),
+    (KeyCode::F, Key::F, 'f'),
+    (KeyCode::G, Key::G, 'g'),
+    (KeyCode::H, Key::H, 'h'),
+    (KeyCode::I, Key::I, 'i'),
+    (KeyCode::J, Key::J, 'j'),
+    (KeyCode::K, Key::K, 'k'),
+    (KeyCode::L, Key::L, 'l'),
+    (KeyCode::M, Key::M, 'm'),
+    (KeyCode::N, Key::N, 'n'),
+    (KeyCode::O, Key::O, 'o'),
+    (KeyCode::P, Key::P, 'p'),
+    (KeyCode::Q, Key::Q, 'q'),
+    (KeyCode::R, Key::R, 'r'),
+    (KeyCode::S, Key::S, 's'),
+    (KeyCode::T, Key::T, 't'),
+    (KeyCode::U, Key::U, 'u'),
+    (KeyCode::V, Key::V, 'v'),
+    (KeyCode::W, Key::W, 'w'),
+    (KeyCode::X, Key::X, 'x'),
+    (KeyCode::Y, Key::Y, 'y'),
+    (KeyCode::Z, Key::Z, 'z'),
+    (KeyCode::Key0, Key::Digit0, '0'),
+    (KeyCode::Key1, Key::Digit1, '1'),
+    (KeyCode::Key2, Key::Digit2, '2'),
+    (KeyCode::Key3, Key::Digit3, '3'),
+    (KeyCode::Key4, Key::Digit4, '4'),
+    (KeyCode::Key5, Key::Digit5, '5'),
+    (KeyCode::Key6, Key::Digit6, '6'),
+    (KeyCode::Key7, Key::Digit7, '7'),
+    (KeyCode::Key8, Key::Digit8, '8'),
+    (KeyCode::Key9, Key::Digit9, '9'),
+    (KeyCode::Space, Key::Space, ' '),
+    (KeyCode::Enter, Key::Enter, '\0'),
+    (KeyCode::Tab, Key::Tab, '\0'),
+    (KeyCode::Backspace, Key::Backspace, '\0'),
+    (KeyCode::Delete, Key::Delete, '\0'),
+    (KeyCode::Escape, Key::Escape, '\0'),
+    (KeyCode::Up, Key::ArrowUp, '\0'),
+    (KeyCode::Down, Key::ArrowDown, '\0'),
+    (KeyCode::Left, Key::ArrowLeft, '\0'),
+    (KeyCode::Right, Key::ArrowRight, '\0'),
+    (KeyCode::Home, Key::Home, '\0'),
+    (KeyCode::End, Key::End, '\0'),
+    (KeyCode::PageUp, Key::PageUp, '\0'),
+    (KeyCode::PageDown, Key::PageDown, '\0'),
+    (KeyCode::Insert, Key::Insert, '\0'),
+    (KeyCode::Minus, Key::Minus, '-'),
+    (KeyCode::Equal, Key::Equal, '='),
+    (KeyCode::LeftBracket, Key::BracketLeft, '['),
+    (KeyCode::RightBracket, Key::BracketRight, ']'),
+    (KeyCode::Backslash, Key::Backslash, '\\'),
+    (KeyCode::Semicolon, Key::Semicolon, ';'),
+    (KeyCode::Apostrophe, Key::Quote, '\''),
+    (KeyCode::Comma, Key::Comma, ','),
+    (KeyCode::Period, Key::Period, '.'),
+    (KeyCode::Slash, Key::Slash, '/'),
+    (KeyCode::GraveAccent, Key::Backquote, '`'),
+    (KeyCode::F1, Key::F1, '\0'),
+    (KeyCode::F2, Key::F2, '\0'),
+    (KeyCode::F3, Key::F3, '\0'),
+    (KeyCode::F4, Key::F4, '\0'),
+    (KeyCode::F5, Key::F5, '\0'),
+    (KeyCode::F6, Key::F6, '\0'),
+    (KeyCode::F7, Key::F7, '\0'),
+    (KeyCode::F8, Key::F8, '\0'),
+    (KeyCode::F9, Key::F9, '\0'),
+    (KeyCode::F10, Key::F10, '\0'),
+    (KeyCode::F11, Key::F11, '\0'),
+    (KeyCode::F12, Key::F12, '\0'),
+];
+
+/// Configuration for macroquad.
+///
+/// By default the window is resizable and DPI-aware,
+/// while prioritizing Wayland over X11 on Linux.
+fn macroquad_conf() -> Conf {
+    Conf {
+        window_title: "ghostling-rs".to_owned(),
+        window_resizable: true,
+        high_dpi: true,
+        platform: conf::Platform {
+            // Default to Wayland and fallback to X11 on Linux.
+            linux_backend: conf::LinuxBackend::WaylandWithX11Fallback,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// This is a full implementation of a pseudo-terminal (PTY) interface.
+///
+/// Normally we would try to avoid using unsafe code in examples,
+/// but pseudo-terminals are very hard to use safely in the general case
+/// and as such the standard library does not handle them at all.
+///
+/// Of course, you could just use any off-the-shelf PTY crate on crates.io,
+/// but we'd like to keep this demo self-contained using minimal dependencies,
+/// so here you go.
+mod pty {
+    // Unfortunately, there will be some unsafe shenanigans here.
+    #![allow(unsafe_code)]
+    use std::{
+        os::{
+            fd::{AsRawFd, OwnedFd},
+            unix::process::CommandExt,
+        },
+        path::PathBuf,
+        process::Command,
+    };
+
+    use libghostty_vt::Terminal;
+    use nix::{
+        errno::Errno,
+        fcntl::{self, OFlag},
+        pty::ForkptyResult,
+        sys::{signal, wait},
+        unistd::{self, Pid},
+    };
+
+    use crate::Dimensions;
+
+    /// Handle to a pseudo-terminal (PTY).
+    pub struct Pty(OwnedFd);
+
+    impl Pty {
+        /// Spawn the user's default shell in a new pseudo-terminal.
+        ///
+        /// Creates a pty pair via forkpty(), sets the initial window size, execs the
+        /// shell in the child, and puts the master fd into non-blocking mode so we
+        /// can poll it each frame without stalling the render loop.
+        ///
+        /// The shell is chosen by checking, in order:
+        ///   1. $SHELL environment variable
+        ///   2. The pw_shell field from the passwd database
+        ///   3. /bin/sh as a last resort
+        pub fn new(dims: Dimensions) -> std::io::Result<(Self, Child)> {
+            // forkpty() combines openpty + fork + login_tty into one call.
+            // In the child it sets up the slave side as stdin/stdout/stderr.
+            match unsafe { nix::pty::forkpty(&dims.to_winsize(), None)? } {
+                // Child process -- replace ourselves with the shell.
+                // TERM tells programs what escape sequences we understand.
+                ForkptyResult::Child => {
+                    // Determine the user's preferred shell. We try $SHELL first (the
+                    // standard convention), then fall back to the passwd entry, and
+                    // finally to /bin/sh if nothing else is available.
+                    let shell = match std::env::var_os("SHELL") {
+                        Some(shell) if !shell.is_empty() => PathBuf::from(shell),
+                        _ => match unistd::User::from_uid(unistd::getuid()) {
+                            Ok(Some(user)) => user.shell,
+                            _ => PathBuf::from("/bin/sh"),
+                        },
+                    };
+
+                    // Extract just the program name for argv[0] (e.g. "/bin/zsh" -> "zsh").
+                    let arg0 = shell.file_name().unwrap_or(shell.as_os_str());
+
+                    // Replace the child process with the user's shell via `exec`.
+                    _ = Command::new(&shell)
+                        .env("TERM", "xterm-256color")
+                        .arg0(arg0)
+                        .exec();
+
+                    // `exec` only returns on error.
+                    std::process::exit(127);
+                }
+
+                // Parent -- make the master fd non-blocking so read() returns EAGAIN
+                // instead of blocking when there's no data, letting us poll each frame.
+                ForkptyResult::Parent { child, master: fd } => {
+                    let raw_flags = fcntl::fcntl(&fd, fcntl::F_GETFL)?;
+                    let flags = OFlag::from_bits_retain(raw_flags) | OFlag::O_NONBLOCK;
+                    _ = fcntl::fcntl(&fd, fcntl::F_SETFL(flags))?;
+
+                    Ok((Self(fd), Child::Active(child)))
+                }
+            }
+        }
+
+        /// Drain all available output from the pty master and feed it into the
+        /// ghostty terminal. The terminal's VT parser will process any escape
+        /// sequences and update its internal screen/cursor/style state.
+        ///
+        /// Because the fd is non-blocking, read() returns an error with
+        /// EAGAIN once the kernel buffer is empty, at which point we stop.
+        pub fn read(&self, term: &mut Terminal) -> Result<(), PtyError> {
+            let mut buf = [0u8; 4096];
+            loop {
+                match nix::unistd::read(&self.0, &mut buf) {
+                    // EOF -- the child closed its side of the pty.
+                    Ok(0) => return Err(PtyError::EndOfStream),
+                    Ok(len) => term.vt_write(&buf[..len]),
+
+                    // Distinguish "no data right now" from real errors.
+                    Err(Errno::EAGAIN) => return Ok(()),
+                    Err(Errno::EINTR) => continue, // retry the read
+                    // On Linux, the slave closing often produces EIO rather
+                    // than a clean EOF (read returning 0). Treat it the same.
+                    Err(Errno::EIO) => return Err(PtyError::EndOfStream),
+                    Err(err) => return Err(PtyError::OtherError(err)),
+                };
+            }
+        }
+
+        /// Best-effort write to the pty master fd. Because the fd is
+        /// non-blocking, write() may return short or fail with EAGAIN.
+        /// We retry on EINTR, advance past partial writes, and silently
+        /// drop data if the kernel buffer is full -- this matches what most
+        /// terminal emulators do under back-pressure.
+        pub fn write(&self, data: &[u8]) {
+            let mut remaining = data;
+            while !remaining.is_empty() {
+                match nix::unistd::write(&self.0, remaining) {
+                    Ok(len) => remaining = &remaining[len..],
+                    Err(Errno::EINTR) => continue,
+                    // EAGAIN or real error -- drop the remainder.
+                    Err(_) => break,
+                }
+            }
+        }
+
+        /// Send a resize event to the pty via the TIOCSWINSZ ioctl.
+        ///
+        /// ioctl is a way to control a resource without inventing a dedicated
+        /// system call for it, and in this case we have to generate bindings
+        /// for this ioctl and feed the new window size to it.
+        pub fn resize(&self, dims: Dimensions) {
+            nix::ioctl_write_ptr_bad!(tiocswinsz, nix::libc::TIOCSWINSZ, nix::pty::Winsize);
+            _ = unsafe { tiocswinsz(self.0.as_raw_fd(), &dims.to_winsize()) };
+        }
+    }
+
+    /// The child process within a pseudo-terminal.
+    ///
+    /// The child can be in one of three states: active (default), exited
+    /// and reaped. The parent process has to wait for the child to fully
+    /// exit, which is why it tries to "reap" the child process by waiting
+    /// for it to exit via `waitpid`. Once it has exited fully, it will be
+    /// considered "reaped".
+    pub enum Child {
+        Active(Pid),
+        Exited(Pid),
+        Reaped(wait::WaitStatus),
+    }
+
+    impl Drop for Child {
+        fn drop(&mut self) {
+            // If the child is still running, ask it to exit. Then do a
+            // blocking waitpid to reap it and avoid leaving a zombie.
+            match *self {
+                Child::Active(pid) => {
+                    let _ = signal::kill(pid, signal::SIGHUP);
+                    let _ = wait::waitpid(pid, None);
+                }
+                Child::Exited(pid) => {
+                    let _ = wait::waitpid(pid, None);
+                }
+                Child::Reaped(_) => {}
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum PtyError {
+        EndOfStream,
+        OtherError(nix::errno::Errno),
+    }
+}
