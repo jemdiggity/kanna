@@ -28,6 +28,14 @@ const localRepos = new Map<string, LocalRepoFixture>([
       remote: "git@github.com:owner/design-system.git",
     },
   ],
+  [
+    "/Users/me/code/second-project",
+    {
+      exists: true,
+      branch: "main",
+      remote: "git@github.com:owner/second-project.git",
+    },
+  ],
 ]);
 
 const { invokeMock } = vi.hoisted(() => ({
@@ -166,6 +174,67 @@ describe("AddRepoModal", () => {
     expect(wrapper.emitted("import")).toEqual([
       ["/Users/me/code/project", "Project Desktop", "main"],
     ]);
+  });
+
+  it("keeps the committed local repo name when rename mode is canceled with Escape", async () => {
+    const wrapper = mountModal();
+
+    await flushPromises();
+
+    const importInput = wrapper.get('input[placeholder="addRepo.importPlaceholder"]');
+    await importInput.setValue("/Users/me/code/project");
+    await flushPromises();
+
+    const repoNameRow = wrapper.get(".repo-name-row");
+    await repoNameRow.get(".repo-name-change").trigger("click");
+    await flushPromises();
+
+    const repoNameInput = wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]');
+    await repoNameInput.setValue("Project Desktop");
+    await repoNameInput.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+
+    await repoNameRow.get(".repo-name-change").trigger("click");
+    await flushPromises();
+
+    const renameInput = wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]');
+    await renameInput.setValue("Temporary Name");
+    await renameInput.trigger("keydown", { key: "Escape" });
+    await flushPromises();
+
+    expect(wrapper.get(".repo-name-value").text()).toBe("Project Desktop");
+
+    await wrapper.get(".btn-primary").trigger("click");
+
+    expect(wrapper.emitted("import")).toEqual([
+      ["/Users/me/code/project", "Project Desktop", "main"],
+    ]);
+  });
+
+  it("falls back to the derived local repo name and resets when the path changes", async () => {
+    const wrapper = mountModal();
+
+    await flushPromises();
+
+    const importInput = wrapper.get('input[placeholder="addRepo.importPlaceholder"]');
+    await importInput.setValue("/Users/me/code/project");
+    await flushPromises();
+
+    const repoNameRow = wrapper.get(".repo-name-row");
+    await repoNameRow.get(".repo-name-change").trigger("click");
+    await flushPromises();
+
+    const repoNameInput = wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]');
+    await repoNameInput.setValue("");
+    await repoNameInput.trigger("blur");
+    await flushPromises();
+
+    expect(wrapper.get(".repo-name-value").text()).toBe("project");
+
+    await importInput.setValue("/Users/me/code/second-project");
+    await flushPromises();
+
+    expect(wrapper.get(".repo-name-value").text()).toBe("second-project");
   });
 
   it("keeps focus on the import input until rename mode is opened explicitly", async () => {

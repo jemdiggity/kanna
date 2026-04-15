@@ -39,6 +39,8 @@ const importInput = ref("");
 const selectedLocalPath = ref<string | null>(null);
 const localDerivedRepoName = ref("");
 const localRepoName = ref("");
+const localRepoNameDraft = ref("");
+const localRepoNamePath = ref<string | null>(null);
 const localBranch = ref("main");
 const localRemote = ref("");
 const localPathExists = ref(false);
@@ -210,6 +212,8 @@ function normalizeLocalPath(path: string): string {
 function resetLocalRepoState() {
   localDerivedRepoName.value = "";
   localRepoName.value = "";
+  localRepoNameDraft.value = "";
+  localRepoNamePath.value = null;
   localBranch.value = "main";
   localRemote.value = "";
   localPathExists.value = false;
@@ -229,8 +233,13 @@ async function inspectLocalPath(dirPath: string) {
   localLoading.value = true;
   const derivedRepoName = deriveRepoName(dirPath);
   localDerivedRepoName.value = derivedRepoName;
-  localRepoName.value = derivedRepoName;
-  isEditingLocalRepoName.value = false;
+  const isNewPath = localRepoNamePath.value !== dirPath;
+  if (isNewPath) {
+    localRepoName.value = derivedRepoName;
+    localRepoNameDraft.value = "";
+    localRepoNamePath.value = dirPath;
+    isEditingLocalRepoName.value = false;
+  }
   localPathExists.value = false;
 
   try {
@@ -273,6 +282,7 @@ async function inspectLocalPath(dirPath: string) {
 
 async function startLocalRepoRename() {
   if (!activeLocalPath.value || !localIsGitRepo.value || localLoading.value) return;
+  localRepoNameDraft.value = localRepoName.value;
   isEditingLocalRepoName.value = true;
   await nextTick();
   localRepoNameInputRef.value?.focus();
@@ -280,8 +290,14 @@ async function startLocalRepoRename() {
 }
 
 function commitLocalRepoRename() {
-  localRepoName.value = localRepoName.value.trim() || localDerivedRepoName.value;
+  localRepoName.value = localRepoNameDraft.value.trim() || localDerivedRepoName.value;
+  localRepoNameDraft.value = "";
   isEditingLocalRepoName.value = false;
+}
+
+function cancelLocalRepoRename() {
+  isEditingLocalRepoName.value = false;
+  localRepoNameDraft.value = "";
 }
 
 async function handleChangeCreateDir() {
@@ -427,13 +443,14 @@ function switchTab(tab: "create" | "import") {
               <div v-if="isEditingLocalRepoName">
                 <input
                   ref="localRepoNameInputRef"
-                  v-model="localRepoName"
+                  v-model="localRepoNameDraft"
                   v-bind="macOsTextInputAttrs"
                   class="text-input"
                   type="text"
                   :placeholder="$t('addRepo.repoNamePlaceholder')"
                   @blur="commitLocalRepoRename"
                   @keydown.enter.stop.prevent="commitLocalRepoRename"
+                  @keydown.escape.stop.prevent="cancelLocalRepoRename"
                 />
               </div>
               <div v-else class="repo-name-row">
@@ -466,13 +483,14 @@ function switchTab(tab: "create" | "import") {
             <div v-if="isEditingLocalRepoName">
               <input
                 ref="localRepoNameInputRef"
-                v-model="localRepoName"
+                v-model="localRepoNameDraft"
                 v-bind="macOsTextInputAttrs"
                 class="text-input"
                 type="text"
                 :placeholder="$t('addRepo.repoNamePlaceholder')"
                 @blur="commitLocalRepoRename"
                 @keydown.enter.stop.prevent="commitLocalRepoRename"
+                @keydown.escape.stop.prevent="cancelLocalRepoRename"
               />
             </div>
             <div v-else class="repo-name-row">
