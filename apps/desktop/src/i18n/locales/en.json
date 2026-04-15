@@ -243,6 +243,8 @@
     "agentCopilotName": "GitHub Copilot",
     "agentCodexName": "OpenAI Codex",
     "agentCopied": "Copied!",
+    "commandHintPrefix": "Use",
+    "commandHintSuffix": "to see available commands.",
     "noTaskSelected": "No task selected",
     "noTaskHint": "Select a task from the sidebar or press {shortcut} to create one."
   },

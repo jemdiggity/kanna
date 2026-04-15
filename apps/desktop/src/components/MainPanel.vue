@@ -20,11 +20,14 @@ const emit = defineEmits<{
 }>();
 
 const isMobile = __KANNA_MOBILE__;
+const COMMAND_HINT_STORAGE_KEY = "kanna:hide-command-hint";
 
 const isBlocked = computed(() => {
   if (!props.blockers || props.blockers.length === 0) return false;
   return props.blockers.some(b => !b.closed_at);
 });
+const commandHintDismissed = ref(readCommandHintDismissed());
+const showCommandHint = computed(() => !commandHintDismissed.value);
 
 // --- Agent CLI detection ---
 
@@ -86,6 +89,18 @@ async function copyCommand(agent: string) {
   await navigator.clipboard.writeText(cmd);
   copiedAgent.value = agent;
   setTimeout(() => { copiedAgent.value = null; }, 1500);
+}
+
+function readCommandHintDismissed(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(COMMAND_HINT_STORAGE_KEY) === "1";
+}
+
+function dismissCommandHint() {
+  commandHintDismissed.value = true;
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(COMMAND_HINT_STORAGE_KEY, "1");
+  }
 }
 </script>
 
@@ -168,6 +183,32 @@ async function copyCommand(agent: string) {
         <p class="empty-title">{{ $t('mainPanel.noTaskSelected') }}</p>
         <p class="empty-hint">{{ $t('mainPanel.noTaskHint', { shortcut: '⇧⌘N' }) }}</p>
       </template>
+    </div>
+    <div
+      v-if="showCommandHint"
+      data-testid="command-hint"
+      class="command-hint"
+    >
+      <span class="command-hint-copy">
+        <span v-if="$t('mainPanel.commandHintPrefix')" class="command-hint-text">
+          {{ $t('mainPanel.commandHintPrefix') }}
+        </span>
+        <span class="command-hint-shortcut">
+          <kbd>⌘</kbd><kbd>/</kbd>
+        </span>
+        <span class="command-hint-text">
+          {{ $t('mainPanel.commandHintSuffix') }}
+        </span>
+      </span>
+      <button
+        data-testid="command-hint-dismiss"
+        type="button"
+        class="command-hint-dismiss"
+        :aria-label="$t('actions.dismiss')"
+        @click="dismissCommandHint"
+      >
+        ×
+      </button>
     </div>
   </main>
 </template>
@@ -283,6 +324,58 @@ async function copyCommand(agent: string) {
   font-size: 11px;
   color: #555;
   margin-top: 8px;
+}
+
+.command-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid #2d2d2d;
+  background: #181818;
+  color: #8c8c8c;
+  font-size: 12px;
+}
+
+.command-hint-copy {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.command-hint-shortcut {
+  display: inline-flex;
+  align-items: center;
+}
+
+.command-hint-copy kbd {
+  background: #242424;
+  border: 1px solid #3f3f3f;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 11px;
+  color: #b3b3b3;
+}
+
+.command-hint-copy kbd + kbd {
+  margin-left: 2px;
+}
+
+.command-hint-dismiss {
+  border: 0;
+  background: transparent;
+  color: #666;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.command-hint-dismiss:hover {
+  color: #aaa;
 }
 
 .agent-setup {
