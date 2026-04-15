@@ -151,7 +151,7 @@ const displayCloneDestination = computed(() => {
 const manualLocalPath = computed(() => {
   const localPath = parsed.value.type === "local" ? parsed.value.localPath : null;
   if (!localPath) return null;
-  return normalizeLocalPath(localPath);
+  return canonicalizeLocalPath(normalizeLocalPath(localPath));
 });
 
 const activeLocalPath = computed(() => selectedLocalPath.value ?? manualLocalPath.value);
@@ -209,6 +209,12 @@ function normalizeLocalPath(path: string): string {
   return path;
 }
 
+function canonicalizeLocalPath(path: string): string {
+  if (path === "/") return path;
+  const trimmed = path.replace(/\/+$/, "");
+  return trimmed || "/";
+}
+
 function resetLocalRepoState() {
   localDerivedRepoName.value = "";
   localRepoName.value = "";
@@ -229,21 +235,22 @@ function deriveRepoName(path: string): string {
 }
 
 async function inspectLocalPath(dirPath: string) {
+  const canonicalDirPath = canonicalizeLocalPath(dirPath);
   const inspectionId = ++localInspectVersion.value;
   localLoading.value = true;
-  const derivedRepoName = deriveRepoName(dirPath);
+  const derivedRepoName = deriveRepoName(canonicalDirPath);
   localDerivedRepoName.value = derivedRepoName;
-  const isNewPath = localRepoNamePath.value !== dirPath;
+  const isNewPath = localRepoNamePath.value !== canonicalDirPath;
   if (isNewPath) {
     localRepoName.value = derivedRepoName;
     localRepoNameDraft.value = "";
-    localRepoNamePath.value = dirPath;
+    localRepoNamePath.value = canonicalDirPath;
     isEditingLocalRepoName.value = false;
   }
   localPathExists.value = false;
 
   try {
-    const exists = await invoke<boolean>("file_exists", { path: dirPath });
+    const exists = await invoke<boolean>("file_exists", { path: canonicalDirPath });
     if (inspectionId !== localInspectVersion.value) return;
 
     localPathExists.value = exists;
@@ -255,12 +262,12 @@ async function inspectLocalPath(dirPath: string) {
     }
 
     try {
-      const branch = await invoke<string>("git_default_branch", { repoPath: dirPath });
+      const branch = await invoke<string>("git_default_branch", { repoPath: canonicalDirPath });
       if (inspectionId !== localInspectVersion.value) return;
       localBranch.value = branch || "main";
       localIsGitRepo.value = true;
       try {
-        const remote = await invoke<string>("git_remote_url", { repoPath: dirPath });
+        const remote = await invoke<string>("git_remote_url", { repoPath: canonicalDirPath });
         if (inspectionId !== localInspectVersion.value) return;
         localRemote.value = remote;
       } catch {
@@ -321,9 +328,10 @@ async function handleChooseLocalFolder() {
   const dirPath = Array.isArray(result) ? result[0] : result;
   if (!dirPath) return;
 
-  selectedLocalPath.value = dirPath;
-  importInput.value = dirPath;
-  await inspectLocalPath(dirPath);
+  const canonicalDirPath = canonicalizeLocalPath(dirPath);
+  selectedLocalPath.value = canonicalDirPath;
+  importInput.value = canonicalDirPath;
+  await inspectLocalPath(canonicalDirPath);
 }
 
 function handleSubmit() {

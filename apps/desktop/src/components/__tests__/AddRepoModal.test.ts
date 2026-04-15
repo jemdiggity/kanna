@@ -237,6 +237,30 @@ describe("AddRepoModal", () => {
     expect(wrapper.get(".repo-name-value").text()).toBe("second-project");
   });
 
+  it("preserves a custom rename when the same local repo is re-inspected with a trailing slash", async () => {
+    const wrapper = mountModal();
+
+    await flushPromises();
+
+    const importInput = wrapper.get('input[placeholder="addRepo.importPlaceholder"]');
+    await importInput.setValue("/Users/me/code/project");
+    await flushPromises();
+
+    const repoNameRow = wrapper.get(".repo-name-row");
+    await repoNameRow.get(".repo-name-change").trigger("click");
+    await flushPromises();
+
+    const repoNameInput = wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]');
+    await repoNameInput.setValue("Project Desktop");
+    await repoNameInput.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+
+    await importInput.setValue("/Users/me/code/project/");
+    await flushPromises();
+
+    expect(wrapper.get(".repo-name-value").text()).toBe("Project Desktop");
+  });
+
   it("keeps focus on the import input until rename mode is opened explicitly", async () => {
     const wrapper = mountModal("create");
 
