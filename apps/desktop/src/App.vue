@@ -110,7 +110,36 @@ const preferences = reactive({
   devLingerTerminals: false,
   defaultAgentProvider: "claude" as AgentProvider,
 });
-const diffScopes = new Map<string, "branch" | "working">();
+type DiffScope = "branch" | "working";
+
+interface DiffScrollPositions {
+  branch?: number;
+  working?: number;
+}
+
+interface DiffViewState {
+  scope?: DiffScope;
+  scrollPositions?: DiffScrollPositions;
+}
+
+const diffViewStates = reactive<Record<string, DiffViewState>>({});
+const currentDiffViewKey = computed(() => {
+  if (store.currentItem) return `item:${store.currentItem.id}`;
+  if (store.selectedRepo) return `repo:${store.selectedRepo.id}`;
+  return undefined;
+});
+const currentDiffViewState = computed(() => {
+  const key = currentDiffViewKey.value;
+  return key ? diffViewStates[key] : undefined;
+});
+
+function updateCurrentDiffViewState(partial: DiffViewState) {
+  const key = currentDiffViewKey.value;
+  if (!key) return;
+  const current = diffViewStates[key] ?? {};
+  diffViewStates[key] = { ...current, ...partial };
+}
+
 const sidebarHidden = ref(false);
 const maximizedModal = ref<ShortcutContext | null>(null);
 const maximized = computed(() => maximizedModal.value !== null);
@@ -954,10 +983,13 @@ onMounted(async () => {
       v-if="showDiffModal && !isMobile && store.selectedRepo?.path"
       :repo-path="store.selectedRepo.path"
       :worktree-path="store.currentItem?.branch ? activeWorktreePath : undefined"
-      :initial-scope="store.currentItem ? diffScopes.get(store.currentItem.id) : undefined"
+      :initial-scope="currentDiffViewState?.scope"
+      :initial-scroll-positions="currentDiffViewState?.scrollPositions"
       :base-ref="store.currentItem?.base_ref ?? undefined"
+      :view-key="currentDiffViewKey"
       :maximized="maximizedModal === 'diff'"
-      @scope-change="(s: 'branch' | 'working') => { if (store.currentItem) diffScopes.set(store.currentItem.id, s); }"
+      @scope-change="(scope: DiffScope) => updateCurrentDiffViewState({ scope })"
+      @scroll-state-change="(scrollPositions: DiffScrollPositions) => updateCurrentDiffViewState({ scrollPositions })"
       @close="showDiffModal = false; maximizedModal = null"
     />
     <CommitGraphModal

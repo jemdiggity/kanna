@@ -157,4 +157,60 @@ describe("DiffView", () => {
 
     wrapper.unmount();
   });
+
+  it("restores the previous scroll position when switching diff scopes", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "git_diff") return "diff --git a/working.txt b/working.txt";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_merge_base") return "base-sha";
+      if (command === "git_diff_range") return "diff --git a/branch.txt b/branch.txt";
+      return "";
+    });
+    renderMock.mockImplementation(({ containerWrapper }: { containerWrapper?: HTMLElement }) => {
+      containerWrapper?.parentElement?.scrollTo({ top: 0 });
+    });
+
+    const wrapper = mount(DiffView, {
+      props: {
+        repoPath: "/repo",
+        initialScope: "working",
+      },
+      attachTo: document.body,
+      global: {
+        mocks: {
+          $t: (key: string) => key,
+        },
+      },
+    });
+
+    const container = wrapper.get(".diff-container").element as HTMLElement;
+    container.scrollTo = ({ top }: ScrollToOptions) => {
+      container.scrollTop = top ?? 0;
+    };
+
+    await flushPromises();
+    await flushPromises();
+
+    const [workingButton, branchButton] = wrapper.findAll("button");
+
+    container.scrollTop = 240;
+    await branchButton.trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    container.scrollTop = 520;
+    await workingButton.trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.scrollTop).toBe(240);
+
+    await branchButton.trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.scrollTop).toBe(520);
+
+    wrapper.unmount();
+  });
 });
