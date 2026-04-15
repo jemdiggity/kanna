@@ -1,15 +1,27 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import { useLessScroll } from "../composables/useLessScroll";
 import { invoke } from "../invoke";
 import { registerContextShortcuts } from "../composables/useShortcutContext";
-import { FileDiff, parsePatchFiles, setLanguageOverride } from "@pierre/diffs";
+import {
+  FileDiff,
+  parsePatchFiles,
+  setLanguageOverride,
+  type FileDiffMetadata,
+} from "@pierre/diffs";
 import {
   getSyntaxLanguageForPath,
   isBazelSyntaxPath,
 } from "../utils/syntaxLanguage";
 import { normalizeGitPatchForDiffParser } from "../utils/normalizeGitPatch";
+import { macOsTextInputAttrs } from "../utils/textInput";
+import {
+  buildDiffSearchTargets,
+  findDiffSearchMatches,
+  type DiffSearchFile,
+  type DiffSearchMatch,
+} from "../utils/diffSearch";
 import {
   getOrCreateWorkerPoolSingleton,
   type WorkerPoolManager,
@@ -18,6 +30,9 @@ import {
 const { t } = useI18n();
 
 registerContextShortcuts("diff", [
+  { label: t('diffView.shortcutSearch'), display: "/" },
+  { label: t('diffView.shortcutSearchAlt'), display: "⌘F" },
+  { label: t('diffView.shortcutNextPrevMatch'), display: "n / N" },
   { label: t('diffView.shortcutScopeNext'), display: "⇧⌘]" },
   { label: t('diffView.shortcutScopePrev'), display: "⇧⌘[" },
   { label: t('diffView.shortcutCycleFilter'), display: "s" },
@@ -48,7 +63,9 @@ const emit = defineEmits<{
   (e: "close"): void;
 }>();
 
+const diffViewRef = ref<HTMLElement | null>(null);
 const containerRef = ref<HTMLElement | null>(null);
+const searchInputRef = ref<HTMLInputElement | null>(null);
 const diffContent = ref("");
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -56,6 +73,10 @@ const noDiff = ref(false);
 const workingFilter = ref<WorkingFilter>("all");
 const scope = ref<DiffScope>(props.initialScope === "branch" ? "branch" : "working");
 const scrollPositions = ref<DiffScrollPositions>(cloneScrollPositions(props.initialScrollPositions));
+const renderedFiles = ref<DiffSearchFile[]>([]);
+const isSearching = ref(false);
+const searchQuery = ref("");
+const currentMatch = ref(1);
 
 const workingFilterLabel = computed(() => {
   const labels: Record<WorkingFilter, string> = {
@@ -94,6 +115,15 @@ interface DiffRenderContext {
   loadStartedAt: number;
 }
 
+const searchTargets = computed(() => buildDiffSearchTargets(renderedFiles.value));
+const searchMatches = computed(() => findDiffSearchMatches(searchTargets.value, searchQuery.value));
+const searchMatchCount = computed(() => searchMatches.value.length);
+const searchCountLabel = computed(() => {
+  if (!searchQuery.value) return "";
+  if (!searchMatchCount.value) return t("diffView.searchNoMatches");
+  return `${currentMatch.value}/${searchMatchCount.value}`;
+});
+
 let nextDiffLoadId = 0;
 
 function roundDuration(durationMs: number): number {
@@ -105,6 +135,107 @@ function getWorkerPoolStatsSnapshot(pool: WorkerPoolManager | null): DiffWorkerP
   const inspector = pool as WorkerPoolManager & DiffWorkerPoolInspector;
   if (typeof inspector.getStats !== "function") return null;
   return inspector.getStats();
+}
+
+function openSearch() {
+  isSearching.value = true;
+}
+
+function closeSearch() {
+  isSearching.value = false;
+  searchQuery.value = "";
+  currentMatch.value = 1;
+}
+
+function nextMatch() {
+  if (!searchMatchCount.value) return;
+  currentMatch.value =
+    currentMatch.value >= searchMatchCount.value ? 1 : currentMatch.value + 1;
+}
+
+function prevMatch() {
+  if (!searchMatchCount.value) return;
+  currentMatch.value =
+    currentMatch.value <= 1 ? searchMatchCount.value : currentMatch.value - 1;
+}
+
+function getFileWrapper(fileId: string): HTMLElement | null {
+  const wrappers = containerRef.value?.querySelectorAll<HTMLElement>(".diff-file");
+  if (!wrappers) return null;
+  return [...wrappers].find((wrapper) => wrapper.dataset.fileId === fileId) ?? null;
+}
+
+function ensureSearchStyles(shadowRoot: ShadowRoot) {
+  if (shadowRoot.querySelector("style[data-kanna-diff-search]")) return;
+  const style = document.createElement("style");
+  style.dataset.kannaDiffSearch = "true";
+  style.textContent = `
+    .diff-search-match {
+      background: rgba(255, 196, 61, 0.22);
+      box-shadow: inset 0 0 0 1px rgba(255, 196, 61, 0.3);
+    }
+
+    .diff-search-active {
+      background: rgba(255, 196, 61, 0.4);
+      box-shadow: inset 0 0 0 1px rgba(255, 196, 61, 0.85);
+    }
+  `;
+  shadowRoot.appendChild(style);
+}
+
+function getMatchElements(match: DiffSearchMatch): HTMLElement[] {
+  const wrapper = getFileWrapper(match.anchor.fileId);
+  const container = wrapper?.querySelector<HTMLElement>("diffs-container");
+  const shadowRoot = container?.shadowRoot;
+  if (!shadowRoot) return [];
+
+  ensureSearchStyles(shadowRoot);
+
+  if (match.anchor.type === "file-header") {
+    const title = shadowRoot.querySelector<HTMLElement>("[data-title]");
+    return title ? [title] : [];
+  }
+
+  const lineIndexPrefix = `${match.anchor.unifiedLineIndex},`;
+  const gutter = shadowRoot.querySelector<HTMLElement>(`[data-gutter] [data-line-index^="${lineIndexPrefix}"]`);
+  const content = shadowRoot.querySelector<HTMLElement>(`[data-content] [data-line-index^="${lineIndexPrefix}"]`);
+  return [gutter, content].filter((element): element is HTMLElement => element != null);
+}
+
+function clearSearchHighlights() {
+  const containers = containerRef.value?.querySelectorAll<HTMLElement>("diffs-container");
+  if (!containers) return;
+
+  for (const container of containers) {
+    const shadowRoot = container.shadowRoot;
+    if (!shadowRoot) continue;
+    for (const element of shadowRoot.querySelectorAll<HTMLElement>(".diff-search-match, .diff-search-active")) {
+      element.classList.remove("diff-search-match", "diff-search-active");
+    }
+  }
+}
+
+function applySearchHighlights() {
+  clearSearchHighlights();
+  if (!searchMatches.value.length) return;
+
+  const activeIndex = Math.max(1, Math.min(currentMatch.value, searchMatches.value.length)) - 1;
+  let activeElement: HTMLElement | null = null;
+
+  for (const [index, match] of searchMatches.value.entries()) {
+    const elements = getMatchElements(match);
+    for (const element of elements) {
+      element.classList.add("diff-search-match");
+      if (index === activeIndex) {
+        element.classList.add("diff-search-active");
+        if (activeElement == null && !element.closest("[data-gutter]")) {
+          activeElement = element;
+        }
+      }
+    }
+  }
+
+  activeElement?.scrollIntoView?.({ block: "center" });
 }
 
 function logDiffPerf(
@@ -176,6 +307,7 @@ async function loadDiff(options: { preserveCurrentScroll?: boolean } = {}) {
     saveCurrentScrollPosition();
   }
   emit("scope-change", scope.value);
+  closeSearch();
   const path = props.worktreePath || props.repoPath;
   const loadId = ++nextDiffLoadId;
   const loadStartedAt = performance.now();
@@ -238,6 +370,7 @@ async function loadDiff(options: { preserveCurrentScroll?: boolean } = {}) {
     if (!patch?.trim()) {
       noDiff.value = true;
       diffContent.value = "";
+      renderedFiles.value = [];
       cleanupInstance();
       logDiffPerf(loadId, "empty", {
         totalMs: roundDuration(performance.now() - loadStartedAt),
@@ -306,6 +439,7 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
   const allFiles = patches?.flatMap((p) => p.files || []) || [];
   if (allFiles.length === 0) {
     noDiff.value = true;
+    renderedFiles.value = [];
     cleanupInstance();
     logDiffPerf(context.loadId, "parse:empty", {
       totalMs: roundDuration(performance.now() - context.loadStartedAt),
@@ -321,6 +455,11 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
     patchCount: patches.length,
     fileCount: allFiles.length,
   });
+
+  renderedFiles.value = allFiles.map((fileMeta, fileIndex) => ({
+    id: `${context.loadId}:${fileIndex}`,
+    fileDiff: fileMeta as FileDiffMetadata,
+  }));
 
   const workerInitStartedAt = performance.now();
   const pool = await initWorkerPool();
@@ -359,6 +498,7 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
 
     const wrapper = document.createElement("div");
     wrapper.className = "diff-file";
+    wrapper.dataset.fileId = renderedFiles.value[fileIndex]?.id ?? `${context.loadId}:${fileIndex}`;
     containerRef.value.appendChild(wrapper);
 
     const instance = new FileDiff(
@@ -369,6 +509,7 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
         onPostRender: () => {
           if (didLogPostRender) return;
           didLogPostRender = true;
+          nextTick(() => applySearchHighlights());
           const completedAt = performance.now();
           const sinceFileStartMs = completedAt - fileRenderStartedAt;
           const sinceLoadStartMs = completedAt - context.loadStartedAt;
@@ -474,8 +615,56 @@ function handleScroll() {
   saveCurrentScrollPosition();
 }
 
+function handleSearchInputKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeSearch();
+    nextTick(() => diffViewRef.value?.focus());
+    return;
+  }
+
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (e.shiftKey) {
+      prevMatch();
+    } else {
+      nextMatch();
+    }
+    nextTick(() => diffViewRef.value?.focus());
+  }
+}
+
 useLessScroll(containerRef, {
   extraHandler(e) {
+    const noMods = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+    const meta = e.metaKey || e.ctrlKey;
+
+    if (e.key === "/" && noMods) {
+      e.preventDefault();
+      openSearch();
+      nextTick(() => searchInputRef.value?.focus());
+      return true;
+    }
+
+    if (meta && e.key === "f" && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      openSearch();
+      nextTick(() => searchInputRef.value?.focus());
+      return true;
+    }
+
+    if (e.key === "n" && noMods && isSearching.value) {
+      e.preventDefault();
+      nextMatch();
+      return true;
+    }
+
+    if (e.key === "N" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && isSearching.value) {
+      e.preventDefault();
+      prevMatch();
+      return true;
+    }
+
     // s — cycle working filter (only in working scope)
     if (e.key === "s" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
       if (scope.value === "working") {
@@ -501,9 +690,34 @@ useLessScroll(containerRef, {
   onClose: () => emit("close"),
 });
 
+watch(searchMatchCount, (count) => {
+  if (count === 0) {
+    currentMatch.value = 1;
+    return;
+  }
+  if (currentMatch.value > count) {
+    currentMatch.value = count;
+  }
+});
+
+watch(searchQuery, () => {
+  currentMatch.value = 1;
+});
+
+watch([searchMatches, currentMatch], () => {
+  nextTick(() => applySearchHighlights());
+});
+
+watch(isSearching, (searching) => {
+  if (searching) {
+    nextTick(() => searchInputRef.value?.focus());
+  }
+});
+
 onMounted(() => {
   syncViewStateFromProps();
   void loadDiff({ preserveCurrentScroll: false });
+  nextTick(() => diffViewRef.value?.focus());
 });
 
 onUnmounted(() => cleanupInstance());
@@ -512,7 +726,7 @@ defineExpose({ refresh: loadDiff });
 </script>
 
 <template>
-  <div class="diff-view">
+  <div ref="diffViewRef" class="diff-view" tabindex="-1">
     <div class="diff-toolbar">
       <div class="scope-selector">
         <button :class="{ active: scope === 'working' }" @click="setScope('working')">{{ $t('diffView.scopeWorking') }}</button>
@@ -527,6 +741,18 @@ defineExpose({ refresh: loadDiff });
     <div v-if="error" class="diff-status diff-error">{{ error }}</div>
     <div v-else-if="noDiff && !loading" class="diff-status">{{ $t('diffView.noChanges') }}</div>
     <div ref="containerRef" class="diff-container" @scroll="handleScroll"></div>
+    <div v-if="isSearching" class="search-bar">
+      <span class="search-prefix">/</span>
+      <input
+        ref="searchInputRef"
+        v-model="searchQuery"
+        v-bind="macOsTextInputAttrs"
+        class="search-input"
+        :placeholder="$t('diffView.searchPlaceholder')"
+        @keydown="handleSearchInputKeydown"
+      />
+      <span v-if="searchQuery" class="search-count">{{ searchCountLabel }}</span>
+    </div>
   </div>
 </template>
 
@@ -539,6 +765,7 @@ defineExpose({ refresh: loadDiff });
   min-height: 0;
   display: flex;
   flex-direction: column;
+  outline: none;
 }
 
 .diff-toolbar {
@@ -608,5 +835,41 @@ defineExpose({ refresh: loadDiff });
 
 .diff-container :deep(diffs-container) {
   color-scheme: dark;
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid #333;
+  background: #151515;
+  flex-shrink: 0;
+}
+
+.search-prefix {
+  font-family: "SF Mono", Menlo, monospace;
+  color: #8b949e;
+  font-size: 13px;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e6edf3;
+  font-size: 13px;
+}
+
+.search-input::placeholder {
+  color: #6e7681;
+}
+
+.search-count {
+  font-size: 12px;
+  color: #8b949e;
+  white-space: nowrap;
 }
 </style>
