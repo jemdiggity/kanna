@@ -82,6 +82,7 @@ class BuildMacosDmgTest(unittest.TestCase):
 
     def test_build_applescript_includes_window_and_icon_clauses(self) -> None:
         script = build_macos_dmg.build_applescript(
+            mount_dir=Path("/Volumes/Kanna"),
             window_pos=(10, 60),
             window_size=(500, 350),
             icon_size=128,
@@ -94,7 +95,20 @@ class BuildMacosDmgTest(unittest.TestCase):
         self.assertIn('set position of item "Kanna.app" to {160, 175}', script)
         self.assertIn('set position of item "Applications" to {352, 175}', script)
         self.assertIn("set icon size to 128", script)
-        self.assertIn('set dsStore to "\\"/Volumes/" & volumeName & "/.DS_Store\\""', script)
+        self.assertIn('set dsStorePath to "/Volumes/Kanna/.DS_Store"', script)
+
+    def test_build_applescript_uses_actual_mount_dir_when_volume_name_collides(self) -> None:
+        script = build_macos_dmg.build_applescript(
+            mount_dir=Path("/Volumes/Kanna 1"),
+            window_pos=(10, 60),
+            window_size=(500, 350),
+            icon_size=128,
+            text_size=16,
+            icon_positions={},
+        )
+
+        self.assertIn('set dsStorePath to "/Volumes/Kanna 1/.DS_Store"', script)
+        self.assertNotIn('"/Volumes/" & volumeName', script)
 
     def test_read_finder_info_returns_zeroed_bytes_when_missing(self) -> None:
         completed = subprocess.CompletedProcess(
@@ -187,12 +201,13 @@ class BuildMacosDmgTest(unittest.TestCase):
 
     def test_run_finder_layout_invokes_osascript_and_waits_for_ds_store(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            mount_dir = Path(temp_dir)
+            mount_dir = Path(temp_dir) / "Kanna 1"
+            mount_dir.mkdir()
             ds_store_path = mount_dir / ".DS_Store"
 
             def fake_run(command, check=False, capture_output=False, text=False):
                 self.assertEqual(command[0], "osascript")
-                self.assertEqual(command[-1], "Kanna")
+                self.assertEqual(command[-1], "Kanna 1")
                 ds_store_path.write_text("finder-layout", encoding="utf-8")
                 return subprocess.CompletedProcess(
                     args=command, returncode=0, stdout="", stderr=""
@@ -205,7 +220,6 @@ class BuildMacosDmgTest(unittest.TestCase):
                     build_macos_dmg.subprocess, "run", side_effect=fake_run
                 ) as subprocess_run:
                     build_macos_dmg.run_finder_layout(
-                        volume_name="Kanna",
                         mount_dir=mount_dir,
                         window_pos=(10, 60),
                         window_size=(500, 350),
@@ -215,6 +229,7 @@ class BuildMacosDmgTest(unittest.TestCase):
                     )
 
             build_applescript.assert_called_once_with(
+                mount_dir=mount_dir,
                 window_pos=(10, 60),
                 window_size=(500, 350),
                 icon_size=128,
@@ -320,7 +335,6 @@ class BuildMacosDmgTest(unittest.TestCase):
 
             finder_layout_lock.assert_called_once_with()
             run_finder_layout.assert_called_once_with(
-                volume_name="Kanna",
                 mount_dir=public_mount_dir,
                 window_pos=(10, 60),
                 window_size=(500, 350),

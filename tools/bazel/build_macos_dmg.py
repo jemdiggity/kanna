@@ -77,6 +77,11 @@ def run_checked(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
+def applescript_string_literal(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 @contextlib.contextmanager
 def finder_layout_lock(lock_path: Optional[Path] = None):
     target_lock_path = lock_path or FINDER_LAYOUT_LOCK_PATH
@@ -148,12 +153,14 @@ def set_finder_info(
 
 def build_applescript(
     *,
+    mount_dir: Path,
     window_pos: tuple[int, int],
     window_size: tuple[int, int],
     icon_size: int,
     text_size: int,
     icon_positions: dict[str, tuple[int, int]],
 ) -> str:
+    ds_store_path = applescript_string_literal(str(mount_dir / ".DS_Store"))
     position_lines = "\n".join(
         f'            set position of item "{name}" to {{{x}, {y}}}'
         for name, (x, y) in icon_positions.items()
@@ -166,7 +173,6 @@ def build_applescript(
             set theYOrigin to {window_pos[1]}
             set theWidth to {window_size[0]}
             set theHeight to {window_size[1]}
-            set dsStore to "\\"/Volumes/" & volumeName & "/.DS_Store\\""
             tell container window
                 set current view to icon view
                 set toolbar visible to false
@@ -190,7 +196,7 @@ def build_applescript(
                 set the bounds to {{theXOrigin, theYOrigin, theXOrigin + theWidth, theYOrigin + theHeight}}
             end tell
         end tell
-        set dsStorePath to "/Volumes/" & volumeName & "/.DS_Store"
+        set dsStorePath to {ds_store_path}
         repeat 20 times
             if (do shell script "[ -f " & quoted form of dsStorePath & " ] && echo yes || echo no") is "yes" then
                 return
@@ -205,7 +211,6 @@ end run
 
 def run_finder_layout(
     *,
-    volume_name: str,
     mount_dir: Path,
     window_pos: tuple[int, int],
     window_size: tuple[int, int],
@@ -214,6 +219,7 @@ def run_finder_layout(
     icon_positions: dict[str, tuple[int, int]],
 ) -> None:
     script = build_applescript(
+        mount_dir=mount_dir,
         window_pos=window_pos,
         window_size=window_size,
         icon_size=icon_size,
@@ -227,9 +233,10 @@ def run_finder_layout(
         applescript_path = Path(handle.name)
     try:
         last_error: Optional[subprocess.CalledProcessError] = None
+        mounted_volume_name = mount_dir.name
         for _ in range(10):
             result = subprocess.run(
-                ["osascript", str(applescript_path), volume_name],
+                ["osascript", str(applescript_path), mounted_volume_name],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -354,7 +361,6 @@ def main() -> None:
             try:
                 if has_custom_layout:
                     run_finder_layout(
-                        volume_name=args.volume_name,
                         mount_dir=mount_dir,
                         window_pos=window_pos,
                         window_size=window_size,
