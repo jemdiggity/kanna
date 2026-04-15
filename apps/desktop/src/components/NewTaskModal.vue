@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { invoke } from "../invoke";
 import type { AgentProvider } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
@@ -31,7 +31,17 @@ const emit = defineEmits<{
 
 const prompt = ref("");
 const agentProvider = ref<AgentProvider>(props.defaultAgentProvider ?? "claude");
-const selectedPipeline = ref<string>(props.defaultPipeline ?? props.pipelines?.[0] ?? "default");
+const pipelineOptions = computed(() => {
+  if (props.pipelines && props.pipelines.length > 0) return props.pipelines;
+  return ["default"];
+});
+const selectedPipeline = ref<string>(props.defaultPipeline ?? pipelineOptions.value[0] ?? "default");
+const showPipelinePicker = ref(false);
+const pipelineLabelId = "pipeline-label";
+const pipelineActionLabelId = "pipeline-action-label";
+const pipelineValueId = "pipeline-value";
+const pipelineToggleId = "pipeline-toggle";
+const pipelinePickerId = "pipeline-picker";
 const defaultBranchName = computed(() => props.defaultBranchName ?? "main");
 const resolvedBaseBranch = computed(() => {
   if (props.defaultBaseBranch) return props.defaultBaseBranch;
@@ -99,6 +109,84 @@ function handleBaseBranchSelect(branch: string) {
   hasExplicitBaseBranchSelection.value = true;
 }
 
+function handlePipelineSelect(pipeline: string) {
+  selectedPipeline.value = pipeline;
+  showPipelinePicker.value = false;
+  nextTick(() => {
+    document.getElementById(pipelineToggleId)?.focus();
+  });
+}
+
+function focusPipelineOption(pipeline: string) {
+  nextTick(() => {
+    document.getElementById(`pipeline-option-${pipeline}`)?.focus();
+  });
+}
+
+function focusSelectedPipelineOption() {
+  focusPipelineOption(selectedPipeline.value);
+}
+
+function handlePipelineToggle() {
+  showPipelinePicker.value = !showPipelinePicker.value;
+  if (showPipelinePicker.value) focusSelectedPipelineOption();
+}
+
+function handlePipelineToggleKeydown(e: KeyboardEvent) {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    if (!showPipelinePicker.value) showPipelinePicker.value = true;
+    focusSelectedPipelineOption();
+    return;
+  }
+
+  if (e.key === "Escape" && showPipelinePicker.value) {
+    e.preventDefault();
+    showPipelinePicker.value = false;
+  }
+}
+
+function handlePipelineOptionKeydown(e: KeyboardEvent, index: number) {
+  const options = pipelineOptions.value;
+  const lastIndex = options.length - 1;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    const nextIndex = index === lastIndex ? 0 : index + 1;
+    focusPipelineOption(options[nextIndex]);
+    return;
+  }
+
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    const nextIndex = index === 0 ? lastIndex : index - 1;
+    focusPipelineOption(options[nextIndex]);
+    return;
+  }
+
+  if (e.key === "Home") {
+    e.preventDefault();
+    focusPipelineOption(options[0]);
+    return;
+  }
+
+  if (e.key === "End") {
+    e.preventDefault();
+    focusPipelineOption(options[lastIndex]);
+    return;
+  }
+
+  if (e.key === "Enter" || e.key === " ") {
+    return;
+  }
+
+  if (e.key === "Escape") {
+    e.preventDefault();
+    showPipelinePicker.value = false;
+    document.getElementById(pipelineToggleId)?.focus();
+  }
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
     e.preventDefault();
@@ -144,24 +232,6 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown="handleKeydown"
         />
         <div class="pipeline-row">
-          <label class="pipeline-label" for="pipeline-select">Pipeline</label>
-          <select
-            id="pipeline-select"
-            v-model="selectedPipeline"
-            class="pipeline-select"
-          >
-            <option
-              v-if="!pipelines || pipelines.length === 0"
-              value="default"
-            >default</option>
-            <option
-              v-for="name in pipelines"
-              :key="name"
-              :value="name"
-            >{{ name }}</option>
-          </select>
-        </div>
-        <div class="pipeline-row">
           <label class="pipeline-label">{{ $t("tasks.baseBranch") }}</label>
           <div class="base-branch-row">
             <span class="base-branch-value" data-testid="base-branch-value">{{ selectedBaseBranch }}</span>
@@ -197,6 +267,55 @@ function handleKeydown(e: KeyboardEvent) {
             @click="handleBaseBranchSelect(branch)"
           >
             {{ branch }}
+          </button>
+        </div>
+
+        <div class="pipeline-row">
+          <label :id="pipelineLabelId" class="pipeline-label">Pipeline</label>
+          <div class="base-branch-row pipeline-value-row">
+            <span :id="pipelineActionLabelId" class="sr-only">{{ $t("addRepo.change") }}</span>
+            <span :id="pipelineValueId" class="base-branch-value" data-testid="pipeline-value">{{ selectedPipeline }}</span>
+            <button
+              :id="pipelineToggleId"
+              type="button"
+              class="change-link"
+              data-testid="pipeline-toggle"
+              :aria-controls="pipelinePickerId"
+              :aria-expanded="showPipelinePicker"
+              aria-haspopup="listbox"
+              :aria-labelledby="`${pipelineActionLabelId} ${pipelineLabelId} ${pipelineValueId}`"
+              @mousedown.prevent
+              @click="handlePipelineToggle"
+              @keydown="handlePipelineToggleKeydown"
+            >
+              {{ $t("addRepo.change") }}
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-if="showPipelinePicker"
+          :id="pipelinePickerId"
+          class="base-branch-picker"
+          role="listbox"
+          :aria-labelledby="pipelineLabelId"
+        >
+          <button
+            v-for="(name, index) in pipelineOptions"
+            :key="name"
+            :id="`pipeline-option-${name}`"
+            type="button"
+            class="base-branch-option"
+            role="option"
+            :class="{ selected: name === selectedPipeline }"
+            :aria-selected="name === selectedPipeline"
+            :data-testid="`pipeline-option-${name}`"
+            :tabindex="name === selectedPipeline ? 0 : -1"
+            @mousedown.prevent
+            @click="handlePipelineSelect(name)"
+            @keydown="handlePipelineOptionKeydown($event, index)"
+          >
+            {{ name }}
           </button>
         </div>
       </div>
@@ -290,6 +409,18 @@ function handleKeydown(e: KeyboardEvent) {
   color: #555;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .pipeline-row {
   display: flex;
   align-items: center;
@@ -303,20 +434,8 @@ function handleKeydown(e: KeyboardEvent) {
   white-space: nowrap;
 }
 
-.pipeline-select {
+.pipeline-value-row {
   flex: 1;
-  background: #1a1a1a;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #e0e0e0;
-  font-size: 12px;
-  padding: 4px 8px;
-  outline: none;
-  cursor: pointer;
-}
-
-.pipeline-select:focus {
-  border-color: #0066cc;
 }
 
 .base-branch-row {
