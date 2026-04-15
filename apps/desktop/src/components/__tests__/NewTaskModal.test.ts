@@ -292,6 +292,60 @@ describe("NewTaskModal", () => {
     expect(wrapper.text()).not.toContain("fix/base-branch-picker");
   });
 
+  it("opens the base branch selector as a compact dropdown with capped results height", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        baseBranches: [
+          "origin/main",
+          "main",
+          "feature/task-base-branch",
+          "feature/sidebar-analytics",
+          "feature/worktree-cleanup",
+          "feature/command-palette-filtering",
+          "fix/base-branch-picker",
+          "release/2026.04",
+        ],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get('[data-testid="base-branch-toggle"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="base-branch-dropdown"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="base-branch-options"]').attributes("style")).toContain("max-height");
+  });
+
+  it("supports keyboard selection in the base branch dropdown and closes after selection", async () => {
+    const wrapper = mount(NewTaskModal, {
+      attachTo: document.body,
+      props: {
+        baseBranches: ["origin/main", "main", "release/2026.04"],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get('[data-testid="base-branch-toggle"]').trigger("click");
+    await flushPromises();
+
+    const search = wrapper.get('[data-testid="base-branch-search"]');
+    expect(document.activeElement).toBe(search.element);
+
+    await search.trigger("keydown", { key: "ArrowDown" });
+    await search.trigger("keydown", { key: "ArrowDown" });
+    await search.trigger("keydown", { key: "Enter" });
+
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("release/2026.04");
+    expect(wrapper.find('[data-testid="base-branch-dropdown"]').exists()).toBe(false);
+
+    wrapper.unmount();
+  });
+
   it("shows the selected base branch inline before the picker is opened", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {
@@ -305,6 +359,8 @@ describe("NewTaskModal", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("origin/main");
+    expect(wrapper.get('[data-testid="base-branch-change-link"]').text()).toContain("addRepo.change");
+    expect(wrapper.find('[data-testid="base-branch-dropdown"]').exists()).toBe(false);
   });
 
   it("prefers origin default branch when no explicit default base branch is provided", async () => {
