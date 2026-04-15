@@ -3,7 +3,7 @@ import type { Repo, PipelineItem } from "@kanna/db";
 import { computed, ref, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
-import { fuzzyMatch } from "../utils/fuzzyMatch";
+import { taskSearchMatch } from "../utils/taskSearch";
 import { useKannaStore } from "../stores/kanna";
 import { isTeardownStage } from "../stores/taskStages";
 import { macOsTextInputAttrs } from "../utils/textInput";
@@ -47,19 +47,36 @@ const preSearchCollapsed = ref<Set<string> | null>(null);
 const trimmedSearchQuery = computed(() => searchQuery.value.trim());
 const hasActiveSearch = computed(() => trimmedSearchQuery.value.length > 0);
 
+function isSearchActive(): boolean {
+  return searchQuery.value.trim().length > 0;
+}
+
 function matchesSearch(item: PipelineItem): boolean {
   const q = trimmedSearchQuery.value;
   if (!q) return true;
-  const title = item.display_name || item.issue_title || item.prompt;
-  if (title && fuzzyMatch(q, title) !== null) return true;
-  if (item.branch && item.branch.toLowerCase().includes(q.toLowerCase())) return true;
-  return false;
+  return taskSearchMatch(q, item) !== null;
+}
+
+function getSearchScore(item: PipelineItem): number | null {
+  const q = searchQuery.value.trim();
+  if (!q) return null;
+  return taskSearchMatch(q, item)?.score ?? null;
+}
+
+function compareBySearchScore(a: PipelineItem, b: PipelineItem): number {
+  const scoreA = getSearchScore(a) ?? 0;
+  const scoreB = getSearchScore(b) ?? 0;
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  return b.created_at.localeCompare(a.created_at);
 }
 
 function sortedPinned(repoId: string): PipelineItem[] {
   return props.pipelineItems
     .filter((i) => i.repo_id === repoId && !isHidden(i) && i.pinned && matchesSearch(i))
-    .sort((a, b) => (a.pin_order ?? 0) - (b.pin_order ?? 0));
+    .sort((a, b) => {
+      if (searchQuery.value.trim()) return compareBySearchScore(a, b);
+      return (a.pin_order ?? 0) - (b.pin_order ?? 0);
+    });
 }
 
 function sortByCreatedAt(items: PipelineItem[]): PipelineItem[] {
@@ -67,9 +84,10 @@ function sortByCreatedAt(items: PipelineItem[]): PipelineItem[] {
 }
 
 function sortedBlocked(repoId: string): PipelineItem[] {
-  return sortByCreatedAt(
-    props.pipelineItems.filter((i) => i.repo_id === repoId && hasTag(i, "blocked") && !isHidden(i) && !i.pinned && matchesSearch(i))
+  const items = props.pipelineItems.filter(
+    (i) => i.repo_id === repoId && hasTag(i, "blocked") && !isHidden(i) && !i.pinned && matchesSearch(i)
   );
+  return searchQuery.value.trim() ? [...items].sort(compareBySearchScore) : sortByCreatedAt(items);
 }
 
 interface StageGroup {
@@ -100,7 +118,7 @@ function groupedByStage(repoId: string): StageGroup[] {
     groups.get(item.stage)!.push(item);
   }
   for (const [, items] of groups) {
-    items.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    items.sort(searchQuery.value.trim() ? compareBySearchScore : (a, b) => b.created_at.localeCompare(a.created_at));
   }
 
   // Sort stages by configured order; unlisted stages sort alphabetically after
@@ -196,6 +214,7 @@ function toggleRepo(repoId: string) {
 
 // Drag handlers — vuedraggable's @change provides { added, removed, moved }
 function onPinnedChange(repoId: string, evt: any) {
+  if (isSearchActive()) return;
   if (evt.added) {
     // Item dragged from unpinned to pinned zone
     emit("pin-item", evt.added.element.id, evt.added.newIndex);
@@ -214,6 +233,7 @@ function onPinnedChange(repoId: string, evt: any) {
 }
 
 function onUnpinnedChange(repoId: string, evt: any) {
+  if (isSearchActive()) return;
   if (evt.added) {
     // Item dragged from pinned to unpinned zone — unpin it
     emit("unpin-item", evt.added.element.id);
@@ -295,6 +315,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
             :group="{ name: `repo-${repo.id}` }"
             item-key="id"
             :animation="150"
+            :disabled="isSearchActive()"
             :force-fallback="true"
             ghost-class="sortable-ghost"
             chosen-class="sortable-chosen"
@@ -347,6 +368,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
               item-key="id"
               :animation="150"
               :sort="false"
+              :disabled="isSearchActive()"
               :force-fallback="true"
               ghost-class="sortable-ghost"
               chosen-class="sortable-chosen"
