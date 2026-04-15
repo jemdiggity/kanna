@@ -65,6 +65,15 @@ const mockState = vi.hoisted(() => {
   let baseBranchResponse: string[] | Error = ["origin/main", "main"];
   let repoConfig: RepoConfig = {};
   let taskPorts: TaskPort[] = [];
+  let blockCleanupGate: Promise<void> | null = null;
+
+  function defer(): { promise: Promise<void>; resolve: () => void } {
+    let resolve = () => {};
+    const promise = new Promise<void>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
 
   const invokeMock = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     switch (command) {
@@ -75,11 +84,13 @@ const mockState = vi.hoisted(() => {
         return baseBranchResponse;
       case "git_fetch":
       case "git_worktree_add":
+      case "git_worktree_remove":
       case "spawn_session":
       case "signal_session":
       case "create_agent_session":
       case "kill_session":
       case "attach_session":
+      case "run_script":
         return undefined;
       case "which_binary":
         return `/usr/bin/${String(args?.name ?? "tool")}`;
@@ -135,6 +146,15 @@ const mockState = vi.hoisted(() => {
     }
   });
 
+  const closePipelineItemMock = vi.fn(async (_db: DbHandle, itemId: string) => {
+    const item = pipelineItems.find((candidate) => candidate.id === itemId);
+    if (item) {
+      item.stage = "done";
+      item.closed_at = now;
+      item.updated_at = now;
+    }
+  });
+
   function reset(): void {
     repos = [makeRepo()];
     pipelineItems = [];
@@ -142,10 +162,12 @@ const mockState = vi.hoisted(() => {
     baseBranchResponse = ["origin/main", "main"];
     repoConfig = {};
     taskPorts = [];
+    blockCleanupGate = null;
     invokeMock.mockClear();
     insertPipelineItemMock.mockClear();
     updatePipelineItemStageMock.mockClear();
     updatePipelineItemActivityMock.mockClear();
+    closePipelineItemMock.mockClear();
   }
 
   return {
@@ -189,8 +211,16 @@ const mockState = vi.hoisted(() => {
     insertPipelineItemMock,
     updatePipelineItemStageMock,
     updatePipelineItemActivityMock,
+    closePipelineItemMock,
     makeItem,
     makeRepo,
+    defer,
+    get blockCleanupGate() {
+      return blockCleanupGate;
+    },
+    set blockCleanupGate(value: Promise<void> | null) {
+      blockCleanupGate = value;
+    },
     reset,
   };
 });
@@ -246,7 +276,12 @@ vi.mock("../composables/terminalStateCache", () => ({
 }));
 
 vi.mock("./kannaCleanup", () => ({
-  closePipelineItemAndClearCachedTerminalState: vi.fn(async () => {}),
+  closePipelineItemAndClearCachedTerminalState: vi.fn(async (itemId: string, closePipelineItem: (itemId: string) => Promise<unknown>) => {
+    if (mockState.blockCleanupGate) {
+      await mockState.blockCleanupGate;
+    }
+    await closePipelineItem(itemId);
+  }),
   isTeardownSessionId: vi.fn(() => false),
   reportCloseSessionError: vi.fn(),
   reportPrewarmSessionError: vi.fn(),
@@ -340,7 +375,7 @@ vi.mock("@kanna/db", () => ({
   reorderPinnedItems: vi.fn(async () => {}),
   updatePipelineItemDisplayName: vi.fn(async () => {}),
   clearPipelineItemStageResult: vi.fn(async () => {}),
-  closePipelineItem: vi.fn(async () => {}),
+  closePipelineItem: mockState.closePipelineItemMock,
   reopenPipelineItem: vi.fn(async (_db: DbHandle, itemId: string) => {
     const item = mockState.pipelineItems.find((candidate) => candidate.id === itemId);
     if (item) {
@@ -658,5 +693,54 @@ describe("kanna store task base branch integration", () => {
         }),
       );
     });
+  });
+
+  it("shows the blocked replacement before cleanup finishes", async () => {
+    const cleanup = mockState.defer();
+    mockState.blockCleanupGate = cleanup.promise;
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-active",
+        branch: "task-item-active",
+        prompt: "Investigate sidebar lag",
+        display_name: "Sidebar lag",
+      }),
+      mockState.makeItem({
+        id: "item-blocker",
+        branch: "task-item-blocker",
+        prompt: "Finish upstream dependency",
+        display_name: "Upstream dependency",
+        created_at: "2026-04-14T00:01:00.000Z",
+        updated_at: "2026-04-14T00:01:00.000Z",
+      }),
+    ];
+
+    const store = await createStore();
+    await vi.waitFor(() => {
+      expect(store.currentItem?.id).toBe("item-blocker");
+    });
+
+    await store.selectItem("item-active");
+    await flushStore();
+
+    const blockPromise = store.blockTask(["item-blocker"]);
+    await flushStore();
+
+    const blockedReplacement = mockState.pipelineItems.find((item) =>
+      item.id !== "item-active" && JSON.parse(item.tags).includes("blocked")
+    );
+
+    expect(blockedReplacement).toBeDefined();
+    expect(store.selectedItemId).toBe(blockedReplacement?.id ?? null);
+    expect(store.currentItem?.id).toBe(blockedReplacement?.id ?? null);
+    expect(JSON.parse(store.currentItem?.tags ?? "[]")).toContain("blocked");
+    expect(store.items.some((item) => item.id === "item-active" && item.stage !== "done")).toBe(false);
+
+    cleanup.resolve();
+    await blockPromise;
+    await flushStore();
+
+    expect(store.items.some((item) => item.id === "item-active" && item.stage !== "done")).toBe(false);
+    expect(store.items.some((item) => item.id === blockedReplacement?.id)).toBe(true);
   });
 });
