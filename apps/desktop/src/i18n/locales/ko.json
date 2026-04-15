@@ -279,7 +279,20 @@
     "newCustomTask": "새 커스텀 작업",
     "newCustomTaskDesc": "재사용 가능한 에이전트 작업 정의 생성",
     "selectBlockingTasks": "차단 작업 선택",
-    "editBlockingTasks": "차단 작업 편집"
+    "editBlockingTasks": "차단 작업 편집",
+    "update": {
+      "title": "앱 업데이트",
+      "available": "업데이트 사용 가능",
+      "downloading": "업데이트 다운로드 중",
+      "readyToRestart": "다시 시작할 준비 완료",
+      "restartReady": "업데이트 설치가 완료되었습니다.",
+      "error": "업데이트 실패",
+      "errorFallback": "업데이트를 설치할 수 없습니다.",
+      "install": "설치",
+      "retry": "다시 시도",
+      "restartNow": "지금 다시 시작",
+      "later": "나중에"
+    }
   },
   "common": {
     "loading": "로딩 중..."

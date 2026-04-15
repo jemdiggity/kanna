@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { defineComponent, nextTick } from "vue";
+import { computed, defineComponent, nextTick, ref } from "vue";
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeyboardActions } from "./composables/useKeyboardShortcuts";
@@ -114,6 +114,29 @@ vi.mock("./composables/useCustomTasks", () => ({
   }),
 }));
 
+const appUpdateStartMock = vi.fn();
+const appUpdateMock = {
+  status: ref<"idle" | "checking" | "available" | "downloading" | "readyToRestart" | "error">("available"),
+  updateVersion: ref("0.0.39"),
+  releaseNotes: ref("Notes for 0.0.39"),
+  publishedAt: ref("2026-04-15T00:00:00Z"),
+  dismissedVersion: ref<string | null>(null),
+  downloadedBytes: ref(0),
+  contentLength: ref<number | null>(null),
+  errorMessage: ref<string | null>(null),
+  visible: computed(() => true),
+  start: appUpdateStartMock,
+  checkNow: vi.fn(),
+  dismiss: vi.fn(),
+  install: vi.fn(),
+  restartNow: vi.fn(),
+  dispose: vi.fn(),
+};
+
+vi.mock("./composables/useAppUpdate", () => ({
+  useAppUpdate: () => appUpdateMock,
+}));
+
 vi.mock("./composables/useToast", () => ({
   useToast: () => ({
     error: vi.fn(),
@@ -186,6 +209,12 @@ describe("App", () => {
     store.sortedItemsAllRepos = [];
     capturedKeyboardActions = null;
     invokeMock.mockClear();
+    appUpdateStartMock.mockClear();
+    appUpdateMock.dispose.mockClear();
+    appUpdateMock.dismiss.mockClear();
+    appUpdateMock.install.mockClear();
+    appUpdateMock.status.value = "available";
+    appUpdateMock.visible = computed(() => true);
     invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
       if (command === "list_dir") return ["default.json"];
       if (command === "read_text_file") return "";
@@ -356,5 +385,30 @@ describe("App", () => {
 
     expect(wrapper.get('[data-testid="diff-scope"]').text()).toBe("branch");
     expect(wrapper.get('[data-testid="diff-working-scroll"]').text()).toBe("240");
+  });
+
+  it("starts the updater controller and renders the global update prompt", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+
+    await flushPromises();
+
+    expect(appUpdateStartMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.get('[data-testid="update-install"]').text()).toBe("app.update.install");
+    await wrapper.get('[data-testid="update-install"]').trigger("click");
+    expect(appUpdateMock.install).toHaveBeenCalledTimes(1);
+    await wrapper.get('[data-testid="update-dismiss"]').trigger("click");
+    expect(appUpdateMock.dismiss).toHaveBeenCalledTimes(1);
+
+    wrapper.unmount();
+    expect(appUpdateMock.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("disposes the updater controller when the app unmounts", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+
+    await flushPromises();
+    wrapper.unmount();
+
+    expect(appUpdateMock.dispose).toHaveBeenCalledTimes(1);
   });
 });

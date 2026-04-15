@@ -281,7 +281,20 @@
     "newCustomTask": "新規カスタムタスク",
     "newCustomTaskDesc": "再利用可能なエージェントタスク定義を作成",
     "selectBlockingTasks": "ブロックタスクを選択",
-    "editBlockingTasks": "ブロックタスクを編集"
+    "editBlockingTasks": "ブロックタスクを編集",
+    "update": {
+      "title": "アプリ更新",
+      "available": "更新があります",
+      "downloading": "更新をダウンロード中",
+      "readyToRestart": "再起動できます",
+      "restartReady": "更新のインストールが完了しました。",
+      "error": "更新に失敗しました",
+      "errorFallback": "更新をインストールできませんでした。",
+      "install": "インストール",
+      "retry": "再試行",
+      "restartNow": "今すぐ再起動",
+      "later": "あとで"
+    }
   },
   "common": {
     "loading": "読み込み中..."

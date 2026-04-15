@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, inject, onMounted, nextTick, type Ref } from "vue";
+import { ref, reactive, computed, inject, onMounted, onBeforeUnmount, nextTick, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { computedAsync } from "@vueuse/core";
@@ -23,6 +23,7 @@ import CommandPaletteModal from "./components/CommandPaletteModal.vue";
 import AnalyticsModal from "./components/AnalyticsModal.vue";
 import BlockerSelectModal from "./components/BlockerSelectModal.vue";
 import PreferencesPanel from "./components/PreferencesPanel.vue";
+import AppUpdatePrompt from "./components/AppUpdatePrompt.vue";
 import ToastContainer from "./components/ToastContainer.vue";
 import { useKeyboardShortcuts, type ActionName } from "./composables/useKeyboardShortcuts";
 import { startPeriodicBackup } from "./composables/useBackup";
@@ -31,6 +32,7 @@ import { type ShortcutContext } from "./composables/useShortcutContext";
 import { useCustomTasks } from "./composables/useCustomTasks";
 import { useToast } from "./composables/useToast";
 import { useRestoreFocus } from "./composables/useRestoreFocus";
+import { useAppUpdate } from "./composables/useAppUpdate";
 import { isTopModal } from "./composables/useModalZIndex";
 import { selectTaskByActivity } from "./utils/selectTaskByActivity";
 import { getDefaultBaseBranch } from "./utils/baseBranchPicker";
@@ -52,6 +54,7 @@ const { t } = useI18n();
 const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
+const appUpdate = useAppUpdate();
 useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 
 // UI state
@@ -845,6 +848,7 @@ async function handlePreferenceUpdate(key: string, value: string) {
 
 // Init
 onMounted(async () => {
+  appUpdate.start();
   await store.init(db);
 
   // Cache $HOME for shell-at-home (no repo selected)
@@ -890,6 +894,10 @@ onMounted(async () => {
     previewFromPicker.value = false;
     previewHidden.value = false;
   });
+});
+
+onBeforeUnmount(() => {
+  appUpdate.dispose();
 });
 </script>
 
@@ -1048,6 +1056,7 @@ onMounted(async () => {
       @update="handlePreferenceUpdate"
       @close="showPreferencesPanel = false"
     />
+    <AppUpdatePrompt :controller="appUpdate" />
     <ToastContainer />
   </div>
 </template>
