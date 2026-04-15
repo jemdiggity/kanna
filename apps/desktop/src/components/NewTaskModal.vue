@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { invoke } from "../invoke";
 import type { AgentProvider } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
@@ -55,6 +55,7 @@ const selectedBaseBranch = ref(resolvedBaseBranch.value ?? defaultBranchName.val
 const hasExplicitBaseBranchSelection = ref(false);
 const showBaseBranchPicker = ref(false);
 const baseBranchQuery = ref("");
+const selectedBaseBranchIndex = ref(0);
 const visibleBaseBranches = computed(() =>
   filterBaseBranchCandidates(
     props.baseBranches ?? [],
@@ -63,6 +64,11 @@ const visibleBaseBranches = computed(() =>
   ),
 );
 const textareaRef = ref<HTMLTextAreaElement>();
+const baseBranchSearchRef = ref<HTMLInputElement | null>(null);
+
+const MAX_VISIBLE_BRANCH_ROWS = 7;
+const BRANCH_ROW_HEIGHT_PX = 36;
+const baseBranchOptionsMaxHeight = `${MAX_VISIBLE_BRANCH_ROWS * BRANCH_ROW_HEIGHT_PX}px`;
 
 const providers: Array<AgentProvider> = ["claude", "copilot", "codex"];
 const availableProviders = ref<Array<AgentProvider>>([...providers]);
@@ -96,6 +102,23 @@ onMounted(async () => {
   }
 });
 
+watch(baseBranchQuery, () => {
+  selectedBaseBranchIndex.value = 0;
+});
+
+watch(showBaseBranchPicker, async (open) => {
+  if (open) {
+    baseBranchQuery.value = "";
+    selectedBaseBranchIndex.value = Math.max(0, visibleBaseBranches.value.indexOf(selectedBaseBranch.value));
+    await nextTick();
+    baseBranchSearchRef.value?.focus();
+    return;
+  }
+
+  baseBranchQuery.value = "";
+  selectedBaseBranchIndex.value = 0;
+});
+
 function handleSubmit() {
   const text = prompt.value.trim();
   if (!text) return;
@@ -107,6 +130,42 @@ function handleSubmit() {
 function handleBaseBranchSelect(branch: string) {
   selectedBaseBranch.value = branch;
   hasExplicitBaseBranchSelection.value = true;
+  showBaseBranchPicker.value = false;
+}
+
+function toggleBaseBranchPicker() {
+  showBaseBranchPicker.value = !showBaseBranchPicker.value;
+}
+
+function clampSelectedBaseBranchIndex(nextIndex: number): number {
+  if (visibleBaseBranches.value.length === 0) return 0;
+  return Math.min(Math.max(nextIndex, 0), visibleBaseBranches.value.length - 1);
+}
+
+function handleBaseBranchSearchKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    showBaseBranchPicker.value = false;
+    return;
+  }
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    selectedBaseBranchIndex.value = clampSelectedBaseBranchIndex(selectedBaseBranchIndex.value + 1);
+    return;
+  }
+
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    selectedBaseBranchIndex.value = clampSelectedBaseBranchIndex(selectedBaseBranchIndex.value - 1);
+    return;
+  }
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    const branch = visibleBaseBranches.value[selectedBaseBranchIndex.value];
+    if (branch) handleBaseBranchSelect(branch);
+  }
 }
 
 function handlePipelineSelect(pipeline: string) {
@@ -233,41 +292,57 @@ function handleKeydown(e: KeyboardEvent) {
         />
         <div class="pipeline-row">
           <label class="pipeline-label">{{ $t("tasks.baseBranch") }}</label>
-          <div class="base-branch-row">
-            <span class="base-branch-value" data-testid="base-branch-value">{{ selectedBaseBranch }}</span>
-            <button
-              type="button"
-              class="change-link"
-              data-testid="base-branch-toggle"
-              @mousedown.prevent
-              @click="showBaseBranchPicker = !showBaseBranchPicker"
-            >
-              {{ $t("addRepo.change") }}
-            </button>
-          </div>
-        </div>
+          <div class="base-branch-dropdown-shell">
+            <div class="base-branch-row">
+              <span class="base-branch-value" data-testid="base-branch-value">{{ selectedBaseBranch }}</span>
+              <button
+                id="base-branch-toggle"
+                type="button"
+                class="change-link"
+                data-testid="base-branch-toggle"
+                @mousedown.prevent
+                @click="toggleBaseBranchPicker"
+              >
+                <span data-testid="base-branch-change-link">{{ $t("addRepo.change") }}</span>
+              </button>
+            </div>
 
-        <div v-if="showBaseBranchPicker" class="base-branch-picker">
-          <input
-            v-model="baseBranchQuery"
-            v-bind="macOsTextInputAttrs"
-            class="text-input"
-            type="text"
-            :placeholder="$t('tasks.baseBranchSearchPlaceholder')"
-            data-testid="base-branch-search"
-          />
-          <button
-            v-for="branch in visibleBaseBranches"
-            :key="branch"
-            type="button"
-            class="base-branch-option"
-            :class="{ selected: branch === selectedBaseBranch }"
-            :data-testid="`base-branch-option-${branch}`"
-            @mousedown.prevent
-            @click="handleBaseBranchSelect(branch)"
-          >
-            {{ branch }}
-          </button>
+            <div
+              v-if="showBaseBranchPicker"
+              class="base-branch-dropdown"
+              data-testid="base-branch-dropdown"
+            >
+              <input
+                ref="baseBranchSearchRef"
+                v-model="baseBranchQuery"
+                v-bind="macOsTextInputAttrs"
+                class="text-input base-branch-search"
+                type="text"
+                :placeholder="$t('tasks.baseBranchSearchPlaceholder')"
+                data-testid="base-branch-search"
+                @keydown="handleBaseBranchSearchKeydown"
+              />
+              <div
+                class="base-branch-options"
+                :style="{ maxHeight: baseBranchOptionsMaxHeight }"
+                data-testid="base-branch-options"
+              >
+                <button
+                  v-for="(branch, index) in visibleBaseBranches"
+                  :key="branch"
+                  type="button"
+                  class="base-branch-option"
+                  :class="{ selected: branch === selectedBaseBranch, active: index === selectedBaseBranchIndex }"
+                  :data-testid="`base-branch-option-${branch}`"
+                  @mouseenter="selectedBaseBranchIndex = index"
+                  @mousedown.prevent
+                  @click="handleBaseBranchSelect(branch)"
+                >
+                  {{ branch }}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="pipeline-row">
@@ -305,7 +380,7 @@ function handleKeydown(e: KeyboardEvent) {
             :key="name"
             :id="`pipeline-option-${name}`"
             type="button"
-            class="base-branch-option"
+            class="pipeline-picker-option"
             role="option"
             :class="{ selected: name === selectedPipeline }"
             :aria-selected="name === selectedPipeline"
@@ -438,6 +513,12 @@ function handleKeydown(e: KeyboardEvent) {
   flex: 1;
 }
 
+.base-branch-dropdown-shell {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
 .base-branch-row {
   display: flex;
   align-items: center;
@@ -449,6 +530,11 @@ function handleKeydown(e: KeyboardEvent) {
   color: #e0e0e0;
   font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
   font-size: 12px;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .change-link {
@@ -465,11 +551,17 @@ function handleKeydown(e: KeyboardEvent) {
   text-decoration: underline;
 }
 
-.base-branch-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
+.base-branch-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 4;
+  overflow: hidden;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
 }
 
 .text-input {
@@ -487,7 +579,49 @@ function handleKeydown(e: KeyboardEvent) {
   border-color: #0066cc;
 }
 
+.base-branch-search {
+  border: none;
+  border-bottom: 1px solid #333;
+  border-radius: 0;
+}
+
+.base-branch-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.base-branch-options {
+  overflow-y: auto;
+}
+
 .base-branch-option {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: #b8b8b8;
+  cursor: pointer;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  text-align: left;
+}
+
+.base-branch-option:hover,
+.base-branch-option.active {
+  background: #2d2d2d;
+}
+
+.base-branch-option.selected {
+  color: #e0e0e0;
+  font-weight: 600;
+}
+
+.pipeline-picker-option {
   width: 100%;
   padding: 6px 8px;
   background: #1a1a1a;
@@ -500,8 +634,8 @@ function handleKeydown(e: KeyboardEvent) {
   text-align: left;
 }
 
-.base-branch-option:hover,
-.base-branch-option.selected {
+.pipeline-picker-option:hover,
+.pipeline-picker-option.selected {
   border-color: #0066cc;
   color: #e0e0e0;
 }

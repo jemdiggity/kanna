@@ -3,12 +3,26 @@ import { createPinia } from "pinia";
 import i18n from "./i18n";
 import { isTauri } from "./tauri-mock";
 import { loadDatabase, runMigrations } from "./stores/db";
+import { shouldMountBaseBranchDropdownPreview } from "./previewMode";
 import App from "./App.vue";
 
 interface AppWithSetupState {
   _instance?: {
     setupState?: Record<string, unknown>;
   };
+}
+
+async function resolveRootComponent() {
+  if (shouldMountBaseBranchDropdownPreview(window.location.search, {
+    dev: import.meta.env.DEV,
+    mode: import.meta.env.MODE,
+    vitest: typeof process !== "undefined" ? process.env.VITEST : undefined,
+  })) {
+    const previewModule = await import("./components/BaseBranchDropdownPreview.vue");
+    return previewModule.default;
+  }
+
+  return App;
 }
 
 if (isTauri) {
@@ -47,7 +61,8 @@ try {
   const { db, dbName } = await loadDatabase();
   await runMigrations(db);
 
-  const app = createApp(App);
+  const RootComponent = await resolveRootComponent();
+  const app = createApp(RootComponent);
   app.use(createPinia());
   app.use(i18n);
   app.provide("db", db);
