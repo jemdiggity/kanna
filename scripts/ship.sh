@@ -150,10 +150,19 @@ create_updater_bundle() {
 sign_updater_bundle() {
     local bundle_path="$1"
     local signature_path="$2"
-    rm -f "$signature_path"
-    TAURI_PRIVATE_KEY_PATH="$TAURI_PRIVATE_KEY_PATH" \
-    TAURI_PRIVATE_KEY_PASSWORD="${TAURI_PRIVATE_KEY_PASSWORD:-}" \
-        pnpm --dir "$ROOT/apps/desktop" exec tauri signer sign "$bundle_path" > "$signature_path"
+    local generated_sig="${bundle_path}.sig"
+    local signer_args=(pnpm --dir "$ROOT/apps/desktop" exec tauri signer sign --private-key-path "$TAURI_PRIVATE_KEY_PATH")
+    rm -f "$signature_path" "$generated_sig"
+    if [[ -n "${TAURI_PRIVATE_KEY_PASSWORD+x}" ]]; then
+        signer_args+=(--password "${TAURI_PRIVATE_KEY_PASSWORD:-}")
+    fi
+    signer_args+=("$bundle_path")
+    "${signer_args[@]}" >/dev/null
+    if [[ ! -f "$generated_sig" ]]; then
+        echo "Error: Expected updater signature not found: $generated_sig"
+        exit 1
+    fi
+    mv "$generated_sig" "$signature_path"
 }
 
 read_release_metadata_field() {

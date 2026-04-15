@@ -167,6 +167,11 @@ describe("updater release assets", () => {
 
     expect(shipScript).toContain('echo "Kanna_${VERSION}_${suffix}.app.tar.gz"');
     expect(shipScript).toContain("tauri signer sign");
+    expect(shipScript).toContain('local generated_sig="${bundle_path}.sig"');
+    expect(shipScript).toContain('mv "$generated_sig" "$signature_path"');
+    expect(shipScript).not.toContain(
+      'pnpm --dir "$ROOT/apps/desktop" exec tauri signer sign "$bundle_path" > "$signature_path"',
+    );
     expect(shipScript).toContain(".app.tar.gz.sig");
   });
 

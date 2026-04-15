@@ -474,6 +474,74 @@ def _target_files(targets):
         files.extend(target[DefaultInfo].files.to_list())
     return files
 
+def _cargo_src_relpath(file, package):
+    if not package:
+        return file.short_path
+
+    prefix = package + "/"
+    if file.short_path.startswith(prefix):
+        return file.short_path[len(prefix):]
+
+    return file.short_path
+
+def _cargo_src_manifest(ctx, name):
+    manifest = ctx.actions.declare_file(name)
+    lines = []
+    for file in ctx.files.cargo_srcs:
+        lines.append("%s\t%s" % (file.path, _cargo_src_relpath(file, ctx.label.package)))
+    ctx.actions.write(manifest, "\n".join(lines) + "\n")
+    return manifest
+
+def _run_tauri_tool_with_staged_config(ctx, *, tool, config, other_inputs, outputs, args, mnemonic, progress_message):
+    manifest = _cargo_src_manifest(ctx, ctx.label.name + "_cargo_srcs_manifest.txt")
+
+    ctx.actions.run_shell(
+        inputs = depset(direct = ctx.files.cargo_srcs + other_inputs + [config, manifest, tool]),
+        outputs = outputs,
+        arguments = [tool.path, manifest.path, config.path, args],
+        command = """
+set -euo pipefail
+tool="$1"
+manifest="$2"
+config="$3"
+shift 3
+
+staged="$(mktemp -d "${TMPDIR:-/tmp}/kanna-tauri-config.XXXXXX")"
+cleanup() {
+  rm -rf "$staged"
+}
+trap cleanup EXIT
+
+python3 - "$manifest" "$staged" "$config" <<'PY'
+import pathlib
+import shutil
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+staged_dir = pathlib.Path(sys.argv[2])
+config_path = pathlib.Path(sys.argv[3])
+
+for raw_line in manifest_path.read_text(encoding="utf-8").splitlines():
+    if not raw_line:
+        continue
+    src_raw, rel_raw = raw_line.split("\t", 1)
+    src = pathlib.Path(src_raw)
+    rel = pathlib.Path(rel_raw)
+    destination = staged_dir / rel
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, destination)
+
+destination = staged_dir / "tauri.conf.json"
+destination.parent.mkdir(parents=True, exist_ok=True)
+shutil.copy2(config_path, destination)
+PY
+
+"$tool" --config "$staged/tauri.conf.json" "$@"
+""",
+        mnemonic = mnemonic,
+        progress_message = progress_message,
+    )
+
 def _tauri_acl_prep_dir_impl(ctx):
     out = ctx.actions.declare_directory(ctx.label.name + ".out_dir")
     config = _single_output(ctx.attr.config, "config") if ctx.attr.config else _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
@@ -481,12 +549,8 @@ def _tauri_acl_prep_dir_impl(ctx):
     dep_target_files = _target_files(ctx.attr.dep_env_targets)
     dep_env_files = [file for file in dep_target_files if file.basename.endswith(".depenv")]
     dep_out_dirs = [file for file in dep_target_files if file.is_directory]
-    inputs = depset(
-        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, frontend_dist] + dep_target_files,
-    )
 
     args = ctx.actions.args()
-    args.add("--config", config.path)
     for dep_env_file in dep_env_files:
         args.add("--dep-env-file", dep_env_file.path)
     for dep_out_dir in dep_out_dirs:
@@ -494,14 +558,31 @@ def _tauri_acl_prep_dir_impl(ctx):
     args.add("--frontend-dist", frontend_dist.path)
     args.add("--out-dir", out.path)
 
-    ctx.actions.run(
-        executable = ctx.executable._tool,
-        inputs = inputs,
-        outputs = [out],
-        arguments = [args],
-        mnemonic = "TauriAclPrep",
-        progress_message = "Preparing Tauri ACL outputs for %s" % ctx.label.name,
-    )
+    if ctx.attr.config:
+        _run_tauri_tool_with_staged_config(
+            ctx,
+            tool = ctx.executable._tool,
+            config = config,
+            other_inputs = ctx.files.tauri_build_data + [frontend_dist] + dep_target_files,
+            outputs = [out],
+            args = args,
+            mnemonic = "TauriAclPrep",
+            progress_message = "Preparing Tauri ACL outputs for %s" % ctx.label.name,
+        )
+    else:
+        inputs = depset(
+            direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, frontend_dist] + dep_target_files,
+        )
+        args.add("--config", config.path)
+
+        ctx.actions.run(
+            executable = ctx.executable._tool,
+            inputs = inputs,
+            outputs = [out],
+            arguments = [args],
+            mnemonic = "TauriAclPrep",
+            progress_message = "Preparing Tauri ACL outputs for %s" % ctx.label.name,
+        )
 
     return [DefaultInfo(files = depset([out]))]
 
@@ -568,24 +649,37 @@ def _tauri_context_support_dir_impl(ctx):
     config = _single_output(ctx.attr.config, "config") if ctx.attr.config else _find_named_file(ctx.files.cargo_srcs, "tauri.conf.json", "cargo_srcs")
     embedded_assets_rust = _single_output(ctx.attr.embedded_assets_rust, "embedded_assets_rust")
     acl_out_dir = _single_output(ctx.attr.acl_out_dir, "acl_out_dir")
-    inputs = depset(
-        direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, embedded_assets_rust, acl_out_dir],
-    )
 
     args = ctx.actions.args()
-    args.add("--config", config.path)
     args.add("--embedded-assets-rust", embedded_assets_rust.path)
     args.add("--acl-out-dir", acl_out_dir.path)
     args.add("--out", out.path + "/full_context_rust.rs")
 
-    ctx.actions.run(
-        executable = ctx.executable._tool,
-        inputs = inputs,
-        outputs = [out],
-        arguments = [args],
-        mnemonic = "TauriContextCodegenDir",
-        progress_message = "Generating Tauri context support dir for %s" % ctx.label.name,
-    )
+    if ctx.attr.config:
+        _run_tauri_tool_with_staged_config(
+            ctx,
+            tool = ctx.executable._tool,
+            config = config,
+            other_inputs = ctx.files.tauri_build_data + [embedded_assets_rust, acl_out_dir],
+            outputs = [out],
+            args = args,
+            mnemonic = "TauriContextCodegenDir",
+            progress_message = "Generating Tauri context support dir for %s" % ctx.label.name,
+        )
+    else:
+        inputs = depset(
+            direct = ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, embedded_assets_rust, acl_out_dir],
+        )
+        args.add("--config", config.path)
+
+        ctx.actions.run(
+            executable = ctx.executable._tool,
+            inputs = inputs,
+            outputs = [out],
+            arguments = [args],
+            mnemonic = "TauriContextCodegenDir",
+            progress_message = "Generating Tauri context support dir for %s" % ctx.label.name,
+        )
 
     return [DefaultInfo(files = depset([out]))]
 
