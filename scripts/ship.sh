@@ -40,11 +40,37 @@ github_release_exists() {
     gh release view "v$VERSION" >/dev/null 2>&1
 }
 
+read_release_metadata_json() {
+    gh release view "v$VERSION" --json body,publishedAt
+}
+
 installer_arch_suffix() {
     case "$1" in
         arm64) echo "arm64" ;;
         x86_64) echo "x86_64" ;;
         *) echo "unknown architecture label: $1" >&2; exit 1 ;;
+    esac
+}
+
+updater_asset_name() {
+    local label="$1"
+    local suffix
+    suffix="$(installer_arch_suffix "$label")"
+    echo "Kanna_${VERSION}_${suffix}.app.tar.gz"
+}
+
+updater_signature_name() {
+    local label="$1"
+    local suffix
+    suffix="$(installer_arch_suffix "$label")"
+    echo "Kanna_${VERSION}_${suffix}.app.tar.gz.sig"
+}
+
+updater_platform_key() {
+    case "$1" in
+        arm64) echo "darwin-aarch64" ;;
+        x86_64) echo "darwin-x86_64" ;;
+        *) echo "unknown updater platform for $1" >&2; exit 1 ;;
     esac
 }
 
@@ -57,13 +83,13 @@ bazel_target_for_label() {
     fi
 }
 
-bazel_output_for_label() {
+signed_app_target_for_label() {
     local label="$1"
-    if [[ "$DRY_RUN" = true ]]; then
-        echo "signed/Kanna-${label}.dmg"
-    else
-        echo "notarized/Kanna-${label}.dmg"
-    fi
+    case "$label" in
+        arm64) echo "//:kanna_signed_app_release_arm64" ;;
+        x86_64) echo "//:kanna_signed_app_release_x86_64" ;;
+        *) echo "unknown app target for $label" >&2; exit 1 ;;
+    esac
 }
 
 resolve_bazel_output() {
@@ -85,6 +111,92 @@ release_asset_name() {
     local suffix
     suffix="$(installer_arch_suffix "$label")"
     echo "Kanna_${VERSION}_${suffix}.dmg"
+}
+
+release_repo_slug() {
+    local remote_url
+    remote_url="$(git -C "$ROOT" remote get-url origin)"
+    case "$remote_url" in
+        git@github.com:*)
+            remote_url="${remote_url#git@github.com:}"
+            ;;
+        ssh://git@github.com/*)
+            remote_url="${remote_url#ssh://git@github.com/}"
+            ;;
+        https://github.com/*)
+            remote_url="${remote_url#https://github.com/}"
+            ;;
+        *)
+            echo "Error: Unsupported GitHub remote URL: $remote_url" >&2
+            exit 1
+            ;;
+    esac
+    echo "${remote_url%.git}"
+}
+
+release_download_base_url() {
+    echo "https://github.com/$(release_repo_slug)/releases/download/v$VERSION"
+}
+
+create_updater_bundle() {
+    local app_source="$1"
+    local bundle_dest="$2"
+    local app_dir
+    app_dir="$(dirname "$app_source")"
+    rm -f "$bundle_dest"
+    tar -C "$app_dir" -czf "$bundle_dest" "$(basename "$app_source")"
+}
+
+sign_updater_bundle() {
+    local bundle_path="$1"
+    local signature_path="$2"
+    rm -f "$signature_path"
+    TAURI_PRIVATE_KEY_PATH="$TAURI_PRIVATE_KEY_PATH" \
+    TAURI_PRIVATE_KEY_PASSWORD="${TAURI_PRIVATE_KEY_PASSWORD:-}" \
+        pnpm --dir "$ROOT/apps/desktop" exec tauri signer sign "$bundle_path" > "$signature_path"
+}
+
+read_release_metadata_field() {
+    local metadata_json="$1"
+    local field_name="$2"
+    FIELD_NAME="$field_name" RELEASE_METADATA_JSON="$metadata_json" node -e '
+const metadata = JSON.parse(process.env.RELEASE_METADATA_JSON);
+process.stdout.write(String(metadata[process.env.FIELD_NAME] ?? ""));
+'
+}
+
+load_release_metadata() {
+    local release_metadata_json
+    release_metadata_json="$(read_release_metadata_json)"
+    RELEASE_BODY="$(read_release_metadata_field "$release_metadata_json" body)"
+    RELEASE_PUBLISHED_AT="$(read_release_metadata_field "$release_metadata_json" publishedAt)"
+}
+
+write_latest_json() {
+    local notes="$1"
+    local published_at="$2"
+    RELEASE_NOTES="$notes" \
+    PUBLISHED_AT="$published_at" \
+    UPDATER_PLATFORMS_JSON="$UPDATER_PLATFORMS_JSON" \
+    VERSION="$VERSION" \
+    node <<'EOF' > "$LATEST_JSON"
+const version = process.env.VERSION;
+const notes = process.env.RELEASE_NOTES;
+const pubDate = process.env.PUBLISHED_AT;
+const platforms = JSON.parse(process.env.UPDATER_PLATFORMS_JSON);
+process.stdout.write(
+  JSON.stringify(
+    {
+      version,
+      notes,
+      pub_date: pubDate,
+      platforms,
+    },
+    null,
+    2,
+  ) + "\n",
+);
+EOF
 }
 
 bazel_cache_configured() {
@@ -188,7 +300,7 @@ if [[ "$DRY_RUN" = false ]]; then
 fi
 
 # Required tools
-for TOOL in bazel security codesign hdiutil xcrun; do
+for TOOL in bazel security codesign hdiutil xcrun node pnpm; do
     if ! command -v "$TOOL" >/dev/null 2>&1; then
         echo "Error: Missing required tool: $TOOL"
         exit 1
@@ -233,6 +345,26 @@ if [[ "$RELEASE" = true ]]; then
         echo "Error: gh CLI is not authenticated. Run 'gh auth login' first."
         exit 1
     fi
+fi
+
+if [[ -z "${KANNA_UPDATER_PUBKEY:-}" ]]; then
+    echo "Error: Missing KANNA_UPDATER_PUBKEY."
+    exit 1
+fi
+
+if [[ -z "${TAURI_PRIVATE_KEY_PATH:-}" ]]; then
+    echo "Error: Missing TAURI_PRIVATE_KEY_PATH."
+    exit 1
+fi
+
+if [[ ! -f "$TAURI_PRIVATE_KEY_PATH" ]]; then
+    echo "Error: Tauri updater private key not found: $TAURI_PRIVATE_KEY_PATH"
+    exit 1
+fi
+
+if [[ "$RELEASE" = true && ${#ARCH_LABELS[@]} -ne 2 ]]; then
+    echo "Error: updater releases must include both arm64 and x86_64 artifacts"
+    exit 1
 fi
 
 echo "    Prerequisites OK"
@@ -322,6 +454,7 @@ echo "    Version files updated to $VERSION"
 # --- Build artifacts with Bazel ---
 
 DMG_PATHS=()
+UPDATER_PATHS=()
 RELEASE_DIR="$BUILD_DIR/release"
 mkdir -p "$RELEASE_DIR"
 
@@ -329,6 +462,7 @@ STEP="building release artifacts"
 TARGETS=()
 for LABEL in "${ARCH_LABELS[@]}"; do
     TARGETS+=("$(bazel_target_for_label "$LABEL")")
+    TARGETS+=("$(signed_app_target_for_label "$LABEL")")
 done
 
 BAZEL_ARGS=(-c opt)
@@ -359,6 +493,87 @@ for LABEL in "${ARCH_LABELS[@]}"; do
 
     echo "    Built: $DMG_NAME"
 done
+
+STEP="creating updater artifacts"
+GENERATED_RELEASE_NOTES=""
+RELEASE_BODY=""
+RELEASE_PUBLISHED_AT=""
+if [[ "$RELEASE" = true ]]; then
+    GENERATED_RELEASE_NOTES="$(
+        gh api "repos/$(release_repo_slug)/releases/generate-notes" \
+            -X POST \
+            -f tag_name="v$VERSION" \
+            -f target_commitish="main" \
+            --jq '.body'
+    )"
+else
+    RELEASE_BODY="Dry-run updater manifest for v$VERSION"
+    RELEASE_PUBLISHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+fi
+
+URL_DARWIN_AARCH64=""
+SIG_DARWIN_AARCH64=""
+URL_DARWIN_X86_64=""
+SIG_DARWIN_X86_64=""
+
+for LABEL in "${ARCH_LABELS[@]}"; do
+    APP_SOURCE="$(resolve_bazel_output "$(signed_app_target_for_label "$LABEL")")"
+    if [[ ! -d "$APP_SOURCE" ]]; then
+        echo "Error: Expected signed app bundle not found: $APP_SOURCE"
+        exit 1
+    fi
+
+    BUNDLE_NAME="$(updater_asset_name "$LABEL")"
+    BUNDLE_PATH="$RELEASE_DIR/$BUNDLE_NAME"
+    SIG_NAME="$(updater_signature_name "$LABEL")"
+    SIG_PATH="$RELEASE_DIR/$SIG_NAME"
+    create_updater_bundle "$APP_SOURCE" "$BUNDLE_PATH"
+    sign_updater_bundle "$BUNDLE_PATH" "$SIG_PATH"
+    UPDATER_PATHS+=("$BUNDLE_PATH" "$SIG_PATH")
+
+    PLATFORM_KEY="$(updater_platform_key "$LABEL")"
+    BUNDLE_URL="$(release_download_base_url)/$BUNDLE_NAME"
+    SIGNATURE_VALUE="$(tr -d '\n' < "$SIG_PATH")"
+
+    case "$PLATFORM_KEY" in
+        darwin-aarch64)
+            URL_DARWIN_AARCH64="$BUNDLE_URL"
+            SIG_DARWIN_AARCH64="$SIGNATURE_VALUE"
+            ;;
+        darwin-x86_64)
+            URL_DARWIN_X86_64="$BUNDLE_URL"
+            SIG_DARWIN_X86_64="$SIGNATURE_VALUE"
+            ;;
+    esac
+
+    echo "    Built: $BUNDLE_NAME"
+    echo "    Signed: $SIG_NAME"
+done
+
+LATEST_JSON="$RELEASE_DIR/latest.json"
+UPDATER_PLATFORMS_JSON="$(
+    URL_DARWIN_AARCH64="$URL_DARWIN_AARCH64" \
+    SIG_DARWIN_AARCH64="$SIG_DARWIN_AARCH64" \
+    URL_DARWIN_X86_64="$URL_DARWIN_X86_64" \
+    SIG_DARWIN_X86_64="$SIG_DARWIN_X86_64" \
+    node <<'EOF'
+const candidates = [
+  ["darwin-aarch64", process.env.URL_DARWIN_AARCH64, process.env.SIG_DARWIN_AARCH64],
+  ["darwin-x86_64", process.env.URL_DARWIN_X86_64, process.env.SIG_DARWIN_X86_64],
+];
+const platforms = Object.fromEntries(
+  candidates
+    .filter(([, url, signature]) => Boolean(url) && Boolean(signature))
+    .map(([key, url, signature]) => [key, { signature, url }]),
+);
+process.stdout.write(JSON.stringify(platforms));
+EOF
+)"
+
+if [[ "$RELEASE" = false ]]; then
+    write_latest_json "$RELEASE_BODY" "$RELEASE_PUBLISHED_AT"
+    echo "    Built: latest.json"
+fi
 
 # Version files were intentionally modified — don't reset on success
 VERSION_FILES_DIRTY=false
@@ -410,15 +625,29 @@ if [[ "$RELEASE" = true ]]; then
     fi
 
     if [[ "$RELEASE_EXISTS" = true ]]; then
+        STEP="reading GitHub release metadata"
+        load_release_metadata
+        write_latest_json "$RELEASE_BODY" "$RELEASE_PUBLISHED_AT"
+        echo "    Built: latest.json"
+
         STEP="uploading GitHub release assets"
         echo "    Updating GitHub release assets..."
-        gh release upload "v$VERSION" "${DMG_PATHS[@]}" --clobber
+        gh release upload "v$VERSION" "${DMG_PATHS[@]}" "${UPDATER_PATHS[@]}" "$LATEST_JSON" --clobber
     else
         STEP="creating GitHub release"
         echo "    Creating GitHub release..."
-        gh release create "v$VERSION" "${DMG_PATHS[@]}" \
+        gh release create "v$VERSION" "${DMG_PATHS[@]}" "${UPDATER_PATHS[@]}" \
             --title "Kanna v$VERSION" \
-            --generate-notes
+            --notes "$GENERATED_RELEASE_NOTES"
+
+        STEP="reading GitHub release metadata"
+        load_release_metadata
+        write_latest_json "$RELEASE_BODY" "$RELEASE_PUBLISHED_AT"
+        echo "    Built: latest.json"
+
+        STEP="uploading GitHub release manifest"
+        echo "    Uploading latest.json..."
+        gh release upload "v$VERSION" "$LATEST_JSON" --clobber
     fi
 
     echo "==> Shipped Kanna v$VERSION"
@@ -428,5 +657,9 @@ else
     for DMG in "${DMG_PATHS[@]}"; do
         echo "    DMG: $DMG"
     done
+    for UPDATER_ASSET in "${UPDATER_PATHS[@]}"; do
+        echo "    Updater: $UPDATER_ASSET"
+    done
+    echo "    Manifest: $LATEST_JSON"
     echo "    Run with --release to tag and publish to GitHub"
 fi
