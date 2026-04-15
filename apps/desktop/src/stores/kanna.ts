@@ -142,6 +142,29 @@ function toPortAssignmentMap(taskPorts: Array<{ env_name: string; port: number }
   return map;
 }
 
+async function tryClaimPort(
+  itemId: string,
+  envName: string,
+  candidate: number,
+  occupiedPorts: Set<number>,
+): Promise<boolean> {
+  if (!Number.isInteger(candidate) || candidate <= 0) return false;
+  if (occupiedPorts.has(candidate)) return false;
+
+  await _db.execute(
+    "INSERT OR IGNORE INTO task_port (port, pipeline_item_id, env_name) VALUES (?, ?, ?)",
+    [candidate, itemId, envName],
+  );
+  const owner = await _db.select<{ pipeline_item_id: string }>(
+    "SELECT pipeline_item_id FROM task_port WHERE port = ?",
+    [candidate],
+  );
+  if (owner[0]?.pipeline_item_id !== itemId) return false;
+
+  occupiedPorts.add(candidate);
+  return true;
+}
+
 async function claimClosestPort(
   itemId: string,
   envName: string,
@@ -155,19 +178,8 @@ async function claimClosestPort(
     return existingPort;
   }
 
-  for (let candidate = preferredPort; candidate <= 65535; candidate++) {
-    if (!Number.isInteger(candidate) || candidate <= 0) continue;
-    if (occupiedPorts.has(candidate)) continue;
-    await _db.execute(
-      "INSERT OR IGNORE INTO task_port (port, pipeline_item_id, env_name) VALUES (?, ?, ?)",
-      [candidate, itemId, envName],
-    );
-    const owner = await _db.select<{ pipeline_item_id: string }>(
-      "SELECT pipeline_item_id FROM task_port WHERE port = ?",
-      [candidate],
-    );
-    if (owner[0]?.pipeline_item_id === itemId) {
-      occupiedPorts.add(candidate);
+  for (let candidate = preferredPort + 1; candidate <= 65535; candidate++) {
+    if (await tryClaimPort(itemId, envName, candidate, occupiedPorts)) {
       return candidate;
     }
   }

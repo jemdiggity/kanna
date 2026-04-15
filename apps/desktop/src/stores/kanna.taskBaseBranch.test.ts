@@ -1,8 +1,9 @@
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DbHandle, PipelineItem, Repo } from "@kanna/db";
+import type { DbHandle, PipelineItem, Repo, TaskPort } from "@kanna/db";
 import type { PipelineDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
+import type { RepoConfig } from "@kanna/core";
 
 const mockState = vi.hoisted(() => {
   const repoPath = "/tmp/repo";
@@ -62,6 +63,8 @@ const mockState = vi.hoisted(() => {
     stages: [],
   };
   let baseBranchResponse: string[] | Error = ["origin/main", "main"];
+  let repoConfig: RepoConfig = {};
+  let taskPorts: TaskPort[] = [];
 
   const invokeMock = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     switch (command) {
@@ -87,6 +90,9 @@ const mockState = vi.hoisted(() => {
       case "read_builtin_resource":
         return "{}";
       case "read_text_file":
+        if (typeof args?.path === "string" && args.path.endsWith("/.kanna/config.json")) {
+          return "{}";
+        }
         throw new Error("missing");
       default:
         throw new Error(`unexpected invoke: ${command}`);
@@ -134,6 +140,8 @@ const mockState = vi.hoisted(() => {
     pipelineItems = [];
     pipelineDefinition = { name: "default", stages: [] };
     baseBranchResponse = ["origin/main", "main"];
+    repoConfig = {};
+    taskPorts = [];
     invokeMock.mockClear();
     insertPipelineItemMock.mockClear();
     updatePipelineItemStageMock.mockClear();
@@ -165,6 +173,18 @@ const mockState = vi.hoisted(() => {
     set baseBranchResponse(value: string[] | Error) {
       baseBranchResponse = value;
     },
+    get repoConfig() {
+      return repoConfig;
+    },
+    set repoConfig(value: RepoConfig) {
+      repoConfig = value;
+    },
+    get taskPorts() {
+      return taskPorts;
+    },
+    set taskPorts(value: TaskPort[]) {
+      taskPorts = value;
+    },
     invokeMock,
     insertPipelineItemMock,
     updatePipelineItemStageMock,
@@ -188,7 +208,7 @@ vi.mock("../listen", () => ({
 }));
 
 vi.mock("@kanna/core", () => ({
-  parseRepoConfig: vi.fn(() => ({})),
+  parseRepoConfig: vi.fn(() => mockState.repoConfig),
   parseAgentMd: vi.fn(() => null),
   DEFAULT_STAGE_ORDER: ["in progress", "pr", "merge", "done"],
 }));
@@ -321,7 +341,12 @@ vi.mock("@kanna/db", () => ({
   updatePipelineItemDisplayName: vi.fn(async () => {}),
   clearPipelineItemStageResult: vi.fn(async () => {}),
   closePipelineItem: vi.fn(async () => {}),
-  reopenPipelineItem: vi.fn(async () => {}),
+  reopenPipelineItem: vi.fn(async (_db: DbHandle, itemId: string) => {
+    const item = mockState.pipelineItems.find((candidate) => candidate.id === itemId);
+    if (item) {
+      item.closed_at = null;
+    }
+  }),
   getRepo: vi.fn(async (_db: DbHandle, repoId: string) =>
     mockState.repos.find((repo) => repo.id === repoId) ?? null
   ),
@@ -336,17 +361,73 @@ vi.mock("@kanna/db", () => ({
   hasCircularDependency: vi.fn(async () => false),
   insertOperatorEvent: vi.fn(async () => {}),
   updateClaudeSessionId: vi.fn(async () => {}),
-  listTaskPorts: vi.fn(async () => []),
-  listTaskPortsForItem: vi.fn(async () => []),
-  deleteTaskPortsForItem: vi.fn(async () => {}),
+  listTaskPorts: vi.fn(async () => [...mockState.taskPorts].sort((a, b) => a.port - b.port)),
+  listTaskPortsForItem: vi.fn(async (_db: DbHandle, itemId: string) =>
+    mockState.taskPorts
+      .filter((taskPort) => taskPort.pipeline_item_id === itemId)
+      .sort((a, b) => a.port - b.port)
+  ),
+  deleteTaskPortsForItem: vi.fn(async (_db: DbHandle, itemId: string) => {
+    mockState.taskPorts = mockState.taskPorts.filter((taskPort) => taskPort.pipeline_item_id !== itemId);
+  }),
 }));
 
 import { useKannaStore } from "./kanna";
 
 function createDb(): DbHandle {
   return {
-    execute: vi.fn(async () => ({ rowsAffected: 1 })),
-    select: vi.fn(async () => []),
+    execute: vi.fn(async (query: string, bindValues?: unknown[]) => {
+      if (query.startsWith("INSERT OR IGNORE INTO task_port")) {
+        const [port, pipelineItemId, envName] = bindValues as [number, string, string];
+        if (!mockState.taskPorts.some((taskPort) => taskPort.port === port)) {
+          mockState.taskPorts = [
+            ...mockState.taskPorts,
+            {
+              port,
+              pipeline_item_id: pipelineItemId,
+              env_name: envName,
+              created_at: mockState.makeItem().created_at,
+            },
+          ];
+          return { rowsAffected: 1 };
+        }
+        return { rowsAffected: 0 };
+      }
+
+      if (query.startsWith("UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?")) {
+        const [portOffset, portEnv, itemId] = bindValues as [number | null, string | null, string];
+        const item = mockState.pipelineItems.find((candidate) => candidate.id === itemId);
+        if (item) {
+          item.port_offset = portOffset;
+          item.port_env = portEnv;
+        }
+        return { rowsAffected: item ? 1 : 0 };
+      }
+
+      if (query.startsWith("DELETE FROM pipeline_item WHERE id = ?")) {
+        const [itemId] = bindValues as [string];
+        mockState.pipelineItems = mockState.pipelineItems.filter((candidate) => candidate.id !== itemId);
+        return { rowsAffected: 1 };
+      }
+
+      return { rowsAffected: 1 };
+    }),
+    select: vi.fn(async <T>(query: string, bindValues?: unknown[]) => {
+      if (query === "SELECT pipeline_item_id FROM task_port WHERE port = ?") {
+        const [port] = bindValues as [number];
+        const row = mockState.taskPorts.find((taskPort) => taskPort.port === port);
+        return row ? [{ pipeline_item_id: row.pipeline_item_id }] as T[] : [];
+      }
+
+      if (query === "SELECT * FROM pipeline_item WHERE closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1") {
+        const closed = [...mockState.pipelineItems]
+          .filter((item) => item.closed_at !== null)
+          .sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)));
+        return (closed[0] ? [closed[0]] : []) as T[];
+      }
+
+      return [];
+    }),
   };
 }
 
@@ -458,6 +539,91 @@ describe("kanna store task base branch integration", () => {
         base_ref: "main",
       }),
     );
+  });
+
+  it("reserves every configured base port for the default branch and starts worktrees at the next offset", async () => {
+    mockState.repoConfig = {
+      ports: {
+        KANNA_DEV_PORT: 1420,
+        API_PORT: 3000,
+      },
+    };
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Ship reserved ports", "sdk", {
+      agentProvider: "claude",
+    });
+
+    const createdItem = mockState.pipelineItems.at(-1);
+    expect(createdItem?.port_offset).toBe(1421);
+    expect(createdItem?.port_env).toBe(JSON.stringify({
+      KANNA_DEV_PORT: "1421",
+      API_PORT: "3001",
+    }));
+    expect(mockState.taskPorts.map((taskPort) => `${taskPort.env_name}:${taskPort.port}`)).toEqual([
+      "KANNA_DEV_PORT:1421",
+      "API_PORT:3001",
+    ]);
+  });
+
+  it("assigns later worktrees the next free offset above the reserved default-branch port", async () => {
+    mockState.repoConfig = {
+      ports: {
+        KANNA_DEV_PORT: 1420,
+        API_PORT: 3000,
+      },
+    };
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "First task", "sdk", {
+      agentProvider: "claude",
+    });
+    await store.createItem("repo-1", "/tmp/repo", "Second task", "sdk", {
+      agentProvider: "claude",
+    });
+
+    const secondItem = mockState.pipelineItems.at(-1);
+    expect(secondItem?.port_offset).toBe(1422);
+    expect(secondItem?.port_env).toBe(JSON.stringify({
+      KANNA_DEV_PORT: "1422",
+      API_PORT: "3002",
+    }));
+  });
+
+  it("assigns ports freshly on undo close instead of restoring the task's previous assignment", async () => {
+    mockState.repoConfig = {
+      ports: {
+        KANNA_DEV_PORT: 1420,
+        API_PORT: 3000,
+      },
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-closed",
+        branch: "task-closed",
+        closed_at: "2026-04-14T12:00:00.000Z",
+        port_offset: 1422,
+        port_env: JSON.stringify({
+          KANNA_DEV_PORT: "1422",
+          API_PORT: "3002",
+        }),
+      }),
+    ];
+    const store = await createStore();
+
+    await store.undoClose();
+
+    const reopenedItem = mockState.pipelineItems[0];
+    expect(reopenedItem.closed_at).toBeNull();
+    expect(reopenedItem.port_offset).toBe(1421);
+    expect(reopenedItem.port_env).toBe(JSON.stringify({
+      KANNA_DEV_PORT: "1421",
+      API_PORT: "3001",
+    }));
+    expect(mockState.taskPorts.map((taskPort) => `${taskPort.env_name}:${taskPort.port}`)).toEqual([
+      "KANNA_DEV_PORT:1421",
+      "API_PORT:3001",
+    ]);
   });
 
   it("advances stages using the previous task branch as the next worktree start point", async () => {
