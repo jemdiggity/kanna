@@ -63,6 +63,28 @@ filegroup(
 )
 
 genrule(
+    name = "tauri_updater_bazel_config",
+    srcs = ["tauri.conf.json"],
+    outs = ["tauri.bazel.conf.json"],
+    cmd = """
+python3 - "$(location tauri.conf.json)" "$@" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+source_path = pathlib.Path(sys.argv[1])
+output_path = pathlib.Path(sys.argv[2])
+config = json.loads(source_path.read_text(encoding="utf-8"))
+pubkey = os.environ.get("KANNA_UPDATER_PUBKEY", "").strip()
+if pubkey:
+    config.setdefault("plugins", {}).setdefault("updater", {})["pubkey"] = pubkey
+output_path.write_text(json.dumps(config, indent=2) + "\\n", encoding="utf-8")
+PY
+""",
+)
+
+genrule(
     name = "embedded_assets_rust",
     srcs = ["//:frontend_dist"],
     tools = [
@@ -77,12 +99,15 @@ genrule(
 tauri_acl_prep_dir(
     name = "desktop_build_script_acl_prep",
     cargo_srcs = ":context_cargo_srcs",
+    config = ":tauri_updater_bazel_config",
     dep_env_targets = [
         "@desktop_crates__tauri-2.10.3//:build_script_build",
         "@desktop_crates__tauri-plugin-dialog-2.6.0//:build_script_build",
         "@desktop_crates__tauri-plugin-opener-2.5.3//:build_script_build",
+        "@desktop_crates__tauri-plugin-process-2.3.1//:build_script_build",
         "@desktop_crates__tauri-plugin-shell-2.3.5//:build_script_build",
         "@desktop_crates__tauri-plugin-sql-2.3.2//:build_script_build",
+        "@desktop_crates__tauri-plugin-updater-2.10.1//:build_script_build",
         "@desktop_crates__tauri-plugin-webdriver-0.2.1//:build_script_build",
     ],
     frontend_dist = "//:frontend_dist",
@@ -93,6 +118,7 @@ tauri_context_support_dir(
     name = "full_context_rust_support",
     acl_out_dir = ":desktop_build_script_acl_prep",
     cargo_srcs = ":context_cargo_srcs",
+    config = ":tauri_updater_bazel_config",
     embedded_assets_rust = ":embedded_assets_rust",
     tauri_build_data = ":tauri_build_data",
 )
@@ -158,8 +184,10 @@ cargo_build_script(
         "@desktop_crates//:tauri",
         "@desktop_crates//:tauri-plugin-dialog",
         "@desktop_crates//:tauri-plugin-opener",
+        "@desktop_crates//:tauri-plugin-process",
         "@desktop_crates//:tauri-plugin-shell",
         "@desktop_crates//:tauri-plugin-sql",
+        "@desktop_crates//:tauri-plugin-updater",
         "@desktop_crates//:tauri-plugin-webdriver",
     ],
     proc_macro_deps = all_crate_deps(
@@ -198,7 +226,6 @@ rust_library(
     ) + [
         ":desktop_build_script",
         "//crates/claude-agent-sdk:claude_agent_sdk",
-        "//crates/tauri-plugin-delta-updater:tauri_plugin_delta_updater",
     ],
     proc_macro_deps = all_crate_deps(
         proc_macro = True,
@@ -226,7 +253,6 @@ rust_library(
         package_name = "apps/desktop/src-tauri",
     ) + [
         "//crates/claude-agent-sdk:claude_agent_sdk",
-        "//crates/tauri-plugin-delta-updater:tauri_plugin_delta_updater",
     ],
     proc_macro_deps = all_crate_deps(
         proc_macro = True,
