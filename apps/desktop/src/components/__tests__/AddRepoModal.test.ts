@@ -5,17 +5,44 @@ import { nextTick } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AddRepoModal from "../AddRepoModal.vue";
 
+interface LocalRepoFixture {
+  exists: boolean;
+  branch: string;
+  remote: string;
+}
+
+const localRepos = new Map<string, LocalRepoFixture>([
+  [
+    "/Users/me/code/project",
+    {
+      exists: true,
+      branch: "main",
+      remote: "git@github.com:owner/project.git",
+    },
+  ],
+  [
+    "/Users/me/code/design-system",
+    {
+      exists: true,
+      branch: "trunk",
+      remote: "git@github.com:owner/design-system.git",
+    },
+  ],
+]);
+
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(async (command: string, args?: { path?: string; repoPath?: string }) => {
-    const localPath = "/Users/me/code/project";
+    const localPath = args?.path ?? args?.repoPath;
+    const fixture = localPath ? localRepos.get(localPath) : undefined;
+
     if (command === "file_exists") {
-      return args?.path === localPath;
+      return fixture?.exists ?? false;
     }
-    if (command === "git_default_branch" && args?.repoPath === localPath) {
-      return "main";
+    if (command === "git_default_branch" && fixture) {
+      return fixture.branch;
     }
-    if (command === "git_remote_url" && args?.repoPath === localPath) {
-      return "git@github.com:owner/project.git";
+    if (command === "git_remote_url" && fixture) {
+      return fixture.remote;
     }
     return false;
   }),
@@ -103,7 +130,45 @@ describe("AddRepoModal", () => {
     ]);
   });
 
-  it("keeps focus on the active text input when switching tabs with the mouse", async () => {
+  it("collapses the local repo name behind an explicit change link", async () => {
+    const wrapper = mountModal();
+
+    await flushPromises();
+
+    const importInput = wrapper.get('input[placeholder="addRepo.importPlaceholder"]');
+    await importInput.setValue("/Users/me/code/project");
+    await flushPromises();
+
+    expect(wrapper.find('input[placeholder="addRepo.repoNamePlaceholder"]').exists()).toBe(false);
+
+    const repoNameRow = wrapper.get(".repo-name-row");
+    expect(repoNameRow.find(".repo-name-label").text()).toBe("addRepo.repoNameLabel");
+    expect(repoNameRow.find(".repo-name-value").text()).toBe("project");
+    expect(repoNameRow.find(".repo-name-change").text()).toBe("addRepo.change");
+
+    await repoNameRow.get(".repo-name-change").trigger("click");
+    await flushPromises();
+
+    const repoNameInput = wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]');
+    expect(document.activeElement).toBe(repoNameInput.element);
+    expect(repoNameInput.element.selectionStart).toBe(0);
+    expect(repoNameInput.element.selectionEnd).toBe("project".length);
+
+    await repoNameInput.setValue("Project Desktop");
+    await repoNameInput.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+
+    expect(wrapper.find('input[placeholder="addRepo.repoNamePlaceholder"]').exists()).toBe(false);
+    expect(wrapper.get(".repo-name-value").text()).toBe("Project Desktop");
+
+    await wrapper.get(".btn-primary").trigger("click");
+
+    expect(wrapper.emitted("import")).toEqual([
+      ["/Users/me/code/project", "Project Desktop", "main"],
+    ]);
+  });
+
+  it("keeps focus on the import input until rename mode is opened explicitly", async () => {
     const wrapper = mountModal("create");
 
     await flushPromises();
@@ -130,8 +195,13 @@ describe("AddRepoModal", () => {
     await importInput.setValue("/Users/me/code/project");
     await flushPromises();
 
-    const repoNameInput = wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]');
-    expect(document.activeElement).toBe(repoNameInput.element);
+    expect(document.activeElement).toBe(importInput.element);
+    expect(wrapper.find('input[placeholder="addRepo.repoNamePlaceholder"]').exists()).toBe(false);
+
+    await wrapper.get(".repo-name-change").trigger("click");
+    await flushPromises();
+
+    expect(document.activeElement).toBe(wrapper.get('input[placeholder="addRepo.repoNamePlaceholder"]').element);
 
     const createMouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     createTab.element.dispatchEvent(createMouseDown);

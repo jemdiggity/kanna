@@ -37,6 +37,7 @@ const homeDir = ref("");
 // ── Import / Clone tab state ──
 const importInput = ref("");
 const selectedLocalPath = ref<string | null>(null);
+const localDerivedRepoName = ref("");
 const localRepoName = ref("");
 const localBranch = ref("main");
 const localRemote = ref("");
@@ -44,6 +45,7 @@ const localPathExists = ref(false);
 const localIsGitRepo = ref(false);
 const localLoading = ref(false);
 const localInspectVersion = ref(0);
+const isEditingLocalRepoName = ref(false);
 
 // ── Shared state ──
 const error = ref<string | null>(null);
@@ -155,13 +157,15 @@ const shouldFocusLocalRepoName = computed(() =>
   activeTab.value === "import" &&
   !!activeLocalPath.value &&
   localIsGitRepo.value &&
+  isEditingLocalRepoName.value &&
   !localLoading.value,
 );
+const resolvedLocalRepoName = computed(() => localRepoName.value.trim() || localDerivedRepoName.value);
 
 const importDisabled = computed(() => {
   if (props.cloning) return true;
   if (activeLocalPath.value) {
-    return localLoading.value || !localPathExists.value || !localIsGitRepo.value || !localRepoName.value.trim();
+    return localLoading.value || !localPathExists.value || !localIsGitRepo.value || !resolvedLocalRepoName.value;
   }
   return parsed.value.type !== "clone";
 });
@@ -175,8 +179,8 @@ watch(manualLocalPath, async (path) => {
   await inspectLocalPath(path);
 }, { immediate: true });
 
-watch([activeLocalPath, localIsGitRepo, localLoading], () => {
-  if (shouldFocusLocalRepoName.value) {
+watch(shouldFocusLocalRepoName, (shouldFocus) => {
+  if (shouldFocus) {
     focusActiveInput();
   }
 });
@@ -204,12 +208,14 @@ function normalizeLocalPath(path: string): string {
 }
 
 function resetLocalRepoState() {
+  localDerivedRepoName.value = "";
   localRepoName.value = "";
   localBranch.value = "main";
   localRemote.value = "";
   localPathExists.value = false;
   localIsGitRepo.value = false;
   localLoading.value = false;
+  isEditingLocalRepoName.value = false;
 }
 
 function deriveRepoName(path: string): string {
@@ -221,7 +227,11 @@ function deriveRepoName(path: string): string {
 async function inspectLocalPath(dirPath: string) {
   const inspectionId = ++localInspectVersion.value;
   localLoading.value = true;
-  localRepoName.value = deriveRepoName(dirPath);
+  const derivedRepoName = deriveRepoName(dirPath);
+  localDerivedRepoName.value = derivedRepoName;
+  localRepoName.value = derivedRepoName;
+  isEditingLocalRepoName.value = false;
+  localPathExists.value = false;
 
   try {
     const exists = await invoke<boolean>("file_exists", { path: dirPath });
@@ -261,6 +271,19 @@ async function inspectLocalPath(dirPath: string) {
   }
 }
 
+async function startLocalRepoRename() {
+  if (!activeLocalPath.value || !localIsGitRepo.value || localLoading.value) return;
+  isEditingLocalRepoName.value = true;
+  await nextTick();
+  localRepoNameInputRef.value?.focus();
+  localRepoNameInputRef.value?.select();
+}
+
+function commitLocalRepoRename() {
+  localRepoName.value = localRepoName.value.trim() || localDerivedRepoName.value;
+  isEditingLocalRepoName.value = false;
+}
+
 async function handleChangeCreateDir() {
   const result = await open({ directory: true, multiple: false, title: t('modals.chooseDirectory') });
   if (!result) return;
@@ -296,7 +319,7 @@ function handleSubmit() {
   } else {
     if (importDisabled.value) return;
     if (activeLocalPath.value && localIsGitRepo.value) {
-      emit("import", activeLocalPath.value, localRepoName.value.trim(), localBranch.value);
+      emit("import", activeLocalPath.value, resolvedLocalRepoName.value, localBranch.value);
     } else if (parsed.value.type === "clone" && parsed.value.cloneUrl) {
       emit("clone", parsed.value.cloneUrl, cloneDestination.value);
     }
@@ -400,15 +423,24 @@ function switchTab(tab: "create" | "import") {
             <div v-else-if="localPathExists" class="error-inline">
               {{ $t('addRepo.notAGitRepo') }}
             </div>
-            <div v-if="localIsGitRepo && !localLoading" class="name-field">
-              <input
-                ref="localRepoNameInputRef"
-                v-model="localRepoName"
-                v-bind="macOsTextInputAttrs"
-                class="text-input"
-                type="text"
-                :placeholder="$t('addRepo.repoNamePlaceholder')"
-              />
+            <div v-if="localIsGitRepo && !localLoading">
+              <div v-if="isEditingLocalRepoName">
+                <input
+                  ref="localRepoNameInputRef"
+                  v-model="localRepoName"
+                  v-bind="macOsTextInputAttrs"
+                  class="text-input"
+                  type="text"
+                  :placeholder="$t('addRepo.repoNamePlaceholder')"
+                  @blur="commitLocalRepoRename"
+                  @keydown.enter.stop.prevent="commitLocalRepoRename"
+                />
+              </div>
+              <div v-else class="repo-name-row">
+                <span class="repo-name-label">{{ $t('addRepo.repoNameLabel') }}</span>
+                <span class="repo-name-value">{{ resolvedLocalRepoName }}</span>
+                <a class="repo-name-change change-link" @click="startLocalRepoRename">{{ $t('addRepo.change') }}</a>
+              </div>
             </div>
           </template>
           <template v-else>
@@ -430,15 +462,24 @@ function switchTab(tab: "create" | "import") {
           <div v-else class="error-inline">
             {{ $t('addRepo.notAGitRepo') }}
           </div>
-          <div v-if="localIsGitRepo && !localLoading" class="name-field">
-            <input
-              ref="localRepoNameInputRef"
-              v-model="localRepoName"
-              v-bind="macOsTextInputAttrs"
-              class="text-input"
-              type="text"
-              :placeholder="$t('addRepo.repoNamePlaceholder')"
-            />
+          <div v-if="localIsGitRepo && !localLoading">
+            <div v-if="isEditingLocalRepoName">
+              <input
+                ref="localRepoNameInputRef"
+                v-model="localRepoName"
+                v-bind="macOsTextInputAttrs"
+                class="text-input"
+                type="text"
+                :placeholder="$t('addRepo.repoNamePlaceholder')"
+                @blur="commitLocalRepoRename"
+                @keydown.enter.stop.prevent="commitLocalRepoRename"
+              />
+            </div>
+            <div v-else class="repo-name-row">
+              <span class="repo-name-label">{{ $t('addRepo.repoNameLabel') }}</span>
+              <span class="repo-name-value">{{ resolvedLocalRepoName }}</span>
+              <a class="repo-name-change change-link" @click="startLocalRepoRename">{{ $t('addRepo.change') }}</a>
+            </div>
           </div>
         </template>
 
@@ -578,6 +619,23 @@ function switchTab(tab: "create" | "import") {
   padding: 4px 2px 0;
 }
 
+.repo-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 2px 0;
+  font-size: 11px;
+}
+
+.repo-name-label {
+  color: #555;
+}
+
+.repo-name-value {
+  color: #ccc;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+
 .selected-path-row {
   display: flex;
   align-items: center;
@@ -597,10 +655,6 @@ function switchTab(tab: "create" | "import") {
   border: 1px solid #444;
   border-radius: 4px;
   padding: 10px;
-}
-
-.name-field {
-  margin-top: 10px;
 }
 
 .error-inline {

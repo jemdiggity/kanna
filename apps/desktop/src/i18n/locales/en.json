@@ -183,6 +183,7 @@
     "detecting": "detecting...",
     "gitRepoConfirmed": "✓ Git repo · branch:",
     "notAGitRepo": "Not a git repo. Use Create New tab to initialize one.",
+    "repoNameLabel": "Repo name",
     "repoNamePlaceholder": "Repository name",
     "cloning": "Cloning...",
     "or": "or"

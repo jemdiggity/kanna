@@ -183,6 +183,7 @@
     "detecting": "감지 중...",
     "gitRepoConfirmed": "✓ Git 저장소 · 브랜치:",
     "notAGitRepo": "Git 저장소가 아닙니다. 새로 만들기 탭에서 초기화하세요.",
+    "repoNameLabel": "저장소 이름",
     "repoNamePlaceholder": "저장소 이름",
     "cloning": "복제 중...",
     "or": "또는"
