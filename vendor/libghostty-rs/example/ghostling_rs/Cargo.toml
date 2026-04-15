@@ -1,0 +1,11 @@
+[package]
+name = "ghostling_rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libghostty-vt.workspace = true
+macroquad = "0.4.14"
+nix = { version = "0.31.2", features = ["term", "fs", "signal", "process", "user", "ioctl"] }

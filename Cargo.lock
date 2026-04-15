@@ -2614,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "kanna-desktop"
-version = "0.0.38"
+version = "0.0.39"
 dependencies = [
  "base64 0.22.1",
  "block2",
@@ -2720,7 +2720,6 @@ checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
 [[package]]
 name = "libghostty-vt"
 version = "0.1.1"
-source = "git+https://github.com/jemdiggity/libghostty-rs.git?rev=61ae57d7b42821e1b19ad325abc7ff49c80fc880#61ae57d7b42821e1b19ad325abc7ff49c80fc880"
 dependencies = [
  "bitflags 2.11.0",
  "int-enum",
@@ -2730,7 +2729,6 @@ dependencies = [
 [[package]]
 name = "libghostty-vt-sys"
 version = "0.1.1"
-source = "git+https://github.com/jemdiggity/libghostty-rs.git?rev=61ae57d7b42821e1b19ad325abc7ff49c80fc880#61ae57d7b42821e1b19ad325abc7ff49c80fc880"
 
 [[package]]
 name = "libgit2-sys"
