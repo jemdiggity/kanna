@@ -146,3 +146,51 @@ describe("desktop version wiring", () => {
     expect(desktopBuild).not.toContain('"KANNA_VERSION": "0.0.33"');
   });
 });
+
+describe("updater release assets", () => {
+  it("requires updater signing inputs before publishing a release", () => {
+    const shipScript = readFileSync(
+      resolve(repoRoot, "scripts/ship.sh"),
+      "utf8",
+    );
+
+    expect(shipScript).toContain("KANNA_UPDATER_PUBKEY");
+    expect(shipScript).toContain("TAURI_PRIVATE_KEY_PATH");
+    expect(shipScript).toContain("TAURI_PRIVATE_KEY_PASSWORD");
+  });
+
+  it("creates architecture-specific updater tarballs and signatures", () => {
+    const shipScript = readFileSync(
+      resolve(repoRoot, "scripts/ship.sh"),
+      "utf8",
+    );
+
+    expect(shipScript).toContain('echo "Kanna_${VERSION}_${suffix}.app.tar.gz"');
+    expect(shipScript).toContain("tauri signer sign");
+    expect(shipScript).toContain(".app.tar.gz.sig");
+  });
+
+  it("publishes a latest.json manifest alongside the release assets", () => {
+    const shipScript = readFileSync(
+      resolve(repoRoot, "scripts/ship.sh"),
+      "utf8",
+    );
+
+    expect(shipScript).toContain('gh release view "v$VERSION" --json body,publishedAt');
+    expect(shipScript).toContain('RELEASE_BODY="$(read_release_metadata_field "$release_metadata_json" body)"');
+    expect(shipScript).toContain(
+      'RELEASE_PUBLISHED_AT="$(read_release_metadata_field "$release_metadata_json" publishedAt)"',
+    );
+    expect(shipScript).toContain('write_latest_json "$RELEASE_BODY" "$RELEASE_PUBLISHED_AT"');
+    expect(shipScript).toContain('const notes = process.env.RELEASE_NOTES;');
+    expect(shipScript).toContain('const pubDate = process.env.PUBLISHED_AT;');
+    expect(shipScript).not.toContain("new Date().toISOString()");
+    expect(shipScript).toContain("latest.json");
+    expect(shipScript).toContain("darwin-aarch64");
+    expect(shipScript).toContain("darwin-x86_64");
+    expect(shipScript).toContain('gh release create "v$VERSION" "${DMG_PATHS[@]}" "${UPDATER_PATHS[@]}" \\');
+    expect(shipScript).not.toContain('gh release create "v$VERSION" "${DMG_PATHS[@]}" "${UPDATER_PATHS[@]}" "$LATEST_JSON"');
+    expect(shipScript).toContain('gh release upload "v$VERSION" "$LATEST_JSON" --clobber');
+    expect(shipScript).toContain("gh release upload");
+  });
+});
