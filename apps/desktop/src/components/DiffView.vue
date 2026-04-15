@@ -29,17 +29,22 @@ registerContextShortcuts("diff", [
 ]);
 
 type WorkingFilter = "all" | "unstaged" | "staged";
+type DiffScope = "branch" | "working";
+type DiffScrollPositions = Partial<Record<DiffScope, number>>;
 const workingFilterOrder: WorkingFilter[] = ["all", "unstaged", "staged"];
 
 const props = defineProps<{
   repoPath: string;
   worktreePath?: string;
-  initialScope?: "branch" | "working";
+  initialScope?: DiffScope;
+  initialScrollPositions?: DiffScrollPositions;
   baseRef?: string;
+  viewKey?: string;
 }>();
 
 const emit = defineEmits<{
-  (e: "scope-change", scope: "branch" | "working"): void;
+  (e: "scope-change", scope: DiffScope): void;
+  (e: "scroll-state-change", positions: DiffScrollPositions): void;
   (e: "close"): void;
 }>();
 
@@ -49,7 +54,8 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const noDiff = ref(false);
 const workingFilter = ref<WorkingFilter>("all");
-const scope = ref<"branch" | "working">(props.initialScope === "branch" ? "branch" : "working");
+const scope = ref<DiffScope>(props.initialScope === "branch" ? "branch" : "working");
+const scrollPositions = ref<DiffScrollPositions>(cloneScrollPositions(props.initialScrollPositions));
 
 const workingFilterLabel = computed(() => {
   const labels: Record<WorkingFilter, string> = {
@@ -109,6 +115,39 @@ function logDiffPerf(
   console.warn(`[DiffView][perf] load#${loadId} ${stage}`, details);
 }
 
+function cloneScrollPositions(positions?: DiffScrollPositions): DiffScrollPositions {
+  return positions ? { ...positions } : {};
+}
+
+function emitScrollStateChange() {
+  emit("scroll-state-change", { ...scrollPositions.value });
+}
+
+function updateScrollPosition(scopeName: DiffScope, top: number) {
+  if (scrollPositions.value[scopeName] === top) return;
+  scrollPositions.value = {
+    ...scrollPositions.value,
+    [scopeName]: top,
+  };
+  emitScrollStateChange();
+}
+
+function saveCurrentScrollPosition() {
+  if (!containerRef.value) return;
+  updateScrollPosition(scope.value, containerRef.value.scrollTop);
+}
+
+function restoreScrollPosition() {
+  if (!containerRef.value) return;
+  const top = scrollPositions.value[scope.value] ?? 0;
+  containerRef.value.scrollTo({ top, behavior: "auto" });
+}
+
+function syncViewStateFromProps() {
+  scope.value = props.initialScope === "branch" ? "branch" : "working";
+  scrollPositions.value = cloneScrollPositions(props.initialScrollPositions);
+}
+
 async function initWorkerPool() {
   if (workerPool) return workerPool;
   try {
@@ -132,7 +171,10 @@ async function initWorkerPool() {
   }
 }
 
-async function loadDiff() {
+async function loadDiff(options: { preserveCurrentScroll?: boolean } = {}) {
+  if (options.preserveCurrentScroll !== false) {
+    saveCurrentScrollPosition();
+  }
   emit("scope-change", scope.value);
   const path = props.worktreePath || props.repoPath;
   const loadId = ++nextDiffLoadId;
@@ -211,6 +253,7 @@ async function loadDiff() {
 
     diffContent.value = patch;
     await renderDiff(diffContent.value, renderContext);
+    restoreScrollPosition();
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e);
     logDiffPerf(loadId, "error", {
@@ -391,29 +434,44 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
 }
 
 watch(
-  () => [props.repoPath, props.worktreePath],
-  () => loadDiff(),
+  () => [props.viewKey, props.repoPath, props.worktreePath, props.baseRef] as const,
+  (nextValue, previousValue) => {
+    const viewChanged = previousValue !== undefined && nextValue[0] !== previousValue[0];
+    if (viewChanged) {
+      syncViewStateFromProps();
+    }
+    void loadDiff({ preserveCurrentScroll: !viewChanged });
+  },
   { immediate: false }
 );
 
-const scopeOrder: Array<"working" | "branch"> = ["working", "branch"];
+const scopeOrder: DiffScope[] = ["working", "branch"];
+
+async function setScope(nextScope: DiffScope) {
+  if (scope.value === nextScope) return;
+  saveCurrentScrollPosition();
+  scope.value = nextScope;
+  await loadDiff({ preserveCurrentScroll: false });
+}
 
 function cycleScopeForward() {
   const idx = scopeOrder.indexOf(scope.value);
-  scope.value = scopeOrder[(idx + 1) % scopeOrder.length];
-  loadDiff();
+  void setScope(scopeOrder[(idx + 1) % scopeOrder.length]);
 }
 
 function cycleScopeBack() {
   const idx = scopeOrder.indexOf(scope.value);
-  scope.value = scopeOrder[(idx - 1 + scopeOrder.length) % scopeOrder.length];
-  loadDiff();
+  void setScope(scopeOrder[(idx - 1 + scopeOrder.length) % scopeOrder.length]);
 }
 
 function cycleWorkingFilter() {
   const idx = workingFilterOrder.indexOf(workingFilter.value);
   workingFilter.value = workingFilterOrder[(idx + 1) % workingFilterOrder.length];
-  loadDiff();
+  void loadDiff();
+}
+
+function handleScroll() {
+  saveCurrentScrollPosition();
 }
 
 useLessScroll(containerRef, {
@@ -443,7 +501,10 @@ useLessScroll(containerRef, {
   onClose: () => emit("close"),
 });
 
-onMounted(() => loadDiff());
+onMounted(() => {
+  syncViewStateFromProps();
+  void loadDiff({ preserveCurrentScroll: false });
+});
 
 onUnmounted(() => cleanupInstance());
 
@@ -454,8 +515,8 @@ defineExpose({ refresh: loadDiff });
   <div class="diff-view">
     <div class="diff-toolbar">
       <div class="scope-selector">
-        <button :class="{ active: scope === 'working' }" @click="scope = 'working'; loadDiff()">{{ $t('diffView.scopeWorking') }}</button>
-        <button :class="{ active: scope === 'branch' }" @click="scope = 'branch'; loadDiff()">{{ $t('diffView.scopeBranch') }}</button>
+        <button :class="{ active: scope === 'working' }" @click="setScope('working')">{{ $t('diffView.scopeWorking') }}</button>
+        <button :class="{ active: scope === 'branch' }" @click="setScope('branch')">{{ $t('diffView.scopeBranch') }}</button>
       </div>
       <button
         v-if="scope === 'working'"
@@ -465,7 +526,7 @@ defineExpose({ refresh: loadDiff });
     </div>
     <div v-if="error" class="diff-status diff-error">{{ error }}</div>
     <div v-else-if="noDiff && !loading" class="diff-status">{{ $t('diffView.noChanges') }}</div>
-    <div ref="containerRef" class="diff-container"></div>
+    <div ref="containerRef" class="diff-container" @scroll="handleScroll"></div>
   </div>
 </template>
 

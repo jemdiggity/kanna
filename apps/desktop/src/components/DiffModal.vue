@@ -13,13 +13,16 @@ defineProps<{
   repoPath: string;
   worktreePath?: string;
   initialScope?: "branch" | "working";
+  initialScrollPositions?: Partial<Record<"branch" | "working", number>>;
   maximized?: boolean;
   baseRef?: string;
+  viewKey?: string;
 }>();
 
 const emit = defineEmits<{
   (e: "close"): void;
   (e: "scope-change", scope: "branch" | "working"): void;
+  (e: "scroll-state-change", positions: Partial<Record<"branch" | "working", number>>): void;
 }>();
 
 // Escape is handled by the centralized dismiss handler in useKeyboardShortcuts
@@ -32,7 +35,17 @@ onMounted(() => {
 <template>
   <div class="modal-overlay" :class="{ maximized }" :style="{ zIndex }" @click.self="emit('close')">
     <div ref="modalRef" class="diff-modal" tabindex="-1">
-      <DiffView :repo-path="repoPath" :worktree-path="worktreePath" :initial-scope="initialScope" :base-ref="baseRef" @scope-change="emit('scope-change', $event)" @close="emit('close')" />
+      <DiffView
+        :repo-path="repoPath"
+        :worktree-path="worktreePath"
+        :initial-scope="initialScope"
+        :initial-scroll-positions="initialScrollPositions"
+        :base-ref="baseRef"
+        :view-key="viewKey"
+        @scope-change="emit('scope-change', $event)"
+        @scroll-state-change="emit('scroll-state-change', $event)"
+        @close="emit('close')"
+      />
     </div>
   </div>
 </template>

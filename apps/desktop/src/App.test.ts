@@ -262,7 +262,6 @@ describe("App", () => {
       }),
     );
   });
-
   it("skips blocked tasks when navigating to the oldest and newest read task", async () => {
     store.sortedItemsForCurrentRepo = [
       { id: "blocked-oldest", activity: "idle", created_at: "2026-03-31T00:00:00.000Z", tags: '["blocked"]' },
@@ -280,5 +279,82 @@ describe("App", () => {
     store.selectItem.mockClear();
     capturedKeyboardActions?.goToNewestRead();
     expect(store.selectItem).toHaveBeenCalledWith("read-newest");
+  });
+
+  it("reopens the diff modal with the last saved diff view state", async () => {
+    const DiffModalStub = defineComponent({
+      name: "DiffModal",
+      props: {
+        initialScope: String,
+        initialScrollPositions: Object,
+      },
+      emits: ["scope-change", "scroll-state-change", "close"],
+      template: `
+        <div data-testid="diff-modal">
+          <span data-testid="diff-scope">{{ initialScope ?? '' }}</span>
+          <span data-testid="diff-working-scroll">{{ initialScrollPositions?.working ?? '' }}</span>
+          <button
+            data-testid="remember-diff-state"
+            @click="$emit('scope-change', 'branch'); $emit('scroll-state-change', { working: 240, branch: 520 })"
+          >
+            remember
+          </button>
+          <button data-testid="close-diff" @click="$emit('close')">close</button>
+        </div>
+      `,
+    });
+
+    vi.stubGlobal("__KANNA_MOBILE__", false);
+    const { default: App } = await import("./App.vue");
+    const wrapper = mount(App, {
+      global: {
+        provide: {
+          db: {},
+          dbName: "test.db",
+        },
+        mocks: {
+          $t: (key: string) => key,
+        },
+        stubs: {
+          Sidebar: SidebarWithRepoStub,
+          MainPanel: true,
+          AddRepoModal: true,
+          KeyboardShortcutsModal: true,
+          FilePickerModal: true,
+          FilePreviewModal: true,
+          TreeExplorerModal: true,
+          DiffModal: DiffModalStub,
+          CommitGraphModal: true,
+          ShellModal: true,
+          CommandPaletteModal: true,
+          AnalyticsModal: true,
+          BlockerSelectModal: true,
+          PreferencesPanel: true,
+          ToastContainer: true,
+          KeepAlive: false,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.showDiff();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="diff-scope"]').text()).toBe("");
+
+    await wrapper.get('[data-testid="remember-diff-state"]').trigger("click");
+    await flushPromises();
+
+    capturedKeyboardActions?.showDiff();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="diff-modal"]').exists()).toBe(false);
+
+    capturedKeyboardActions?.showDiff();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="diff-scope"]').text()).toBe("branch");
+    expect(wrapper.get('[data-testid="diff-working-scroll"]').text()).toBe("240");
   });
 });
