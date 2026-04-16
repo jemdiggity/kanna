@@ -31,6 +31,10 @@ import {
   shouldForceDoubleResizeOnReconnect,
   shouldReattachOnDaemonReady,
 } from "./terminalSessionRecovery"
+import {
+  encodeTerminalPasteBytes,
+  formatDroppedPathsForPaste,
+} from "./terminalMediaBridge"
 import { useToast } from "./useToast"
 import i18n from "../i18n"
 import { getAppErrorMessage } from "../appError"
@@ -72,6 +76,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let unlistenDaemonReady: (() => void) | null = null
   let unlistenStreamLost: (() => void) | null = null
   let container: HTMLElement | null = null
+  let cleanupContainerEvents: (() => void) | null = null
   let fitRafId = 0
   let attached = false
   let connecting = false
@@ -251,6 +256,42 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     }
 
     term.open(container)
+
+    if (options?.agentTerminal) {
+      const suppressDragNavigation = (event: DragEvent) => {
+        if ((event.dataTransfer?.files?.length ?? 0) === 0) return
+        event.preventDefault()
+        event.stopPropagation()
+      }
+
+      const handleDrop = (event: DragEvent) => {
+        const files = Array.from(event.dataTransfer?.files ?? [])
+        const paths = files
+          .map((file) => (file as File & { path?: string }).path ?? "")
+          .filter((path): path is string => path.length > 0)
+
+        if (paths.length === 0) return
+
+        event.preventDefault()
+        event.stopPropagation()
+
+        const text = formatDroppedPathsForPaste(paths)
+        const bytes = encodeTerminalPasteBytes(text, false)
+        void invoke("send_input", {
+          sessionId,
+          data: Array.from(bytes),
+        })
+      }
+
+      container.addEventListener("dragenter", suppressDragNavigation)
+      container.addEventListener("dragover", suppressDragNavigation)
+      container.addEventListener("drop", handleDrop)
+      cleanupContainerEvents = () => {
+        container?.removeEventListener("dragenter", suppressDragNavigation)
+        container?.removeEventListener("dragover", suppressDragNavigation)
+        container?.removeEventListener("drop", handleDrop)
+      }
+    }
 
     if (container.offsetWidth > 0 && container.offsetHeight > 0) {
       fitAddon.fit()
@@ -868,6 +909,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     attached = false
     fileExistsCache.clear()
     if (fitRafId) cancelAnimationFrame(fitRafId)
+    cleanupContainerEvents?.()
+    cleanupContainerEvents = null
     if (unlistenOutput) {
       unlistenOutput()
       console.warn("[terminal][instance] listener:remove", {
