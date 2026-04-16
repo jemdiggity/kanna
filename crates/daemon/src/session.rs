@@ -5,9 +5,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+use crate::protocol::{AgentProvider, SessionInfo, SessionState, SessionStatus};
 use crate::pty::PtySession;
 use crate::sidecar::TerminalSidecar;
-use kanna_daemon::protocol::{AgentProvider, SessionInfo, SessionState, SessionStatus};
 
 pub const STATUS_DETECTION_THROTTLE_MS: u64 = 500;
 
@@ -15,6 +15,12 @@ pub const STATUS_DETECTION_THROTTLE_MS: u64 = 500;
 pub struct StreamControl {
     stop_requested: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
+}
+
+impl Default for StreamControl {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StreamControl {
@@ -56,10 +62,33 @@ pub struct SessionManager {
     pub sessions: HashMap<String, SessionRecord>,
 }
 
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct StatusObservation {
     pub provider: Option<AgentProvider>,
     pub detected_status: Option<SessionStatus>,
     pub lines: Vec<String>,
+}
+
+pub struct BenchmarkStatusState {
+    pub status: SessionStatus,
+    pub status_observed: bool,
+    pub last_status_check_at: Option<Instant>,
+}
+
+impl BenchmarkStatusState {
+    #[allow(dead_code)]
+    pub fn new(status: SessionStatus) -> Self {
+        Self {
+            status,
+            status_observed: false,
+            last_status_check_at: None,
+        }
+    }
 }
 
 impl SessionManager {
@@ -247,38 +276,82 @@ fn status_detection_throttle() -> Duration {
     Duration::from_millis(STATUS_DETECTION_THROTTLE_MS)
 }
 
-fn detect_status_if_due(
-    session: &mut SessionRecord,
+fn detect_sidecar_status_if_due(
+    sidecar: &mut TerminalSidecar,
+    agent_provider: Option<AgentProvider>,
+    status: SessionStatus,
+    status_observed: &mut bool,
+    last_status_check_at: &mut Option<Instant>,
     now: Instant,
     throttle: Duration,
 ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
-    if session
-        .last_status_check_at
+    if last_status_check_at
         .is_some_and(|last_check_at| now.saturating_duration_since(last_check_at) < throttle)
     {
         return Ok(None);
     }
 
-    session.last_status_check_at = Some(now);
+    *last_status_check_at = Some(now);
 
-    let visible_status = session.sidecar.visible_status(session.agent_provider)?;
-    if let Some(status) = visible_status {
-        session.status_observed = true;
-        return Ok(if session.status != status {
-            Some(status)
+    let visible_status = sidecar.visible_status(agent_provider)?;
+    if let Some(next_status) = visible_status {
+        *status_observed = true;
+        return Ok(if status != next_status {
+            Some(next_status)
         } else {
             None
         });
     }
 
     Ok(
-        if session.status_observed
-            && matches!(session.status, SessionStatus::Busy | SessionStatus::Waiting)
-        {
+        if *status_observed && matches!(status, SessionStatus::Busy | SessionStatus::Waiting) {
             Some(SessionStatus::Idle)
         } else {
             None
         },
+    )
+}
+
+#[allow(dead_code)]
+pub fn replay_sidecar_for_benchmark(
+    sidecar: &mut TerminalSidecar,
+    agent_provider: Option<AgentProvider>,
+    state: &mut BenchmarkStatusState,
+    benchmark_started_at: Instant,
+    chunk_at_ms: u64,
+    data: &[u8],
+) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
+    sidecar.write(data);
+    sidecar.drain_pty_writes();
+
+    let now = benchmark_started_at
+        .checked_add(Duration::from_millis(chunk_at_ms))
+        .unwrap_or(benchmark_started_at);
+
+    detect_sidecar_status_if_due(
+        sidecar,
+        agent_provider,
+        state.status,
+        &mut state.status_observed,
+        &mut state.last_status_check_at,
+        now,
+        status_detection_throttle(),
+    )
+}
+
+fn detect_status_if_due(
+    session: &mut SessionRecord,
+    now: Instant,
+    throttle: Duration,
+) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
+    detect_sidecar_status_if_due(
+        &mut session.sidecar,
+        session.agent_provider,
+        session.status,
+        &mut session.status_observed,
+        &mut session.last_status_check_at,
+        now,
+        throttle,
     )
 }
 
@@ -287,10 +360,13 @@ mod tests {
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
-    use super::{SessionManager, SessionRecord};
+    use super::{
+        replay_sidecar_for_benchmark, BenchmarkStatusState, SessionManager, SessionRecord,
+    };
+    use crate::bench::transcript::{BenchmarkMode, BenchmarkProvider, TranscriptSpec};
+    use crate::protocol::{AgentProvider, SessionStatus};
     use crate::pty::PtySession;
-    use crate::sidecar::TerminalSidecar;
-    use kanna_daemon::protocol::{AgentProvider, SessionStatus};
+    use crate::sidecar::{initial_session_status, TerminalSidecar};
 
     fn spawn_test_record(
         provider: AgentProvider,
@@ -487,5 +563,37 @@ mod tests {
             .pty
             .kill()
             .unwrap();
+    }
+
+    #[test]
+    fn benchmark_replay_updates_status_without_real_pty_io() {
+        let transcript =
+            TranscriptSpec::new(BenchmarkProvider::Codex, BenchmarkMode::Steady).build();
+        let mut sidecar = TerminalSidecar::new(120, 40, 10_000).unwrap();
+        let started_at = Instant::now();
+        let mut state =
+            BenchmarkStatusState::new(initial_session_status(Some(AgentProvider::Codex)));
+
+        for chunk in &transcript.chunks {
+            let changed = replay_sidecar_for_benchmark(
+                &mut sidecar,
+                Some(AgentProvider::Codex),
+                &mut state,
+                started_at,
+                chunk.at_ms,
+                &chunk.bytes,
+            )
+            .unwrap();
+
+            if let Some(next) = changed {
+                state.status = next;
+            }
+        }
+
+        assert!(matches!(
+            state.status,
+            SessionStatus::Busy | SessionStatus::Idle
+        ));
+        assert!(state.status_observed);
     }
 }
