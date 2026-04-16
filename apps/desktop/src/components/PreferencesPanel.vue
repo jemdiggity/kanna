@@ -1,13 +1,30 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AgentProvider } from "@kanna/db"
+import { invoke } from "../invoke"
 import { useModalZIndex } from '../composables/useModalZIndex'
+import MobileAccessPanel from './MobileAccessPanel.vue'
 import { macOsTextInputAttrs } from '../utils/textInput'
 
 useI18n()
 const { zIndex } = useModalZIndex()
 const isDev = import.meta.env.DEV
+
+type MobileServerStatus = "running" | "stopped" | "error"
+
+interface MobileServerStatusResponse {
+  desktopName?: string
+  state?: string
+  pairingCode?: string | null
+}
+
+interface PairingSessionResponse {
+  pairingCode?: string | null
+  code?: string | null
+  desktopName?: string
+  state?: string
+}
 
 defineProps<{
   preferences: {
@@ -28,6 +45,9 @@ const emit = defineEmits<{
 const activeTab = ref<'general' | 'developer'>('general')
 
 const tabs: Array<'general' | 'developer'> = isDev ? ['general', 'developer'] : ['general']
+const mobileDesktopName = ref("This desktop")
+const mobileServerStatus = ref<MobileServerStatus>("stopped")
+const pairingCode = ref<string | null>(null)
 
 function cycleTab(direction: -1 | 1) {
   const idx = tabs.indexOf(activeTab.value)
@@ -43,8 +63,46 @@ function handleKeydown(e: KeyboardEvent) {
 
 const overlayRef = ref<HTMLDivElement | null>(null)
 
+function normalizeMobileServerStatus(status?: string): MobileServerStatus {
+  if (status === "running" || status === "stopped" || status === "error") {
+    return status
+  }
+  return "error"
+}
+
+async function refreshMobileAccess() {
+  try {
+    const status = await invoke<MobileServerStatusResponse>("mobile_server_status")
+    if (status.desktopName) {
+      mobileDesktopName.value = status.desktopName
+    }
+    mobileServerStatus.value = normalizeMobileServerStatus(status.state)
+    pairingCode.value = status.pairingCode ?? null
+  } catch (error) {
+    console.error("[PreferencesPanel] failed to load mobile access status:", error)
+    mobileServerStatus.value = "error"
+  }
+}
+
+async function startPairing() {
+  try {
+    const session = await invoke<PairingSessionResponse>("create_mobile_pairing_session")
+    if (session.desktopName) {
+      mobileDesktopName.value = session.desktopName
+    }
+    mobileServerStatus.value = session.state
+      ? normalizeMobileServerStatus(session.state)
+      : "running"
+    pairingCode.value = session.pairingCode ?? session.code ?? null
+  } catch (error) {
+    console.error("[PreferencesPanel] failed to create pairing session:", error)
+    mobileServerStatus.value = "error"
+  }
+}
+
 onMounted(() => {
   overlayRef.value?.focus()
+  void refreshMobileAccess()
 })
 
 defineExpose({ cycleTab })
@@ -135,6 +193,13 @@ defineExpose({ cycleTab })
             @change="emit('update', 'dev.lingerTerminals', ($event.target as HTMLInputElement).checked ? 'true' : 'false')"
           />
         </div>
+
+        <MobileAccessPanel
+          :desktop-name="mobileDesktopName"
+          :server-status="mobileServerStatus"
+          :pairing-code="pairingCode"
+          @start-pairing="startPairing"
+        />
       </div>
 
       <div class="prefs-footer">
