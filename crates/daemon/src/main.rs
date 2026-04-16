@@ -96,7 +96,7 @@ enum HandoffEventLegacy {
     },
 }
 use protocol::{Command, Event, SessionStatus};
-use session::{SessionManager, SessionRecord, StreamControl};
+use session::{SessionManager, SessionRecord, StreamControl, STATUS_DETECTION_THROTTLE_MS};
 use socket::{bind_socket, read_command, write_event};
 
 fn recovery_snapshot_to_terminal_snapshot(
@@ -370,6 +370,7 @@ async fn main() {
                     agent_provider: handoff.agent_provider,
                     status: handoff.status,
                     status_observed,
+                    last_status_check_at: None,
                 },
             );
             // Note: no stream_output started — client must Attach to start streaming
@@ -790,6 +791,7 @@ async fn handle_command(
                             agent_provider,
                             status: sidecar::initial_session_status(agent_provider),
                             status_observed: false,
+                            last_status_check_at: None,
                         },
                     );
                     drop(mgr);
@@ -1689,7 +1691,7 @@ async fn handle_handoff(
 /// Maximum pre-attach buffer size (64 KB). Output before client attaches is
 /// buffered so kitty keyboard mode pushes reach xterm.js on first attach.
 const MAX_PRE_ATTACH_BUFFER: usize = 64 * 1024;
-const STATUS_IDLE_FLUSH_MS: u64 = 150;
+const STATUS_IDLE_FLUSH_MS: u64 = STATUS_DETECTION_THROTTLE_MS;
 
 fn spawn_periodic_status_refresh_thread(
     rt: tokio::runtime::Handle,
@@ -2082,6 +2084,10 @@ fn log_status_observation(
     session_id: &str,
     source: &str,
 ) {
+    if !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
+
     let observation = rt.block_on(async {
         let mut mgr = sessions.lock().await;
         mgr.debug_status_observation(session_id)
@@ -2089,7 +2095,7 @@ fn log_status_observation(
 
     match observation {
         Ok(Some(observation)) if observation.provider.is_some() => {
-            log::info!(
+            log::debug!(
                 "{}",
                 format_status_observation_log(
                     session_id,

@@ -3,10 +3,13 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use std::time::{Duration, Instant};
 
 use crate::pty::PtySession;
 use crate::sidecar::TerminalSidecar;
 use kanna_daemon::protocol::{AgentProvider, SessionInfo, SessionState, SessionStatus};
+
+pub const STATUS_DETECTION_THROTTLE_MS: u64 = 500;
 
 #[derive(Clone)]
 pub struct StreamControl {
@@ -46,6 +49,7 @@ pub struct SessionRecord {
     pub agent_provider: Option<AgentProvider>,
     pub status: SessionStatus,
     pub status_observed: bool,
+    pub last_status_check_at: Option<Instant>,
 }
 
 pub struct SessionManager {
@@ -145,6 +149,23 @@ impl SessionManager {
         data: &[u8],
         allow_sidecar_replies: bool,
     ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
+        self.mirror_output_at(
+            session_id,
+            data,
+            allow_sidecar_replies,
+            Instant::now(),
+            status_detection_throttle(),
+        )
+    }
+
+    fn mirror_output_at(
+        &mut self,
+        session_id: &str,
+        data: &[u8],
+        allow_sidecar_replies: bool,
+        now: Instant,
+        throttle: Duration,
+    ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
         match self.sessions.get_mut(session_id) {
             Some(session) => {
                 session.sidecar.write(data);
@@ -155,14 +176,7 @@ impl SessionManager {
                 } else {
                     session.sidecar.drain_pty_writes();
                 }
-                let next_status = session.sidecar.visible_status(session.agent_provider)?;
-                if next_status.is_some() {
-                    session.status_observed = true;
-                }
-                Ok(match next_status {
-                    Some(status) if session.status != status => Some(status),
-                    _ => None,
-                })
+                detect_status_if_due(session, now, throttle)
             }
             None => Err(format!("session not found: {}", session_id).into()),
         }
@@ -171,7 +185,22 @@ impl SessionManager {
     pub fn refresh_quiet_status(
         &mut self,
         session_id: &str,
-        quiet_for: std::time::Duration,
+        quiet_for: Duration,
+    ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
+        self.refresh_quiet_status_at(
+            session_id,
+            quiet_for,
+            Instant::now(),
+            status_detection_throttle(),
+        )
+    }
+
+    fn refresh_quiet_status_at(
+        &mut self,
+        session_id: &str,
+        quiet_for: Duration,
+        now: Instant,
+        throttle: Duration,
     ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
         let Some(session) = self.sessions.get_mut(session_id) else {
             return Ok(None);
@@ -181,25 +210,7 @@ impl SessionManager {
             return Ok(None);
         }
 
-        let visible_status = session.sidecar.visible_status(session.agent_provider)?;
-        if let Some(status) = visible_status {
-            session.status_observed = true;
-            return Ok(if session.status != status {
-                Some(status)
-            } else {
-                None
-            });
-        }
-
-        Ok(
-            if session.status_observed
-                && matches!(session.status, SessionStatus::Busy | SessionStatus::Waiting)
-            {
-                Some(SessionStatus::Idle)
-            } else {
-                None
-            },
-        )
+        detect_status_if_due(session, now, throttle)
     }
 
     pub fn debug_status_observation(
@@ -232,6 +243,45 @@ impl SessionManager {
     }
 }
 
+fn status_detection_throttle() -> Duration {
+    Duration::from_millis(STATUS_DETECTION_THROTTLE_MS)
+}
+
+fn detect_status_if_due(
+    session: &mut SessionRecord,
+    now: Instant,
+    throttle: Duration,
+) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
+    if session
+        .last_status_check_at
+        .is_some_and(|last_check_at| now.saturating_duration_since(last_check_at) < throttle)
+    {
+        return Ok(None);
+    }
+
+    session.last_status_check_at = Some(now);
+
+    let visible_status = session.sidecar.visible_status(session.agent_provider)?;
+    if let Some(status) = visible_status {
+        session.status_observed = true;
+        return Ok(if session.status != status {
+            Some(status)
+        } else {
+            None
+        });
+    }
+
+    Ok(
+        if session.status_observed
+            && matches!(session.status, SessionStatus::Busy | SessionStatus::Waiting)
+        {
+            Some(SessionStatus::Idle)
+        } else {
+            None
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -262,6 +312,7 @@ mod tests {
             agent_provider: Some(provider),
             status,
             status_observed: false,
+            last_status_check_at: None,
         })
     }
 
@@ -330,6 +381,108 @@ mod tests {
 
         manager
             .remove("copilot")
+            .expect("session should exist")
+            .pty
+            .kill()
+            .unwrap();
+    }
+
+    #[test]
+    fn throttles_status_detection_per_session() {
+        let mut manager = SessionManager::new();
+        let mut record = spawn_test_record(AgentProvider::Codex, SessionStatus::Idle).unwrap();
+        record.pty.last_active_at = Instant::now() - Duration::from_secs(2);
+        manager.insert("codex".to_string(), record);
+
+        let started_at = Instant::now();
+        let throttle = Duration::from_millis(500);
+
+        let first_status = manager
+            .mirror_output_at(
+                "codex",
+                "Header\r\n• Working (0s • esc to interrupt)\r\n› Run /review".as_bytes(),
+                false,
+                started_at,
+                throttle,
+            )
+            .unwrap();
+        assert_eq!(first_status, Some(SessionStatus::Busy));
+        assert!(manager.update_status("codex", SessionStatus::Busy));
+
+        let throttled_status = manager
+            .mirror_output_at(
+                "codex",
+                "\x1b[2J\x1b[HHeader\r\nDone\r\n›".as_bytes(),
+                false,
+                started_at + Duration::from_millis(100),
+                throttle,
+            )
+            .unwrap();
+        assert_eq!(throttled_status, None);
+
+        manager
+            .remove("codex")
+            .expect("session should exist")
+            .pty
+            .kill()
+            .unwrap();
+    }
+
+    #[test]
+    fn quiet_refresh_observes_status_after_throttle_window() {
+        let mut manager = SessionManager::new();
+        let mut record = spawn_test_record(AgentProvider::Codex, SessionStatus::Idle).unwrap();
+        record.pty.last_active_at = Instant::now() - Duration::from_secs(2);
+        manager.insert("codex".to_string(), record);
+
+        let started_at = Instant::now();
+        let throttle = Duration::from_millis(500);
+
+        let first_status = manager
+            .mirror_output_at(
+                "codex",
+                "Header\r\n• Working (0s • esc to interrupt)\r\n› Run /review".as_bytes(),
+                false,
+                started_at,
+                throttle,
+            )
+            .unwrap();
+        assert_eq!(first_status, Some(SessionStatus::Busy));
+        assert!(manager.update_status("codex", SessionStatus::Busy));
+
+        let throttled_status = manager
+            .mirror_output_at(
+                "codex",
+                "\x1b[2J\x1b[HHeader\r\nDone\r\n›".as_bytes(),
+                false,
+                started_at + Duration::from_millis(100),
+                throttle,
+            )
+            .unwrap();
+        assert_eq!(throttled_status, None);
+
+        let early_refresh = manager
+            .refresh_quiet_status_at(
+                "codex",
+                Duration::from_millis(500),
+                started_at + Duration::from_millis(300),
+                throttle,
+            )
+            .unwrap();
+        assert_eq!(early_refresh, None);
+
+        let refreshed_status = manager
+            .refresh_quiet_status_at(
+                "codex",
+                Duration::from_millis(500),
+                started_at + Duration::from_millis(600),
+                throttle,
+            )
+            .unwrap();
+        assert_eq!(refreshed_status, Some(SessionStatus::Idle));
+
+        manager
+            .remove("codex")
             .expect("session should exist")
             .pty
             .kill()
