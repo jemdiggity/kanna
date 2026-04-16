@@ -1,9 +1,7 @@
-import { nextTick, ref, watch, type ComputedRef, type Ref } from "vue";
-import { computedAsync } from "@vueuse/core";
+import { ref, type ComputedRef, type Ref } from "vue";
 import { parseRepoConfig, type RepoConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
 import type { PipelineDefinition, AgentDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
-import { listPipelineItems, listRepos } from "@kanna/db";
 import { invoke } from "../invoke";
 import i18n from "../i18n";
 import { useToast } from "../composables/useToast";
@@ -53,6 +51,15 @@ export interface WorktreeBootstrapResult {
   visibleBootstrapSteps: string[];
 }
 
+export interface RepoSnapshotEntry {
+  repo: Repo;
+  items: PipelineItem[];
+}
+
+export interface KannaSnapshot {
+  entries: RepoSnapshotEntry[];
+}
+
 export interface CreateItemOptions {
   baseBranch?: string;
   tags?: string[];
@@ -67,7 +74,6 @@ export interface CreateItemOptions {
 
 export interface StoreState {
   db: Ref<DbHandle | null>;
-  refreshKey: Ref<number>;
   repos: Ref<Repo[]>;
   items: Ref<PipelineItem[]>;
   selectedRepoId: Ref<string | null>;
@@ -85,10 +91,17 @@ export interface StoreState {
   stageOrderCache: Map<string, string[]>;
   pendingCreateVisibility: Map<string, { bumpAt: number }>;
   runtimeStatusSyncTimer: Ref<ReturnType<typeof setTimeout> | null>;
-  refreshRunId: Ref<number>;
 }
 
 export interface StoreServices {
+  loadInitialData?: () => Promise<void>;
+  reloadSnapshot?: () => Promise<void>;
+  withOptimisticItemOverlay?: <T>(input: {
+    key: string;
+    apply: (snapshot: KannaSnapshot) => KannaSnapshot;
+    run: () => Promise<T>;
+    reconcile?: () => Promise<void>;
+  }) => Promise<T>;
   selectedRepo?: ComputedRef<Repo | null>;
   currentItem?: ComputedRef<PipelineItem | null>;
   sortedItemsForCurrentRepo?: ComputedRef<PipelineItem[]>;
@@ -155,7 +168,6 @@ export interface StoreContext {
   state: StoreState;
   services: StoreServices;
   toast: ReturnType<typeof useToast>;
-  bump: () => void;
   requireDb: () => DbHandle;
   tt: (key: string) => string;
 }
@@ -184,7 +196,8 @@ export async function readRepoConfig(basePath: string): Promise<RepoConfig> {
 
 export function createStoreState(): StoreState {
   const db = ref<DbHandle | null>(null);
-  const refreshKey = ref(0);
+  const repos = ref<Repo[]>([]);
+  const items = ref<PipelineItem[]>([]);
   const selectedRepoId = ref<string | null>(null);
   const selectedItemId = ref<string | null>(null);
   const lastSelectedItemByRepo = ref<Record<string, string>>({});
@@ -200,75 +213,9 @@ export function createStoreState(): StoreState {
   const agentCache = new Map<string, AgentDefinition>();
   const stageOrderCache = new Map<string, string[]>();
   const runtimeStatusSyncTimer = ref<ReturnType<typeof setTimeout> | null>(null);
-  const refreshRunId = ref(0);
-
-  const repos = computedAsync<Repo[]>(async () => {
-    refreshKey.value;
-    if (!db.value) return [];
-    return listRepos(db.value);
-  }, []);
-
-  const items = computedAsync<PipelineItem[]>(async () => {
-    refreshKey.value;
-    if (!db.value || repos.value.length === 0) return [];
-
-    const runId = ++refreshRunId.value;
-    const refreshStart = performance.now();
-    console.log(`[perf:items] refresh start #${runId}: repos=${repos.value.length}`);
-
-    const loaded: PipelineItem[] = [];
-    for (const repo of repos.value) {
-      const repoStart = performance.now();
-      loaded.push(...await listPipelineItems(db.value, repo.id));
-      console.log(`[perf:items] refresh repo #${runId} ${repo.id}: ${(performance.now() - repoStart).toFixed(1)}ms`);
-      if (!stageOrderCache.has(repo.path)) {
-        try {
-          const config = await readRepoConfig(repo.path);
-          if (config.stage_order) {
-            stageOrderCache.set(repo.path, config.stage_order);
-          }
-        } catch {
-          // ignore missing config
-        }
-      }
-    }
-
-    console.log(
-      `[perf:items] refresh done #${runId}: ${(performance.now() - refreshStart).toFixed(1)}ms total, items=${loaded.length}`,
-    );
-
-    for (const item of loaded) {
-      const pending = pendingCreateVisibility.get(item.id);
-      if (!pending) continue;
-      console.log(
-        `[perf:createItem] items refresh -> visible: ${(performance.now() - pending.bumpAt).toFixed(1)}ms (id=${item.id})`,
-      );
-      pendingCreateVisibility.delete(item.id);
-    }
-
-    return loaded;
-  }, []);
-
-  watch(items, async (loaded) => {
-    if (!loaded.length) return;
-    const visibleIds = loaded
-      .map((item) => item.id)
-      .filter((id) => pendingCreateVisibility.has(id));
-    if (!visibleIds.length) return;
-
-    await nextTick();
-    for (const id of visibleIds) {
-      const pending = pendingCreateVisibility.get(id);
-      if (!pending) continue;
-      console.log(
-        `[perf:createItem] nextTick after visible: ${(performance.now() - pending.bumpAt).toFixed(1)}ms (id=${id})`,
-      );
-    }
-  });
 
   return {
     db,
-    refreshKey,
     repos,
     items,
     selectedRepoId,
@@ -286,7 +233,6 @@ export function createStoreState(): StoreState {
     stageOrderCache,
     pendingCreateVisibility,
     runtimeStatusSyncTimer,
-    refreshRunId,
   };
 }
 
@@ -299,9 +245,6 @@ export function createStoreContext(
     state,
     services,
     toast,
-    bump: () => {
-      state.refreshKey.value += 1;
-    },
     requireDb: () => {
       if (!state.db.value) {
         throw new Error("Kanna store has not been initialized");

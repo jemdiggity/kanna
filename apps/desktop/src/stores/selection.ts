@@ -3,7 +3,7 @@ import { watchDebounced } from "@vueuse/core";
 import { DEFAULT_STAGE_ORDER } from "@kanna/core";
 import { insertOperatorEvent, setSetting, updatePipelineItemActivity, type PipelineItem, type Repo } from "@kanna/db";
 import { createNavigationHistory } from "../composables/useNavigationHistory";
-import { hasTag, type StoreContext } from "./state";
+import { hasTag, requireService, type StoreContext } from "./state";
 
 export interface SelectionApi {
   selectedRepo: ComputedRef<Repo | null>;
@@ -105,11 +105,7 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
       if (!item || item.activity !== "unread") return;
       if (item.activity_changed_at && new Date(item.activity_changed_at).getTime() > selectionTime) return;
       await updatePipelineItemActivity(context.requireDb(), itemId, "idle");
-      context.state.items.value = context.state.items.value.map((candidate) =>
-        candidate.id === itemId
-          ? { ...candidate, activity: "idle", activity_changed_at: new Date().toISOString() }
-          : candidate,
-      );
+      await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
     },
     { debounce: 1000 },
   );
@@ -141,7 +137,9 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
 
   function goBack() {
     if (!context.state.selectedItemId.value) return;
-    const validIds = new Set(context.state.items.value.filter((item) => !isItemHidden(item)).map((item) => item.id));
+    const validIds = new Set(
+      requireService(context.services.sortedItemsAllRepos, "sortedItemsAllRepos").value.map((item) => item.id),
+    );
     const taskId = nav.goBack(context.state.selectedItemId.value, validIds);
     if (!taskId) return;
 
@@ -161,7 +159,9 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
 
   function goForward() {
     if (!context.state.selectedItemId.value) return;
-    const validIds = new Set(context.state.items.value.filter((item) => !isItemHidden(item)).map((item) => item.id));
+    const validIds = new Set(
+      requireService(context.services.sortedItemsAllRepos, "sortedItemsAllRepos").value.map((item) => item.id),
+    );
     const taskId = nav.goForward(context.state.selectedItemId.value, validIds);
     if (!taskId) return;
 

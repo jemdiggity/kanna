@@ -86,7 +86,7 @@ export function createInitApi(
       await tasks.startBlockedTask(item);
     }
 
-    context.bump();
+    await requireService(context.services.loadInitialData, "loadInitialData")();
 
     const savedRepo = await getSetting(context.requireDb(), "selected_repo_id");
     const savedItem = await getSetting(context.requireDb(), "selected_item_id");
@@ -182,7 +182,7 @@ export function createInitApi(
         ]);
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
         await tasks.checkUnblocked(item.id);
-        context.bump();
+        await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
         return;
       }
 
@@ -211,8 +211,7 @@ export function createInitApi(
       const item = context.state.items.value.find((candidate) => candidate.id === taskId);
       if (!item) return;
 
-      context.bump();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
 
       const freshItem = context.state.items.value.find((candidate) => candidate.id === taskId);
       if (!freshItem) return;
@@ -238,7 +237,7 @@ export function createInitApi(
 
         if (context.state.selectedItemId.value !== taskId) {
           await updatePipelineItemActivity(context.requireDb(), taskId, "unread");
-          context.bump();
+          await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
         }
       } catch (error) {
         console.error("[store] pipeline_stage_complete handler failed:", error);

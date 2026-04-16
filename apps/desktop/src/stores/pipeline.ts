@@ -231,7 +231,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       }
     }
 
-    context.bump();
+    await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
   }
 
   return {

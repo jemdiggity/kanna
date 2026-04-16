@@ -109,6 +109,10 @@ export function createTasksApi(
   context: StoreContext,
   ports: import("./ports").PortsStore,
 ): TasksApi {
+  const reloadSnapshot = () => requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+  const withOptimisticItemOverlay = <T>(input: Parameters<NonNullable<StoreContext["services"]["withOptimisticItemOverlay"]>>[0]) =>
+    requireService(context.services.withOptimisticItemOverlay, "withOptimisticItemOverlay")(input) as Promise<T>;
+
   function computeNextItemId(closingId: string): string | null {
     const sorted = requireService(context.services.sortedItemsForCurrentRepo, "sortedItemsForCurrentRepo").value;
     const idx = sorted.findIndex((item) => item.id === closingId);
@@ -131,14 +135,14 @@ export function createTasksApi(
     if (existing) {
       if (existing.hidden) {
         await unhideRepoQuery(context.requireDb(), existing.id);
-        context.bump();
+        await reloadSnapshot();
         context.state.selectedRepoId.value = existing.id;
       }
       return;
     }
     const id = crypto.randomUUID().slice(0, 8);
     await insertRepo(context.requireDb(), { id, path, name, default_branch: defaultBranch });
-    context.bump();
+    await reloadSnapshot();
     context.state.selectedRepoId.value = id;
     if (isTauri) {
       requireService(context.services.spawnShellSession, "spawnShellSession")(`shell-repo-${id}`, path, null, false)
@@ -151,7 +155,7 @@ export function createTasksApi(
     if (existing) {
       if (existing.hidden) {
         await unhideRepoQuery(context.requireDb(), existing.id);
-        context.bump();
+        await reloadSnapshot();
         context.state.selectedRepoId.value = existing.id;
       }
       return;
@@ -161,7 +165,7 @@ export function createTasksApi(
     const defaultBranch = await invoke<string>("git_default_branch", { repoPath: path }).catch(() => "main");
     const id = crypto.randomUUID().slice(0, 8);
     await insertRepo(context.requireDb(), { id, path, name, default_branch: defaultBranch });
-    context.bump();
+    await reloadSnapshot();
     context.state.selectedRepoId.value = id;
     if (isTauri) {
       requireService(context.services.spawnShellSession, "spawnShellSession")(`shell-repo-${id}`, path, null, false)
@@ -175,7 +179,7 @@ export function createTasksApi(
     const defaultBranch = await invoke<string>("git_default_branch", { repoPath: destination }).catch(() => "main");
     const id = crypto.randomUUID().slice(0, 8);
     await insertRepo(context.requireDb(), { id, path: destination, name, default_branch: defaultBranch });
-    context.bump();
+    await reloadSnapshot();
     context.state.selectedRepoId.value = id;
     if (isTauri) {
       requireService(context.services.spawnShellSession, "spawnShellSession")(`shell-repo-${id}`, destination, null, false)
@@ -187,7 +191,7 @@ export function createTasksApi(
     await hideRepoQuery(context.requireDb(), repoId);
     if (context.state.selectedRepoId.value === repoId) context.state.selectedRepoId.value = null;
     context.state.lastHiddenRepoId.value = repoId;
-    context.bump();
+    await reloadSnapshot();
   }
 
   async function createWorktree(
@@ -249,7 +253,7 @@ export function createTasksApi(
     const s0 = performance.now();
     const markSetupFailed = async (error: unknown, logPrefix: string, toastMessage: string) => {
       await updatePipelineItemActivity(context.requireDb(), id, "idle");
-      context.bump();
+      await reloadSnapshot();
       console.error(logPrefix, error);
       context.toast.error(toastMessage);
     };
@@ -384,16 +388,10 @@ export function createTasksApi(
       stage: opts?.stage,
       displayName,
     });
-
-    context.state.items.value = [
-      pendingPlaceholder,
-      ...context.state.items.value.filter((item) => item.id !== id),
-    ];
     context.state.pendingSetupIds.value = [...context.state.pendingSetupIds.value, id];
     context.state.pendingCreateVisibility.set(id, { bumpAt: performance.now() });
 
     const removePendingPlaceholder = () => {
-      context.state.items.value = context.state.items.value.filter((item) => item.id !== id);
       context.state.pendingSetupIds.value = context.state.pendingSetupIds.value.filter((pendingId) => pendingId !== id);
       context.state.pendingCreateVisibility.delete(id);
     };
@@ -469,78 +467,94 @@ export function createTasksApi(
     let pipelineItemInserted = false;
 
     try {
-      try {
-        t1 = performance.now();
-        try {
-          const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
-          const availableBaseBranches = await invoke<string[]>("git_list_base_branches", { repoPath }).catch(() => [defaultBranch]);
-          baseRef = resolveInitialBaseRef({
-            selectedBaseBranch: opts?.baseBranch,
-            availableBaseBranches,
-            defaultBranch,
-          });
-        } catch (error) {
-          console.warn("[store] failed to compute base_ref:", error);
-        }
-        console.log(`[perf:createItem] git base_ref: ${(performance.now() - t1).toFixed(1)}ms`);
+      await withOptimisticItemOverlay<void>({
+        key: `create:${id}`,
+        apply: (snapshot) => ({
+          entries: snapshot.entries.map((entry) =>
+            entry.repo.id === repoId
+              ? {
+                  ...entry,
+                  items: [pendingPlaceholder, ...entry.items.filter((item) => item.id !== id)],
+                }
+              : entry,
+          ),
+        }),
+        run: async () => {
+          try {
+            t1 = performance.now();
+            try {
+              const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
+              const availableBaseBranches = await invoke<string[]>("git_list_base_branches", { repoPath }).catch(() => [defaultBranch]);
+              baseRef = resolveInitialBaseRef({
+                selectedBaseBranch: opts?.baseBranch,
+                availableBaseBranches,
+                defaultBranch,
+              });
+            } catch (error) {
+              console.warn("[store] failed to compute base_ref:", error);
+            }
+            console.log(`[perf:createItem] git base_ref: ${(performance.now() - t1).toFixed(1)}ms`);
 
-        t1 = performance.now();
-        await insertPipelineItem(context.requireDb(), {
-          id,
-          repo_id: repoId,
-          issue_number: null,
-          issue_title: null,
-          prompt: effectivePrompt,
-          pipeline: pipelineName,
-          stage: firstStageName,
-          tags: opts?.tags ?? [firstStageName],
-          pr_number: null,
-          pr_url: null,
-          branch,
-          agent_type: effectiveAgentType,
-          agent_provider: effectiveAgentProvider,
-          port_offset: portOffset,
-          port_env: Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null,
-          activity: "working",
-          display_name: displayName,
-          base_ref: baseRef,
-        });
+            t1 = performance.now();
+            await insertPipelineItem(context.requireDb(), {
+              id,
+              repo_id: repoId,
+              issue_number: null,
+              issue_title: null,
+              prompt: effectivePrompt,
+              pipeline: pipelineName,
+              stage: firstStageName,
+              tags: opts?.tags ?? [firstStageName],
+              pr_number: null,
+              pr_url: null,
+              branch,
+              agent_type: effectiveAgentType,
+              agent_provider: effectiveAgentProvider,
+              port_offset: portOffset,
+              port_env: Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null,
+              activity: "working",
+              display_name: displayName,
+              base_ref: baseRef,
+            });
 
-        pipelineItemInserted = true;
+            pipelineItemInserted = true;
 
-        const allocated = await ports.claimTaskPorts(id, repoConfig);
-        portOffset = allocated.firstPort;
-        portEnv = allocated.portEnv;
-        await context.requireDb().execute(
-          "UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?",
-          [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
-        );
-      } catch (error) {
-        if (pipelineItemInserted) {
-          await context.requireDb().execute("DELETE FROM pipeline_item WHERE id = ?", [id]).catch(() => undefined);
-        }
-        await ports.releaseTaskPorts(id).catch(() => undefined);
-        console.error("[store] task creation failed:", error);
-        context.toast.error(context.tt("toasts.dbInsertFailed"));
-        throw error;
-      }
-      console.log(`[perf:createItem] DB insert: ${(performance.now() - t1).toFixed(1)}ms`);
+            const allocated = await ports.claimTaskPorts(id, repoConfig);
+            portOffset = allocated.firstPort;
+            portEnv = allocated.portEnv;
+            await context.requireDb().execute(
+              "UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?",
+              [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
+            );
+          } catch (error) {
+            if (pipelineItemInserted) {
+              await context.requireDb().execute("DELETE FROM pipeline_item WHERE id = ?", [id]).catch(() => undefined);
+            }
+            await ports.releaseTaskPorts(id).catch(() => undefined);
+            console.error("[store] task creation failed:", error);
+            context.toast.error(context.tt("toasts.dbInsertFailed"));
+            throw error;
+          }
+          console.log(`[perf:createItem] DB insert: ${(performance.now() - t1).toFixed(1)}ms`);
 
-      context.bump();
-      console.log(`[perf:createItem] bump -> waiting for items refresh (id=${id})`);
-      console.log(`[perf:createItem] TOTAL (modal → bump): ${(performance.now() - t0).toFixed(1)}ms`);
+          await reloadSnapshot();
+          console.log(`[perf:createItem] reload -> waiting for items refresh (id=${id})`);
+          console.log(`[perf:createItem] TOTAL (modal → reload): ${(performance.now() - t0).toFixed(1)}ms`);
 
-      void setupWorktreeAndSpawn(
-        id,
-        repoPath,
-        worktreePath,
-        branch,
-        portEnv,
-        pipelinePrompt,
-        effectiveAgentType,
-        effectiveAgentProvider,
-        opts,
-      );
+          void setupWorktreeAndSpawn(
+            id,
+            repoPath,
+            worktreePath,
+            branch,
+            portEnv,
+            pipelinePrompt,
+            effectiveAgentType,
+            effectiveAgentProvider,
+            opts,
+          );
+        },
+        reconcile: reloadSnapshot,
+      });
     } catch (error) {
       removePendingPlaceholder();
       throw error;
@@ -583,7 +597,7 @@ export function createTasksApi(
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
         await checkUnblocked(item.id);
-        context.bump();
+        await reloadSnapshot();
         return;
       }
 
@@ -592,7 +606,7 @@ export function createTasksApi(
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
-        context.bump();
+        await reloadSnapshot();
         void invoke("kill_session", { sessionId: item.id }).catch((error: unknown) =>
           reportCloseSessionError("[store] kill_session failed:", error));
         return;
@@ -633,7 +647,7 @@ export function createTasksApi(
       })) {
         selectNextItem(nextId);
       }
-      context.bump();
+      await reloadSnapshot();
 
       if (shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
         teardownCommandCount: teardownCmds.length,
@@ -647,7 +661,7 @@ export function createTasksApi(
         ]);
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
         await checkUnblocked(item.id);
-        context.bump();
+        await reloadSnapshot();
         return;
       }
 
@@ -663,7 +677,7 @@ export function createTasksApi(
       const repoId = context.state.lastHiddenRepoId.value;
       context.state.lastHiddenRepoId.value = null;
       await unhideRepoQuery(context.requireDb(), repoId);
-      context.bump();
+      await reloadSnapshot();
       return;
     }
 
@@ -697,7 +711,7 @@ export function createTasksApi(
       }
 
       await requireService(context.services.selectItem, "selectItem")(item.id);
-      context.bump();
+      await reloadSnapshot();
 
       if (item.branch && !portAllocationFailed) {
         const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
@@ -711,10 +725,10 @@ export function createTasksApi(
             ...(item.claude_session_id ? { resumeSessionId: item.claude_session_id } : {}),
           });
           await updatePipelineItemActivity(context.requireDb(), item.id, "working");
-          context.bump();
+          await reloadSnapshot();
         } catch (spawnError) {
           await updatePipelineItemActivity(context.requireDb(), item.id, "idle");
-          context.bump();
+          await reloadSnapshot();
           console.error("[store] session re-spawn after undo failed:", spawnError);
           context.toast.error(`${context.tt("toasts.agentStartFailed")}: ${spawnError instanceof Error ? spawnError.message : spawnError}`);
         }
@@ -731,10 +745,9 @@ export function createTasksApi(
     const item = context.state.items.value.find((candidate) => candidate.id === sessionId);
     if (!item) return;
     const activity = context.state.selectedItemId.value === sessionId ? "idle" : "unread";
-    updatePipelineItemActivity(context.requireDb(), item.id, activity).catch((error) =>
-      console.error("[store] activity update failed:", error),
-    );
-    context.bump();
+    updatePipelineItemActivity(context.requireDb(), item.id, activity)
+      .then(() => reloadSnapshot())
+      .catch((error) => console.error("[store] activity update failed:", error));
   }
 
   async function checkUnblocked(blockerItemId: string) {
@@ -845,7 +858,7 @@ export function createTasksApi(
          WHERE id = ?`,
         [branch, portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, resolvedBaseRef, id],
       );
-      context.bump();
+      await reloadSnapshot();
 
       await requireService(context.services.spawnPtySession, "spawnPtySession")(id, worktreePath, augmentedPrompt, 80, 24, {
         agentProvider,
@@ -854,7 +867,7 @@ export function createTasksApi(
       });
     } catch (error) {
       await updatePipelineItemActivity(context.requireDb(), id, "idle");
-      context.bump();
+      await reloadSnapshot();
       console.error("[store] startBlockedTask PTY spawn failed:", error);
       context.toast.error(`${context.tt("toasts.agentStartFailed")}: ${error instanceof Error ? error.message : error}`);
     }
@@ -928,48 +941,61 @@ export function createTasksApi(
       updated_at: now,
     };
 
-    context.state.items.value = context.state.items.value
-      .filter((candidate) => candidate.id !== originalId)
-      .concat(blockedReplacement);
-    await requireService(context.services.selectItem, "selectItem")(newId);
+    await withOptimisticItemOverlay<void>({
+      key: `block:${newId}`,
+      apply: (snapshot) => ({
+        entries: snapshot.entries.map((entry) =>
+          entry.repo.id === originalRepoId
+            ? {
+                ...entry,
+                items: entry.items
+                  .filter((candidate) => candidate.id !== originalId)
+                  .concat(blockedReplacement),
+              }
+            : entry,
+        ),
+      }),
+      run: async () => {
+        await requireService(context.services.selectItem, "selectItem")(newId);
+        await reloadSnapshot();
 
-    const dependents = await listBlockedByItem(context.requireDb(), originalId);
-    for (const dependent of dependents) {
-      await removeTaskBlocker(context.requireDb(), dependent.id, originalId);
-      await insertTaskBlocker(context.requireDb(), dependent.id, newId);
-    }
-
-    try {
-      await invoke("kill_session", { sessionId: originalId }).catch((error: unknown) =>
-        console.error("[store] kill_session failed:", error),
-      );
-      await invoke("kill_session", { sessionId: `shell-wt-${originalId}` }).catch((error: unknown) =>
-        console.error("[store] kill shell session failed:", error),
-      );
-
-      const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-      try {
-        const teardownCmds = await collectTeardownCommands(item, repo);
-        for (const command of teardownCmds) {
-          await invoke("run_script", { script: command, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
+        const dependents = await listBlockedByItem(context.requireDb(), originalId);
+        for (const dependent of dependents) {
+          await removeTaskBlocker(context.requireDb(), dependent.id, originalId);
+          await insertTaskBlocker(context.requireDb(), dependent.id, newId);
         }
-      } catch (error) {
-        console.error("[store] teardown failed:", error);
-      }
 
-      await invoke("git_worktree_remove", { repoPath: repo.path, path: worktreePath }).catch((error: unknown) =>
-        console.error("[store] worktree remove failed:", error),
-      );
+        try {
+          await invoke("kill_session", { sessionId: originalId }).catch((error: unknown) =>
+            console.error("[store] kill_session failed:", error),
+          );
+          await invoke("kill_session", { sessionId: `shell-wt-${originalId}` }).catch((error: unknown) =>
+            console.error("[store] kill shell session failed:", error),
+          );
 
-      await closePipelineItemAndClearCachedTerminalState(originalId, (id) => closePipelineItem(context.requireDb(), id));
-      await checkUnblocked(originalId);
-    } catch (error) {
-      console.error("[store] blockTask close failed:", error);
-      context.toast.error(context.tt("toasts.blockTaskFailed"));
-      context.bump();
-    }
+          const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+          try {
+            const teardownCmds = await collectTeardownCommands(item, repo);
+            for (const command of teardownCmds) {
+              await invoke("run_script", { script: command, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
+            }
+          } catch (error) {
+            console.error("[store] teardown failed:", error);
+          }
 
-    context.bump();
+          await invoke("git_worktree_remove", { repoPath: repo.path, path: worktreePath }).catch((error: unknown) =>
+            console.error("[store] worktree remove failed:", error),
+          );
+
+          await closePipelineItemAndClearCachedTerminalState(originalId, (id) => closePipelineItem(context.requireDb(), id));
+          await checkUnblocked(originalId);
+        } catch (error) {
+          console.error("[store] blockTask close failed:", error);
+          context.toast.error(context.tt("toasts.blockTaskFailed"));
+        }
+      },
+      reconcile: reloadSnapshot,
+    });
   }
 
   async function editBlockedTask(itemId: string, newBlockerIds: string[]) {
@@ -999,7 +1025,7 @@ export function createTasksApi(
       }
     }
 
-    context.bump();
+    await reloadSnapshot();
 
     const updatedBlockers = await listBlockersForItem(context.requireDb(), itemId);
     const allClear = updatedBlockers.length === 0 || updatedBlockers.every(
@@ -1012,22 +1038,22 @@ export function createTasksApi(
 
   async function pinItem(itemId: string, position: number) {
     await pinPipelineItem(context.requireDb(), itemId, position);
-    context.bump();
+    await reloadSnapshot();
   }
 
   async function unpinItem(itemId: string) {
     await unpinPipelineItem(context.requireDb(), itemId);
-    context.bump();
+    await reloadSnapshot();
   }
 
   async function reorderPinned(repoId: string, orderedIds: string[]) {
     await reorderPinnedItems(context.requireDb(), repoId, orderedIds);
-    context.bump();
+    await reloadSnapshot();
   }
 
   async function renameItem(itemId: string, displayName: string | null) {
     await updatePipelineItemDisplayName(context.requireDb(), itemId, displayName);
-    context.bump();
+    await reloadSnapshot();
   }
 
   return {

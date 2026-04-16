@@ -3,6 +3,7 @@ import { listBlockedByItem, listBlockersForItem } from "@kanna/db";
 import { useToast } from "../composables/useToast";
 import { createStoreContext, createStoreState, type StoreServices } from "./state";
 import { createPortsStore } from "./ports";
+import { createQueriesApi } from "./queries";
 import { createSelectionApi } from "./selection";
 import { createSessionsApi } from "./sessions";
 import { createPipelineApi } from "./pipeline";
@@ -18,12 +19,16 @@ export const useKannaStore = defineStore("kanna", () => {
   const context = createStoreContext(state, toast, services);
 
   const ports = createPortsStore(context);
+  const queries = createQueriesApi(context);
   const selection = createSelectionApi(context);
   const sessions = createSessionsApi(context);
   const pipeline = createPipelineApi(context);
   const tasks = createTasksApi(context, ports);
   const initApi = createInitApi(context, ports, tasks);
 
+  services.loadInitialData = queries.loadInitialData;
+  services.reloadSnapshot = queries.reloadSnapshot;
+  services.withOptimisticItemOverlay = queries.withOptimisticItemOverlay;
   services.selectedRepo = selection.selectedRepo;
   services.currentItem = selection.currentItem;
   services.sortedItemsForCurrentRepo = selection.sortedItemsForCurrentRepo;
@@ -73,15 +78,15 @@ export const useKannaStore = defineStore("kanna", () => {
 
   async function mergeQueue() {
     if (!state.selectedRepoId.value) {
-      if (state.repos.value.length === 1) {
-        state.selectedRepoId.value = state.repos.value[0].id;
+      if (queries.repos.data.value.length === 1) {
+        state.selectedRepoId.value = queries.repos.data.value[0].id;
       } else {
         toast.warning(context.tt("toasts.selectRepoFirst"));
         return;
       }
     }
 
-    const repo = state.repos.value.find((candidate) => candidate.id === state.selectedRepoId.value);
+    const repo = queries.repos.data.value.find((candidate) => candidate.id === state.selectedRepoId.value);
     if (!repo) return;
 
     try {
@@ -94,8 +99,8 @@ export const useKannaStore = defineStore("kanna", () => {
   }
 
   return {
-    repos: state.repos,
-    items: state.items,
+    repos: queries.repos.data,
+    items: queries.items.data,
     selectedRepoId: state.selectedRepoId,
     selectedItemId: state.selectedItemId,
     lastSelectedItemByRepo: state.lastSelectedItemByRepo,
@@ -107,15 +112,12 @@ export const useKannaStore = defineStore("kanna", () => {
     hideShortcutsOnStartup: state.hideShortcutsOnStartup,
     devLingerTerminals: state.devLingerTerminals,
     lastHiddenRepoId: state.lastHiddenRepoId,
-    refreshKey: state.refreshKey,
-
     selectedRepo: selection.selectedRepo,
     currentItem: selection.currentItem,
     sortedItemsForCurrentRepo: selection.sortedItemsForCurrentRepo,
     sortedItemsAllRepos: selection.sortedItemsAllRepos,
     getStageOrder: selection.getStageOrder,
 
-    bump: context.bump,
     init: initApi.init,
     selectRepo: selection.selectRepo,
     selectItem: selection.selectItem,

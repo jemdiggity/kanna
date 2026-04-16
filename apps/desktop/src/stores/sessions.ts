@@ -13,7 +13,7 @@ import {
 import { resolveActivityForRuntimeStatus, shouldIgnoreRuntimeStatusDuringSetup } from "./taskRuntimeStatus";
 import { isTeardownSessionId } from "./kannaCleanup";
 import { isReadableDirectory, resolveShellSpawnCwd } from "../utils/shellCwd";
-import { readRepoConfig, type PreparedPtySession, type PtySpawnOptions, type StoreContext } from "./state";
+import { readRepoConfig, requireService, type PreparedPtySession, type PtySpawnOptions, type StoreContext } from "./state";
 
 interface DaemonSessionInfo {
   session_id?: string;
@@ -74,7 +74,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
       if (nextActivity == null) return;
 
       await updatePipelineItemActivity(context.requireDb(), item.id, nextActivity);
-      context.bump();
+      await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
     }
   }
 
