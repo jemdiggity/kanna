@@ -127,6 +127,17 @@ export async function updatePipelineItemStage(
   );
 }
 
+export async function updatePipelineItemTags(
+  db: DbHandle,
+  id: string,
+  tags: string[],
+): Promise<void> {
+  await db.execute(
+    "UPDATE pipeline_item SET tags = ?, updated_at = datetime('now') WHERE id = ?",
+    [JSON.stringify(tags), id],
+  );
+}
+
 export async function updatePipelineItemStageResult(
   db: DbHandle,
   id: string,
