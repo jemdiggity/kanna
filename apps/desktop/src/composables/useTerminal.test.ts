@@ -1152,4 +1152,87 @@ describe("useTerminal", () => {
     ]);
     expect(terminal.reset).toHaveBeenCalledTimes(2);
   });
+
+  it("suppresses browser navigation and pastes dropped file paths into agent terminals", async () => {
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init } = useTerminal(
+          "session-1",
+          undefined,
+          {
+            agentTerminal: true,
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    const dropEvent = new Event("drop") as Event & {
+      dataTransfer: { files: Array<{ path: string; type: string }> };
+      preventDefault: ReturnType<typeof vi.fn>;
+      stopPropagation: ReturnType<typeof vi.fn>;
+    };
+    dropEvent.dataTransfer = {
+      files: [{ path: "/tmp/task/screenshot one.png", type: "image/png" }],
+    };
+    dropEvent.preventDefault = vi.fn();
+    dropEvent.stopPropagation = vi.fn();
+
+    terminalElement.dispatchEvent(dropEvent);
+
+    expect(dropEvent.preventDefault).toHaveBeenCalled();
+    expect(dropEvent.stopPropagation).toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "session-1",
+      data: Array.from(new TextEncoder().encode("'/tmp/task/screenshot one.png'")),
+    });
+  });
+
+  it("does not install dropped-file handlers for non-agent terminals", async () => {
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init } = useTerminal(
+          "session-1",
+          undefined,
+          {
+            agentTerminal: false,
+          },
+        );
+
+        return { init };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    const addEventListenerSpy = vi.spyOn(terminalElement, "addEventListener");
+
+    wrapper.vm.init(terminalElement);
+
+    expect(addEventListenerSpy).not.toHaveBeenCalledWith("drop", expect.any(Function), undefined);
+  });
 });
