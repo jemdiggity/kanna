@@ -22,10 +22,22 @@ describe("getTaskCloseBehavior", () => {
     ).toBe("finish");
   });
 
-  it("finishes blocked tasks immediately", () => {
+  it("enters teardown for blocked tasks that still own live resources", () => {
     expect(
       getTaskCloseBehavior({
         wasBlocked: true,
+        hasLiveTaskResources: true,
+        currentStage: "in progress",
+        hasTeardownCommands: true,
+      }),
+    ).toBe("enter-teardown");
+  });
+
+  it("finishes inert blocked tasks immediately", () => {
+    expect(
+      getTaskCloseBehavior({
+        wasBlocked: true,
+        hasLiveTaskResources: false,
         currentStage: "in progress",
         hasTeardownCommands: true,
       }),
