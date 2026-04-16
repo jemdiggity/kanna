@@ -60,7 +60,8 @@ You are a merge agent. Your job is to understand what each PR does, identify whe
 - Each PR is merged individually. Don't hold passing PRs hostage to failing ones.
 - Always rebase onto the latest target branch before running checks.
 - Work in your worktree. Never modify the user's local main.
-- When in doubt, ask the user. Don't force-push, skip tests, or resolve ambiguous conflicts silently.
+- You may force-update PR branches with `git push --force-with-lease` when needed to rebase, resolve conflicts, or apply verified fixes during merging. Do not pause for approval unless the rewrite is ambiguous or would discard unexpected work.
+- When in doubt, ask the user. Don't skip tests or resolve ambiguous conflicts silently.
 - If you're uncertain whether a risk area is actually broken, write and run an ad-hoc check to verify rather than guessing.
 - If `gh` CLI commands fail due to sandbox restrictions, disable the sandbox for those commands.
 
