@@ -40,7 +40,6 @@ describe("task lifecycle", () => {
     );
     expect(result).toBe("ok");
 
-    // Task should appear in the sidebar.
     const el = await client.waitForText(".sidebar", "Say OK");
     expect(el).toBeTruthy();
   });
@@ -68,7 +67,26 @@ describe("task lifecycle", () => {
     expect(exists).toBe(true);
   });
 
-  it("moves the task into teardown when closed", async () => {
+  it("closes into teardown and stays visible when teardown commands exist", async () => {
+    const rows = (await queryDb(
+      client,
+      "SELECT branch FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
+      [repoId, "Say OK"],
+    )) as Array<{ branch: string }>;
+    const branch = rows[0]?.branch;
+    expect(branch).toBeTruthy();
+    if (!branch) {
+      throw new Error("expected the created task to have a branch");
+    }
+
+    await tauriInvoke(client, "write_text_file", {
+      path: `${testRepoPath}/.kanna-worktrees/${branch}/.kanna/config.json`,
+      content: JSON.stringify({
+        setup: [],
+        teardown: ["printf 'teardown\\n' && sleep 2"],
+      }),
+    });
+
     const result = await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
        const ctx = window.__KANNA_E2E__.setupState;
@@ -80,12 +98,71 @@ describe("task lifecycle", () => {
     );
     expect(result).toBe("ok");
 
-    await sleep(500);
-    const rows = (await queryDb(
+    await sleep(300);
+    const stageRows = (await queryDb(
       client,
       "SELECT stage FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
       [repoId, "Say OK"],
-    )) as Array<{ stage: string | null }>;
-    expect(rows[0]?.stage).toBe("teardown");
+    )) as Array<{ stage: string }>;
+    expect(stageRows[0]?.stage).toBe("teardown");
+
+    const sidebarText = await client.executeSync<string>(
+      `return document.querySelector(".sidebar")?.textContent || "";`
+    );
+    expect(sidebarText).toContain("Say OK");
+  });
+
+  it("closes directly to done and disappears when teardown commands do not exist", async () => {
+    const createResult = await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       ctx.createItem(${JSON.stringify(repoId)}, ${JSON.stringify(testRepoPath)}, "Close Fast", "sdk")
+         .then(() => cb("ok"))
+         .catch((error) => cb("err:" + error));`
+    );
+    expect(createResult).toBe("ok");
+
+    const header = await client.waitForText(".task-header", "Close Fast");
+    expect(header).toBeTruthy();
+
+    const rows = (await queryDb(
+      client,
+      "SELECT id, branch FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
+      [repoId, "Close Fast"],
+    )) as Array<{ id: string; branch: string }>;
+    const branch = rows[0]?.branch;
+    expect(branch).toBeTruthy();
+    if (!branch) {
+      throw new Error("expected the close-fast task to have a branch");
+    }
+
+    await tauriInvoke(client, "write_text_file", {
+      path: `${testRepoPath}/.kanna-worktrees/${branch}/.kanna/config.json`,
+      content: JSON.stringify({ setup: [] }),
+    });
+
+    const closeResult = await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       const item = ctx.selectedItem();
+       if (!item) { cb("no item"); return; }
+       Promise.resolve(ctx.store.closeTask(item.id))
+         .then(() => cb("ok"))
+         .catch((error) => cb("err:" + error));`
+    );
+    expect(closeResult).toBe("ok");
+
+    await sleep(500);
+    const stageRows = (await queryDb(
+      client,
+      "SELECT stage FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
+      [repoId, "Close Fast"],
+    )) as Array<{ stage: string }>;
+    expect(stageRows[0]?.stage).toBe("done");
+
+    const sidebarText = await client.executeSync<string>(
+      `return document.querySelector(".sidebar")?.textContent || "";`
+    );
+    expect(sidebarText).not.toContain("Close Fast");
   });
 });
