@@ -728,7 +728,7 @@ export function createTasksApi(
             item.agent_provider,
             await requireService(context.services.getAgentProviderAvailability, "getAgentProviderAvailability")(),
           );
-          await requireService(context.services.spawnPtySession, "spawnPtySession")(item.id, worktreePath, "", 80, 24, {
+          await requireService(context.services.spawnPtySession, "spawnPtySession")(item.id, worktreePath, item.prompt || "", 80, 24, {
             agentProvider,
             ...(item.claude_session_id ? { resumeSessionId: item.claude_session_id } : {}),
           });
