@@ -24,6 +24,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             commands::connect_relay,
+            commands::list_repos,
             commands::list_pipeline_items,
             commands::get_pipeline_item,
             commands::list_sessions,

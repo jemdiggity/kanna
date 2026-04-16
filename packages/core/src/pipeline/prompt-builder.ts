@@ -15,7 +15,7 @@ export function buildStagePrompt(
   const combined = parts.join("\n\n");
 
   return combined
-    .replaceAll("$TASK_PROMPT", context.taskPrompt ?? "")
-    .replaceAll("$PREV_RESULT", context.prevResult ?? "")
-    .replaceAll("$BRANCH", context.branch ?? "");
+    .split("$TASK_PROMPT").join(context.taskPrompt ?? "")
+    .split("$PREV_RESULT").join(context.prevResult ?? "")
+    .split("$BRANCH").join(context.branch ?? "");
 }

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "test": "sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; exec vitest run src \"$@\"' --",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
@@ -20,8 +21,11 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^20.8.9",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
+    "vitest": "^4.1.4",
     "vue-tsc": "^2.1.10"
   }
 }

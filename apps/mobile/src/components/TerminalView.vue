@@ -4,21 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-
-interface Task {
-  id: string;
-  repo_id: string;
-  prompt: string;
-  tags: string;
-  activity: string;
-  display_name: string | null;
-  branch: string | null;
-  pr_number: number | null;
-  created_at: string;
-}
+import type { MobileTask } from "../lib/mobile-types";
 
 const props = defineProps<{
-  task: Task;
+  task: MobileTask;
 }>();
 
 const emit = defineEmits<{
@@ -33,8 +22,8 @@ let term: Terminal | null = null;
 let unlisten: (() => void) | null = null;
 let unlistenExit: (() => void) | null = null;
 
-function taskName(task: Task): string {
-  if (task.display_name) return task.display_name;
+function taskName(task: MobileTask): string {
+  if (task.displayName) return task.displayName;
   if (task.prompt) return task.prompt.length > 40 ? task.prompt.slice(0, 40) + "…" : task.prompt;
   return task.id.slice(0, 8);
 }

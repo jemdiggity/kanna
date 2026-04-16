@@ -42,6 +42,7 @@ export function buildPendingTaskPlaceholder(
     unread_at: null,
     port_offset: null,
     display_name: options.displayName ?? null,
+    last_output_preview: null,
     port_env: null,
     pinned: 0,
     pin_order: null,

@@ -31,6 +31,7 @@ export interface PipelineItem {
   unread_at: string | null;
   port_offset: number | null;
   display_name: string | null;
+  last_output_preview: string | null;
   port_env: string | null;  // JSON: {"KANNA_DEV_PORT": "1421", ...}
   pinned: number;          // 0 or 1
   pin_order: number | null;
