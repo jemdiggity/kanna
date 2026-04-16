@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod bench;
 mod fd_transfer;
 mod pty;
 mod session;
