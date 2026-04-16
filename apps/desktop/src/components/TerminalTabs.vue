@@ -43,6 +43,7 @@ function buildSpawnOptions() {
       :kitty-keyboard="!!(spawnPtySession && worktreePath && prompt) && shouldEnableKittyKeyboard({ agentProvider })"
       :agent-provider="agentProvider"
       :worktree-path="worktreePath"
+      :agent-terminal="true"
     />
     <!-- SDK mode: key by sessionId so switching tasks creates a new view -->
     <AgentView

@@ -45,6 +45,7 @@ export interface TerminalOptions {
   kittyKeyboard?: boolean
   agentProvider?: string
   worktreePath?: string
+  agentTerminal?: boolean
   skipInitialReconnectEffects?: boolean
 }
 
