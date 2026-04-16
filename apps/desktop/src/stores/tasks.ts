@@ -18,6 +18,7 @@ import {
   updatePipelineItemActivity,
   updatePipelineItemDisplayName,
   updatePipelineItemStage,
+  updatePipelineItemTags,
   pinPipelineItem,
   unpinPipelineItem,
   type AgentProvider,
@@ -127,6 +128,26 @@ export function createTasksApi(
     } else if (context.state.selectedItemId.value !== null) {
       context.state.selectedItemId.value = null;
     }
+  }
+
+  function hasLiveTaskResources(item: PipelineItem): boolean {
+    return item.branch !== null || item.claude_session_id !== null || item.port_env !== null;
+  }
+
+  function buildBlockedResumeMessage(blockers: PipelineItem[]): string {
+    const blockerContext = blockers
+      .map((blocker) => {
+        const name = blocker.display_name || (blocker.prompt ? blocker.prompt.slice(0, 60) : "Untitled");
+        return `- ${name} (branch: ${blocker.branch || "unknown"})`;
+      })
+      .join("\n");
+
+    return [
+      "This task was previously blocked by the following tasks, which have now completed:",
+      blockerContext,
+      "Their changes may be on branches that haven't merged to main yet.",
+      "Please continue this task using that context where relevant.",
+    ].join("\n");
   }
 
   async function importRepo(path: string, name: string, defaultBranch: string) {
@@ -766,9 +787,31 @@ export function createTasksApi(
       if (blockers.length === 0) continue;
       const allClear = blockers.every((blocker) => blocker.closed_at !== null);
       if (allClear) {
-        await startBlockedTask(blocked);
+        if (hasLiveTaskResources(blocked)) {
+          await resumeBlockedTaskInPlace(blocked, blockers);
+        } else {
+          await startBlockedTask(blocked);
+        }
       }
     }
+  }
+
+  async function resumeBlockedTaskInPlace(
+    item: PipelineItem,
+    blockers?: PipelineItem[],
+  ): Promise<void> {
+    if (!JSON.parse(item.tags).includes("blocked")) return;
+    const resolvedBlockers = blockers ?? await listBlockersForItem(context.requireDb(), item.id);
+
+    const nextTags = JSON.parse(item.tags).filter((tag: string) => tag !== "blocked");
+    await updatePipelineItemTags(context.requireDb(), item.id, nextTags);
+    await updatePipelineItemActivity(context.requireDb(), item.id, "working");
+    await reloadSnapshot();
+
+    await invoke("send_input", {
+      sessionId: item.id,
+      input: `${buildBlockedResumeMessage(resolvedBlockers)}\n`,
+    });
   }
 
   async function startBlockedTask(item: PipelineItem) {
@@ -887,123 +930,15 @@ export function createTasksApi(
     const isItemHidden = requireService(context.services.isItemHidden as ((item: PipelineItem) => boolean) | undefined, "isItemHidden");
     if (!item || !repo || isItemHidden(item) || JSON.parse(item.tags).includes("blocked")) return;
 
-    const originalPrompt = item.prompt;
-    const originalRepoId = item.repo_id;
-    const originalAgentType = item.agent_type;
-    const originalAgentProvider = item.agent_provider;
-    const originalDisplayName = item.display_name;
-    const originalId = item.id;
-
-    const newId = crypto.randomUUID().slice(0, 8);
-    await insertPipelineItem(context.requireDb(), {
-      id: newId,
-      repo_id: originalRepoId,
-      issue_number: null,
-      issue_title: null,
-      prompt: originalPrompt,
-      pipeline: item.pipeline,
-      stage: item.stage,
-      tags: ["blocked"],
-      pr_number: null,
-      pr_url: null,
-      branch: null,
-      agent_type: originalAgentType,
-      agent_provider: originalAgentProvider ?? null,
-      port_offset: null,
-      port_env: null,
-      activity: "idle",
-      base_ref: null,
-    });
-
-    if (originalDisplayName) {
-      await updatePipelineItemDisplayName(context.requireDb(), newId, originalDisplayName);
-    }
-
     for (const blockerId of blockerIds) {
-      await insertTaskBlocker(context.requireDb(), newId, blockerId);
+      await insertTaskBlocker(context.requireDb(), item.id, blockerId);
     }
 
-    const now = new Date().toISOString();
-    const blockedReplacement: PipelineItem = {
-      ...item,
-      id: newId,
-      issue_number: null,
-      issue_title: null,
-      stage_result: null,
-      tags: JSON.stringify(["blocked"]),
-      pr_number: null,
-      pr_url: null,
-      branch: null,
-      claude_session_id: null,
-      port_offset: null,
-      port_env: null,
-      activity: "idle",
-      activity_changed_at: now,
-      unread_at: null,
-      closed_at: null,
-      base_ref: null,
-      previous_stage: null,
-      pinned: 0,
-      pin_order: null,
-      created_at: now,
-      updated_at: now,
-    };
-
-    await withOptimisticItemOverlay<void>({
-      key: `block:${newId}`,
-      apply: (snapshot) => ({
-        entries: snapshot.entries.map((entry) =>
-          entry.repo.id === originalRepoId
-            ? {
-                ...entry,
-                items: entry.items
-                  .filter((candidate) => candidate.id !== originalId)
-                  .concat(blockedReplacement),
-              }
-            : entry,
-        ),
-      }),
-      run: async () => {
-        await requireService(context.services.selectItem, "selectItem")(newId);
-        await reloadSnapshot();
-
-        const dependents = await listBlockedByItem(context.requireDb(), originalId);
-        for (const dependent of dependents) {
-          await removeTaskBlocker(context.requireDb(), dependent.id, originalId);
-          await insertTaskBlocker(context.requireDb(), dependent.id, newId);
-        }
-
-        try {
-          await invoke("kill_session", { sessionId: originalId }).catch((error: unknown) =>
-            console.error("[store] kill_session failed:", error),
-          );
-          await invoke("kill_session", { sessionId: `shell-wt-${originalId}` }).catch((error: unknown) =>
-            console.error("[store] kill shell session failed:", error),
-          );
-
-          const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-          try {
-            const teardownCmds = await collectTeardownCommands(item, repo);
-            for (const command of teardownCmds) {
-              await invoke("run_script", { script: command, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
-            }
-          } catch (error) {
-            console.error("[store] teardown failed:", error);
-          }
-
-          await invoke("git_worktree_remove", { repoPath: repo.path, path: worktreePath }).catch((error: unknown) =>
-            console.error("[store] worktree remove failed:", error),
-          );
-
-          await closePipelineItemAndClearCachedTerminalState(originalId, (id) => closePipelineItem(context.requireDb(), id));
-          await checkUnblocked(originalId);
-        } catch (error) {
-          console.error("[store] blockTask close failed:", error);
-          context.toast.error(context.tt("toasts.blockTaskFailed"));
-        }
-      },
-      reconcile: reloadSnapshot,
-    });
+    const nextTags = Array.from(new Set([...JSON.parse(item.tags), "blocked"]));
+    await updatePipelineItemTags(context.requireDb(), item.id, nextTags);
+    await updatePipelineItemActivity(context.requireDb(), item.id, "idle");
+    await reloadSnapshot();
+    await requireService(context.services.selectItem, "selectItem")(item.id);
   }
 
   async function editBlockedTask(itemId: string, newBlockerIds: string[]) {
@@ -1040,7 +975,12 @@ export function createTasksApi(
       (blocker) => blocker.closed_at !== null,
     );
     if (allClear) {
-      await startBlockedTask(item);
+      const resumeBlockers = updatedBlockers.length > 0 ? updatedBlockers : currentBlockers;
+      if (hasLiveTaskResources(item)) {
+        await resumeBlockedTaskInPlace(item, resumeBlockers);
+      } else {
+        await startBlockedTask(item);
+      }
     }
   }
 

@@ -66,6 +66,15 @@ const mockState = vi.hoisted(() => {
   let repoConfig: RepoConfig = {};
   let taskPorts: TaskPort[] = [];
   let blockCleanupGate: Promise<void> | null = null;
+  const listBlockersForItemMock = vi.fn(async () => [] as PipelineItem[]);
+  const listBlockedByItemMock = vi.fn(async () => [] as PipelineItem[]);
+  const updatePipelineItemTagsMock = vi.fn(async (_db: DbHandle, itemId: string, tags: string[]) => {
+    const item = pipelineItems.find((candidate) => candidate.id === itemId);
+    if (item) {
+      item.tags = JSON.stringify(tags);
+      item.updated_at = now;
+    }
+  });
 
   function defer(): { promise: Promise<void>; resolve: () => void } {
     let resolve = () => {};
@@ -90,6 +99,7 @@ const mockState = vi.hoisted(() => {
       case "create_agent_session":
       case "kill_session":
       case "attach_session":
+      case "send_input":
       case "run_script":
         return undefined;
       case "which_binary":
@@ -168,6 +178,11 @@ const mockState = vi.hoisted(() => {
     updatePipelineItemStageMock.mockClear();
     updatePipelineItemActivityMock.mockClear();
     closePipelineItemMock.mockClear();
+    listBlockersForItemMock.mockClear();
+    listBlockedByItemMock.mockClear();
+    updatePipelineItemTagsMock.mockClear();
+    listBlockersForItemMock.mockResolvedValue([]);
+    listBlockedByItemMock.mockResolvedValue([]);
   }
 
   return {
@@ -215,6 +230,9 @@ const mockState = vi.hoisted(() => {
     makeItem,
     makeRepo,
     defer,
+    listBlockersForItemMock,
+    listBlockedByItemMock,
+    updatePipelineItemTagsMock,
     get blockCleanupGate() {
       return blockCleanupGate;
     },
@@ -370,6 +388,7 @@ vi.mock("@kanna/db", () => ({
   insertPipelineItem: mockState.insertPipelineItemMock,
   updatePipelineItemActivity: mockState.updatePipelineItemActivityMock,
   updatePipelineItemStage: mockState.updatePipelineItemStageMock,
+  updatePipelineItemTags: mockState.updatePipelineItemTagsMock,
   pinPipelineItem: vi.fn(async () => {}),
   unpinPipelineItem: vi.fn(async () => {}),
   reorderPinnedItems: vi.fn(async () => {}),
@@ -390,8 +409,8 @@ vi.mock("@kanna/db", () => ({
   insertTaskBlocker: vi.fn(async () => {}),
   removeTaskBlocker: vi.fn(async () => {}),
   removeAllBlockersForItem: vi.fn(async () => {}),
-  listBlockersForItem: vi.fn(async () => []),
-  listBlockedByItem: vi.fn(async () => []),
+  listBlockersForItem: mockState.listBlockersForItemMock,
+  listBlockedByItem: mockState.listBlockedByItemMock,
   getUnblockedItems: vi.fn(async () => []),
   hasCircularDependency: vi.fn(async () => false),
   insertOperatorEvent: vi.fn(async () => {}),
@@ -723,13 +742,12 @@ describe("kanna store task base branch integration", () => {
     });
   });
 
-  it("shows the blocked replacement before cleanup finishes", async () => {
-    const cleanup = mockState.defer();
-    mockState.blockCleanupGate = cleanup.promise;
+  it("marks the current task blocked in place without killing its live session", async () => {
     mockState.pipelineItems = [
       mockState.makeItem({
         id: "item-active",
         branch: "task-item-active",
+        claude_session_id: "claude-item-active",
         prompt: "Investigate sidebar lag",
         display_name: "Sidebar lag",
       }),
@@ -751,24 +769,61 @@ describe("kanna store task base branch integration", () => {
     await store.selectItem("item-active");
     await flushStore();
 
-    const blockPromise = store.blockTask(["item-blocker"]);
+    await store.blockTask(["item-blocker"]);
     await flushStore();
 
-    const blockedReplacement = mockState.pipelineItems.find((item) =>
-      item.id !== "item-active" && JSON.parse(item.tags).includes("blocked")
+    const active = mockState.pipelineItems.find((item) => item.id === "item-active");
+    expect(active?.branch).toBe("task-item-active");
+    expect(active?.claude_session_id).toBe("claude-item-active");
+    expect(JSON.parse(active?.tags ?? "[]")).toContain("blocked");
+    expect(store.selectedItemId).toBe("item-active");
+    expect(store.currentItem?.id).toBe("item-active");
+    expect(mockState.invokeMock).not.toHaveBeenCalledWith("kill_session", expect.anything());
+    expect(mockState.invokeMock).not.toHaveBeenCalledWith(
+      "git_worktree_remove",
+      expect.objectContaining({ path: "/tmp/repo/.kanna-worktrees/task-item-active" }),
     );
+  });
 
-    expect(blockedReplacement).toBeDefined();
-    expect(store.selectedItemId).toBe(blockedReplacement?.id ?? null);
-    expect(store.currentItem?.id).toBe(blockedReplacement?.id ?? null);
-    expect(JSON.parse(store.currentItem?.tags ?? "[]")).toContain("blocked");
-    expect(store.items.some((item) => item.id === "item-active" && item.stage !== "done")).toBe(false);
+  it("unblocks a live blocked task in place and sends blocker context to the existing session", async () => {
+    const blocker = mockState.makeItem({
+      id: "item-blocker",
+      branch: "task-item-blocker",
+      closed_at: "2026-04-14T01:00:00.000Z",
+      prompt: "Finish upstream dependency",
+      display_name: "Upstream dependency",
+    });
 
-    cleanup.resolve();
-    await blockPromise;
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-blocked",
+        branch: "task-item-blocked",
+        claude_session_id: "claude-item-blocked",
+        tags: '["blocked"]',
+      }),
+      blocker,
+    ];
+
+    mockState.listBlockersForItemMock
+      .mockResolvedValueOnce([blocker])
+      .mockResolvedValueOnce([]);
+
+    const store = await createStore();
+    await store.editBlockedTask("item-blocked", []);
     await flushStore();
 
-    expect(store.items.some((item) => item.id === "item-active" && item.stage !== "done")).toBe(false);
-    expect(store.items.some((item) => item.id === blockedReplacement?.id)).toBe(true);
+    const blocked = mockState.pipelineItems.find((item) => item.id === "item-blocked");
+    expect(JSON.parse(blocked?.tags ?? "[]")).not.toContain("blocked");
+    expect(mockState.invokeMock).toHaveBeenCalledWith(
+      "send_input",
+      expect.objectContaining({
+        sessionId: "item-blocked",
+        input: expect.stringContaining("Upstream dependency"),
+      }),
+    );
+    expect(mockState.invokeMock).not.toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({ sessionId: "item-blocked" }),
+    );
   });
 });
