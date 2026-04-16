@@ -110,6 +110,11 @@ function directoryName(path: string): string | null {
   return path.slice(0, lastSlash);
 }
 
+function truncateVisibleShellCommand(command: string, maxLength = 115): string {
+  if (command.length <= maxLength) return command;
+  return `${command.slice(0, maxLength - 3)}...`;
+}
+
 export function buildTaskShellCommand(
   agentCmd: string,
   setupCmds: string[],
@@ -138,6 +143,8 @@ export function buildTaskShellCommand(
   if (setupParts.length > 0) {
     commandParts.push(`printf '\\033[33mRunning startup...\\033[0m\\n' && ${setupParts.join(" && ")} && printf '\\n'`);
   }
+  const visibleAgentCmd = shellSingleQuote(truncateVisibleShellCommand(agentCmd));
+  commandParts.push(`printf '\\033[2m$ %s\\033[0m\\n' '${visibleAgentCmd}'`);
   commandParts.push(agentCmd);
 
   return commandParts.join(" && ");

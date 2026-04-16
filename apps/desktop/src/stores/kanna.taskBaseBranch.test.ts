@@ -267,7 +267,7 @@ vi.mock("../composables/useToast", () => ({
 }));
 
 vi.mock("../composables/terminalSessionRecovery", () => ({
-  buildTaskShellCommand: vi.fn(() => "agent-command"),
+  buildTaskShellCommand: vi.fn((agentCmd: string) => agentCmd),
   getTaskTerminalEnv: vi.fn(() => ({})),
 }));
 
@@ -659,6 +659,34 @@ describe("kanna store task base branch integration", () => {
       "KANNA_DEV_PORT:1421",
       "API_PORT:3001",
     ]);
+  });
+
+  it("reuses the saved prompt when respawning a reopened PTY task", async () => {
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-closed",
+        branch: "task-closed",
+        prompt: "continue e3d1fc75",
+        closed_at: "2026-04-14T12:00:00.000Z",
+        agent_type: "pty",
+        agent_provider: "codex",
+      }),
+    ];
+    const store = await createStore();
+
+    await store.undoClose();
+
+    expect(mockState.invokeMock).toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({
+        sessionId: "item-closed",
+        cwd: "/tmp/repo/.kanna-worktrees/task-closed",
+        agentProvider: "codex",
+        args: expect.arrayContaining([
+          expect.stringContaining("continue e3d1fc75"),
+        ]),
+      }),
+    );
   });
 
   it("advances stages using the previous task branch as the next worktree start point", async () => {

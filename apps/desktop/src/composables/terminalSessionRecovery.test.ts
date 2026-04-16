@@ -393,6 +393,22 @@ describe("buildTaskShellCommand", () => {
     expect(command).toContain("printf '\\033[2m$ %s\\033[0m\\n' 'bun test' && bun test");
     expect(command).toContain("codex 'ship it'");
   });
+
+  it("prints the agent command before launching it", () => {
+    const command = buildTaskShellCommand("codex 'ship it'", ["bun test"]);
+
+    expect(command).toContain("printf '\\033[2m$ %s\\033[0m\\n' 'codex '\\''ship it'\\'''");
+    expect(command).toContain("&& codex 'ship it'");
+  });
+
+  it("truncates the visible agent command when it is too long", () => {
+    const longPrompt = "x".repeat(160);
+    const command = buildTaskShellCommand(`codex '${longPrompt}'`, []);
+    const truncatedVisiblePrompt = "x".repeat(105);
+
+    expect(command).toContain(`${truncatedVisiblePrompt}...`);
+    expect(command).toContain(`codex '${longPrompt}'`);
+  });
 });
 
 describe("getReconnectRedrawPolicy", () => {
