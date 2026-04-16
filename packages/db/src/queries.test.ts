@@ -13,6 +13,7 @@ import {
   deleteTaskPortsForItem,
   insertPipelineItem,
   updatePipelineItemStage,
+  updatePipelineItemTags,
   updatePipelineItemStageResult,
   clearPipelineItemStageResult,
   updatePipelineItemPR,
@@ -597,6 +598,12 @@ describe("stage queries", () => {
     await updatePipelineItemStage(db, "pi1", "review");
     const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
     expect(item?.stage).toBe("review");
+  });
+
+  it("updatePipelineItemTags overwrites tags for a single task", async () => {
+    await updatePipelineItemTags(db, "pi1", ["in progress", "blocked"]);
+    const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
+    expect(item?.tags).toBe('["in progress","blocked"]');
   });
 
   it("updatePipelineItemStageResult sets stage_result", async () => {

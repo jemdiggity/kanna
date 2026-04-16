@@ -15,7 +15,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "agent-completed"): void;
   (e: "back"): void;
 }>();
 
@@ -137,7 +136,6 @@ function dismissCommandHint() {
           :worktree-path="item.branch ? `${repoPath}/.kanna-worktrees/${item.branch}` : undefined"
           :prompt="item.prompt || ''"
           :spawn-pty-session="spawnPtySession"
-          @agent-completed="emit('agent-completed')"
         />
       </template>
     </template>
