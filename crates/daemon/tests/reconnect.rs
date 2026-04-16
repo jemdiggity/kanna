@@ -38,6 +38,11 @@ enum Cmd {
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         emulate_terminal: bool,
     },
+    AttachSnapshot {
+        session_id: String,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        emulate_terminal: bool,
+    },
     Input {
         session_id: String,
         data: Vec<u8>,
@@ -46,6 +51,15 @@ enum Cmd {
         session_id: String,
     },
     List,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SessionStatus {
+    Busy,
+    Waiting,
+    Idle,
 }
 
 #[allow(dead_code)]
@@ -65,6 +79,14 @@ enum Evt {
     },
     SessionList {
         sessions: Vec<Value>,
+    },
+    Snapshot {
+        session_id: String,
+        snapshot: Value,
+    },
+    StatusChanged {
+        session_id: String,
+        status: SessionStatus,
     },
     Ok,
     Error {
@@ -266,6 +288,21 @@ fn attach_emulating_terminal(conn: &mut ClientConn, session_id: &str) {
     }
 }
 
+fn attach_snapshot(conn: &mut ClientConn, session_id: &str) {
+    conn.send(&Cmd::AttachSnapshot {
+        session_id: session_id.to_string(),
+        emulate_terminal: true,
+    });
+
+    match conn.recv() {
+        Evt::Snapshot {
+            session_id: sid, ..
+        } => assert_eq!(sid, session_id),
+        Evt::Error { message } => panic!("attach snapshot failed: {}", message),
+        other => panic!("expected Snapshot, got: {:?}", other),
+    }
+}
+
 fn send_input(conn: &mut ClientConn, session_id: &str, data: &[u8]) {
     conn.send(&Cmd::Input {
         session_id: session_id.to_string(),
@@ -277,6 +314,7 @@ fn send_input(conn: &mut ClientConn, session_id: &str, data: &[u8]) {
         match conn.recv() {
             Evt::Ok => break,
             Evt::Output { .. } => continue,
+            Evt::StatusChanged { .. } => continue,
             Evt::Error { message } => panic!("input failed: {}", message),
             other => panic!("expected Ok for input, got: {:?}", other),
         }
@@ -330,6 +368,43 @@ fn test_spawn_attach_io() {
         "expected 'hello' in output, got: {:?}",
         String::from_utf8_lossy(&output)
     );
+}
+
+#[test]
+fn test_attach_replays_current_status() {
+    let daemon = DaemonHandle::start();
+    let mut conn = daemon.connect();
+
+    spawn_echo_session(&mut conn, "sess-status");
+    attach(&mut conn, "sess-status");
+
+    match conn.recv() {
+        Evt::StatusChanged { session_id, status } => {
+            assert_eq!(session_id, "sess-status");
+            assert!(matches!(status, SessionStatus::Idle));
+        }
+        other => panic!("expected StatusChanged after attach, got: {:?}", other),
+    }
+}
+
+#[test]
+fn test_attach_snapshot_replays_current_status() {
+    let daemon = DaemonHandle::start();
+    let mut conn = daemon.connect();
+
+    spawn_echo_session(&mut conn, "sess-snapshot-status");
+    attach_snapshot(&mut conn, "sess-snapshot-status");
+
+    match conn.recv() {
+        Evt::StatusChanged { session_id, status } => {
+            assert_eq!(session_id, "sess-snapshot-status");
+            assert!(matches!(status, SessionStatus::Idle));
+        }
+        other => panic!(
+            "expected StatusChanged after attach snapshot, got: {:?}",
+            other
+        ),
+    }
 }
 
 /// Reattach from the SAME connection: second Attach should cancel the first
