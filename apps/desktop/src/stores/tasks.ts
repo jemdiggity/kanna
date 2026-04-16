@@ -40,7 +40,6 @@ import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import { getCreateWorktreeStartPoint, resolveInitialBaseRef } from "./taskBaseBranch";
 import {
-  closePipelineItemAndClearCachedTerminalState,
   reportCloseSessionError,
   reportPrewarmSessionError,
 } from "./kannaCleanup";
@@ -599,12 +598,14 @@ export function createTasksApi(
       );
 
       const wasBlocked = JSON.parse(item.tags).includes("blocked");
+      const ownsLiveTaskResources = hasLiveTaskResources(item);
       const existingTeardown = isTeardownStage(item.stage);
-      const teardownCmds = wasBlocked || existingTeardown
+      const teardownCmds = existingTeardown || !ownsLiveTaskResources
         ? []
         : await collectTeardownCommands(item, repo);
       const closeBehavior = getTaskCloseBehavior({
         wasBlocked,
+        hasLiveTaskResources: ownsLiveTaskResources,
         currentStage: item.stage,
         hasTeardownCommands: teardownCmds.length > 0,
       });
@@ -618,6 +619,9 @@ export function createTasksApi(
           invoke("kill_session", { sessionId: `td-${item.id}` }).catch((error: unknown) =>
             reportCloseSessionError("[store] kill teardown session failed:", error)),
         ]);
+        if (wasBlocked) {
+          await removeAllBlockersForItem(context.requireDb(), item.id);
+        }
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
@@ -626,7 +630,7 @@ export function createTasksApi(
         return;
       }
 
-      if (closeBehavior === "finish" && wasBlocked) {
+      if (closeBehavior === "finish" && wasBlocked && !ownsLiveTaskResources) {
         await removeAllBlockersForItem(context.requireDb(), item.id);
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
 
@@ -644,6 +648,9 @@ export function createTasksApi(
           invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((error: unknown) =>
             reportCloseSessionError("[store] kill shell session failed:", error)),
         ]);
+        if (wasBlocked) {
+          await removeAllBlockersForItem(context.requireDb(), item.id);
+        }
         if (shouldSelectNextOnCloseTransition({
           selectNext: opts?.selectNext !== false,
           wasBlocked,

@@ -102,6 +102,8 @@ const mockState = vi.hoisted(() => {
       case "send_input":
       case "run_script":
         return undefined;
+      case "file_exists":
+        return false;
       case "which_binary":
         return `/usr/bin/${String(args?.name ?? "tool")}`;
       case "get_app_data_dir":
@@ -822,6 +824,58 @@ describe("kanna store task base branch integration", () => {
       }),
     );
     expect(mockState.invokeMock).not.toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({ sessionId: "item-blocked" }),
+    );
+  });
+
+  it("closes a blocked task with live resources through the normal cleanup path", async () => {
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-blocked",
+        branch: "task-item-blocked",
+        claude_session_id: "claude-item-blocked",
+        tags: '["blocked"]',
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-blocked");
+    await flushStore();
+
+    await store.closeTask();
+    await flushStore();
+
+    expect(mockState.invokeMock).toHaveBeenCalledWith("kill_session", { sessionId: "item-blocked" });
+    expect(mockState.invokeMock).toHaveBeenCalledWith("kill_session", { sessionId: "shell-wt-item-blocked" });
+  });
+
+  it("still respawns legacy blocked tasks with no live session context", async () => {
+    const blocker = mockState.makeItem({
+      id: "item-blocker",
+      branch: "task-item-blocker",
+      closed_at: "2026-04-14T01:00:00.000Z",
+    });
+
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-blocked",
+        branch: null,
+        claude_session_id: null,
+        tags: '["blocked"]',
+      }),
+      blocker,
+    ];
+
+    mockState.listBlockersForItemMock
+      .mockResolvedValueOnce([blocker])
+      .mockResolvedValueOnce([]);
+
+    const store = await createStore();
+    await store.editBlockedTask("item-blocked", []);
+    await flushStore();
+
+    expect(mockState.invokeMock).toHaveBeenCalledWith(
       "spawn_session",
       expect.objectContaining({ sessionId: "item-blocked" }),
     );
