@@ -61,6 +61,14 @@ async fn invoke_remote(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+pub async fn list_repos(
+    relay: State<'_, RelaySink>,
+    pending: State<'_, PendingRequests>,
+) -> Result<serde_json::Value, String> {
+    invoke_remote(&relay, &pending, "list_repos", json!({})).await
+}
+
+#[tauri::command]
 pub async fn list_pipeline_items(
     relay: State<'_, RelaySink>,
     pending: State<'_, PendingRequests>,

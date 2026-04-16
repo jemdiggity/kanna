@@ -1,5 +1,6 @@
 // Pipeline (stage helpers)
 export * from "./pipeline/types.js";
+export * from "./terminal/preview.js";
 
 // Slack
 export * from "./slack/client.js";
@@ -14,4 +15,3 @@ export * from "./config/repo-config.js";
 
 // Custom Tasks
 export * from "./config/custom-tasks.js";
-
