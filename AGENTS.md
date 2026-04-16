@@ -402,7 +402,7 @@ User makes PR → GitHub API → DB update → stage transition
 
 SQLite via `tauri-plugin-sql`. Schema defined inline in `stores/db.ts`'s `runMigrations()`. See the Database Tables inventory in the Codebase Overview section for the full table list.
 
-DB name is resolved by `dev.sh` from the current context: main instances use `kanna-v2.db`, and worktrees auto-name their DB `kanna-wt-{worktree-dir}.db` (for example `kanna-wt-task-10720bf8.db`). All DBs live in `~/Library/Application Support/com.kanna.app/`.
+DB name is resolved by `dev.sh` from the current context: main instances use `kanna-v2.db`, and worktrees auto-name their DB `kanna-wt-{worktree-dir}.db` (for example `kanna-wt-task-10720bf8.db`). In the current checked-in dev build, Tauri's app identifier is `build.kanna`, so the default DB directory is `~/Library/Application Support/build.kanna/`. If the app identifier changes for another build flavor, the enclosing Application Support directory changes with it.
 
 ## Testing
 

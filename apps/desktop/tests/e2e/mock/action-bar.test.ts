@@ -1,20 +1,22 @@
-import { dirname, resolve } from "path";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
-import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
-import { callVueMethod, getVueState } from "../helpers/vue";
-
-const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+import { resetDatabase, importTestRepo } from "../helpers/reset";
+import { getVueState } from "../helpers/vue";
+import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 
 describe("action bar", () => {
   const client = new WebDriverClient();
+  let fixtureRepoRoot = "";
+  let testRepoPath = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
-    await importTestRepo(client, TEST_REPO_PATH, "action-test");
+    fixtureRepoRoot = await createFixtureRepo("action-test");
+    testRepoPath = join(fixtureRepoRoot, "apps");
+    await importTestRepo(client, testRepoPath, "action-test");
     // Insert task directly into DB — no Claude session needed for action bar tests
     const repoId = await getVueState(client, "selectedRepoId") as string;
     await client.executeAsync<string>(
@@ -33,7 +35,7 @@ describe("action bar", () => {
   });
 
   afterAll(async () => {
-    cleanupWorktrees(client, TEST_REPO_PATH).catch(() => {});
+    await cleanupFixtureRepos(fixtureRepoRoot ? [fixtureRepoRoot] : []);
     await client.deleteSession();
   });
 

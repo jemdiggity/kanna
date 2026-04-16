@@ -1,28 +1,32 @@
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
-import { callVueMethod } from "../helpers/vue";
-
-// Use the kanna-tauri repo itself as a test fixture
-const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
-const SECOND_REPO_PATH = resolve(TEST_REPO_PATH, "..", "..");
+import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 
 describe("import repo", () => {
   const client = new WebDriverClient();
+  let firstRepoRoot = "";
+  let secondRepoRoot = "";
+  let firstRepoPath = "";
+  let secondRepoPath = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
+    firstRepoRoot = await createFixtureRepo("kanna-tauri");
+    secondRepoRoot = await createFixtureRepo("second-repo");
+    firstRepoPath = join(firstRepoRoot, "apps");
+    secondRepoPath = join(secondRepoRoot, "apps");
   });
 
   afterAll(async () => {
+    await cleanupFixtureRepos([firstRepoRoot, secondRepoRoot].filter(Boolean));
     await client.deleteSession();
   });
 
   it("imports a repo and shows it in the sidebar", async () => {
-    await importTestRepo(client, TEST_REPO_PATH, "kanna-tauri");
+    await importTestRepo(client, firstRepoPath, "kanna-tauri");
 
     // Repo should appear in sidebar
     const el = await client.waitForText(".repo-header", "kanna-tauri");
@@ -47,7 +51,7 @@ describe("import repo", () => {
   });
 
   it("can import a second repo", async () => {
-    await callVueMethod(client, "handleImportRepo", SECOND_REPO_PATH, "second-repo", "main");
+    await importTestRepo(client, secondRepoPath, "second-repo");
     await client.waitForText(".sidebar", "second-repo", 10000);
     const text = await client.executeSync<string>(
       `return document.querySelector(".sidebar").textContent;`

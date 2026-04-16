@@ -1,29 +1,31 @@
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
-import { callVueMethod, getVueState, tauriInvoke } from "../helpers/vue";
-
-const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+import { getVueState, tauriInvoke } from "../helpers/vue";
+import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 
 describe("diff view", () => {
   const client = new WebDriverClient();
+  let fixtureRepoRoot = "";
+  let testRepoPath = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
-    await importTestRepo(client, TEST_REPO_PATH, "diff-test");
+    fixtureRepoRoot = await createFixtureRepo("diff-test");
+    testRepoPath = join(fixtureRepoRoot, "apps");
+    await importTestRepo(client, testRepoPath, "diff-test");
 
     // Create a task with worktree but no Claude session (SDK mode, will fail gracefully)
     const repoId = await getVueState(client, "selectedRepoId") as string;
     const id = crypto.randomUUID();
     const branch = `task-${id}`;
-    const worktreePath = `${TEST_REPO_PATH}/.kanna-worktrees/${branch}`;
+    const worktreePath = `${testRepoPath}/.kanna-worktrees/${branch}`;
 
     // Create worktree
     await tauriInvoke(client, "git_worktree_add", {
-      repoPath: TEST_REPO_PATH,
+      repoPath: testRepoPath,
       branch,
       path: worktreePath,
     });
@@ -44,8 +46,10 @@ describe("diff view", () => {
   });
 
   afterAll(async () => {
-    // Best-effort cleanup — don't block on worktree removal
-    cleanupWorktrees(client, TEST_REPO_PATH).catch(() => {});
+    if (testRepoPath) {
+      await cleanupWorktrees(client, testRepoPath);
+    }
+    await cleanupFixtureRepos(fixtureRepoRoot ? [fixtureRepoRoot] : []);
     await client.deleteSession();
   });
 
@@ -69,7 +73,7 @@ describe("diff view", () => {
       return;
     }
 
-    const worktreePath = `${TEST_REPO_PATH}/.kanna-worktrees/${branch}`;
+    const worktreePath = `${testRepoPath}/.kanna-worktrees/${branch}`;
 
     // Modify a tracked file in the worktree so the working diff is guaranteed to pick it up.
     await tauriInvoke(client, "run_script", {

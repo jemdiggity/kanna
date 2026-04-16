@@ -1,24 +1,26 @@
-import { dirname, resolve } from "path";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
-import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
-import { callVueMethod, getVueState } from "../helpers/vue";
-
-const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+import { resetDatabase, importTestRepo } from "../helpers/reset";
+import { getVueState } from "../helpers/vue";
+import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 const CTX_SCRIPT = 'window.__KANNA_E2E__.setupState';
 
 describe("keyboard shortcuts", () => {
   const client = new WebDriverClient();
+  let fixtureRepoRoot = "";
+  let testRepoPath = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
+    fixtureRepoRoot = await createFixtureRepo("keyboard-test");
+    testRepoPath = join(fixtureRepoRoot, "apps");
   });
 
   afterAll(async () => {
-    // No worktrees to clean — tasks were inserted directly into DB
+    await cleanupFixtureRepos(fixtureRepoRoot ? [fixtureRepoRoot] : []);
     await client.deleteSession();
   });
 
@@ -55,7 +57,7 @@ describe("keyboard shortcuts", () => {
   });
 
   it("navigation changes selected item", async () => {
-    await importTestRepo(client, TEST_REPO_PATH, "keyboard-test");
+    await importTestRepo(client, testRepoPath, "keyboard-test");
     // Insert tasks directly into DB without spawning Claude
     const repoId = await getVueState(client, "selectedRepoId") as string;
     await client.executeAsync<string>(

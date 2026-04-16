@@ -129,9 +129,11 @@ export class WebDriverClient {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
-        const el = await this.findElement(css);
-        const content = await this.getText(el);
-        if (content.includes(text)) return el;
+        const elements = await this.findElements(css);
+        for (const elementId of elements) {
+          const content = await this.getText(elementId);
+          if (content.includes(text)) return elementId;
+        }
       } catch {
         // Element might not exist yet
       }

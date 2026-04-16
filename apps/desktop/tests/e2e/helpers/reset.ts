@@ -5,6 +5,52 @@ import { join } from "path";
 import { copyFile, access } from "fs/promises";
 import { WebDriverClient } from "./webdriver";
 import { execDb, callVueMethod, getVueState, queryDb, tauriInvoke } from "./vue";
+import { assertSafeE2eRepoPath } from "./fixture-repo";
+
+interface GitWorktreeEntry {
+  name?: string;
+  path?: string;
+}
+
+const worktreeCleanupBaselines = new Map<string, Set<string>>();
+
+async function recordWorktreeCleanupBaseline(
+  client: WebDriverClient,
+  repoPath: string
+): Promise<void> {
+  const result = await tauriInvoke(client, "git_worktree_list", { repoPath });
+  const worktrees = Array.isArray(result) ? result as GitWorktreeEntry[] : [];
+  worktreeCleanupBaselines.set(
+    repoPath,
+    new Set(
+      worktrees
+        .map((wt) => wt.path)
+        .filter((path): path is string => typeof path === "string" && path.length > 0)
+    )
+  );
+}
+
+async function getTrackedTaskWorktreePaths(
+  client: WebDriverClient,
+  repoPath: string
+): Promise<Set<string>> {
+  const rows = await queryDb(
+    client,
+    `SELECT branch
+       FROM pipeline_item
+      WHERE branch IS NOT NULL
+        AND branch != ''
+        AND repo_id IN (SELECT id FROM repo WHERE path = ?)`,
+    [repoPath],
+  ) as Array<{ branch?: string | null }>;
+
+  return new Set(
+    rows
+      .map((row) => row.branch)
+      .filter((branch): branch is string => typeof branch === "string" && branch.length > 0)
+      .map((branch) => join(repoPath, ".kanna-worktrees", branch)),
+  );
+}
 
 /** Back up the SQLite DB file before wiping. Best-effort — logs but never throws. */
 async function getAppDataDir(client: WebDriverClient): Promise<string> {
@@ -74,12 +120,22 @@ export async function cleanupWorktrees(
   client: WebDriverClient,
   repoPath: string
 ): Promise<void> {
+  assertSafeE2eRepoPath(repoPath);
+  const baseline = worktreeCleanupBaselines.get(repoPath);
+  if (!baseline) return;
+
   try {
+    const trackedPaths = await getTrackedTaskWorktreePaths(client, repoPath);
     const result = await tauriInvoke(client, "git_worktree_list", { repoPath });
-    const worktrees = Array.isArray(result) ? result : [];
+    const worktrees = Array.isArray(result) ? result as GitWorktreeEntry[] : [];
 
     for (const wt of worktrees) {
-      if (wt.name?.startsWith("task-")) {
+      if (
+        wt.name?.startsWith("task-") &&
+        typeof wt.path === "string" &&
+        !baseline.has(wt.path) &&
+        trackedPaths.has(wt.path)
+      ) {
         try {
           await tauriInvoke(client, "git_worktree_remove", { repoPath, path: wt.path });
         } catch {
@@ -89,6 +145,8 @@ export async function cleanupWorktrees(
     }
   } catch {
     // Cleanup is best-effort — don't fail tests
+  } finally {
+    worktreeCleanupBaselines.delete(repoPath);
   }
 }
 
@@ -102,6 +160,8 @@ export async function importTestRepo(
   name = "test-repo",
   branch = "main"
 ): Promise<string> {
+  assertSafeE2eRepoPath(repoPath);
+  await recordWorktreeCleanupBaseline(client, repoPath);
   await callVueMethod(client, "handleImportRepo", repoPath, name, branch);
   await client.waitForText(".repo-header", name);
   const rows = (await queryDb(

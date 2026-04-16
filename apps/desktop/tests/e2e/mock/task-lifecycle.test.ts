@@ -1,25 +1,30 @@
-import { dirname, resolve } from "path";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { queryDb, tauriInvoke } from "../helpers/vue";
-
-const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 
 describe("task lifecycle", () => {
   const client = new WebDriverClient();
   let repoId = "";
+  let fixtureRepoRoot = "";
+  let testRepoPath = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
-    repoId = await importTestRepo(client, TEST_REPO_PATH, "lifecycle-test");
+    fixtureRepoRoot = await createFixtureRepo("lifecycle-test");
+    testRepoPath = join(fixtureRepoRoot, "apps");
+    repoId = await importTestRepo(client, testRepoPath, "lifecycle-test");
   });
 
   afterAll(async () => {
-    await cleanupWorktrees(client, TEST_REPO_PATH);
+    if (testRepoPath) {
+      await cleanupWorktrees(client, testRepoPath);
+    }
+    await cleanupFixtureRepos(fixtureRepoRoot ? [fixtureRepoRoot] : []);
     await client.deleteSession();
   });
 
@@ -28,7 +33,7 @@ describe("task lifecycle", () => {
       `const cb = arguments[arguments.length - 1];
        try {
          const ctx = window.__KANNA_E2E__.setupState;
-         ctx.createItem(${JSON.stringify(repoId)}, ${JSON.stringify(TEST_REPO_PATH)}, "Say OK", "sdk")
+         ctx.createItem(${JSON.stringify(repoId)}, ${JSON.stringify(testRepoPath)}, "Say OK", "sdk")
            .then(function() { cb("ok"); })
            .catch(function(e) { cb("err:" + e); });
        } catch(e) { cb("outer:" + e); }`
@@ -58,12 +63,12 @@ describe("task lifecycle", () => {
     }
 
     const exists = await tauriInvoke(client, "file_exists", {
-      path: `${TEST_REPO_PATH}/.kanna-worktrees/${branch}`,
+      path: `${testRepoPath}/.kanna-worktrees/${branch}`,
     });
     expect(exists).toBe(true);
   });
 
-  it("closes task and removes it from the sidebar", async () => {
+  it("moves the task into teardown when closed", async () => {
     const result = await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
        const ctx = window.__KANNA_E2E__.setupState;
@@ -75,11 +80,12 @@ describe("task lifecycle", () => {
     );
     expect(result).toBe("ok");
 
-    // Closed tasks are hidden from the sidebar.
     await sleep(500);
-    const sidebarText = await client.executeSync<string>(
-      `return document.querySelector(".sidebar")?.textContent || "";`
-    );
-    expect(sidebarText).not.toContain("Say OK");
+    const rows = (await queryDb(
+      client,
+      "SELECT stage FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
+      [repoId, "Say OK"],
+    )) as Array<{ stage: string | null }>;
+    expect(rows[0]?.stage).toBe("teardown");
   });
 });

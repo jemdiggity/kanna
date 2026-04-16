@@ -1,24 +1,26 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod } from "../helpers/vue";
-import { dirname, resolve } from "path";
-
-const TEST_REPO_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../..");
+import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 
 describe("diff after claude (real CLI)", () => {
   const client = new WebDriverClient();
+  let testRepoPath = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
-    await importTestRepo(client, TEST_REPO_PATH, "diff-real-test");
+    testRepoPath = await createFixtureRepo("diff-real-test");
+    await importTestRepo(client, testRepoPath, "diff-real-test");
   });
 
   afterAll(async () => {
-    cleanupWorktrees(client, TEST_REPO_PATH).catch(() => {});
+    if (testRepoPath) {
+      await cleanupWorktrees(client, testRepoPath);
+      await cleanupFixtureRepos([testRepoPath]);
+    }
     await client.deleteSession();
   });
 
