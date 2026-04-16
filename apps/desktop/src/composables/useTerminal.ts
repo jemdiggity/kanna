@@ -32,8 +32,12 @@ import {
   shouldReattachOnDaemonReady,
 } from "./terminalSessionRecovery"
 import {
+  buildKittyClipboardResponse,
+  collectKittyClipboardRequests,
+  type ClipboardImagePayload,
   encodeTerminalPasteBytes,
   formatDroppedPathsForPaste,
+  updateBracketedPasteMode,
 } from "./terminalMediaBridge"
 import { useToast } from "./useToast"
 import i18n from "../i18n"
@@ -53,11 +57,14 @@ export interface TerminalOptions {
   skipInitialReconnectEffects?: boolean
 }
 
+const CLIPBOARD_IMAGE_TTL_MS = 30_000
+
 export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, options?: TerminalOptions) {
   const toast = useToast()
   const terminal = ref<Terminal | null>(null)
   const fitAddon = new FitAddon()
   const instanceId = Math.random().toString(36).slice(2, 10)
+  const outputDecoder = new TextDecoder()
   interface RecoverySnapshotFetchResult {
     snapshot: Awaited<ReturnType<typeof loadSessionRecoveryState>>
     failed: boolean
@@ -82,6 +89,11 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let connecting = false
   let disposed = false
   let hasAttachedOnce = false
+  let bracketedPasteMode = false
+  let kittyClipboardBuffer = ""
+  let pendingClipboardImage: ClipboardImagePayload | null = null
+  let pendingClipboardImageExpiresAt = 0
+  let pendingClipboardImageLoad: Promise<ClipboardImagePayload | null> | null = null
 
   // Scroll-lock: when the user scrolls up, hold their viewport position
   // instead of letting TUI redraws yank them to the top of the buffer.
@@ -126,6 +138,116 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       fileExistsCache.set(relativePath, false)
       return false
     }
+  }
+
+  function clearPendingClipboardImage() {
+    pendingClipboardImage = null
+    pendingClipboardImageExpiresAt = 0
+  }
+
+  function getPendingClipboardImage(): ClipboardImagePayload | null {
+    if (!pendingClipboardImage) {
+      return null
+    }
+    if (Date.now() > pendingClipboardImageExpiresAt) {
+      clearPendingClipboardImage()
+      return null
+    }
+    return pendingClipboardImage
+  }
+
+  function armPendingClipboardImage(payload: ClipboardImagePayload) {
+    pendingClipboardImage = payload
+    pendingClipboardImageExpiresAt = Date.now() + CLIPBOARD_IMAGE_TTL_MS
+  }
+
+  async function sendInputBytes(bytes: Uint8Array) {
+    await invoke("send_input", {
+      sessionId,
+      data: Array.from(bytes),
+    })
+  }
+
+  async function maybeReadClipboardImage() {
+    if (!options?.agentTerminal) {
+      return
+    }
+    const load = (async () => {
+      try {
+        const payload = await invoke<ClipboardImagePayload | null>("read_clipboard_image_png", {})
+        if (!payload) {
+          clearPendingClipboardImage()
+          return null
+        }
+        armPendingClipboardImage(payload)
+        return payload
+      } catch (error) {
+        clearPendingClipboardImage()
+        console.warn("[terminal][clipboard] failed to read clipboard image", {
+          sessionId,
+          instanceId,
+          error: getAppErrorMessage(error),
+        })
+        return null
+      }
+    })()
+    pendingClipboardImageLoad = load
+    void load.finally(() => {
+      if (pendingClipboardImageLoad === load) {
+        pendingClipboardImageLoad = null
+      }
+    })
+  }
+
+  async function resolvePendingClipboardImage(): Promise<ClipboardImagePayload | null> {
+    const readyPayload = getPendingClipboardImage()
+    if (readyPayload) {
+      return readyPayload
+    }
+    if (!pendingClipboardImageLoad) {
+      return null
+    }
+    await pendingClipboardImageLoad
+    return getPendingClipboardImage()
+  }
+
+  async function maybeRespondToKittyClipboardRequests(requests: ReturnType<typeof collectKittyClipboardRequests>["requests"]) {
+    if (requests.length === 0) {
+      return
+    }
+
+    const payload = await resolvePendingClipboardImage()
+    if (!payload) {
+      return
+    }
+
+    const matchesRequest = requests.some((request) => {
+      return request.mimeTypes.length === 0 || request.mimeTypes.includes(payload.mimeType)
+    })
+
+    if (!matchesRequest) {
+      return
+    }
+
+    clearPendingClipboardImage()
+    const response = buildKittyClipboardResponse(payload)
+    await sendInputBytes(new TextEncoder().encode(response))
+  }
+
+  function handleTerminalOutputControlSequences(bytes: Uint8Array) {
+    const chunkText = outputDecoder.decode(bytes, { stream: true })
+    bracketedPasteMode = updateBracketedPasteMode(bracketedPasteMode, chunkText)
+    kittyClipboardBuffer += chunkText
+
+    const parsed = collectKittyClipboardRequests(kittyClipboardBuffer)
+    kittyClipboardBuffer = parsed.remainder
+    void maybeRespondToKittyClipboardRequests(parsed.requests).catch((error) => {
+      console.warn("[terminal][clipboard] failed to send clipboard image response", {
+        sessionId,
+        instanceId,
+        error: getAppErrorMessage(error),
+      })
+    })
   }
 
   function init(el: HTMLElement) {
@@ -276,11 +398,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         event.stopPropagation()
 
         const text = formatDroppedPathsForPaste(paths)
-        const bytes = encodeTerminalPasteBytes(text, false)
-        void invoke("send_input", {
-          sessionId,
-          data: Array.from(bytes),
-        })
+        const bytes = encodeTerminalPasteBytes(text, bracketedPasteMode)
+        void sendInputBytes(bytes)
       }
 
       container.addEventListener("dragenter", suppressDragNavigation)
@@ -366,6 +485,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           if (sel) navigator.clipboard.writeText(sel)
           e.preventDefault()
         }
+        if (options?.agentTerminal && e.key === "v" && !e.altKey && !e.ctrlKey) {
+          void maybeReadClipboardImage()
+        }
         return false
       }
       return true
@@ -382,10 +504,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         const cs = core?._coreService ?? core?.coreService
         console.warn(`[kitty] sid=${sessionId} onData=${JSON.stringify(data)} flags=${cs?.kittyKeyboard?.flags}`)
       }
-      invoke("send_input", {
-        sessionId,
-        data: Array.from(new TextEncoder().encode(data)),
-      })
+      void sendInputBytes(new TextEncoder().encode(data))
     })
 
     // Handle resize — only forward to daemon after session is attached,
@@ -771,6 +890,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
               for (let i = 0; i < binary.length; i++) {
                 bytes[i] = binary.charCodeAt(i)
               }
+              handleTerminalOutputControlSequences(bytes)
               if (outputChunkCount <= 5) {
                 console.warn("[terminal][output] chunk", {
                   sessionId,
@@ -781,6 +901,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
               }
               terminal.value.write(bytes, restore)
             } else if (Array.isArray(event.payload.data)) {
+              const bytes = new Uint8Array(event.payload.data)
+              handleTerminalOutputControlSequences(bytes)
               if (outputChunkCount <= 5) {
                 console.warn("[terminal][output] chunk", {
                   sessionId,
@@ -789,7 +911,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
                   byteLength: event.payload.data.length,
                 })
               }
-              terminal.value.write(new Uint8Array(event.payload.data), restore)
+              terminal.value.write(bytes, restore)
             }
           }
         }
@@ -911,6 +1033,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     if (fitRafId) cancelAnimationFrame(fitRafId)
     cleanupContainerEvents?.()
     cleanupContainerEvents = null
+    clearPendingClipboardImage()
+    pendingClipboardImageLoad = null
+    kittyClipboardBuffer = ""
+    bracketedPasteMode = false
     if (unlistenOutput) {
       unlistenOutput()
       console.warn("[terminal][instance] listener:remove", {

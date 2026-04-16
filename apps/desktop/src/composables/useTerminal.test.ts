@@ -1235,4 +1235,141 @@ describe("useTerminal", () => {
 
     expect(addEventListenerSpy).not.toHaveBeenCalledWith("drop", expect.any(Function), undefined);
   });
+
+  it("reads clipboard image data on Cmd+V for agent terminals", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "read_clipboard_image_png") {
+        return {
+          mimeType: "image/png",
+          pngBase64: "aGVsbG8=",
+          width: 1,
+          height: 1,
+        };
+      }
+      return null;
+    });
+
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init } = useTerminal(
+          "session-1",
+          undefined,
+          {
+            agentTerminal: true,
+          },
+        );
+
+        return { init };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    const terminal = terminals[0];
+    const keyHandler = terminal.attachCustomKeyEventHandler.mock.calls[0][0] as (event: KeyboardEvent) => boolean;
+    const keyboardEvent = {
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      altKey: false,
+      ctrlKey: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent;
+
+    const allowed = keyHandler(keyboardEvent);
+    await Promise.resolve();
+
+    expect(allowed).toBe(false);
+    expect(invokeMock).toHaveBeenCalledWith("read_clipboard_image_png", {});
+  });
+
+  it("responds to kitty clipboard image reads after an explicit paste", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "read_clipboard_image_png") {
+        return {
+          mimeType: "image/png",
+          pngBase64: "aGVsbG8=",
+          width: 1,
+          height: 1,
+        };
+      }
+      if (cmd === "attach_session") {
+        return null;
+      }
+      return null;
+    });
+
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "",
+            spawnFn: async () => {},
+          },
+          {
+            agentTerminal: true,
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+    await wrapper.vm.startListening();
+
+    const terminal = terminals[0];
+    const keyHandler = terminal.attachCustomKeyEventHandler.mock.calls[0][0] as (event: KeyboardEvent) => boolean;
+    keyHandler({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      altKey: false,
+      ctrlKey: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
+    await Promise.resolve();
+
+    const outputListener = eventListeners.get("terminal_output")?.[0];
+    outputListener?.({
+      payload: {
+        session_id: "session-1",
+        data: Array.from(new TextEncoder().encode("\u001b]5522;type=read;aW1hZ2UvcG5n\u0007")),
+      },
+    });
+
+    for (let attempt = 0; attempt < 10 && !invokeMock.mock.calls.some(([cmd]) => cmd === "send_input"); attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(invokeMock).toHaveBeenCalledWith("send_input", expect.objectContaining({
+      sessionId: "session-1",
+      data: expect.any(Array),
+    }));
+  });
 });

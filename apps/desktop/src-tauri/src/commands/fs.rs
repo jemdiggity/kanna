@@ -5,6 +5,9 @@ use std::sync::OnceLock;
 use tauri::AppHandle;
 use tauri::Manager;
 
+#[cfg(target_os = "macos")]
+use base64::Engine;
+
 fn webview_log_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
@@ -389,4 +392,47 @@ pub fn append_log(message: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
     writeln!(file, "{} {}", timestamp, message).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardImagePayload {
+    pub mime_type: String,
+    pub png_base64: String,
+    pub width: usize,
+    pub height: usize,
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn read_clipboard_image_png() -> Result<Option<ClipboardImagePayload>, String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|error| format!("failed to open clipboard: {error}"))?;
+    let image = match clipboard.get_image() {
+        Ok(image) => image,
+        Err(arboard::Error::ContentNotAvailable) => return Ok(None),
+        Err(error) => return Err(format!("failed to read clipboard image: {error}")),
+    };
+
+    let bytes = image.bytes.into_owned();
+    let rgba = image::RgbaImage::from_vec(image.width as u32, image.height as u32, bytes)
+        .ok_or_else(|| "clipboard image had an invalid RGBA payload".to_string())?;
+    let dynamic = image::DynamicImage::ImageRgba8(rgba);
+    let mut png = std::io::Cursor::new(Vec::new());
+    dynamic
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|error| format!("failed to encode clipboard image as PNG: {error}"))?;
+
+    Ok(Some(ClipboardImagePayload {
+        mime_type: "image/png".to_string(),
+        png_base64: base64::engine::general_purpose::STANDARD.encode(png.into_inner()),
+        width: image.width,
+        height: image.height,
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn read_clipboard_image_png() -> Result<Option<ClipboardImagePayload>, String> {
+    Ok(None)
 }

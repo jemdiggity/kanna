@@ -34,5 +34,7 @@ tauri-plugin-webdriver = "0.2"
 ignore = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 objc2 = "0.6"
 block2 = "0.6"

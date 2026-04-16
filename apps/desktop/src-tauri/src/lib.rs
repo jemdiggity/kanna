@@ -649,6 +649,7 @@ pub fn run() {
             commands::fs::read_dir_entries,
             commands::fs::read_builtin_resource,
             commands::fs::list_builtin_resources,
+            commands::fs::read_clipboard_image_png,
             // Shell commands
             commands::shell::run_script,
             commands::shell::ensure_term_init,
