@@ -234,6 +234,7 @@ const invokeHandlers: Record<string, (...args: any[]) => any> = {
   which_binary: () => "/usr/local/bin/claude",
   run_script: () => "",
   append_log: () => ({}),
+  read_clipboard_image_png: () => null,
   // Claude agent SDK commands
   create_agent_session: () => ({ session_id: "mock-session" }),
   send_agent_message: () => ({}),
