@@ -24,6 +24,7 @@ The mobile app should support both free local-network access and paid remote acc
 
 - Replace the current mobile prototype with a React Native app that can feel native on iPhone
 - Preserve a single logical mobile API across LAN and Remote connection modes
+- Support multiple desktop connections from the first release
 - Keep the desktop-hosted system as the initial source of truth
 - Avoid coupling the mobile client to desktop Tauri commands or UI internals
 - Create a clean service boundary that can support a future hosted relay/service layer
@@ -51,6 +52,7 @@ The desktop environment remains responsible for:
 The mobile app remains responsible for:
 
 - Connection and pairing UX
+- Desktop selection and switching UX
 - Browsing and searching tasks
 - Realtime viewing of session output
 - Sending limited operator input and actions
@@ -107,6 +109,7 @@ The mobile product should support two connection modes from the start:
 - `Remote`: paid internet access mediated by Kanna infrastructure
 
 Both modes should present the same product surface to the mobile app. The difference is transport and identity, not endpoint shape.
+The app must support connecting to multiple desktops from the start, across both LAN and Remote modes.
 
 ### LAN
 
@@ -115,6 +118,7 @@ Both modes should present the same product surface to the mobile app. The differ
 - Primary pairing flow is QR-based
 - Manual host entry exists as a fallback
 - Pairing establishes a revocable trusted-device relationship with that desktop
+- The phone may pair with multiple LAN desktops and choose between them
 
 ### Remote
 
@@ -123,6 +127,7 @@ Both modes should present the same product surface to the mobile app. The differ
 - Mobile connects to Kanna's hosted service and is routed to the paired desktop through that outbound connection
 - No user port-forwarding or direct machine exposure
 - Hosted infrastructure is responsible for auth, presence, routing, and relay/tunnel behavior, not task execution
+- A signed-in user may have multiple registered remote desktops available in the same account
 
 ## Identity and Pairing
 
@@ -142,6 +147,7 @@ This separation preserves the free local-companion story and avoids forcing clou
 5. Phone can reconnect without rescanning until revoked or expired
 
 Manual host entry should be available when QR is impractical.
+The mobile app should maintain a list of paired desktops rather than assuming a single active desktop.
 
 ## API Design
 
@@ -160,6 +166,8 @@ Even if the initial implementation reuses existing internal commands, the extern
 
 ### v1 Capabilities
 
+- List available desktops and their availability state
+- Select an active desktop
 - List repos
 - List tasks by repo
 - Build a pan-repo recent-task feed
@@ -197,6 +205,7 @@ The React Native app should be organized around product surfaces and a typed Kan
 
 ### Screens
 
+- `Desktops`: paired and available desktops, grouped by connection mode where useful
 - `Tasks`: repo-grouped task list
 - `Recent`: pan-repo feed sorted by most recent updates
 - `Search`: global task jump/search
@@ -216,6 +225,8 @@ The React Native app should be organized around product surfaces and a typed Kan
 - `realtime state`: terminal buffers, live task updates, presence
 - `ui state`: active tab, selected task, sheets, input composer visibility
 
+The selected desktop is an explicit part of application state. The app should not assume a single global desktop forever; users must be able to switch desktops intentionally and see which desktop their current data is coming from.
+
 The RN UI should never speak directly in terms of Tauri invokes or desktop stores. It should only consume the typed Kanna client.
 
 ## UX Scope for the First Release
@@ -229,6 +240,8 @@ Required v1 user flows:
 
 - Connect locally to a desktop
 - Sign in and connect remotely to a desktop
+- Pair or register more than one desktop
+- Switch between desktops
 - Browse tasks grouped by repo
 - View a recent feed across repos
 - Search tasks
@@ -252,6 +265,8 @@ The mobile UI should explicitly represent:
 
 - Not signed in
 - Not paired
+- No desktops available
+- Selected desktop offline
 - Desktop offline
 - LAN unreachable
 - Remote relay unavailable
@@ -274,6 +289,7 @@ Task and search data can refetch on reconnect. Session streams should resume thr
 - All permissions should flow through the desktop-side Kanna API
 - LAN trusted devices must be revocable per desktop
 - Remote access must require account identity and desktop registration
+- Desktop identity must be explicit so a user can distinguish and revoke individual paired machines
 - The hosted service should relay and authorize access, not execute task logic directly in v1
 
 ## Migration Plan
@@ -309,6 +325,7 @@ Testing should align with the service boundary.
 
 Add coverage for:
 
+- Desktop listing and selection
 - Repo listing
 - Task listing
 - Recent feed queries
@@ -331,6 +348,7 @@ This ensures connection mode does not leak into product behavior.
 Focus first on:
 
 - Connection flows
+- Multi-desktop selection flows
 - Pairing flows
 - Task navigation
 - Terminal streaming states
@@ -341,6 +359,7 @@ Focus first on:
 
 Cover:
 
+- Switching between multiple paired desktops
 - Foreground/background transitions
 - Wi-Fi to cellular transitions
 - Desktop sleep/wake
@@ -354,6 +373,7 @@ Cover:
 - Desktop-side Kanna API is the mobile contract boundary
 - Desktop remains the first source of truth
 - Support both LAN and Remote
+- Support multiple desktops from day one
 - LAN is free and does not require an account
 - Remote is paid and requires Kanna infrastructure plus desktop outbound connection
 - One logical API across both connection modes
