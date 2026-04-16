@@ -5,6 +5,17 @@ import { nextTick, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalView from "../TerminalView.vue";
 
+const useTerminalMock = vi.fn(() => ({
+  terminal: ref({ focus: focusMock }),
+  init: initMock,
+  startListening: startListeningMock,
+  fit: fitMock,
+  fitDeferred: fitDeferredMock,
+  redraw: redrawMock,
+  ensureConnected: ensureConnectedMock,
+  dispose: disposeMock,
+}));
+
 const focusMock = vi.fn();
 const initMock = vi.fn();
 const startListeningMock = vi.fn(async () => {});
@@ -25,16 +36,7 @@ async function flushLifecycle() {
 }
 
 vi.mock("../../composables/useTerminal", () => ({
-  useTerminal: () => ({
-    terminal: ref({ focus: focusMock }),
-    init: initMock,
-    startListening: startListeningMock,
-    fit: fitMock,
-    fitDeferred: fitDeferredMock,
-    redraw: redrawMock,
-    ensureConnected: ensureConnectedMock,
-    dispose: disposeMock,
-  }),
+  useTerminal: (...args: unknown[]) => useTerminalMock(...args),
 }));
 
 vi.mock("../../composables/terminalSessionRecovery", () => ({
@@ -43,6 +45,7 @@ vi.mock("../../composables/terminalSessionRecovery", () => ({
 
 describe("TerminalView", () => {
   beforeEach(() => {
+    useTerminalMock.mockClear();
     focusMock.mockReset();
     initMock.mockReset();
     startListeningMock.mockReset();
@@ -75,11 +78,17 @@ describe("TerminalView", () => {
       props: {
         sessionId: "session-1",
         active: true,
+        agentTerminal: true,
       },
     });
 
     await flushLifecycle();
 
+    expect(useTerminalMock).toHaveBeenCalledWith(
+      "session-1",
+      undefined,
+      expect.objectContaining({ agentTerminal: true }),
+    );
     expect(initMock).toHaveBeenCalledTimes(1);
     expect(startListeningMock).toHaveBeenCalledTimes(1);
     expect(focusMock).toHaveBeenCalledTimes(1);
