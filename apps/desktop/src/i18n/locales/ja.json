@@ -183,6 +183,7 @@
     "detecting": "検出中...",
     "gitRepoConfirmed": "✓ Gitリポジトリ · ブランチ:",
     "notAGitRepo": "Gitリポジトリではありません。新規作成タブで初期化してください。",
+    "repoNameLabel": "リポジトリ名",
     "repoNamePlaceholder": "リポジトリ名",
     "cloning": "クローン中...",
     "or": "または"
