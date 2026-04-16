@@ -23,17 +23,6 @@ export interface TeardownExitBehaviorInput {
   lingerEnabled: boolean;
 }
 
-export interface EnterTeardownBehaviorInput {
-  teardownCommandCount: number;
-  lingerEnabled: boolean;
-}
-
-export function shouldAutoCloseTaskImmediatelyAfterEnteringTeardown(
-  input: EnterTeardownBehaviorInput,
-): boolean {
-  return input.teardownCommandCount === 0 && !input.lingerEnabled;
-}
-
 export function shouldAutoCloseTaskAfterTeardownExit(
   input: TeardownExitBehaviorInput,
 ): boolean {

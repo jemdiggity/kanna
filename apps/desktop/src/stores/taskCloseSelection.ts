@@ -14,6 +14,6 @@ export function shouldSelectNextOnCloseTransition(
     transition.selectNext &&
     !transition.wasBlocked &&
     !isTeardownStage(transition.previousStage) &&
-    transition.nextStage === TEARDOWN_STAGE
+    (transition.nextStage === TEARDOWN_STAGE || transition.nextStage === "done")
   );
 }

@@ -8,7 +8,6 @@ import {
   reportCloseSessionError,
   reportPrewarmSessionError,
   shouldAutoCloseTaskAfterTeardownExit,
-  shouldAutoCloseTaskImmediatelyAfterEnteringTeardown,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
 import { AppError } from "../appError";
@@ -38,31 +37,10 @@ describe("kannaCleanup", () => {
     expect(shouldAutoCloseTaskAfterTeardownExit({ exitCode: 1, lingerEnabled: false })).toBe(false);
   });
 
-  it("auto-closes immediately when entering teardown with no teardown commands and linger disabled", () => {
-    expect(
-      shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
-        teardownCommandCount: 0,
-        lingerEnabled: false,
-      }),
-    ).toBe(true);
-  });
-
-  it("does not auto-close immediately when teardown commands exist", () => {
-    expect(
-      shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
-        teardownCommandCount: 1,
-        lingerEnabled: false,
-      }),
-    ).toBe(false);
-  });
-
-  it("does not auto-close immediately when linger is enabled", () => {
-    expect(
-      shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
-        teardownCommandCount: 0,
-        lingerEnabled: true,
-      }),
-    ).toBe(false);
+  it("keeps teardown exit auto-close logic focused on completed teardown sessions", () => {
+    expect(shouldAutoCloseTaskAfterTeardownExit({ exitCode: 0, lingerEnabled: false })).toBe(true);
+    expect(shouldAutoCloseTaskAfterTeardownExit({ exitCode: 1, lingerEnabled: false })).toBe(false);
+    expect(shouldAutoCloseTaskAfterTeardownExit({ exitCode: 0, lingerEnabled: true })).toBe(false);
   });
 
   it("clears cached state only after a successful close", async () => {
