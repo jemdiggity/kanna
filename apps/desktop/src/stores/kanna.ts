@@ -21,7 +21,6 @@ import {
   reportCloseSessionError,
   reportPrewarmSessionError,
   shouldAutoCloseTaskAfterTeardownExit,
-  shouldAutoCloseTaskImmediatelyAfterEnteringTeardown,
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
 import { isTeardownStage, TEARDOWN_STAGE } from "./taskStages";
@@ -1398,13 +1397,18 @@ export const useKannaStore = defineStore("kanna", () => {
       );
 
       const wasBlocked = hasTag(item, "blocked");
+      const existingTeardown = isTeardownStage(item.stage);
+      const teardownCmds = wasBlocked || existingTeardown
+        ? []
+        : await collectTeardownCommands(item, repo);
       const closeBehavior = getTaskCloseBehavior({
         wasBlocked,
         currentStage: item.stage,
+        hasTeardownCommands: teardownCmds.length > 0,
       });
 
       // Already in teardown — second close kills sessions and finishes
-      if (closeBehavior === "finish" && isTeardownStage(item.stage)) {
+      if (closeBehavior === "finish" && existingTeardown) {
         await Promise.all([
           invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
             reportCloseSessionError("[store] kill agent session failed:", e)),
@@ -1435,33 +1439,51 @@ export const useKannaStore = defineStore("kanna", () => {
         return;
       }
 
+      if (closeBehavior === "finish") {
+        await Promise.all([
+          invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
+            reportCloseSessionError("[store] kill agent session failed:", e)),
+          invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
+            reportCloseSessionError("[store] kill shell session failed:", e)),
+        ]);
+        if (shouldSelectNextOnCloseTransition({
+          selectNext: opts?.selectNext !== false,
+          wasBlocked,
+          previousStage: item.stage,
+          nextStage: "done",
+        })) {
+          selectNextItem(nextId);
+        }
+        await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
+        await checkUnblocked(item.id);
+        bump();
+        return;
+      }
+
       // 1. Stop the agent CLI
       await invoke("signal_session", { sessionId: item.id, signal: "SIGINT" }).catch((e: unknown) =>
         reportCloseSessionError("[store] signal_session failed:", e));
 
-      // 2. Run teardown scripts if any
-      const teardownCmds = await collectTeardownCommands(item, repo);
+      // 2. Run teardown scripts
       let teardownExit: Promise<void> | null = null;
-      if (teardownCmds.length > 0) {
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-        const scriptParts = teardownCmds.map((cmd) => {
-          const escaped = cmd.replace(/'/g, "'\\''");
-          return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${cmd}`;
-        });
-        const fullCmd = `printf '\\033[33mRunning teardown...\\033[0m\\n' && ${scriptParts.join(" && ")} && printf '\\n'`;
-        const tdSessionId = `td-${item.id}`;
-        teardownExit = waitForSessionExit(tdSessionId);
-        await invoke("spawn_session", {
-          sessionId: tdSessionId,
-          cwd: worktreePath,
-          executable: "/bin/zsh",
-          args: ["--login", "-i", "-c", fullCmd],
-          env: { KANNA_WORKTREE: "1" },
-          cols: 120,
-          rows: 30,
-        });
-        await invoke("attach_session", { sessionId: tdSessionId, agentProvider: "claude" });
-      }
+      const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+      const scriptParts = teardownCmds.map((cmd) => {
+        const escaped = cmd.replace(/'/g, "'\\''");
+        return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${cmd}`;
+      });
+      const fullCmd = `printf '\\033[33mRunning teardown...\\033[0m\\n' && ${scriptParts.join(" && ")} && printf '\\n'`;
+      const tdSessionId = `td-${item.id}`;
+      teardownExit = waitForSessionExit(tdSessionId);
+      await invoke("spawn_session", {
+        sessionId: tdSessionId,
+        cwd: worktreePath,
+        executable: "/bin/zsh",
+        args: ["--login", "-i", "-c", fullCmd],
+        env: { KANNA_WORKTREE: "1" },
+        cols: 120,
+        rows: 30,
+      });
+      await invoke("attach_session", { sessionId: tdSessionId, agentProvider: "claude" });
 
       // 3. Mark teardown — if linger, keep sessions alive for user to review
       await updatePipelineItemStage(_db, item.id, TEARDOWN_STAGE);
@@ -1470,26 +1492,10 @@ export const useKannaStore = defineStore("kanna", () => {
         wasBlocked,
         previousStage: item.stage,
         nextStage: TEARDOWN_STAGE,
-      })) {
+        })) {
         selectNextItem(nextId);
       }
       bump();
-
-      if (shouldAutoCloseTaskImmediatelyAfterEnteringTeardown({
-        teardownCommandCount: teardownCmds.length,
-        lingerEnabled: devLingerTerminals.value,
-      })) {
-        await Promise.all([
-          invoke("kill_session", { sessionId: item.id }).catch((e: unknown) =>
-            reportCloseSessionError("[store] kill agent session failed:", e)),
-          invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((e: unknown) =>
-            reportCloseSessionError("[store] kill shell session failed:", e)),
-        ]);
-        await closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(_db, id));
-        await checkUnblocked(item.id);
-        bump();
-        return;
-      }
 
       void teardownExit;
       return;

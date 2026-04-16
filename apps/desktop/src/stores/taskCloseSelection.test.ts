@@ -25,6 +25,17 @@ describe("shouldSelectNextOnCloseTransition", () => {
     ).toBe(true);
   });
 
+  it("does not require a teardown stage write before selecting the next item", () => {
+    expect(
+      shouldSelectNextOnCloseTransition({
+        selectNext: true,
+        wasBlocked: false,
+        previousStage: "pr",
+        nextStage: "done",
+      }),
+    ).toBe(true);
+  });
+
   it("does not select when selection handoff is disabled", () => {
     expect(
       shouldSelectNextOnCloseTransition({
