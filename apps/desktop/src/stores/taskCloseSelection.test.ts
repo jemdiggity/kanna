@@ -14,18 +14,29 @@ describe("shouldSelectNextOnCloseTransition", () => {
     ).toBe(true);
   });
 
+  it("also selects immediately when a normal task closes directly to done", () => {
+    expect(
+      shouldSelectNextOnCloseTransition({
+        selectNext: true,
+        wasBlocked: false,
+        previousStage: "in progress",
+        nextStage: "done",
+      }),
+    ).toBe(true);
+  });
+
   it("does not select when selection handoff is disabled", () => {
     expect(
       shouldSelectNextOnCloseTransition({
         selectNext: false,
         wasBlocked: false,
         previousStage: "in progress",
-        nextStage: TEARDOWN_STAGE,
+        nextStage: "done",
       }),
     ).toBe(false);
   });
 
-  it("does not treat blocked-task close as teardown entry", () => {
+  it("does not treat blocked-task close as an immediate selection handoff", () => {
     expect(
       shouldSelectNextOnCloseTransition({
         selectNext: true,
