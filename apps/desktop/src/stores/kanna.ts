@@ -37,7 +37,10 @@ import {
   type AgentProviderAvailability,
 } from "./agent-provider";
 import { buildPendingTaskPlaceholder } from "./taskCreationPlaceholder";
-import { shouldIgnoreRuntimeStatusDuringSetup } from "./taskRuntimeStatus";
+import {
+  resolveActivityForRuntimeStatus,
+  shouldIgnoreRuntimeStatusDuringSetup,
+} from "./taskRuntimeStatus";
 import {
   formatTaskPortAllocationLog,
   type PortAllocationLogEntry,
@@ -119,6 +122,7 @@ interface WorktreeBootstrapResult {
 let _db: DbHandle;
 let portAllocationChain: Promise<void> = Promise.resolve();
 const sessionExitWaiters = new Map<string, Array<() => void>>();
+const RUNTIME_STATUS_SYNC_DELAY_MS = 250;
 
 async function withPortAllocationLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = portAllocationChain.then(fn, fn);
@@ -320,6 +324,7 @@ export const useKannaStore = defineStore("kanna", () => {
   function bump() { refreshKey.value++; }
 
   const pendingCreateVisibility = new Map<string, { bumpAt: number }>();
+  let runtimeStatusSyncTimer: ReturnType<typeof setTimeout> | null = null;
   let refreshRunId = 0;
 
   interface DaemonSessionInfo {
@@ -393,31 +398,17 @@ export const useKannaStore = defineStore("kanna", () => {
       return;
     }
 
-    if (status === "busy") {
-      if (item.activity !== "working") {
-        await updatePipelineItemActivity(_db, item.id, "working");
-        bump();
+    if (status === "busy" || status === "idle" || status === "waiting") {
+      const nextActivity = resolveActivityForRuntimeStatus(
+        item.activity,
+        status,
+        selectedItemId.value === item.id,
+      );
+      if (nextActivity == null) {
+        return;
       }
-      return;
-    }
-
-    if (status === "idle") {
-      if (item.activity === "working") {
-        if (selectedItemId.value === item.id) {
-          await updatePipelineItemActivity(_db, item.id, "idle");
-        } else {
-          await updatePipelineItemActivity(_db, item.id, "unread");
-        }
-        bump();
-      }
-      return;
-    }
-
-    if (status === "waiting") {
-      if (item.activity !== "unread" && selectedItemId.value !== item.id) {
-        await updatePipelineItemActivity(_db, item.id, "unread");
-        bump();
-      }
+      await updatePipelineItemActivity(_db, item.id, nextActivity);
+      bump();
     }
   }
 
@@ -437,6 +428,23 @@ export const useKannaStore = defineStore("kanna", () => {
     } catch (error) {
       console.error("[store] failed to sync task statuses from daemon:", error);
     }
+  }
+
+  function scheduleRuntimeStatusSync(sessionId: string) {
+    if (!isTauri) return;
+    if (sessionId.startsWith("shell-") || isTeardownSessionId(sessionId)) {
+      return;
+    }
+
+    if (runtimeStatusSyncTimer != null) {
+      clearTimeout(runtimeStatusSyncTimer);
+    }
+    runtimeStatusSyncTimer = setTimeout(() => {
+      runtimeStatusSyncTimer = null;
+      syncTaskStatusesFromDaemon().catch((error) => {
+        console.error("[store] failed scheduled runtime status sync:", error);
+      });
+    }, RUNTIME_STATUS_SYNC_DELAY_MS);
   }
 
   // ── Selection & navigation history ──────────────────────────────
@@ -2255,6 +2263,13 @@ export const useKannaStore = defineStore("kanna", () => {
         clearCachedTerminalState(sessionId);
       }
       _handleAgentFinished(sessionId);
+    });
+
+    listen("terminal_output", (event: any) => {
+      const payload = event.payload || event;
+      const sessionId = payload.session_id;
+      if (typeof sessionId !== "string") return;
+      scheduleRuntimeStatusSync(sessionId);
     });
 
     listen("daemon_ready", async () => {

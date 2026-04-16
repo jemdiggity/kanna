@@ -1,11 +1,33 @@
 use std::{cell::RefCell, rc::Rc};
 
 use ghostty_xterm_compat_serialize::serialize_terminal;
-use libghostty_vt::{terminal::Mode, Terminal, TerminalOptions};
+use libghostty_vt::{
+    render::{CellIterator, RenderState, RowIterator},
+    screen::CellWide,
+    terminal::Mode,
+    Terminal, TerminalOptions,
+};
 
-use crate::protocol::TerminalSnapshot;
+use crate::protocol::{AgentProvider, SessionStatus, TerminalSnapshot};
 
 type SidecarResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+const STATUS_ROWS: usize = 8;
+const WAITING_MARKER: &str = "do you want to allow";
+const CLAUDE_PERMISSION_MARKER: &str = "bypass permissions on";
+const INTERRUPT_MARKER: &str = "esc to interrupt";
+const COPILOT_BUSY_MARKER: &str = "esc to cancel";
+const CLAUDE_IDLE_PROMPT: char = '\u{276F}';
+const CODEX_IDLE_PROMPT: char = '\u{203A}';
+const CLAUDE_SPINNERS: [char; 6] = ['✻', '✽', '✶', '✳', '✢', '⏺'];
+
+pub fn initial_session_status(provider: Option<AgentProvider>) -> SessionStatus {
+    if provider.is_some() {
+        SessionStatus::Busy
+    } else {
+        SessionStatus::Idle
+    }
+}
 
 pub struct TerminalSidecar {
     terminal: Box<Terminal<'static, 'static>>,
@@ -97,6 +119,113 @@ impl TerminalSidecar {
         })
     }
 
+    fn visible_footer_lines(&mut self, rows: usize) -> SidecarResult<Vec<String>> {
+        let mut render_state = RenderState::new()?;
+        let snapshot = render_state.update(&self.terminal)?;
+        let cols = usize::from(snapshot.cols()?);
+        let mut row_iterator = RowIterator::new()?;
+        let mut cell_iterator = CellIterator::new()?;
+        let mut rendered_rows = Vec::new();
+
+        let mut row_iteration = row_iterator.update(&snapshot)?;
+        while let Some(row) = row_iteration.next() {
+            let mut rendered = String::with_capacity(cols);
+            let mut cell_iteration = cell_iterator.update(row)?;
+            for x in 0..cols {
+                cell_iteration.select(x as u16)?;
+                let raw_cell = cell_iteration.raw_cell()?;
+                match raw_cell.wide()? {
+                    CellWide::SpacerTail | CellWide::SpacerHead => {}
+                    CellWide::Narrow | CellWide::Wide => {
+                        let graphemes = cell_iteration.graphemes()?;
+                        if graphemes.is_empty() {
+                            rendered.push(' ');
+                        } else {
+                            rendered.extend(graphemes);
+                        }
+                    }
+                }
+            }
+            let normalized = normalize_row_text(&rendered);
+            if !normalized.is_empty() {
+                rendered_rows.push(normalized);
+            }
+        }
+
+        let start = rendered_rows.len().saturating_sub(rows);
+        Ok(rendered_rows.into_iter().skip(start).collect())
+    }
+
+    #[cfg(test)]
+    pub fn visible_footer_text(&mut self, rows: usize) -> SidecarResult<String> {
+        Ok(self.visible_footer_lines(rows)?.join("\n"))
+    }
+
+    pub fn debug_lines(&mut self, rows: usize) -> SidecarResult<Vec<String>> {
+        self.visible_footer_lines(rows)
+    }
+
+    pub fn visible_status(
+        &mut self,
+        provider: Option<AgentProvider>,
+    ) -> SidecarResult<Option<SessionStatus>> {
+        let Some(provider) = provider else {
+            return Ok(None);
+        };
+
+        let footer_lines = self.visible_footer_lines(STATUS_ROWS)?;
+        let flattened_footer = footer_lines.join(" ");
+        let normalized = flattened_footer.to_lowercase();
+        let last_line = footer_lines
+            .iter()
+            .rev()
+            .find(|line| !line.is_empty())
+            .map(String::as_str)
+            .unwrap_or("");
+
+        if normalized.contains(WAITING_MARKER) {
+            return Ok(Some(SessionStatus::Waiting));
+        }
+
+        let status = match provider {
+            AgentProvider::Claude => {
+                if normalized.contains(CLAUDE_PERMISSION_MARKER) {
+                    Some(SessionStatus::Waiting)
+                } else if normalized.contains(INTERRUPT_MARKER)
+                    || footer_lines
+                        .iter()
+                        .any(|line| line_has_claude_spinner(line))
+                {
+                    Some(SessionStatus::Busy)
+                } else if line_starts_with_prompt(last_line, &[CLAUDE_IDLE_PROMPT]) {
+                    Some(SessionStatus::Idle)
+                } else {
+                    None
+                }
+            }
+            AgentProvider::Codex => {
+                if normalized.contains(INTERRUPT_MARKER) {
+                    Some(SessionStatus::Busy)
+                } else if line_starts_with_prompt(last_line, &[CODEX_IDLE_PROMPT]) {
+                    Some(SessionStatus::Idle)
+                } else {
+                    None
+                }
+            }
+            AgentProvider::Copilot => copilot_status_from_lines(&footer_lines).or_else(|| {
+                if normalized.contains(COPILOT_BUSY_MARKER) {
+                    Some(SessionStatus::Busy)
+                } else if line_starts_with_prompt(last_line, &[CLAUDE_IDLE_PROMPT]) {
+                    Some(SessionStatus::Idle)
+                } else {
+                    None
+                }
+            }),
+        };
+
+        Ok(status)
+    }
+
     pub fn from_snapshot(snapshot: &TerminalSnapshot, scrollback: usize) -> SidecarResult<Self> {
         let mut sidecar = Self::new(snapshot.cols, snapshot.rows, scrollback)?;
         sidecar.write(Self::restore_vt(snapshot).as_bytes());
@@ -128,11 +257,71 @@ impl TerminalSidecar {
     }
 }
 
+fn normalize_row_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn line_has_claude_spinner(line: &str) -> bool {
+    line.trim_start()
+        .chars()
+        .next()
+        .is_some_and(|ch| CLAUDE_SPINNERS.contains(&ch))
+}
+
+fn line_starts_with_prompt(line: &str, prompts: &[char]) -> bool {
+    line.trim_start()
+        .chars()
+        .next()
+        .is_some_and(|ch| prompts.contains(&ch))
+}
+
+fn prompt_remainder<'a>(line: &'a str, prompts: &[char]) -> Option<&'a str> {
+    let trimmed = line.trim_start();
+    let mut chars = trimmed.char_indices();
+    let (_, first) = chars.next()?;
+    if !prompts.contains(&first) {
+        return None;
+    }
+
+    let remainder_index = chars.next().map_or(trimmed.len(), |(index, _)| index);
+    Some(trimmed[remainder_index..].trim())
+}
+
+fn line_contains_worktree_path(line: &str) -> bool {
+    line.contains(".kanna-worktrees/") || line.contains("[⎇ ")
+}
+
+fn copilot_line_has_busy_marker(line: &str) -> bool {
+    let normalized = line.to_lowercase();
+    normalized.contains(COPILOT_BUSY_MARKER)
+        || normalized.starts_with("thinking ")
+        || normalized.contains(" thinking ")
+}
+
+fn copilot_status_from_lines(lines: &[String]) -> Option<SessionStatus> {
+    let path_index = lines
+        .iter()
+        .rposition(|line| line_contains_worktree_path(line))?;
+
+    if path_index > 0 && copilot_line_has_busy_marker(&lines[path_index - 1]) {
+        return Some(SessionStatus::Busy);
+    }
+
+    lines
+        .iter()
+        .skip(path_index + 1)
+        .find_map(|line| prompt_remainder(line, &[CLAUDE_IDLE_PROMPT]))
+        .filter(|remainder| remainder.is_empty())
+        .map(|_| SessionStatus::Idle)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use super::{TerminalSidecar, TerminalSnapshot};
+    use crate::protocol::{AgentProvider, SessionStatus};
+
+    use super::{initial_session_status, TerminalSidecar, TerminalSnapshot};
 
     #[test]
     fn sidecar_snapshot_tracks_output_and_resize() {
@@ -226,5 +415,202 @@ mod tests {
         assert_eq!(restored.cols, 80);
         assert_eq!(restored.rows, 24);
         assert!(restored.vt.contains("hello"));
+    }
+
+    #[test]
+    fn visible_footer_text_reads_bottom_rendered_rows() {
+        let mut sidecar = TerminalSidecar::new(80, 4, 10_000).unwrap();
+        sidecar.write(
+            "Header\r\nBody\r\n• Working(0s • esc to interrupt)\r\n› Find and fix a bug".as_bytes(),
+        );
+
+        let footer = sidecar.visible_footer_text(3).unwrap();
+
+        assert!(footer.contains("Working(0s • esc to interrupt)"));
+        assert!(footer.contains("› Find and fix a bug"));
+    }
+
+    #[test]
+    fn codex_status_comes_from_visible_footer_content() {
+        let mut sidecar = TerminalSidecar::new(80, 4, 10_000).unwrap();
+        sidecar.write(
+            "Header\r\nBody\r\n• Working(0s • esc to interrupt)\r\n› Find and fix a bug".as_bytes(),
+        );
+
+        assert_eq!(
+            sidecar.visible_status(Some(AgentProvider::Codex)).unwrap(),
+            Some(SessionStatus::Busy)
+        );
+
+        sidecar.write("\x1b[2J\x1b[HHeader\r\nBody\r\nAll done\r\n›".as_bytes());
+
+        assert_eq!(
+            sidecar.visible_status(Some(AgentProvider::Codex)).unwrap(),
+            Some(SessionStatus::Idle)
+        );
+    }
+
+    #[test]
+    fn codex_prompt_does_not_force_idle_while_interrupt_marker_is_visible() {
+        let mut sidecar = TerminalSidecar::new(80, 4, 10_000).unwrap();
+        sidecar.write(
+            "Header\r\nBody\r\n• Working(0s • esc to interrupt)\r\n› The application panicked"
+                .as_bytes(),
+        );
+
+        assert_eq!(
+            sidecar.visible_status(Some(AgentProvider::Codex)).unwrap(),
+            Some(SessionStatus::Busy)
+        );
+    }
+
+    #[test]
+    fn claude_permission_footer_maps_to_waiting() {
+        let mut sidecar = TerminalSidecar::new(120, 8, 10_000).unwrap();
+        sidecar.write(
+            concat!(
+                "Claude Code\r\n",
+                "❯ foobar\r\n",
+                "Please run /login\r\n",
+                "────────────────────────────────────────────────────────────────\r\n",
+                "❯ \r\n",
+                "⏵⏵ bypass permissions on (shift+tab to cycle)\r\n"
+            )
+            .as_bytes(),
+        );
+
+        assert_eq!(
+            sidecar.visible_status(Some(AgentProvider::Claude)).unwrap(),
+            Some(SessionStatus::Waiting)
+        );
+    }
+
+    #[test]
+    fn claude_permission_footer_maps_to_waiting_even_with_blank_rows_below() {
+        let mut sidecar = TerminalSidecar::new(120, 42, 10_000).unwrap();
+        sidecar.write(
+            concat!(
+                "Claude Code\r\n",
+                "Sonnet 4.6 with high effort\r\n",
+                "~/.kanna/repos/foobar-11/.kanna-worktrees/task-079a9d8b\r\n",
+                "\r\n",
+                "❯ foobar\r\n",
+                "Please run /login\r\n",
+                "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n",
+                "❯ \r\n",
+                "⏵⏵ bypass permissions on (shift+tab to cycle)\r\n"
+            )
+            .as_bytes(),
+        );
+
+        assert_eq!(
+            sidecar.visible_status(Some(AgentProvider::Claude)).unwrap(),
+            Some(SessionStatus::Waiting)
+        );
+    }
+
+    #[test]
+    fn copilot_busy_detects_wrapped_footer_marker() {
+        let mut sidecar = TerminalSidecar::new(8, 4, 10_000).unwrap();
+        sidecar.write("Header\r\n(Esc to cancel)".as_bytes());
+
+        assert_eq!(
+            sidecar
+                .visible_status(Some(AgentProvider::Copilot))
+                .unwrap(),
+            Some(SessionStatus::Busy)
+        );
+    }
+
+    #[test]
+    fn copilot_idle_detects_prompt_footer() {
+        let mut sidecar = TerminalSidecar::new(80, 4, 10_000).unwrap();
+        sidecar.write("Header\r\nDone\r\n❯".as_bytes());
+
+        assert_eq!(
+            sidecar
+                .visible_status(Some(AgentProvider::Copilot))
+                .unwrap(),
+            Some(SessionStatus::Idle)
+        );
+    }
+
+    #[test]
+    fn copilot_busy_detects_thinking_line_above_worktree_path() {
+        let mut sidecar = TerminalSidecar::new(120, 8, 10_000).unwrap();
+        sidecar.write(
+            concat!(
+                "● You mentioned \"pizza\" again.\r\n",
+                "◎ Thinking (Esc to cancel · 230 B)\r\n",
+                "~/.kanna/repos/foobar-11/.kanna-worktrees/task-5b6a4e5e [⎇ task-5b6a4e5e%] GPT-4.1\r\n",
+                "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n",
+                "❯ \r\n",
+                "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n",
+                "v1.0.28 available · run /update · / commands · ? help\r\n",
+            )
+            .as_bytes(),
+        );
+
+        assert_eq!(
+            sidecar
+                .visible_status(Some(AgentProvider::Copilot))
+                .unwrap(),
+            Some(SessionStatus::Busy)
+        );
+    }
+
+    #[test]
+    fn copilot_idle_detects_empty_prompt_below_worktree_path_with_help_footer() {
+        let mut sidecar = TerminalSidecar::new(120, 8, 10_000).unwrap();
+        sidecar.write(
+            concat!(
+                "● You mentioned \"pizza\" again.\r\n",
+                "~/.kanna/repos/foobar-11/.kanna-worktrees/task-5b6a4e5e [⎇ task-5b6a4e5e%] GPT-4.1\r\n",
+                "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n",
+                "❯ \r\n",
+                "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n",
+                "v1.0.28 available · run /update · / commands · ? help\r\n",
+            )
+            .as_bytes(),
+        );
+
+        assert_eq!(
+            sidecar
+                .visible_status(Some(AgentProvider::Copilot))
+                .unwrap(),
+            Some(SessionStatus::Idle)
+        );
+    }
+
+    #[test]
+    fn debug_lines_returns_last_non_empty_rendered_rows() {
+        let mut sidecar = TerminalSidecar::new(20, 6, 10_000).unwrap();
+        sidecar.write("Header\r\n\r\nThinking hard\r\n(Esc to cancel)\r\n".as_bytes());
+
+        assert_eq!(
+            sidecar.debug_lines(3).unwrap(),
+            vec![
+                "Header".to_string(),
+                "Thinking hard".to_string(),
+                "(Esc to cancel)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn initial_agent_sessions_start_busy() {
+        assert_eq!(
+            initial_session_status(Some(AgentProvider::Claude)),
+            SessionStatus::Busy
+        );
+        assert_eq!(
+            initial_session_status(Some(AgentProvider::Copilot)),
+            SessionStatus::Busy
+        );
+        assert_eq!(
+            initial_session_status(Some(AgentProvider::Codex)),
+            SessionStatus::Busy
+        );
+        assert_eq!(initial_session_status(None), SessionStatus::Idle);
     }
 }

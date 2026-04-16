@@ -45,10 +45,17 @@ pub struct SessionRecord {
     pub stream_control: Option<StreamControl>,
     pub agent_provider: Option<AgentProvider>,
     pub status: SessionStatus,
+    pub status_observed: bool,
 }
 
 pub struct SessionManager {
     pub sessions: HashMap<String, SessionRecord>,
+}
+
+pub struct StatusObservation {
+    pub provider: Option<AgentProvider>,
+    pub detected_status: Option<SessionStatus>,
+    pub lines: Vec<String>,
 }
 
 impl SessionManager {
@@ -137,7 +144,7 @@ impl SessionManager {
         session_id: &str,
         data: &[u8],
         allow_sidecar_replies: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
         match self.sessions.get_mut(session_id) {
             Some(session) => {
                 session.sidecar.write(data);
@@ -148,10 +155,66 @@ impl SessionManager {
                 } else {
                     session.sidecar.drain_pty_writes();
                 }
-                Ok(())
+                let next_status = session.sidecar.visible_status(session.agent_provider)?;
+                if next_status.is_some() {
+                    session.status_observed = true;
+                }
+                Ok(match next_status {
+                    Some(status) if session.status != status => Some(status),
+                    _ => None,
+                })
             }
             None => Err(format!("session not found: {}", session_id).into()),
         }
+    }
+
+    pub fn refresh_quiet_status(
+        &mut self,
+        session_id: &str,
+        quiet_for: std::time::Duration,
+    ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return Ok(None);
+        };
+
+        if session.pty.last_active_at.elapsed() < quiet_for {
+            return Ok(None);
+        }
+
+        let visible_status = session.sidecar.visible_status(session.agent_provider)?;
+        if let Some(status) = visible_status {
+            session.status_observed = true;
+            return Ok(if session.status != status {
+                Some(status)
+            } else {
+                None
+            });
+        }
+
+        Ok(
+            if session.status_observed
+                && matches!(session.status, SessionStatus::Busy | SessionStatus::Waiting)
+            {
+                Some(SessionStatus::Idle)
+            } else {
+                None
+            },
+        )
+    }
+
+    pub fn debug_status_observation(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Option<StatusObservation>, Box<dyn std::error::Error + Send + Sync>> {
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return Ok(None);
+        };
+
+        Ok(Some(StatusObservation {
+            provider: session.agent_provider,
+            detected_status: session.sidecar.visible_status(session.agent_provider)?,
+            lines: session.sidecar.debug_lines(8)?,
+        }))
     }
 
     pub fn kill_all(&mut self) {
@@ -166,5 +229,110 @@ impl SessionManager {
     #[allow(dead_code)]
     pub fn session_ids(&self) -> Vec<String> {
         self.sessions.keys().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    use super::{SessionManager, SessionRecord};
+    use crate::pty::PtySession;
+    use crate::sidecar::TerminalSidecar;
+    use kanna_daemon::protocol::{AgentProvider, SessionStatus};
+
+    fn spawn_test_record(
+        provider: AgentProvider,
+        status: SessionStatus,
+    ) -> Result<SessionRecord, Box<dyn std::error::Error + Send + Sync>> {
+        let pty = PtySession::spawn(
+            "/bin/sh",
+            &[String::from("-c"), String::from("sleep 10")],
+            "/tmp",
+            &HashMap::new(),
+            80,
+            24,
+        )?;
+
+        Ok(SessionRecord {
+            pty,
+            sidecar: TerminalSidecar::new(80, 24, 10_000)?,
+            stream_control: None,
+            agent_provider: Some(provider),
+            status,
+            status_observed: false,
+        })
+    }
+
+    #[test]
+    fn copilot_startup_busy_does_not_quiet_idle_before_provider_ui_is_visible() {
+        let mut manager = SessionManager::new();
+        let mut record = spawn_test_record(AgentProvider::Copilot, SessionStatus::Busy).unwrap();
+        record.pty.last_active_at = Instant::now() - Duration::from_millis(500);
+        manager.insert("copilot".to_string(), record);
+
+        let status = manager
+            .refresh_quiet_status("copilot", Duration::from_millis(150))
+            .unwrap();
+
+        assert_eq!(status, None);
+
+        manager
+            .remove("copilot")
+            .expect("session should exist")
+            .pty
+            .kill()
+            .unwrap();
+    }
+
+    #[test]
+    fn quiet_refresh_returns_idle_after_busy_footer_disappears() {
+        let mut manager = SessionManager::new();
+        let mut record = spawn_test_record(AgentProvider::Codex, SessionStatus::Busy).unwrap();
+        record.status_observed = true;
+        record.sidecar.write("Header\r\nDone".as_bytes());
+        record.pty.last_active_at = Instant::now() - Duration::from_millis(500);
+        manager.insert("codex".to_string(), record);
+
+        let status = manager
+            .refresh_quiet_status("codex", Duration::from_millis(150))
+            .unwrap();
+
+        assert_eq!(status, Some(SessionStatus::Idle));
+
+        manager
+            .remove("codex")
+            .expect("session should exist")
+            .pty
+            .kill()
+            .unwrap();
+    }
+
+    #[test]
+    fn debug_status_observation_reports_detected_status_and_lines() {
+        let mut manager = SessionManager::new();
+        let mut record = spawn_test_record(AgentProvider::Copilot, SessionStatus::Idle).unwrap();
+        record.sidecar.write("Header\r\n(Esc to cancel)".as_bytes());
+        manager.insert("copilot".to_string(), record);
+
+        let observation = manager
+            .debug_status_observation("copilot")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(observation.detected_status, Some(SessionStatus::Busy));
+        assert_eq!(observation.provider, Some(AgentProvider::Copilot));
+        assert!(observation
+            .lines
+            .iter()
+            .any(|line| line.contains("Esc to cancel")));
+
+        manager
+            .remove("copilot")
+            .expect("session should exist")
+            .pty
+            .kill()
+            .unwrap();
     }
 }

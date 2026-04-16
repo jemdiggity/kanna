@@ -151,6 +151,15 @@ enum Cmd {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SessionStatus {
+    Busy,
+    Waiting,
+    Idle,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum Evt {
     Output {
@@ -167,6 +176,10 @@ enum Evt {
     Snapshot {
         session_id: String,
         snapshot: SnapshotPayload,
+    },
+    StatusChanged {
+        session_id: String,
+        status: SessionStatus,
     },
     Ok,
     Error {
@@ -301,6 +314,7 @@ impl ClientConn {
                     code,
                 } if exited_id == session_id => return code,
                 Evt::Output { .. } => continue,
+                Evt::StatusChanged { .. } => continue,
                 other => panic!("expected Exit for {}, got {:?}", session_id, other),
             }
         }
@@ -333,9 +347,12 @@ fn daemon_does_not_serve_snapshot_after_session_exit() {
     conn.send(&Cmd::Attach {
         session_id: session_id.to_string(),
     });
-    match conn.recv() {
-        Evt::Ok => {}
-        other => panic!("expected Ok, got {:?}", other),
+    loop {
+        match conn.recv() {
+            Evt::Ok => break,
+            Evt::StatusChanged { .. } => continue,
+            other => panic!("expected Ok, got {:?}", other),
+        }
     }
 
     let exit_code = conn.recv_until_exit(session_id);

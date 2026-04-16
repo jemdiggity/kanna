@@ -10,13 +10,12 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex as StdMutex,
+    Arc,
 };
 
 use kanna_daemon::{
     protocol,
     recovery::{RecoveryManager, RecoverySnapshot, SeededRecoverySnapshot},
-    status::{initial_session_status, StatusTracker},
 };
 use serde::Serialize;
 use tokio::io::BufReader;
@@ -136,6 +135,14 @@ fn socket_path(dir: &PathBuf) -> PathBuf {
 
 fn handoff_loss_message(reason: impl Into<String>) -> String {
     format!("session lost during daemon handoff: {}", reason.into())
+}
+
+async fn replay_current_status(writer: &SessionWriter, session_id: &str, status: SessionStatus) {
+    let event = Event::StatusChanged {
+        session_id: session_id.to_string(),
+        status,
+    };
+    let _ = write_event(&mut *writer.lock().await, &event).await;
 }
 
 fn error_event(code: Option<protocol::ErrorCode>, message: impl Into<String>) -> protocol::Event {
@@ -301,7 +308,7 @@ async fn main() {
     if !handoff_result.adopted.is_empty() {
         let mut mgr = sessions.lock().await;
         for (session_id, pty_session, handoff) in handoff_result.adopted {
-            let sidecar = match handoff.snapshot.as_ref() {
+            let mut sidecar = match handoff.snapshot.as_ref() {
                 Some(snapshot) => {
                     log::info!(
                         "[handoff] adopted session {} (pid={}) snapshot rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
@@ -351,6 +358,9 @@ async fn main() {
                         .expect("failed to create terminal sidecar for adopted session")
                 }
             };
+            let status_observed =
+                matches!(sidecar.visible_status(handoff.agent_provider), Ok(Some(_)))
+                    || handoff.status != sidecar::initial_session_status(handoff.agent_provider);
             mgr.insert(
                 session_id,
                 SessionRecord {
@@ -359,6 +369,7 @@ async fn main() {
                     stream_control: None,
                     agent_provider: handoff.agent_provider,
                     status: handoff.status,
+                    status_observed,
                 },
             );
             // Note: no stream_output started — client must Attach to start streaming
@@ -777,7 +788,8 @@ async fn handle_command(
                             sidecar,
                             stream_control: Some(stream_control.clone()),
                             agent_provider,
-                            status: initial_session_status(agent_provider),
+                            status: sidecar::initial_session_status(agent_provider),
+                            status_observed: false,
                         },
                     );
                     drop(mgr);
@@ -877,6 +889,7 @@ async fn handle_command(
             );
             if is_streaming {
                 // stream_output already running (started at Spawn) — push writer to broadcast list
+                let current_status = mgr.sessions.get(&session_id).map(|session| session.status);
                 drop(mgr);
                 {
                     let mut writers = session_writers.lock().await;
@@ -916,6 +929,10 @@ async fn handle_command(
                     }
                 } else {
                     log::info!("[attach] no pre-attach buffer found for {}", session_id);
+                }
+
+                if let Some(status) = current_status {
+                    replay_current_status(&writer, &session_id, status).await;
                 }
             } else {
                 log::info!(
@@ -983,6 +1000,15 @@ async fn handle_command(
                 }
 
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
+                let current_status = sessions
+                    .lock()
+                    .await
+                    .sessions
+                    .get(&session_id)
+                    .map(|session| session.status);
+                if let Some(status) = current_status {
+                    replay_current_status(&writer, &session_id, status).await;
+                }
 
                 let sid = session_id.clone();
                 let sessions_exit = sessions.clone();
@@ -1241,7 +1267,12 @@ async fn handle_command(
                 let _ = write_event(&mut *writer.lock().await, &evt).await;
             }
 
+            let current_status = mgr.sessions.get(&session_id).map(|session| session.status);
             drop(mgr);
+
+            if let Some(status) = current_status {
+                replay_current_status(&writer, &session_id, status).await;
+            }
         }
 
         Command::Resize {
@@ -1660,15 +1691,14 @@ async fn handle_handoff(
 const MAX_PRE_ATTACH_BUFFER: usize = 64 * 1024;
 const STATUS_IDLE_FLUSH_MS: u64 = 150;
 
-fn spawn_periodic_status_flush_thread<F>(
-    status_tracker: Arc<StdMutex<StatusTracker>>,
+fn spawn_periodic_status_refresh_thread(
+    rt: tokio::runtime::Handle,
+    sessions: Arc<Mutex<SessionManager>>,
     stop_requested: Arc<AtomicBool>,
     flush_every: std::time::Duration,
-    mut on_status: F,
-) -> std::thread::JoinHandle<()>
-where
-    F: FnMut(SessionStatus) + Send + 'static,
-{
+    session_id: String,
+    broadcast_tx: broadcast::Sender<String>,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         while !stop_requested.load(Ordering::SeqCst) {
             std::thread::sleep(flush_every);
@@ -1676,13 +1706,26 @@ where
                 break;
             }
 
-            let statuses = match status_tracker.lock() {
-                Ok(mut tracker) => tracker.flush_idle_if_quiet(flush_every),
-                Err(poisoned) => poisoned.into_inner().flush_idle_if_quiet(flush_every),
-            };
+            let refreshed = rt.block_on(async {
+                let mut mgr = sessions.lock().await;
+                mgr.refresh_quiet_status(&session_id, flush_every)
+            });
 
-            for status in statuses {
-                on_status(status);
+            match refreshed {
+                Ok(Some(status)) => {
+                    log_status_observation(&rt, &sessions, &session_id, "quiet_refresh");
+                    emit_status_changed(&rt, &sessions, &broadcast_tx, &session_id, status);
+                }
+                Ok(None) => {
+                    log_status_observation(&rt, &sessions, &session_id, "quiet_refresh");
+                }
+                Err(error) => {
+                    log::warn!(
+                        "[status] failed quiet status refresh for session {}: {}",
+                        session_id,
+                        error
+                    );
+                }
             }
         }
     })
@@ -1710,27 +1753,20 @@ fn stream_output(
     let rt = tokio::runtime::Handle::current();
     let mut buf = [0u8; 4096];
     let mut chunk_count: usize = 0;
-    let status_tracker = Arc::new(StdMutex::new(rt.block_on(async {
-        let mgr = sessions.lock().await;
-        let provider = mgr
-            .sessions
-            .get(&session_id)
-            .and_then(|session| session.agent_provider);
-        StatusTracker::new(provider)
-    })));
     let status_flush_stop = Arc::new(AtomicBool::new(false));
     let status_flush_thread = {
-        let status_tracker = Arc::clone(&status_tracker);
         let status_flush_stop = Arc::clone(&status_flush_stop);
         let sessions = Arc::clone(&sessions);
         let broadcast_tx = broadcast_tx.clone();
         let session_id = session_id.clone();
         let rt = rt.clone();
-        spawn_periodic_status_flush_thread(
-            status_tracker,
+        spawn_periodic_status_refresh_thread(
+            rt,
+            sessions,
             status_flush_stop,
             std::time::Duration::from_millis(STATUS_IDLE_FLUSH_MS),
-            move |status| emit_status_changed(&rt, &sessions, &broadcast_tx, &session_id, status),
+            session_id,
+            broadcast_tx,
         )
     };
     log::info!("[stream] start session={}", session_id);
@@ -1776,15 +1812,24 @@ fn stream_output(
                         .get(&session_id)
                         .is_none_or(|client_ids| client_ids.is_empty())
                 });
-                if let Err(e) = rt.block_on(async {
+                match rt.block_on(async {
                     let mut mgr = sessions.lock().await;
                     mgr.mirror_output(&session_id, &data, allow_sidecar_replies)
                 }) {
-                    log::error!(
-                        "failed to mirror PTY output into sidecar for session {}: {}",
-                        session_id,
-                        e
-                    );
+                    Ok(Some(status)) => {
+                        log_status_observation(&rt, &sessions, &session_id, "mirror_output");
+                        emit_status_changed(&rt, &sessions, &broadcast_tx, &session_id, status);
+                    }
+                    Ok(None) => {
+                        log_status_observation(&rt, &sessions, &session_id, "mirror_output");
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "failed to mirror PTY output into sidecar for session {}: {}",
+                            session_id,
+                            error
+                        );
+                    }
                 }
                 let sequence = recovery_manager.next_sequence(&session_id);
                 rt.block_on(async {
@@ -1792,14 +1837,6 @@ fn stream_output(
                         .write_output(&session_id, &data, sequence)
                         .await;
                 });
-
-                let statuses = match status_tracker.lock() {
-                    Ok(mut tracker) => tracker.ingest_output(&data),
-                    Err(poisoned) => poisoned.into_inner().ingest_output(&data),
-                };
-                for status in statuses {
-                    emit_status_changed(&rt, &sessions, &broadcast_tx, &session_id, status);
-                }
 
                 // If pre-attach buffer is active (Some), append to it
                 let buffered = rt.block_on(async {
@@ -1934,16 +1971,6 @@ fn stream_output(
     status_flush_stop.store(true, Ordering::SeqCst);
     let _ = status_flush_thread.join();
 
-    let final_statuses = match status_tracker.lock() {
-        Ok(mut tracker) => tracker.flush_idle_if_quiet(std::time::Duration::ZERO),
-        Err(poisoned) => poisoned
-            .into_inner()
-            .flush_idle_if_quiet(std::time::Duration::ZERO),
-    };
-    for status in final_statuses {
-        emit_status_changed(&rt, &sessions, &broadcast_tx, &session_id, status);
-    }
-
     let exit_code = {
         let mut mgr = rt.block_on(sessions.lock());
         let code = match mgr.get_mut(&session_id) {
@@ -2023,12 +2050,71 @@ fn emit_status_changed(
     }
 }
 
+fn format_status_observation_log(
+    session_id: &str,
+    source: &str,
+    provider: Option<protocol::AgentProvider>,
+    detected_status: Option<SessionStatus>,
+    lines: &[String],
+) -> String {
+    let provider = match provider {
+        Some(protocol::AgentProvider::Claude) => "claude",
+        Some(protocol::AgentProvider::Copilot) => "copilot",
+        Some(protocol::AgentProvider::Codex) => "codex",
+        None => "none",
+    };
+    let detected = match detected_status {
+        Some(SessionStatus::Busy) => "busy",
+        Some(SessionStatus::Waiting) => "waiting",
+        Some(SessionStatus::Idle) => "idle",
+        None => "none",
+    };
+
+    format!(
+        "[sidecar-debug] session={} source={} provider={} detected={} lines={:?}",
+        session_id, source, provider, detected, lines
+    )
+}
+
+fn log_status_observation(
+    rt: &tokio::runtime::Handle,
+    sessions: &Arc<Mutex<SessionManager>>,
+    session_id: &str,
+    source: &str,
+) {
+    let observation = rt.block_on(async {
+        let mut mgr = sessions.lock().await;
+        mgr.debug_status_observation(session_id)
+    });
+
+    match observation {
+        Ok(Some(observation)) if observation.provider.is_some() => {
+            log::info!(
+                "{}",
+                format_status_observation_log(
+                    session_id,
+                    source,
+                    observation.provider,
+                    observation.detected_status,
+                    &observation.lines,
+                )
+            );
+        }
+        Ok(Some(_)) | Ok(None) => {}
+        Err(error) => {
+            log::warn!(
+                "[sidecar-debug] failed to collect status observation for session {} from {}: {}",
+                session_id,
+                source,
+                error
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kanna_daemon::protocol::AgentProvider;
-    use std::sync::mpsc;
-    use std::time::Duration;
 
     fn sample_snapshot() -> protocol::TerminalSnapshot {
         protocol::TerminalSnapshot {
@@ -2132,35 +2218,21 @@ mod tests {
     }
 
     #[test]
-    fn periodic_status_flush_emits_copilot_idle_after_quiet_period() {
-        let tracker = Arc::new(StdMutex::new(StatusTracker::new(Some(
-            AgentProvider::Copilot,
-        ))));
-        let busy_events = match tracker.lock() {
-            Ok(mut tracker) => tracker.ingest_output(b"Esc to cancel"),
-            Err(poisoned) => poisoned.into_inner().ingest_output(b"Esc to cancel"),
-        };
-        assert_eq!(busy_events, vec![SessionStatus::Busy]);
+    fn format_status_observation_log_includes_session_source_status_and_lines() {
+        let lines = vec!["Header".to_string(), "(Esc to cancel)".to_string()];
 
-        let stop_requested = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = mpsc::channel();
-        let flush_thread = spawn_periodic_status_flush_thread(
-            Arc::clone(&tracker),
-            Arc::clone(&stop_requested),
-            Duration::from_millis(10),
-            move |status| {
-                let _ = tx.send(status);
-            },
+        let log_line = format_status_observation_log(
+            "dbaa5b9d",
+            "mirror_output",
+            Some(protocol::AgentProvider::Copilot),
+            Some(SessionStatus::Busy),
+            &lines,
         );
 
-        let status = rx
-            .recv_timeout(Duration::from_millis(250))
-            .expect("copilot should transition back to idle after a quiet period");
-        assert_eq!(status, SessionStatus::Idle);
-
-        stop_requested.store(true, Ordering::SeqCst);
-        flush_thread
-            .join()
-            .expect("flush thread should exit cleanly");
+        assert!(log_line.contains("session=dbaa5b9d"));
+        assert!(log_line.contains("source=mirror_output"));
+        assert!(log_line.contains("provider=copilot"));
+        assert!(log_line.contains("detected=busy"));
+        assert!(log_line.contains("Esc to cancel"));
     }
 }
