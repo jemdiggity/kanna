@@ -22,10 +22,6 @@ const props = defineProps<{
   ) => Promise<void>;
 }>();
 
-const emit = defineEmits<{
-  (e: "agent-completed"): void;
-}>();
-
 function buildSpawnOptions() {
   return buildTerminalSpawnOptions(props.spawnPtySession, {
     worktreePath: props.worktreePath,
@@ -53,7 +49,6 @@ function buildSpawnOptions() {
       v-if="sessionId && agentType !== 'pty'"
       :key="sessionId"
       :session-id="sessionId"
-      @completed="emit('agent-completed')"
     />
     <div v-if="!sessionId" class="placeholder">
       {{ $t('terminalTabs.noSession') }}
