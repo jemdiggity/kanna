@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
 use ghostty_xterm_compat_serialize::serialize_terminal;
 use libghostty_vt::{
@@ -31,6 +31,9 @@ pub fn initial_session_status(provider: Option<AgentProvider>) -> SessionStatus 
 
 pub struct TerminalSidecar {
     terminal: Box<Terminal<'static, 'static>>,
+    render_state: RenderState<'static>,
+    row_iterator: RowIterator<'static>,
+    cell_iterator: CellIterator<'static>,
     pty_writes: Rc<RefCell<Vec<Vec<u8>>>>,
     rows: u16,
     cols: u16,
@@ -66,6 +69,9 @@ impl TerminalSidecar {
             rows,
             max_scrollback: scrollback,
         })?);
+        let render_state = RenderState::new()?;
+        let row_iterator = RowIterator::new()?;
+        let cell_iterator = CellIterator::new()?;
         terminal.on_pty_write({
             let pty_writes = Rc::clone(&pty_writes);
             move |_terminal, data| {
@@ -75,6 +81,9 @@ impl TerminalSidecar {
 
         Ok(Self {
             terminal,
+            render_state,
+            row_iterator,
+            cell_iterator,
             pty_writes,
             rows,
             cols,
@@ -120,17 +129,14 @@ impl TerminalSidecar {
     }
 
     fn visible_footer_lines(&mut self, rows: usize) -> SidecarResult<Vec<String>> {
-        let mut render_state = RenderState::new()?;
-        let snapshot = render_state.update(&self.terminal)?;
+        let snapshot = self.render_state.update(&self.terminal)?;
         let cols = usize::from(snapshot.cols()?);
-        let mut row_iterator = RowIterator::new()?;
-        let mut cell_iterator = CellIterator::new()?;
-        let mut rendered_rows = Vec::new();
+        let mut rendered_rows = VecDeque::with_capacity(rows);
 
-        let mut row_iteration = row_iterator.update(&snapshot)?;
+        let mut row_iteration = self.row_iterator.update(&snapshot)?;
         while let Some(row) = row_iteration.next() {
             let mut rendered = String::with_capacity(cols);
-            let mut cell_iteration = cell_iterator.update(row)?;
+            let mut cell_iteration = self.cell_iterator.update(row)?;
             for x in 0..cols {
                 cell_iteration.select(x as u16)?;
                 let raw_cell = cell_iteration.raw_cell()?;
@@ -148,12 +154,14 @@ impl TerminalSidecar {
             }
             let normalized = normalize_row_text(&rendered);
             if !normalized.is_empty() {
-                rendered_rows.push(normalized);
+                if rendered_rows.len() == rows {
+                    rendered_rows.pop_front();
+                }
+                rendered_rows.push_back(normalized);
             }
         }
 
-        let start = rendered_rows.len().saturating_sub(rows);
-        Ok(rendered_rows.into_iter().skip(start).collect())
+        Ok(rendered_rows.into_iter().collect())
     }
 
     #[cfg(test)]
