@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import fcntl
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -231,10 +232,10 @@ def run_finder_layout(
     ) as handle:
         handle.write(script)
         applescript_path = Path(handle.name)
+    keep_applescript = False
     try:
-        last_error: Optional[subprocess.CalledProcessError] = None
         mounted_volume_name = mount_dir.name
-        for _ in range(10):
+        for attempt in range(1, 11):
             result = subprocess.run(
                 ["osascript", str(applescript_path), mounted_volume_name],
                 check=False,
@@ -242,26 +243,44 @@ def run_finder_layout(
                 text=True,
             )
             if result.returncode == 0:
-                last_error = None
                 break
-            last_error = subprocess.CalledProcessError(
-                result.returncode,
-                result.args,
-                output=result.stdout,
-                stderr=result.stderr,
-            )
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
             if "(-1728)" not in result.stderr:
-                raise last_error
+                keep_applescript = True
+                message_lines = [
+                    f"Finder layout failed for mounted volume '{mounted_volume_name}' (attempt {attempt}/10)",
+                    f"mount path: {mount_dir}",
+                    f"AppleScript path: {applescript_path}",
+                    f"command: {shlex.join(result.args)}",
+                    f"exit code: {result.returncode}",
+                ]
+                if stdout:
+                    message_lines.extend(["stdout:", stdout])
+                if stderr:
+                    message_lines.extend(["stderr:", stderr])
+                raise RuntimeError("\n".join(message_lines))
             time.sleep(1)
-        if last_error is not None:
-            raise last_error
+        else:
+            keep_applescript = True
+            raise RuntimeError(
+                "\n".join(
+                    [
+                        f"Finder layout failed for mounted volume '{mounted_volume_name}' after 10 retries",
+                        f"mount path: {mount_dir}",
+                        f"AppleScript path: {applescript_path}",
+                        "osascript continued returning Finder missing-item errors (-1728)",
+                    ]
+                )
+            )
         ds_store_path = mount_dir / ".DS_Store"
         if not ds_store_path.exists():
             raise SystemExit(
                 f"Finder did not write .DS_Store for mounted volume: {mount_dir}"
             )
     finally:
-        applescript_path.unlink(missing_ok=True)
+        if not keep_applescript:
+            applescript_path.unlink(missing_ok=True)
 
 
 def main() -> None:

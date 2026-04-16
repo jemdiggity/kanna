@@ -239,6 +239,53 @@ class BuildMacosDmgTest(unittest.TestCase):
             subprocess_run.assert_called_once()
             self.assertTrue(ds_store_path.exists())
 
+    def test_run_finder_layout_surfaces_osascript_failure_details(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mount_dir = Path(temp_dir) / "Kanna 1"
+            mount_dir.mkdir()
+            applescript_path = Path(temp_dir) / "layout.applescript"
+            applescript_path.write_text("on run {}", encoding="utf-8")
+
+            completed = subprocess.CompletedProcess(
+                args=["osascript", str(applescript_path), "Kanna 1"],
+                returncode=1,
+                stdout="finder stdout",
+                stderr="finder stderr",
+            )
+
+            with mock.patch.object(
+                build_macos_dmg, "build_applescript", return_value="on run {}"
+            ):
+                with mock.patch.object(
+                    build_macos_dmg.tempfile,
+                    "NamedTemporaryFile",
+                ) as named_tempfile:
+                    handle = mock.MagicMock()
+                    handle.write = mock.Mock()
+                    handle.name = str(applescript_path)
+                    named_tempfile.return_value.__enter__.return_value = handle
+                    named_tempfile.return_value.__exit__.return_value = False
+                    with mock.patch.object(
+                        build_macos_dmg.subprocess, "run", return_value=completed
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "(?s)Finder layout failed for mounted volume 'Kanna 1' "
+                            r"\(attempt 1/10\).*mount path: .*Kanna 1.*"
+                            r"AppleScript path: .*layout\.applescript.*"
+                            r"stderr:\nfinder stderr",
+                        ):
+                            build_macos_dmg.run_finder_layout(
+                                mount_dir=mount_dir,
+                                window_pos=(10, 60),
+                                window_size=(500, 350),
+                                icon_size=128,
+                                text_size=16,
+                                icon_positions={"Kanna.app": (160, 175)},
+                            )
+
+            self.assertTrue(applescript_path.exists())
+
     def test_finder_layout_lock_serializes_finder_access(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             lock_path = Path(temp_dir) / "finder-layout.lock"
