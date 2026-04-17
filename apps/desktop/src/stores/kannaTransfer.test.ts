@@ -5,6 +5,8 @@ import {
   buildOutgoingTransferPayload,
   chooseRepoAcquisitionMode,
   parseIncomingTransferRequest,
+  parsePairingResult,
+  parseTransferPeers,
   parseOutgoingTransferPreflightResult,
 } from "../utils/taskTransfer";
 import type { SessionRecoveryState } from "../composables/sessionRecoveryState";
@@ -388,6 +390,42 @@ describe("chooseRepoAcquisitionMode", () => {
         },
       }),
     ).toBe("bundle-repo");
+  });
+});
+
+describe("parseTransferPeers", () => {
+  it("preserves trust and accepting-transfer metadata for the peer picker", () => {
+    expect(parseTransferPeers([
+      {
+        peer_id: "peer-secondary",
+        display_name: "Secondary",
+        trusted: true,
+        accepting_transfers: false,
+      },
+    ])).toEqual([
+      {
+        id: "peer-secondary",
+        name: "Secondary",
+        trusted: true,
+        acceptingTransfers: false,
+        subtitle: "paired",
+      },
+    ]);
+  });
+});
+
+describe("parsePairingResult", () => {
+  it("requires a verification code in the pairing response", () => {
+    expect(() =>
+      parsePairingResult({
+        peer: {
+          peer_id: "peer-secondary",
+          display_name: "Secondary",
+          trusted: true,
+          accepting_transfers: true,
+        },
+      }),
+    ).toThrow("verification");
   });
 });
 

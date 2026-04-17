@@ -6,6 +6,10 @@ pub enum ControlRequest {
     ListPeers {
         request_id: String,
     },
+    StartPairing {
+        request_id: String,
+        target_peer_id: String,
+    },
     StageTransferArtifact {
         request_id: String,
         transfer_id: String,
@@ -40,7 +44,12 @@ pub enum ControlRequest {
 pub enum ControlResponse {
     ListPeers {
         request_id: String,
-        peers: Vec<PeerRegistryEntry>,
+        peers: Vec<DiscoveredPeer>,
+    },
+    StartPairing {
+        request_id: String,
+        peer: DiscoveredPeer,
+        verification_code: String,
     },
     StageTransferArtifact {
         request_id: String,
@@ -76,32 +85,45 @@ pub enum ControlResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PeerRequest {
+    StartPairing {
+        request_id: String,
+        source_peer_id: String,
+        source_display_name: String,
+        source_public_key: String,
+        capabilities_json: String,
+    },
     PrepareTransfer {
         request_id: String,
-        source_task_id: String,
         source_peer_id: String,
+        sealed_payload: String,
     },
     SubmitTransferPayload {
         request_id: String,
         transfer_id: String,
-        payload: serde_json::Value,
+        sealed_payload: String,
     },
     FetchTransferArtifact {
         request_id: String,
         transfer_id: String,
-        artifact_id: String,
+        requester_peer_id: String,
+        sealed_payload: String,
     },
     ImportCommitted {
         request_id: String,
         transfer_id: String,
-        source_task_id: String,
-        destination_local_task_id: String,
+        requester_peer_id: String,
+        sealed_payload: String,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PeerResponse {
+    StartPairing {
+        request_id: String,
+        peer: PairingPeer,
+        verification_code: String,
+    },
     PrepareTransfer {
         request_id: String,
         transfer_id: String,
@@ -115,9 +137,7 @@ pub enum PeerResponse {
     FetchTransferArtifact {
         request_id: String,
         transfer_id: String,
-        artifact_id: String,
-        filename: String,
-        payload_b64: String,
+        sealed_payload: String,
     },
     ImportCommitted {
         request_id: String,
@@ -135,11 +155,39 @@ pub struct PeerRegistryEntry {
     pub display_name: String,
     pub endpoint: String,
     pub pid: u32,
+    pub public_key: String,
+    pub protocol_version: u32,
+    pub accepting_transfers: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscoveredPeer {
+    pub peer_id: String,
+    pub display_name: String,
+    pub endpoint: String,
+    pub pid: u32,
+    pub public_key: String,
+    pub protocol_version: u32,
+    pub accepting_transfers: bool,
+    pub trusted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairingPeer {
+    pub peer_id: String,
+    pub display_name: String,
+    pub public_key: String,
+    pub capabilities_json: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SidecarEvent {
+    PairingCompleted {
+        peer_id: String,
+        display_name: String,
+        verification_code: String,
+    },
     IncomingTransferRequest {
         transfer_id: String,
         source_peer_id: String,

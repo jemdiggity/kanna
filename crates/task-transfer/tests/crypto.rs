@@ -8,11 +8,12 @@ use std::collections::BTreeMap;
 
 #[test]
 fn discovery_txt_roundtrips_peer_metadata() {
-    let txt = encode_txt_record("peer-alpha", "Jeremy's MBP", 1, true).unwrap();
+    let txt = encode_txt_record("peer-alpha", "Jeremy's MBP", "pubkey-alpha", 1, true).unwrap();
     let decoded = decode_txt_record(&txt).unwrap();
 
     assert_eq!(decoded.peer_id, "peer-alpha");
     assert_eq!(decoded.display_name, "Jeremy's MBP");
+    assert_eq!(decoded.public_key, "pubkey-alpha");
     assert_eq!(decoded.protocol_version, 1);
     assert!(decoded.accepting_transfers);
 }
@@ -40,6 +41,7 @@ fn encrypted_payload_roundtrips() {
 fn malformed_txt_input_is_rejected() {
     let missing_peer_id = BTreeMap::from([
         ("display_name".to_owned(), "Jeremy's MBP".to_owned()),
+        ("public_key".to_owned(), "pubkey-alpha".to_owned()),
         ("protocol_version".to_owned(), "1".to_owned()),
         ("accepting_transfers".to_owned(), "1".to_owned()),
     ]);
@@ -53,6 +55,7 @@ fn malformed_txt_input_is_rejected() {
     let invalid_accepting_transfers = BTreeMap::from([
         ("peer_id".to_owned(), "peer-alpha".to_owned()),
         ("display_name".to_owned(), "Jeremy's MBP".to_owned()),
+        ("public_key".to_owned(), "pubkey-alpha".to_owned()),
         ("protocol_version".to_owned(), "1".to_owned()),
         ("accepting_transfers".to_owned(), "yes".to_owned()),
     ]);
@@ -64,12 +67,14 @@ fn malformed_txt_input_is_rejected() {
         DiscoveryError::InvalidAcceptingTransfers("yes".to_owned())
     );
 
-    let invalid_encode_error = encode_txt_record("peer alpha", "Jeremy\nMBP", 1, true).unwrap_err();
+    let invalid_encode_error =
+        encode_txt_record("peer alpha", "Jeremy\nMBP", "pubkey-alpha", 1, true).unwrap_err();
     assert_eq!(invalid_encode_error, DiscoveryError::InvalidPeerId);
 
     let unknown_field = BTreeMap::from([
         ("peer_id".to_owned(), "peer-alpha".to_owned()),
         ("display_name".to_owned(), "Jeremy's MBP".to_owned()),
+        ("public_key".to_owned(), "pubkey-alpha".to_owned()),
         ("protocol_version".to_owned(), "1".to_owned()),
         ("accepting_transfers".to_owned(), "1".to_owned()),
         ("extra".to_owned(), "unexpected".to_owned()),
@@ -82,13 +87,19 @@ fn malformed_txt_input_is_rejected() {
 #[test]
 fn txt_entry_255_byte_boundary_is_enforced() {
     let max_display_name = "a".repeat(255 - "display_name=".len());
-    let txt = encode_txt_record("peer-alpha", &max_display_name, 1, true).unwrap();
+    let txt = encode_txt_record("peer-alpha", &max_display_name, "pubkey-alpha", 1, true).unwrap();
     let decoded = decode_txt_record(&txt).unwrap();
     assert_eq!(decoded.display_name, max_display_name);
 
     let too_long_display_name = "a".repeat(256 - "display_name=".len());
-    let encode_error =
-        encode_txt_record("peer-alpha", &too_long_display_name, 1, true).unwrap_err();
+    let encode_error = encode_txt_record(
+        "peer-alpha",
+        &too_long_display_name,
+        "pubkey-alpha",
+        1,
+        true,
+    )
+    .unwrap_err();
     assert_eq!(
         encode_error,
         DiscoveryError::TxtEntryTooLong {

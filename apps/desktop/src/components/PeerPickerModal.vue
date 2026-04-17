@@ -1,15 +1,10 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useModalZIndex } from "../composables/useModalZIndex";
-
-interface PeerOption {
-  id: string;
-  name: string;
-  subtitle?: string;
-}
+import type { TransferPeerOption } from "../utils/taskTransfer";
 
 const props = defineProps<{
-  peers: PeerOption[];
+  peers: TransferPeerOption[];
   loading?: boolean;
 }>();
 
@@ -21,6 +16,9 @@ const emit = defineEmits<{
 
 const { zIndex } = useModalZIndex();
 const selectedPeerId = ref<string | null>(null);
+const selectedPeer = computed(() =>
+  props.peers.find((peer) => peer.id === selectedPeerId.value) ?? null,
+);
 
 watch(
   () => props.peers,
@@ -33,7 +31,7 @@ watch(
 );
 
 function confirmSelect() {
-  if (!selectedPeerId.value) return;
+  if (!selectedPeerId.value || !selectedPeer.value?.trusted) return;
   emit("select", selectedPeerId.value);
 }
 
@@ -70,7 +68,11 @@ function pairSelectedPeer() {
         <button class="btn" :disabled="!selectedPeerId || loading" @click="pairSelectedPeer">
           {{ $t("taskTransfer.pairPeer") }}
         </button>
-        <button class="btn btn-primary" :disabled="!selectedPeerId || loading" @click="confirmSelect">
+        <button
+          class="btn btn-primary"
+          :disabled="!selectedPeerId || loading || !selectedPeer?.trusted"
+          @click="confirmSelect"
+        >
           {{ $t("taskTransfer.pushToMachine") }}
         </button>
       </div>

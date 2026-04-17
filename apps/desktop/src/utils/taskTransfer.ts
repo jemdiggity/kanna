@@ -75,6 +75,25 @@ export interface OutgoingTransferCommittedEvent {
   destinationLocalTaskId: string;
 }
 
+export interface TransferPeerOption {
+  id: string;
+  name: string;
+  subtitle?: string;
+  trusted: boolean;
+  acceptingTransfers: boolean;
+}
+
+export interface PairingResult {
+  peer: TransferPeerOption;
+  verificationCode: string;
+}
+
+export interface PairingCompletedEvent {
+  peerId: string;
+  displayName: string;
+  verificationCode: string;
+}
+
 function normalizeRemoteUrl(remoteUrl: string | null): string | null {
   if (!remoteUrl) return null;
   const trimmed = remoteUrl.trim();
@@ -84,6 +103,36 @@ function normalizeRemoteUrl(remoteUrl: string | null): string | null {
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") return null;
   return value as Record<string, unknown>;
+}
+
+function parseTransferPeer(value: unknown): TransferPeerOption | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const id = readRequiredString(record, ["peer_id", "peerId"], "transfer peer missing peer_id");
+  const name = readRequiredString(
+    record,
+    ["display_name", "displayName", "name"],
+    "transfer peer missing display_name",
+  );
+  const trusted = readRequiredBoolean(
+    record,
+    ["trusted"],
+    "transfer peer missing trusted flag",
+  );
+  const acceptingTransfers = readRequiredBoolean(
+    record,
+    ["accepting_transfers", "acceptingTransfers"],
+    "transfer peer missing accepting_transfers flag",
+  );
+
+  return {
+    id,
+    name,
+    trusted,
+    acceptingTransfers,
+    subtitle: trusted ? "paired" : "not paired",
+  };
 }
 
 function readRequiredString(
@@ -210,6 +259,55 @@ export function parseOutgoingTransferPreflightResult(
       record,
       ["targetHasRepo", "target_has_repo"],
       "prepare_outgoing_transfer preflight response missing targetHasRepo",
+    ),
+  };
+}
+
+export function parseTransferPeers(value: unknown): TransferPeerOption[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(parseTransferPeer)
+    .filter((peer): peer is TransferPeerOption => peer !== null);
+}
+
+export function parsePairingResult(value: unknown): PairingResult {
+  const record = asRecord(value);
+  if (!record) {
+    throw new Error("start_peer_pairing returned an invalid payload");
+  }
+
+  const peer = parseTransferPeer(record.peer);
+  if (!peer) {
+    throw new Error("start_peer_pairing response missing peer");
+  }
+
+  return {
+    peer,
+    verificationCode: readRequiredString(
+      record,
+      ["verificationCode", "verification_code"],
+      "start_peer_pairing response missing verification code",
+    ),
+  };
+}
+
+export function parsePairingCompletedEvent(value: unknown): PairingCompletedEvent {
+  const record = asRecord(value);
+  if (!record) {
+    throw new Error("pairing-completed event payload is invalid");
+  }
+
+  return {
+    peerId: readRequiredString(record, ["peerId", "peer_id"], "pairing-completed event missing peer id"),
+    displayName: readRequiredString(
+      record,
+      ["displayName", "display_name"],
+      "pairing-completed event missing display name",
+    ),
+    verificationCode: readRequiredString(
+      record,
+      ["verificationCode", "verification_code"],
+      "pairing-completed event missing verification code",
     ),
   };
 }

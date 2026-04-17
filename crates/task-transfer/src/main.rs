@@ -27,6 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let payload = match event {
+                RuntimeEvent::PairingCompleted(event) => SidecarEvent::PairingCompleted {
+                    peer_id: event.peer_id,
+                    display_name: event.display_name,
+                    verification_code: event.verification_code,
+                },
                 RuntimeEvent::IncomingTransferRequest(event) => {
                     SidecarEvent::IncomingTransferRequest {
                         transfer_id: event.transfer_id,
@@ -77,6 +82,17 @@ async fn handle_request(runtime: &TransferRuntime, request: ControlRequest) -> C
     match request {
         ControlRequest::ListPeers { request_id } => match runtime.list_peers().await {
             Ok(peers) => ControlResponse::ListPeers { request_id, peers },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::StartPairing {
+            request_id,
+            target_peer_id,
+        } => match runtime.start_pairing(&target_peer_id).await {
+            Ok(result) => ControlResponse::StartPairing {
+                request_id,
+                peer: result.peer,
+                verification_code: result.verification_code,
+            },
             Err(error) => control_error(request_id, error),
         },
         ControlRequest::StageTransferArtifact {

@@ -42,8 +42,12 @@ import { selectTaskByActivity } from "./utils/selectTaskByActivity";
 import { getDefaultBaseBranch } from "./utils/baseBranchPicker";
 import {
   parseIncomingTransferRequest,
+  parsePairingCompletedEvent,
+  parsePairingResult,
   parsePersistedOutgoingTransferPayload,
   parseOutgoingTransferCommittedEvent,
+  parseTransferPeers,
+  type TransferPeerOption,
 } from "./utils/taskTransfer";
 import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
@@ -55,12 +59,6 @@ const isMobile = __KANNA_MOBILE__;
 function hasTag(item: { tags: string }, tag: string): boolean {
   try { return (JSON.parse(item.tags) as string[]).includes(tag); }
   catch { return false; }
-}
-
-interface TransferPeerOption {
-  id: string;
-  name: string;
-  subtitle?: string;
 }
 
 const store = useKannaStore();
@@ -538,43 +536,6 @@ function closeFilePreview(reopenPicker: boolean) {
   }
 }
 
-function parseTransferPeer(entry: unknown): TransferPeerOption | null {
-  if (typeof entry !== "object" || entry === null) return null;
-  const record = entry as Record<string, unknown>;
-  const id = typeof record.peer_id === "string"
-    ? record.peer_id
-    : typeof record.peerId === "string"
-      ? record.peerId
-      : typeof record.id === "string"
-        ? record.id
-        : null;
-  if (!id) return null;
-  const name = typeof record.display_name === "string"
-    ? record.display_name
-    : typeof record.displayName === "string"
-      ? record.displayName
-      : typeof record.name === "string"
-        ? record.name
-        : id;
-  const subtitle = typeof record.status === "string"
-    ? record.status
-    : typeof record.state === "string"
-      ? record.state
-      : typeof record.last_seen_at === "string"
-        ? record.last_seen_at
-        : typeof record.lastSeenAt === "string"
-          ? record.lastSeenAt
-          : undefined;
-  return { id, name, subtitle };
-}
-
-function parseTransferPeers(payload: unknown): TransferPeerOption[] {
-  if (!Array.isArray(payload)) return [];
-  return payload
-    .map(parseTransferPeer)
-    .filter((peer): peer is TransferPeerOption => peer !== null);
-}
-
 async function loadTransferPeers() {
   transferPeersLoading.value = true;
   try {
@@ -611,6 +572,11 @@ function closePeerPicker() {
 async function handlePeerSelected(peerId: string) {
   const taskId = selectedTransferTaskId.value;
   if (!taskId) return;
+  const selectedPeer = transferPeers.value.find((peer) => peer.id === peerId);
+  if (selectedPeer && !selectedPeer.trusted) {
+    toast.error("Pair this peer before transferring a task.");
+    return;
+  }
   try {
     await store.pushTaskToPeer(taskId, peerId);
     closePeerPicker();
@@ -622,7 +588,8 @@ async function handlePeerSelected(peerId: string) {
 
 async function handlePairPeer(peerId: string) {
   try {
-    await invoke("start_peer_pairing", { peerId });
+    const result = parsePairingResult(await invoke("start_peer_pairing", { peerId }));
+    toast.info(`Paired with ${result.peer.name}. Verify code ${result.verificationCode}.`);
     await loadTransferPeers();
   } catch (e: unknown) {
     console.error("[App] peer pairing failed:", e);
@@ -1088,6 +1055,21 @@ onMounted(async () => {
     appUnlisteners.push(unlistenTransferRequest);
   } catch (e: unknown) {
     console.error("[App] transfer-request listener registration failed:", e);
+  }
+
+  try {
+    const unlistenPairingCompleted = await listen("pairing-completed", async (event: unknown) => {
+      try {
+        const payload = (event as { payload?: unknown })?.payload ?? event;
+        const pairing = parsePairingCompletedEvent(payload);
+        toast.info(`Paired with ${pairing.displayName}. Verify code ${pairing.verificationCode}.`);
+      } catch (e: unknown) {
+        console.error("[App] failed to handle pairing completion event:", e);
+      }
+    });
+    appUnlisteners.push(unlistenPairingCompleted);
+  } catch (e: unknown) {
+    console.error("[App] pairing-completed listener registration failed:", e);
   }
 
   try {
