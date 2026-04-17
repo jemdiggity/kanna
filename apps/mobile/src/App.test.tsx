@@ -1,8 +1,20 @@
-import { expect, it } from "vitest";
-import App from "./App";
+import { expect, it, vi } from "vitest";
+import { createAppModel } from "./appModel";
 
-it("renders the desktops tab label", () => {
-  const app = App();
+it("creates an app model with desktop navigation and a LAN client", async () => {
+  const model = createAppModel("http://desktop.test", vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      state: "running",
+      desktopId: "desktop-1",
+      desktopName: "Studio Mac",
+      lanHost: "0.0.0.0",
+      lanPort: 48120,
+      pairingCode: null
+    })
+  })));
 
-  expect(app.navigator.tabs.map((tab) => tab.label)).toContain("Desktops");
+  expect(model.navigator.tabs.map((tab) => tab.label)).toContain("Desktops");
+  expect((await model.client.getStatus()).desktopName).toBe("Studio Mac");
 });
