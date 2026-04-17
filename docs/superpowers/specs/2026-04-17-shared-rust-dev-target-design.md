@@ -124,6 +124,8 @@ The following remain unchanged in this phase:
 - `scripts/setup-worktree.sh`
 - Tauri backend worktree creation code that writes `.cargo/config.toml`
 - manual Cargo commands run outside `./scripts/dev.sh`
+- `start_mobile()` and its `cargo run --manifest-path crates/kanna-server/Cargo.toml`
+  path
 - Bazel release graph and Bazel caches
 
 ### Target path derivation
@@ -190,11 +192,14 @@ Add or update tests that verify:
 3. Different repos resolve different shared target paths.
 4. Existing tmux/env behavior in `scripts/dev.sh` still includes the expected
    DB name, DB path, and daemon dir.
+5. Non-worktree invocations keep their current behavior without relying on the
+   shared target experiment.
 
 ## Non-Goals
 
 - Changing manual Cargo behavior outside `./scripts/dev.sh`
 - Rewriting `.cargo/config.toml` everywhere in this first experiment
+- Changing the mobile/server dev path launched by `start_mobile()`
 - Solving duplicated `node_modules`
 - Replacing Bazel release caching with Cargo/Tauri caching
 - Guaranteeing zero rebuild churn between two backend-divergent worktrees
