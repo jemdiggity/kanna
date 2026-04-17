@@ -72,6 +72,7 @@ function createClientMock(): ClientMock {
       taskId: "task-merge"
     }),
     sendTaskInput: vi.fn().mockResolvedValue(undefined),
+    closeTask: vi.fn().mockResolvedValue(undefined),
     observeTaskTerminal: vi.fn().mockImplementation((_taskId, listener) => {
       terminalStream.subscription.setListener(listener);
       return terminalStream.subscription;
@@ -222,6 +223,30 @@ describe("createMobileController", () => {
     await controller.sendTaskInput("task-1", "continue");
 
     expect(client.sendTaskInput).toHaveBeenCalledWith("task-1", "continue");
+  });
+
+  it("closes the selected desktop task and clears the mobile task view", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.listRecentTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ])
+      .mockResolvedValueOnce([]);
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    controller.openTask("task-1");
+    await controller.closeDesktopTask("task-1");
+
+    expect(client.closeTask).toHaveBeenCalledWith("task-1");
+    expect(store.getState().selectedTaskId).toBeNull();
+    expect(store.getState().recentTasks).toEqual([]);
   });
 });
 interface ClientMock extends KannaClient {

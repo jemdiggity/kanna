@@ -118,12 +118,15 @@ export default function App() {
             onStartPairing={() => {
               void controller.connectLocal();
             }}
-            onOpenComposer={() => controller.openComposer()}
-            onRunMergeAgent={(taskId) => {
-              void controller.runMergeAgent(taskId);
-            }}
-          />
-        );
+          onOpenComposer={() => controller.openComposer()}
+          onRunMergeAgent={(taskId) => {
+            void controller.runMergeAgent(taskId);
+          }}
+          onCloseTask={(taskId) => {
+            void controller.closeDesktopTask(taskId);
+          }}
+        />
+      );
       case "tasks":
       default:
         return (

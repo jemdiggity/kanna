@@ -1,7 +1,7 @@
 import type { TaskSummary } from "../lib/api/types";
 
 export interface MoreCommandAction {
-  id: "refresh" | "pair" | "desktops" | "compose" | "merge-agent";
+  id: "refresh" | "pair" | "desktops" | "compose" | "merge-agent" | "close-task";
   title: string;
   copy: string;
 }
@@ -74,6 +74,11 @@ export function buildMoreCommandSections({
           id: "merge-agent",
           title: "Run Merge Agent",
           copy: `Spawn the follow-up merge task for ${selectedTask.title}.`
+        },
+        {
+          id: "close-task",
+          title: "Close Task",
+          copy: `Stop the agent and hide ${selectedTask.title} from the open task list.`
         }
       ]
     });

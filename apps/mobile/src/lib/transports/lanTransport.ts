@@ -73,6 +73,10 @@ export function createLanTransport(
       request<TaskActionResponse>(`/v1/tasks/${encodeURIComponent(taskId)}/actions/run-merge-agent`, {
         method: "POST"
       }),
+    closeTask: (taskId: string) =>
+      request<void>(`/v1/tasks/${encodeURIComponent(taskId)}/actions/close`, {
+        method: "POST"
+      }),
     sendTaskInput: (taskId: string, input: string) =>
       request<void>(`/v1/tasks/${encodeURIComponent(taskId)}/input`, {
         method: "POST",
