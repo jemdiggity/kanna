@@ -37,7 +37,7 @@ impl PtySession {
         rows: u16,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         validate_cwd(cwd)?;
-        let stripped_env_keys = kanna_daemon::subprocess_env::inherited_env_keys_to_strip();
+        let stripped_env_keys = crate::subprocess_env::inherited_env_keys_to_strip();
 
         let mut master_fd: RawFd = -1;
         let mut slave_fd: RawFd = -1;
