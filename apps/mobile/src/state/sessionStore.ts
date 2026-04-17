@@ -20,6 +20,7 @@ export interface SessionState {
   selectedDesktopId: string | null;
   repos: RepoSummary[];
   selectedRepoId: string | null;
+  repoTasks: TaskSummary[];
   recentTasks: TaskSummary[];
   searchQuery: string;
   searchResults: TaskSummary[];
@@ -46,6 +47,7 @@ export interface SessionStore {
   selectDesktop(desktopId: string): void;
   setRepos(repos: RepoSummary[]): void;
   selectRepo(repoId: string): void;
+  setRepoTasks(tasks: TaskSummary[]): void;
   setRecentTasks(tasks: TaskSummary[]): void;
   setSearchResults(query: string, results: TaskSummary[]): void;
   setSelectedTask(taskId: string | null): void;
@@ -69,6 +71,7 @@ export function createSessionStore(): SessionStore {
     selectedDesktopId: null,
     repos: [],
     selectedRepoId: null,
+    repoTasks: [],
     recentTasks: [],
     searchQuery: "",
     searchResults: [],
@@ -164,6 +167,13 @@ export function createSessionStore(): SessionStore {
       state = {
         ...state,
         selectedRepoId: repoId
+      };
+      publish();
+    },
+    setRepoTasks(repoTasks) {
+      state = {
+        ...state,
+        repoTasks
       };
       publish();
     },

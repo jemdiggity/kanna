@@ -5,16 +5,35 @@ import type { TabName, TabRoute } from "../navigation/RootNavigator";
 interface FloatingToolbarProps {
   activeTab: TabName;
   tabs: TabRoute[];
+  utilityActions: {
+    name: "search" | "create";
+    label: string;
+  }[];
   onSelectTab(tab: TabName): void;
+  onSelectUtilityAction(action: "search" | "create"): void;
 }
 
 export function FloatingToolbar({
   activeTab,
   tabs,
-  onSelectTab
+  utilityActions,
+  onSelectTab,
+  onSelectUtilityAction
 }: FloatingToolbarProps) {
+  const searchAction = utilityActions.find((action) => action.name === "search");
+  const createAction = utilityActions.find((action) => action.name === "create");
+
   return (
     <View style={styles.wrap}>
+      {searchAction ? (
+        <Pressable
+          style={styles.utilityButton}
+          onPress={() => onSelectUtilityAction(searchAction.name)}
+        >
+          <Text style={styles.utilityLabel}>{searchAction.label}</Text>
+        </Pressable>
+      ) : null}
+
       <View style={styles.bar}>
         {tabs.map((tab) => {
           const active = tab.name === activeTab;
@@ -31,24 +50,36 @@ export function FloatingToolbar({
           );
         })}
       </View>
+
+      {createAction ? (
+        <Pressable
+          style={styles.utilityButtonPrimary}
+          onPress={() => onSelectUtilityAction(createAction.name)}
+        >
+          <Text style={styles.utilityLabelPrimary}>{createAction.label}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: {
+    alignItems: "center",
     bottom: 18,
+    flexDirection: "row",
+    gap: 10,
     left: 20,
     position: "absolute",
     right: 20
   },
   bar: {
-    alignItems: "center",
     backgroundColor: "rgba(10, 18, 32, 0.96)",
     borderColor: "#20304C",
     borderRadius: 26,
     borderWidth: 1,
     flexDirection: "row",
+    flex: 1,
     justifyContent: "space-between",
     paddingHorizontal: 10,
     paddingVertical: 8,
@@ -65,6 +96,32 @@ const styles = StyleSheet.create({
   itemActive: {
     backgroundColor: "#E8F1FF"
   },
+  utilityButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(10, 18, 32, 0.96)",
+    borderColor: "#20304C",
+    borderRadius: 22,
+    borderWidth: 1,
+    minHeight: 52,
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    shadowColor: "#02060E",
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.28,
+    shadowRadius: 20
+  },
+  utilityButtonPrimary: {
+    alignItems: "center",
+    backgroundColor: "#E8F1FF",
+    borderRadius: 22,
+    minHeight: 52,
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    shadowColor: "#02060E",
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.28,
+    shadowRadius: 20
+  },
   label: {
     color: "#8EA3C4",
     fontSize: 13,
@@ -72,5 +129,15 @@ const styles = StyleSheet.create({
   },
   labelActive: {
     color: "#0B1220"
+  },
+  utilityLabel: {
+    color: "#D5DEEC",
+    fontSize: 12,
+    fontWeight: "700"
+  },
+  utilityLabelPrimary: {
+    color: "#0B1220",
+    fontSize: 12,
+    fontWeight: "800"
   }
 });

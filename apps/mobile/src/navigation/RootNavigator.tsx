@@ -1,4 +1,4 @@
-export type TabName = "tasks" | "recent" | "desktops" | "more";
+export type TabName = "tasks" | "recent" | "more";
 
 export interface TabRoute {
   name: TabName;
@@ -22,7 +22,6 @@ export function createRootNavigator(): RootNavigatorModel {
     tabs: [
       { name: "tasks", label: "Tasks" },
       { name: "recent", label: "Recent" },
-      { name: "desktops", label: "Desktops" },
       { name: "more", label: "More" }
     ],
     utilityActions: [

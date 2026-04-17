@@ -60,6 +60,10 @@ export function createLanTransport(
       const desktops = await request<DesktopDescriptor[]>("/v1/desktops");
       return desktops.map(mapDesktopSummary);
     },
+    listRepos: () => request<RepoSummary[]>("/v1/repos"),
+    listRepos: () => request<RepoSummary[]>("/v1/repos"),
+    listRepoTasks: (repoId: string) =>
+      request<TaskSummary[]>(`/v1/repos/${encodeURIComponent(repoId)}/tasks`),
     listRecentTasks: () => request<TaskSummary[]>("/v1/tasks/recent"),
     searchTasks: (query) =>
       request<TaskSummary[]>(`/v1/tasks/search?query=${encodeURIComponent(query)}`),

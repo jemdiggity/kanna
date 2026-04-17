@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useSyncExternalStore } from "react";
 import {
-  Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -36,6 +35,7 @@ export default function App() {
   }, [model]);
 
   const selectedTask =
+    state.repoTasks.find((task) => task.id === state.selectedTaskId) ??
     state.recentTasks.find((task) => task.id === state.selectedTaskId) ??
     state.searchResults.find((task) => task.id === state.selectedTaskId) ??
     null;
@@ -83,7 +83,9 @@ export default function App() {
             repos={state.repos}
             selectedRepoId={state.selectedRepoId}
             tasks={state.recentTasks}
-            onSelectRepo={(repoId) => controller.selectRepo(repoId)}
+            onSelectRepo={(repoId) => {
+              void controller.selectRepo(repoId);
+            }}
             onOpenTask={(taskId) => controller.openTask(taskId)}
           />
         );
@@ -118,36 +120,49 @@ export default function App() {
             onStartPairing={() => {
               void controller.connectLocal();
             }}
-          onOpenComposer={() => controller.openComposer()}
-          onAdvanceTaskStage={(taskId) => {
-            void controller.advanceDesktopTaskStage(taskId);
-          }}
-          onRunMergeAgent={(taskId) => {
-            void controller.runMergeAgent(taskId);
-          }}
-          onCloseTask={(taskId) => {
-            void controller.closeDesktopTask(taskId);
-          }}
-        />
-      );
+            onOpenComposer={() => controller.openComposer()}
+            onAdvanceTaskStage={(taskId) => {
+              void controller.advanceDesktopTaskStage(taskId);
+            }}
+            onRunMergeAgent={(taskId) => {
+              void controller.runMergeAgent(taskId);
+            }}
+            onCloseTask={(taskId) => {
+              void controller.closeDesktopTask(taskId);
+            }}
+          />
+        );
       case "tasks":
       default:
         return (
           <TasksScreen
             heading="Tasks"
-            subheading="Open a desktop task to drill into the channel-style detail view."
+            subheading="Repo-scoped work from the paired desktop, like the main desktop sidebar."
             repos={state.repos}
             selectedRepoId={state.selectedRepoId}
-            tasks={state.recentTasks}
-            onSelectRepo={(repoId) => controller.selectRepo(repoId)}
+            tasks={state.repoTasks}
+            onSelectRepo={(repoId) => {
+              void controller.selectRepo(repoId);
+            }}
             onOpenTask={(taskId) => controller.openTask(taskId)}
           />
         );
     }
   })();
 
-  const toolbarTab =
-    state.activeView === "search" ? navigator.initialRouteName : state.activeView;
+  const toolbarTab = (() => {
+    switch (state.activeView) {
+      case "recent":
+        return "recent";
+      case "more":
+      case "desktops":
+        return "more";
+      case "search":
+      case "tasks":
+      default:
+        return "tasks";
+    }
+  })();
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -161,24 +176,6 @@ export default function App() {
               <Text style={styles.desktopTitle}>
                 {state.desktopName ?? "Desktop not connected"}
               </Text>
-            </View>
-            <View style={styles.headerActions}>
-              <Pressable
-                style={styles.utilityButton}
-                onPress={() => controller.showView("search")}
-              >
-                <Text style={styles.utilityLabel}>
-                  {navigator.utilityActions[0]?.label ?? "Search"}
-                </Text>
-              </Pressable>
-              <Pressable
-                style={styles.utilityButtonPrimary}
-                onPress={() => controller.openComposer()}
-              >
-                <Text style={styles.utilityLabelPrimary}>
-                  {navigator.utilityActions[1]?.label ?? "New Task"}
-                </Text>
-              </Pressable>
             </View>
           </View>
         ) : null}
@@ -202,7 +199,16 @@ export default function App() {
         {state.connectionState === "connected" ? (
           <FloatingToolbar
             activeTab={toolbarTab}
+            utilityActions={navigator.utilityActions}
             onSelectTab={(tab) => controller.showView(tab)}
+            onSelectUtilityAction={(action) => {
+              if (action === "search") {
+                controller.showView("search");
+                return;
+              }
+
+              controller.openComposer();
+            }}
             tabs={navigator.tabs}
           />
         ) : null}
@@ -213,7 +219,9 @@ export default function App() {
           repos={state.repos}
           selectedRepoId={state.selectedRepoId}
           onClose={() => controller.closeComposer()}
-          onSelectRepo={(repoId) => controller.selectRepo(repoId)}
+          onSelectRepo={(repoId) => {
+            void controller.selectRepo(repoId);
+          }}
           onChangePrompt={(prompt) => controller.updateComposerPrompt(prompt)}
           onSubmit={() => {
             void controller.createTask();
@@ -255,15 +263,7 @@ const styles = StyleSheet.create({
     paddingTop: 18
   },
   header: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "space-between",
     marginBottom: 18
-  },
-  headerActions: {
-    alignItems: "flex-end",
-    gap: 8
   },
   eyebrow: {
     color: "#7FA7D9",
@@ -277,30 +277,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "700",
     marginTop: 4
-  },
-  utilityButton: {
-    backgroundColor: "#152036",
-    borderColor: "#22304D",
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8
-  },
-  utilityButtonPrimary: {
-    backgroundColor: "#E8F1FF",
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 9
-  },
-  utilityLabel: {
-    color: "#D5DEEC",
-    fontSize: 13,
-    fontWeight: "700"
-  },
-  utilityLabelPrimary: {
-    color: "#0B1220",
-    fontSize: 13,
-    fontWeight: "700"
   },
   errorBanner: {
     backgroundColor: "rgba(97, 33, 36, 0.38)",
