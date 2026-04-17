@@ -78,6 +78,10 @@ impl Session {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
+        if !options.inherit_parent_env {
+            cmd.env_clear();
+        }
+
         if let Some(cwd) = &options.cwd {
             cmd.current_dir(cwd);
         }

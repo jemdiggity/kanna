@@ -37,6 +37,7 @@ impl PtySession {
         rows: u16,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         validate_cwd(cwd)?;
+        let stripped_env_keys = kanna_daemon::subprocess_env::inherited_env_keys_to_strip();
 
         let mut master_fd: RawFd = -1;
         let mut slave_fd: RawFd = -1;
@@ -96,7 +97,14 @@ impl PtySession {
                 let cwd_c = CString::new(cwd).unwrap_or_else(|_| CString::new("/tmp").unwrap());
                 libc::chdir(cwd_c.as_ptr());
 
-                // Set environment variables
+                for key in &stripped_env_keys {
+                    if let Ok(key_c) = CString::new(key.as_str()) {
+                        libc::unsetenv(key_c.as_ptr());
+                    }
+                }
+
+                // Re-apply explicit per-session overrides after scrubbing any
+                // inherited KANNA_/webdriver control-plane env vars.
                 for (k, v) in env {
                     if let (Ok(k_c), Ok(v_c)) = (CString::new(k.as_str()), CString::new(v.as_str()))
                     {
@@ -298,6 +306,25 @@ impl PtySession {
 mod tests {
     use super::PtySession;
     use std::collections::HashMap;
+    use std::ffi::CString;
+    use std::io::Read;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    unsafe fn set_env_var(key: &str, value: &str) {
+        let key = CString::new(key).expect("env key should be valid");
+        let value = CString::new(value).expect("env value should be valid");
+        assert_eq!(libc::setenv(key.as_ptr(), value.as_ptr(), 1), 0);
+    }
+
+    unsafe fn unset_env_var(key: &str) {
+        let key = CString::new(key).expect("env key should be valid");
+        assert_eq!(libc::unsetenv(key.as_ptr()), 0);
+    }
 
     #[test]
     fn spawn_rejects_unreadable_working_directories() {
@@ -314,5 +341,48 @@ mod tests {
             Ok(_) => panic!("spawn should fail for a missing cwd"),
             Err(error) => assert!(error.to_string().contains("cwd is not a directory")),
         }
+    }
+
+    #[test]
+    fn spawn_does_not_inherit_kanna_control_plane_env() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        unsafe {
+            set_env_var("KANNA_TMUX_SESSION", "leaked-session");
+            set_env_var("KANNA_DB_PATH", "/tmp/leaked.db");
+            set_env_var("TAURI_WEBDRIVER_PORT", "4555");
+        }
+
+        let session = PtySession::spawn(
+            "/bin/sh",
+            &[
+                "-lc".to_string(),
+                "printf '%s|%s|%s' \"${KANNA_TMUX_SESSION:-}\" \"${KANNA_DB_PATH:-}\" \"${TAURI_WEBDRIVER_PORT:-}\""
+                    .to_string(),
+            ],
+            "/tmp",
+            &HashMap::new(),
+            80,
+            24,
+        )
+        .expect("spawn should succeed");
+
+        let mut reader = session
+            .try_clone_reader()
+            .expect("reader clone should succeed");
+        let mut output = String::new();
+        reader
+            .read_to_string(&mut output)
+            .expect("should capture PTY output");
+
+        unsafe {
+            unset_env_var("KANNA_TMUX_SESSION");
+            unset_env_var("KANNA_DB_PATH");
+            unset_env_var("TAURI_WEBDRIVER_PORT");
+        }
+
+        assert!(
+            output.contains("||"),
+            "unexpected PTY env output: {output:?}"
+        );
     }
 }

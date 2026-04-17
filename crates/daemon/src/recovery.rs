@@ -596,9 +596,15 @@ async fn spawn_worker(
     })?;
 
     let mut command = Command::new(&launcher.program);
+    command.args(&launcher.args);
+    crate::subprocess_env::apply_child_env(
+        &mut command,
+        [(
+            "KANNA_TERMINAL_RECOVERY_DIR".to_string(),
+            snapshot_dir.to_string_lossy().into_owned(),
+        )],
+    );
     command
-        .args(&launcher.args)
-        .env("KANNA_TERMINAL_RECOVERY_DIR", &snapshot_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

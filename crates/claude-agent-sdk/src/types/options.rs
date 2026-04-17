@@ -45,7 +45,7 @@ impl Effort {
 /// Options for starting a Claude CLI session.
 ///
 /// Use the builder pattern via `SessionOptions::builder()`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SessionOptions {
     /// Working directory for the CLI process.
     pub cwd: Option<String>,
@@ -73,12 +73,38 @@ pub struct SessionOptions {
     pub effort: Option<Effort>,
     /// Additional environment variables for the CLI process.
     pub env: HashMap<String, String>,
+    /// Whether the CLI process should inherit the parent process environment.
+    pub inherit_parent_env: bool,
     /// Whether to include partial/streaming messages.
     pub include_partial_messages: bool,
     /// Additional directories to include in context.
     pub additional_directories: Vec<String>,
     /// Whether a permission callback is registered (adds --permission-prompt-tool stdio).
     pub has_permission_callback: bool,
+}
+
+impl Default for SessionOptions {
+    fn default() -> Self {
+        Self {
+            cwd: None,
+            model: None,
+            permission_mode: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            max_turns: None,
+            max_budget_usd: None,
+            resume: None,
+            continue_session: false,
+            system_prompt: None,
+            thinking: None,
+            effort: None,
+            env: HashMap::new(),
+            inherit_parent_env: true,
+            include_partial_messages: false,
+            additional_directories: Vec::new(),
+            has_permission_callback: false,
+        }
+    }
 }
 
 impl SessionOptions {
@@ -266,6 +292,12 @@ impl SessionOptionsBuilder {
         self
     }
 
+    /// Control whether the CLI process inherits the parent process environment.
+    pub fn inherit_parent_env(mut self, inherit_parent_env: bool) -> Self {
+        self.options.inherit_parent_env = inherit_parent_env;
+        self
+    }
+
     /// Enable inclusion of partial/streaming messages.
     pub fn include_partial_messages(mut self) -> Self {
         self.options.include_partial_messages = true;
@@ -437,6 +469,18 @@ mod tests {
         let opts = SessionOptions::builder().include_partial_messages().build();
         let args = opts.to_cli_args(None);
         assert!(args.contains(&"--include-partial-messages".to_string()));
+    }
+
+    #[test]
+    fn test_inherit_parent_env_defaults_to_true() {
+        let opts = SessionOptions::builder().build();
+        assert!(opts.inherit_parent_env);
+    }
+
+    #[test]
+    fn test_inherit_parent_env_can_be_disabled() {
+        let opts = SessionOptions::builder().inherit_parent_env(false).build();
+        assert!(!opts.inherit_parent_env);
     }
 
     #[test]
