@@ -257,6 +257,21 @@ impl SessionManager {
         }))
     }
 
+    pub fn codex_resume_session_id(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return Ok(None);
+        };
+
+        if session.agent_provider != Some(AgentProvider::Codex) {
+            return Ok(None);
+        }
+
+        session.sidecar.codex_resume_session_id()
+    }
+
     pub fn kill_all(&mut self) {
         for (id, session) in self.sessions.iter_mut() {
             if let Err(e) = session.pty.kill() {

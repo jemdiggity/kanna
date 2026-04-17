@@ -153,11 +153,16 @@ export function createInitApi(
     });
 
     listen("session_exit", async (event: unknown) => {
-      const payload = (event as { payload?: { session_id?: string; code?: number } }).payload ?? (event as { session_id?: string; code?: number });
+      const payload = (event as { payload?: { session_id?: string; code?: number; resume_session_id?: string | null } }).payload
+        ?? (event as { session_id?: string; code?: number; resume_session_id?: string | null });
       const sessionId = payload.session_id;
       if (!sessionId) return;
 
       requireService(context.services.resolveSessionExitWaiters, "resolveSessionExitWaiters")(sessionId);
+      await requireService(context.services.persistExitedSessionResumeId, "persistExitedSessionResumeId")(
+        sessionId,
+        payload.resume_session_id,
+      );
 
       if (typeof sessionId === "string" && isTeardownSessionId(sessionId)) {
         const itemId = getTaskIdFromTeardownSessionId(sessionId);

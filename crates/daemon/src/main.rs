@@ -2044,13 +2044,31 @@ fn stream_output(
             Some(session) => session.pty.try_wait().unwrap_or(0),
             None => 0,
         };
-        mgr.remove(&session_id);
         code
     };
+    let resume_session_id = rt.block_on(async {
+        let mut mgr = sessions.lock().await;
+        match mgr.codex_resume_session_id(&session_id) {
+            Ok(value) => value,
+            Err(error) => {
+                log::warn!(
+                    "[stream] failed to read codex resume session id for {}: {}",
+                    session_id,
+                    error
+                );
+                None
+            }
+        }
+    });
+    rt.block_on(async {
+        let mut mgr = sessions.lock().await;
+        mgr.remove(&session_id);
+    });
 
     let evt = Event::Exit {
         session_id: session_id.clone(),
         code: exit_code,
+        resume_session_id: resume_session_id.clone(),
     };
     rt.block_on(async {
         recovery_manager.end_session(&session_id).await;
@@ -2073,6 +2091,7 @@ fn stream_output(
             let obs_evt = Event::Exit {
                 session_id: session_id.clone(),
                 code: exit_code,
+                resume_session_id,
             };
             futures::future::join_all(observer_list.iter().map(|obs| {
                 let evt = obs_evt.clone();
