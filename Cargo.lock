@@ -2802,6 +2802,7 @@ dependencies = [
 name = "kanna-terminal-recovery"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "ghostty-xterm-compat-serialize",
  "libghostty-vt",
  "serde",
