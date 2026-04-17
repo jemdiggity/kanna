@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
 import type { TaskTerminalStatus } from "../state/sessionStore";
 import { buildTaskWorkspaceModel } from "./taskWorkspace";
@@ -37,53 +37,64 @@ export function TaskScreen({
 
   return (
     <View style={styles.wrap}>
-      <Pressable style={styles.backButton} onPress={onBack}>
-        <Text style={styles.backLabel}>Back to Tasks</Text>
-      </Pressable>
-
-      <View style={styles.header}>
-        <Text style={styles.title}>{task.title}</Text>
-        <View style={styles.stagePill}>
-          <Text style={styles.stageLabel}>{task.stage ?? "unknown"}</Text>
-        </View>
-      </View>
-
-      <Text style={styles.meta}>{repoName ?? `Repo ${task.repoId}`}</Text>
-
-      <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>{model.summaryLabel}</Text>
-        <Text style={styles.summaryCopy}>{model.summaryCopy}</Text>
-      </View>
-
-      <View style={styles.actionRow}>
-        <Pressable style={styles.actionButtonPrimary} onPress={onOpenMore}>
-          <Text style={styles.actionButtonPrimaryLabel}>{model.primaryActionLabel}</Text>
+      <View style={styles.topRow}>
+        <Pressable style={styles.backButton} onPress={onBack}>
+          <Text style={styles.backLabel}>Tasks</Text>
         </Pressable>
-        <Pressable style={styles.actionButton} onPress={onShowSearch}>
-          <Text style={styles.actionButtonLabel}>Search Tasks</Text>
+        <Pressable style={styles.topActionButton} onPress={onShowSearch}>
+          <Text style={styles.topActionLabel}>Search</Text>
         </Pressable>
       </View>
 
-      <View style={styles.factsGrid}>
-        {model.facts.map((fact) => (
-          <View key={fact.label} style={styles.factCard}>
-            <Text style={styles.factLabel}>{fact.label}</Text>
-            <Text style={styles.factValue}>{fact.value}</Text>
+      <View style={styles.channelCard}>
+        <View style={styles.header}>
+          <Text style={styles.title}>{task.title}</Text>
+          <View style={styles.stagePill}>
+            <Text style={styles.stageLabel}>{task.stage ?? "unknown"}</Text>
           </View>
-        ))}
+        </View>
+
+        <Text style={styles.meta}>{repoName ?? `Repo ${task.repoId}`}</Text>
+        <Text style={styles.summaryCopy}>{model.summaryCopy}</Text>
+
+        <View style={styles.contextRow}>
+          {model.facts.map((fact) => (
+            <View key={fact.label} style={styles.contextPill}>
+              <Text style={styles.contextLabel}>{fact.label}</Text>
+              <Text style={styles.contextValue}>{fact.value}</Text>
+            </View>
+          ))}
+        </View>
       </View>
 
       <View style={styles.terminalCard}>
         <View style={styles.terminalHeader}>
-          <Text style={styles.terminalLabel}>Agent Terminal</Text>
-          <View style={styles.terminalStatusPill}>
-            <Text style={styles.terminalStatusLabel}>{terminalStatus}</Text>
+          <View style={styles.terminalHeaderCopy}>
+            <Text style={styles.terminalLabel}>Agent Terminal</Text>
+            <Text style={styles.terminalSubhead}>{model.summaryLabel}</Text>
+          </View>
+          <View style={styles.terminalHeaderActions}>
+            <View style={styles.terminalStatusPill}>
+              <Text style={styles.terminalStatusLabel}>{terminalStatus}</Text>
+            </View>
+            <Pressable style={styles.actionButtonPrimary} onPress={onOpenMore}>
+              <Text style={styles.actionButtonPrimaryLabel}>{model.primaryActionLabel}</Text>
+            </Pressable>
           </View>
         </View>
-        <Text style={styles.terminalLine}>{terminalText}</Text>
+
+        <ScrollView
+          contentContainerStyle={styles.terminalOutput}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+          style={styles.terminalViewport}
+        >
+          <Text style={styles.terminalLine}>{terminalText}</Text>
+        </ScrollView>
+
         <Text style={styles.terminalHint}>
-          This feed follows the selected desktop task. Command palette actions stay available from
-          More while the stream remains attached to the task.
+          This stays attached to the selected desktop task. Use More for task actions while the
+          stream remains live.
         </Text>
         <View style={styles.inputComposer}>
           <TextInput
@@ -122,6 +133,11 @@ const styles = StyleSheet.create({
   wrap: {
     gap: 14
   },
+  topRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between"
+  },
   backButton: {
     alignSelf: "flex-start",
     backgroundColor: "#152036",
@@ -135,6 +151,27 @@ const styles = StyleSheet.create({
     color: "#D5DEEC",
     fontSize: 13,
     fontWeight: "700"
+  },
+  topActionButton: {
+    backgroundColor: "#152036",
+    borderColor: "#22304D",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  topActionLabel: {
+    color: "#D5DEEC",
+    fontSize: 13,
+    fontWeight: "700"
+  },
+  channelCard: {
+    backgroundColor: "#10192A",
+    borderColor: "#22304D",
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 10,
+    padding: 18
   },
   header: {
     alignItems: "center",
@@ -165,80 +202,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600"
   },
-  summaryCard: {
-    backgroundColor: "#10192A",
-    borderColor: "#22304D",
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 8,
-    padding: 16
-  },
-  summaryLabel: {
-    color: "#7FA7D9",
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase"
-  },
   summaryCopy: {
     color: "#E6EDF8",
     fontSize: 15,
     lineHeight: 22
   },
-  actionRow: {
-    flexDirection: "row",
-    gap: 10
-  },
-  actionButton: {
-    backgroundColor: "#152036",
-    borderColor: "#22304D",
-    borderRadius: 999,
-    borderWidth: 1,
-    flex: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 10
-  },
-  actionButtonPrimary: {
-    backgroundColor: "#E8F1FF",
-    borderRadius: 999,
-    flex: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 10
-  },
-  actionButtonLabel: {
-    color: "#D5DEEC",
-    fontSize: 13,
-    fontWeight: "700",
-    textAlign: "center"
-  },
-  actionButtonPrimaryLabel: {
-    color: "#0B1220",
-    fontSize: 13,
-    fontWeight: "700",
-    textAlign: "center"
-  },
-  factsGrid: {
+  contextRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10
   },
-  factCard: {
-    backgroundColor: "#10192A",
-    borderColor: "#22304D",
-    borderRadius: 18,
+  contextPill: {
+    backgroundColor: "#111B2C",
+    borderColor: "#20304C",
+    borderRadius: 16,
     borderWidth: 1,
-    gap: 6,
-    minWidth: "47%",
-    padding: 14
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10
   },
-  factLabel: {
+  contextLabel: {
     color: "#7FA7D9",
     fontSize: 11,
     fontWeight: "700",
     textTransform: "uppercase"
   },
-  factValue: {
+  contextValue: {
     color: "#F5F7FB",
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: "700"
   },
   terminalCard: {
@@ -255,11 +246,24 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between"
   },
+  terminalHeaderCopy: {
+    gap: 4
+  },
   terminalLabel: {
     color: "#7FA7D9",
     fontSize: 12,
     fontWeight: "700",
     textTransform: "uppercase"
+  },
+  terminalSubhead: {
+    color: "#F5F7FB",
+    fontSize: 16,
+    fontWeight: "700"
+  },
+  terminalHeaderActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8
   },
   terminalStatusPill: {
     backgroundColor: "#172843",
@@ -272,6 +276,29 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     textTransform: "uppercase"
+  },
+  actionButtonPrimary: {
+    backgroundColor: "#E8F1FF",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10
+  },
+  actionButtonPrimaryLabel: {
+    color: "#0B1220",
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center"
+  },
+  terminalViewport: {
+    backgroundColor: "#050B14",
+    borderColor: "#15243C",
+    borderRadius: 16,
+    borderWidth: 1,
+    maxHeight: 280
+  },
+  terminalOutput: {
+    minHeight: 220,
+    padding: 14
   },
   terminalLine: {
     color: "#B9D4FF",
@@ -289,7 +316,7 @@ const styles = StyleSheet.create({
     color: "#95A9C8",
     fontSize: 14,
     lineHeight: 21,
-    marginTop: 10
+    marginTop: 2
   },
   inputComposer: {
     alignItems: "center",
