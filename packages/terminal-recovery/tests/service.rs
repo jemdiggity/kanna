@@ -118,7 +118,7 @@ fn service_persists_dirty_snapshots_after_debounce_without_followup_commands() {
 }
 
 #[test]
-fn default_debounce_does_not_persist_within_300ms() {
+fn default_debounce_does_not_persist_within_three_seconds() {
     let tempdir = tempfile::tempdir().expect("tempdir should exist");
     let store = SnapshotStore::new(tempdir.path());
     let (input_reader, mut input_writer) =
@@ -147,7 +147,7 @@ fn default_debounce_does_not_persist_within_300ms() {
         .read_line(&mut response)
         .expect("start session response should read");
 
-    thread::sleep(Duration::from_millis(300));
+    thread::sleep(Duration::from_secs(3));
 
     let persisted = SnapshotStore::new(tempdir.path())
         .read("session-1")

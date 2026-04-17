@@ -19,7 +19,7 @@ struct TrackedSession {
     dirty_since: Option<u64>,
 }
 
-const DEFAULT_PERSIST_DEBOUNCE_MS: u64 = 2_500;
+const DEFAULT_PERSIST_DEBOUNCE_MS: u64 = 5 * 60 * 1_000;
 
 impl RecoveryService {
     pub fn new(snapshot_store: SnapshotStore) -> Self {
