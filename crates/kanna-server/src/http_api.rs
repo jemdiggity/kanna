@@ -618,7 +618,11 @@ async fn stream_task_terminal(socket: WebSocket, state: Arc<AppState>, task_id: 
                     text,
                 }
             }
-            DaemonEvent::Exit { session_id, code } => TaskTerminalStreamEvent::Exit {
+            DaemonEvent::Exit {
+                session_id,
+                code,
+                ..
+            } => TaskTerminalStreamEvent::Exit {
                 task_id: session_id,
                 code,
             },
