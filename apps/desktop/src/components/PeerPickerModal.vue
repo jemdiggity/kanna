@@ -48,6 +48,10 @@ function pairSelectedPeer() {
 
       <div v-if="loading" class="state-text">{{ $t("common.loading") }}</div>
 
+      <div v-else-if="peers.length === 0" class="state-text">
+        {{ $t("taskTransfer.noPeersFound") }}
+      </div>
+
       <div v-else class="peer-list">
         <button
           v-for="peer in peers"

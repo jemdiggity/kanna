@@ -300,6 +300,7 @@
   "taskTransfer": {
     "pushToMachine": "Push to Machine",
     "pairPeer": "Pair Machine",
+    "noPeersFound": "No machines found on your network yet.",
     "incomingTitle": "Incoming Task Transfer",
     "approve": "Approve",
     "reject": "Reject"
