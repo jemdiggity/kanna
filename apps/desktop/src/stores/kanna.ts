@@ -34,6 +34,7 @@ import {
   buildOutgoingTransferPayload,
   parseOutgoingTransferPreflightResult,
   parsePersistedOutgoingTransferPayload,
+  resolveIncomingTransferBaseBranch,
   type IncomingTransferRequest,
   type OutgoingTransferCommittedEvent,
   type OutgoingTransferPayload,
@@ -2097,7 +2098,7 @@ export const useKannaStore = defineStore("kanna", () => {
       payload.task.agent_type === "sdk" ? "sdk" : "pty",
       {
         agentProvider: payload.task.agent_provider,
-        baseBranch: payload.task.branch ?? undefined,
+        baseBranch: resolveIncomingTransferBaseBranch(payload),
         pipelineName: payload.task.pipeline,
         stage: payload.task.stage,
         displayName: payload.task.display_name,

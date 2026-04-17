@@ -134,6 +134,16 @@ export function chooseRepoAcquisitionMode(input: {
   return "bundle-repo";
 }
 
+export function resolveIncomingTransferBaseBranch(
+  payload: Pick<OutgoingTransferPayload, "repo" | "task">,
+): string | undefined {
+  if (payload.repo.mode === "bundle-repo") {
+    return payload.task.branch ?? payload.task.base_ref ?? undefined;
+  }
+
+  return payload.task.base_ref ?? undefined;
+}
+
 export function buildOutgoingTransferPayload(
   input: BuildOutgoingTransferPayloadInput,
 ): OutgoingTransferPayload {
