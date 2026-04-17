@@ -1,7 +1,11 @@
-import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useMemo, useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
-import { buildMoreCommandSections, type MoreCommandAction } from "./moreCommands";
+import {
+  buildMoreCommandPalette,
+  buildMoreCommandSections,
+  type MoreCommandAction
+} from "./moreCommands";
 
 interface MoreScreenProps {
   pairingCode: string | null;
@@ -26,7 +30,12 @@ export function MoreScreen({
   onRunMergeAgent,
   onCloseTask
 }: MoreScreenProps) {
+  const [query, setQuery] = useState("");
   const sections = buildMoreCommandSections({ pairingCode, selectedTask });
+  const paletteEntries = useMemo(
+    () => buildMoreCommandPalette({ pairingCode, selectedTask }, query),
+    [pairingCode, query, selectedTask]
+  );
 
   const handleAction = (action: MoreCommandAction) => {
     switch (action.id) {
@@ -64,26 +73,52 @@ export function MoreScreen({
     <View style={styles.wrap}>
       <Text style={styles.heading}>More</Text>
       <Text style={styles.subheading}>
-        Command palette actions for desktop selection, refresh, pairing, and task management.
+        Search commands for desktop selection, refresh, pairing, and task management.
       </Text>
 
-      {sections.map((section) => (
+      <View style={styles.paletteCard}>
+        <TextInput
+          autoCapitalize="none"
+          onChangeText={setQuery}
+          placeholder="Search commands"
+          placeholderTextColor="#6A7E9D"
+          style={styles.searchInput}
+          value={query}
+        />
+
+        <View style={styles.paletteList}>
+          {paletteEntries.length ? (
+            paletteEntries.map((action) => (
+              <Pressable
+                key={action.id}
+                style={styles.action}
+                onPress={() => handleAction(action)}
+              >
+                <Text style={styles.commandLabel}>{action.sectionTitle}</Text>
+                <Text style={styles.actionTitle}>{action.title}</Text>
+                <Text style={styles.actionCopy}>{action.copy}</Text>
+              </Pressable>
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No commands matched</Text>
+              <Text style={styles.emptyCopy}>
+                Try searching for merge, stage, pair, desktop, or task.
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {sections
+        .filter((section) => !section.actions?.length)
+        .map((section) => (
         <View key={section.title} style={styles.commandCard}>
           <Text style={styles.commandLabel}>{section.title}</Text>
           <Text style={styles.commandValue}>{section.headline}</Text>
           <Text style={styles.commandHint}>{section.detail}</Text>
-          {section.actions?.map((action) => (
-            <Pressable
-              key={action.id}
-              style={styles.action}
-              onPress={() => handleAction(action)}
-            >
-              <Text style={styles.actionTitle}>{action.title}</Text>
-              <Text style={styles.actionCopy}>{action.copy}</Text>
-            </Pressable>
-          ))}
         </View>
-      ))}
+        ))}
     </View>
   );
 }
@@ -101,6 +136,27 @@ const styles = StyleSheet.create({
     color: "#A9B8D1",
     fontSize: 14,
     lineHeight: 20
+  },
+  paletteCard: {
+    backgroundColor: "#0D1727",
+    borderColor: "#22304D",
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 12,
+    padding: 16
+  },
+  searchInput: {
+    backgroundColor: "#10192A",
+    borderColor: "#22304D",
+    borderRadius: 16,
+    borderWidth: 1,
+    color: "#F5F7FB",
+    fontSize: 15,
+    paddingHorizontal: 14,
+    paddingVertical: 13
+  },
+  paletteList: {
+    gap: 10
   },
   commandCard: {
     backgroundColor: "#10192A",
@@ -125,6 +181,26 @@ const styles = StyleSheet.create({
     color: "#93A7C8",
     fontSize: 13,
     lineHeight: 19
+  },
+  emptyState: {
+    alignItems: "center",
+    backgroundColor: "#10192A",
+    borderColor: "#20304C",
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 6,
+    padding: 20
+  },
+  emptyTitle: {
+    color: "#F5F7FB",
+    fontSize: 15,
+    fontWeight: "700"
+  },
+  emptyCopy: {
+    color: "#93A7C8",
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: "center"
   },
   action: {
     backgroundColor: "#111B2C",
