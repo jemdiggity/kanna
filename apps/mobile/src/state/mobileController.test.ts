@@ -71,6 +71,9 @@ function createClientMock(): ClientMock {
     runMergeAgent: vi.fn().mockResolvedValue({
       taskId: "task-merge"
     }),
+    advanceTaskStage: vi.fn().mockResolvedValue({
+      taskId: "task-pr"
+    }),
     sendTaskInput: vi.fn().mockResolvedValue(undefined),
     closeTask: vi.fn().mockResolvedValue(undefined),
     observeTaskTerminal: vi.fn().mockImplementation((_taskId, listener) => {
@@ -247,6 +250,36 @@ describe("createMobileController", () => {
     expect(client.closeTask).toHaveBeenCalledWith("task-1");
     expect(store.getState().selectedTaskId).toBeNull();
     expect(store.getState().recentTasks).toEqual([]);
+  });
+
+  it("advances the selected task stage and opens the replacement task", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.listRecentTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "task-pr",
+          repoId: "repo-1",
+          title: "Review mobile shell",
+          stage: "pr"
+        }
+      ]);
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    await controller.advanceDesktopTaskStage("task-1");
+
+    expect(client.advanceTaskStage).toHaveBeenCalledWith("task-1");
+    expect(store.getState().selectedTaskId).toBe("task-pr");
+    expect(store.getState().recentTasks[0]?.id).toBe("task-pr");
   });
 });
 interface ClientMock extends KannaClient {

@@ -26,6 +26,7 @@ export interface KannaTransport {
   searchTasks(query: string): Promise<TaskSummary[]>;
   createTask(input: CreateTaskRequest): Promise<CreateTaskResponse>;
   runMergeAgent(taskId: string): Promise<TaskActionResponse>;
+  advanceTaskStage(taskId: string): Promise<TaskActionResponse>;
   closeTask(taskId: string): Promise<void>;
   sendTaskInput(taskId: string, input: string): Promise<void>;
   observeTaskTerminal(
@@ -42,6 +43,7 @@ export interface KannaClient {
   searchTasks(query: string): Promise<TaskSummary[]>;
   createTask(input: CreateTaskRequest): Promise<CreateTaskResponse>;
   runMergeAgent(taskId: string): Promise<TaskActionResponse>;
+  advanceTaskStage(taskId: string): Promise<TaskActionResponse>;
   closeTask(taskId: string): Promise<void>;
   sendTaskInput(taskId: string, input: string): Promise<void>;
   observeTaskTerminal(
@@ -59,6 +61,7 @@ export function createKannaClient(transport: KannaTransport): KannaClient {
     searchTasks: (query) => transport.searchTasks(query),
     createTask: (input) => transport.createTask(input),
     runMergeAgent: (taskId) => transport.runMergeAgent(taskId),
+    advanceTaskStage: (taskId) => transport.advanceTaskStage(taskId),
     closeTask: (taskId) => transport.closeTask(taskId),
     sendTaskInput: (taskId, input) => transport.sendTaskInput(taskId, input),
     observeTaskTerminal: (taskId, listener) =>

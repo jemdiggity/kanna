@@ -119,6 +119,9 @@ export default function App() {
               void controller.connectLocal();
             }}
           onOpenComposer={() => controller.openComposer()}
+          onAdvanceTaskStage={(taskId) => {
+            void controller.advanceDesktopTaskStage(taskId);
+          }}
           onRunMergeAgent={(taskId) => {
             void controller.runMergeAgent(taskId);
           }}

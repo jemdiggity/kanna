@@ -10,6 +10,7 @@ interface MoreScreenProps {
   onShowDesktops(): void;
   onStartPairing(): void;
   onOpenComposer(): void;
+  onAdvanceTaskStage(taskId: string): void;
   onRunMergeAgent(taskId: string): void;
   onCloseTask(taskId: string): void;
 }
@@ -21,6 +22,7 @@ export function MoreScreen({
   onShowDesktops,
   onStartPairing,
   onOpenComposer,
+  onAdvanceTaskStage,
   onRunMergeAgent,
   onCloseTask
 }: MoreScreenProps) {
@@ -39,6 +41,11 @@ export function MoreScreen({
         break;
       case "compose":
         onOpenComposer();
+        break;
+      case "advance-stage":
+        if (selectedTask) {
+          onAdvanceTaskStage(selectedTask.id);
+        }
         break;
       case "merge-agent":
         if (selectedTask) {
