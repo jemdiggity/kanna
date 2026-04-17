@@ -5,6 +5,7 @@ import type { DbHandle, PipelineItem, Repo } from "@kanna/db";
 
 const mockState = vi.hoisted(() => {
   const now = "2026-04-16T00:00:00.000Z";
+  const updateClaudeSessionIdMock = vi.fn(async () => {});
 
   function makeRepo(overrides: Partial<Repo> = {}): Repo {
     return {
@@ -134,6 +135,7 @@ const mockState = vi.hoisted(() => {
     invokeMock,
     listenMock,
     updatePipelineItemActivityMock,
+    updateClaudeSessionIdMock,
     emit,
     reset,
   };
@@ -286,7 +288,7 @@ vi.mock("@kanna/db", () => ({
   getUnblockedItems: vi.fn(async () => []),
   hasCircularDependency: vi.fn(async () => false),
   insertOperatorEvent: vi.fn(async () => {}),
-  updateClaudeSessionId: vi.fn(async () => {}),
+  updateClaudeSessionId: mockState.updateClaudeSessionIdMock,
   listTaskPorts: vi.fn(async () => []),
   listTaskPortsForItem: vi.fn(async () => []),
   deleteTaskPortsForItem: vi.fn(async () => {}),
@@ -297,7 +299,16 @@ import { useKannaStore } from "./kanna";
 function createDb(): DbHandle {
   return {
     execute: vi.fn(async () => ({ rowsAffected: 1 })),
-    select: vi.fn(async () => []),
+    select: vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes("SELECT agent_provider FROM pipeline_item")) {
+        const itemId = typeof params?.[0] === "string" ? params[0] : null;
+        const item = itemId
+          ? mockState.pipelineItems.find((candidate) => candidate.id === itemId)
+          : null;
+        return item ? [{ agent_provider: item.agent_provider }] : [];
+      }
+      return [];
+    }),
   };
 }
 
@@ -320,6 +331,7 @@ describe("kanna runtime status reconciliation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockState.reset();
+    mockState.updateClaudeSessionIdMock.mockClear();
   });
 
   it("reconciles a selected task to idle after terminal output when the daemon now reports waiting", async () => {
@@ -367,5 +379,31 @@ describe("kanna runtime status reconciliation", () => {
       "unread",
     );
     expect(mockState.pipelineItems[0]?.activity).toBe("unread");
+  });
+
+  it("persists a codex resume session id from session_exit payload", async () => {
+    mockState.pipelineItems = [
+      {
+        ...mockState.pipelineItems[0]!,
+        agent_provider: "codex",
+      },
+    ];
+
+    await createStore();
+    await flushStore();
+
+    mockState.emit("session_exit", {
+      session_id: "task-1",
+      code: 0,
+      resume_session_id: "019d99a5-aa94-7c73-b786-644cc095c037",
+    });
+
+    await flushStore();
+
+    expect(mockState.updateClaudeSessionIdMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "task-1",
+      "019d99a5-aa94-7c73-b786-644cc095c037",
+    );
   });
 });

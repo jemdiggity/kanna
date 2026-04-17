@@ -28,6 +28,7 @@ export interface SessionsApi {
   getAgentProviderAvailability: () => Promise<AgentProviderAvailability>;
   waitForSessionExit: (sessionId: string) => Promise<void>;
   resolveSessionExitWaiters: (sessionId: string) => void;
+  persistExitedSessionResumeId: (sessionId: string, resumeSessionId?: string | null) => Promise<void>;
   spawnShellSession: (
     sessionId: string,
     cwd: string,
@@ -147,6 +148,16 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     if (!waiters) return;
     sessionExitWaiters.delete(sessionId);
     for (const resolve of waiters) resolve();
+  }
+
+  async function persistExitedSessionResumeId(
+    sessionId: string,
+    resumeSessionId?: string | null,
+  ): Promise<void> {
+    if (!resumeSessionId) return;
+    const item = context.state.items.value.find((candidate) => candidate.id === sessionId);
+    if (!item || item.agent_provider !== "codex") return;
+    await updateClaudeSessionId(context.requireDb(), sessionId, resumeSessionId);
   }
 
   async function spawnShellSession(
@@ -364,6 +375,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     getAgentProviderAvailability,
     waitForSessionExit,
     resolveSessionExitWaiters,
+    persistExitedSessionResumeId,
     spawnShellSession,
     prewarmWorktreeShellSession,
     preparePtySession,

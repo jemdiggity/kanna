@@ -148,6 +148,8 @@ pub enum Event {
     Exit {
         session_id: String,
         code: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        resume_session_id: Option<String>,
     },
     StatusChanged {
         session_id: String,
@@ -280,13 +282,22 @@ mod tests {
         let evt = Event::Exit {
             session_id: "s1".to_string(),
             code: 42,
+            resume_session_id: Some("019d99a5-aa94-7c73-b786-644cc095c037".to_string()),
         };
         let json = serde_json::to_string(&evt).unwrap();
         let decoded: Event = serde_json::from_str(&json).unwrap();
         match decoded {
-            Event::Exit { session_id, code } => {
+            Event::Exit {
+                session_id,
+                code,
+                resume_session_id,
+            } => {
                 assert_eq!(session_id, "s1");
                 assert_eq!(code, 42);
+                assert_eq!(
+                    resume_session_id.as_deref(),
+                    Some("019d99a5-aa94-7c73-b786-644cc095c037")
+                );
             }
             _ => panic!("wrong variant"),
         }

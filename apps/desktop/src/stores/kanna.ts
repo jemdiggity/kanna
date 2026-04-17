@@ -354,6 +354,19 @@ async function waitForSessionExit(sessionId: string): Promise<void> {
   });
 }
 
+async function persistExitedSessionResumeId(
+  sessionId: string,
+  resumeSessionId?: string | null,
+): Promise<void> {
+  if (!resumeSessionId) return;
+  const rows = await _db.select<Pick<PipelineItem, "agent_provider">>(
+    "SELECT agent_provider FROM pipeline_item WHERE id = ? LIMIT 1",
+    [sessionId],
+  );
+  if (rows[0]?.agent_provider !== "codex") return;
+  await updateClaudeSessionId(_db, sessionId, resumeSessionId);
+}
+
 function tt(key: string): string { return i18n.global.t(key); }
 
 export async function readRepoConfig(basePath: string): Promise<RepoConfig> {
@@ -2627,6 +2640,8 @@ export const useKannaStore = defineStore("kanna", () => {
         sessionExitWaiters.delete(sessionId);
         for (const resolve of waiters) resolve();
       }
+
+      await persistExitedSessionResumeId(sessionId, payload.resume_session_id);
 
       // Successful teardown exits finish the task unless lingering is enabled.
       if (typeof sessionId === "string" && isTeardownSessionId(sessionId)) {
