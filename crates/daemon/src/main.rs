@@ -5,7 +5,8 @@ mod pty;
 mod session;
 mod sidecar;
 mod socket;
-mod subprocess_env;
+
+use kanna_daemon::subprocess_env;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;

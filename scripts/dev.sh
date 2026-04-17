@@ -59,6 +59,7 @@ tmux_env_args() {
     KANNA_DB_PATH \
     KANNA_DAEMON_DIR \
     KANNA_DEV_PORT \
+    KANNA_WEBDRIVER_PORT \
     TAURI_WEBDRIVER_PORT; do
     if [ -n "${!key:-}" ]; then
       printf '%s\0%s\0' "-e" "${key}=${!key}"
