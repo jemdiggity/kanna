@@ -19,6 +19,14 @@ fn default_cursor_visible() -> bool {
     true
 }
 
+fn default_saved_at() -> u64 {
+    0
+}
+
+fn default_sequence() -> u64 {
+    0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalSnapshot {
     pub version: u32,
@@ -28,6 +36,10 @@ pub struct TerminalSnapshot {
     pub cursor_col: u16,
     #[serde(default = "default_cursor_visible")]
     pub cursor_visible: bool,
+    #[serde(default = "default_saved_at")]
+    pub saved_at: u64,
+    #[serde(default = "default_sequence")]
+    pub sequence: u64,
     pub vt: String,
 }
 
@@ -115,6 +127,10 @@ pub enum Command {
     },
     Snapshot {
         session_id: String,
+    },
+    SeedSnapshot {
+        session_id: String,
+        snapshot: TerminalSnapshot,
     },
     Handoff {
         version: u32,
@@ -299,6 +315,38 @@ mod tests {
     }
 
     #[test]
+    fn test_command_seed_snapshot_roundtrip() {
+        let cmd = Command::SeedSnapshot {
+            session_id: "sess-1".to_string(),
+            snapshot: TerminalSnapshot {
+                version: 1,
+                rows: 24,
+                cols: 80,
+                cursor_row: 3,
+                cursor_col: 4,
+                cursor_visible: true,
+                saved_at: 0,
+                sequence: 0,
+                vt: "seeded".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let decoded: Command = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Command::SeedSnapshot {
+                session_id,
+                snapshot,
+            } => {
+                assert_eq!(session_id, "sess-1");
+                assert_eq!(snapshot.rows, 24);
+                assert_eq!(snapshot.cols, 80);
+                assert_eq!(snapshot.vt, "seeded");
+            }
+            other => panic!("wrong variant: {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_event_snapshot_roundtrip() {
         let evt = Event::Snapshot {
             session_id: "sess-1".to_string(),
@@ -309,6 +357,8 @@ mod tests {
                 cursor_row: 10,
                 cursor_col: 5,
                 cursor_visible: true,
+                saved_at: 123,
+                sequence: 7,
                 vt: "hello".to_string(),
             },
         };
@@ -322,6 +372,8 @@ mod tests {
                 assert_eq!(session_id, "sess-1");
                 assert_eq!(snapshot.version, 1);
                 assert_eq!(snapshot.vt, "hello");
+                assert_eq!(snapshot.saved_at, 123);
+                assert_eq!(snapshot.sequence, 7);
             }
             other => panic!("wrong variant: {:?}", other),
         }
@@ -347,9 +399,33 @@ mod tests {
             Event::Snapshot { snapshot, .. } => {
                 assert!(snapshot.cursor_visible);
                 assert_eq!(snapshot.vt, "hello");
+                assert_eq!(snapshot.saved_at, 0);
+                assert_eq!(snapshot.sequence, 0);
             }
             other => panic!("wrong variant: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_event_snapshot_serialization_includes_recovery_metadata_defaults() {
+        let evt = Event::Snapshot {
+            session_id: "sess-1".to_string(),
+            snapshot: TerminalSnapshot {
+                version: 1,
+                rows: 24,
+                cols: 80,
+                cursor_row: 10,
+                cursor_col: 5,
+                cursor_visible: true,
+                saved_at: 0,
+                sequence: 0,
+                vt: "hello".to_string(),
+            },
+        };
+
+        let value = serde_json::to_value(&evt).unwrap();
+        assert_eq!(value["snapshot"]["saved_at"], serde_json::json!(0));
+        assert_eq!(value["snapshot"]["sequence"], serde_json::json!(0));
     }
 
     #[test]

@@ -8,13 +8,22 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "advance-stage"): void;
+  (e: "push-to-machine"): void;
 }>();
 
 const showAdvanceStage = computed(() => props.item.stage !== "done");
+const showPushToMachine = computed(() => props.item.stage !== "done");
 </script>
 
 <template>
   <div class="action-bar">
+    <button
+      v-if="showPushToMachine"
+      class="btn"
+      @click="emit('push-to-machine')"
+    >
+      {{ $t('taskTransfer.pushToMachine') }}
+    </button>
     <button
       v-if="showAdvanceStage"
       class="btn btn-primary"

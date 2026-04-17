@@ -36,7 +36,8 @@
       "binaries/kanna-daemon",
       "binaries/kanna-cli",
       "binaries/kanna-terminal-recovery",
-      "binaries/kanna-server"
+      "binaries/kanna-server",
+      "binaries/kanna-task-transfer"
     ],
     "resources": {
       "../../../.kanna/agents/": ".kanna/agents/",

@@ -55,7 +55,6 @@ async fn recovery_end_session_removes_snapshot_artifact() {
         .start_session("session-2", 80, 24, true)
         .await
         .expect("start_session should succeed");
-    recovery.write_output("session-2", b"bye\r\n", 1).await;
 
     let snapshot_path = recovery.snapshot_file_for_test("session-2");
     assert!(snapshot_path.exists(), "snapshot file should be seeded");
@@ -153,6 +152,10 @@ enum Cmd {
     Snapshot {
         session_id: String,
     },
+    SeedSnapshot {
+        session_id: String,
+        snapshot: SeedSnapshotPayload,
+    },
 }
 
 #[allow(dead_code)]
@@ -197,8 +200,21 @@ enum Evt {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct SnapshotPayload {
+    version: u32,
+    rows: u16,
+    cols: u16,
+    #[serde(alias = "cursorRow")]
+    cursor_row: u16,
+    #[serde(alias = "cursorCol")]
+    cursor_col: u16,
+    #[serde(alias = "cursorVisible")]
+    cursor_visible: bool,
+    vt: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SeedSnapshotPayload {
     version: u32,
     rows: u16,
     cols: u16,
@@ -374,5 +390,48 @@ fn daemon_does_not_serve_snapshot_after_session_exit() {
             message
         ),
         other => panic!("expected snapshot error, got {:?}", other),
+    }
+}
+
+#[test]
+fn daemon_seed_snapshot_command_serves_seeded_snapshot() {
+    let daemon = DaemonHandle::start();
+    let session_id = "seeded-session";
+    let mut conn = daemon.connect();
+
+    conn.send(&Cmd::SeedSnapshot {
+        session_id: session_id.to_string(),
+        snapshot: SeedSnapshotPayload {
+            version: 1,
+            rows: 31,
+            cols: 101,
+            cursor_row: 4,
+            cursor_col: 7,
+            cursor_visible: true,
+            vt: "seeded snapshot output".to_string(),
+        },
+    });
+    match conn.recv() {
+        Evt::Ok => {}
+        other => panic!("expected Ok from seed snapshot, got {:?}", other),
+    }
+
+    conn.send(&Cmd::Snapshot {
+        session_id: session_id.to_string(),
+    });
+    match conn.recv() {
+        Evt::Snapshot {
+            session_id: snap_session,
+            snapshot,
+        } => {
+            assert_eq!(snap_session, session_id);
+            assert_eq!(snapshot.rows, 31);
+            assert_eq!(snapshot.cols, 101);
+            assert_eq!(snapshot.cursor_row, 4);
+            assert_eq!(snapshot.cursor_col, 7);
+            assert!(snapshot.cursor_visible);
+            assert_eq!(snapshot.vt, "seeded snapshot output");
+        }
+        other => panic!("expected seeded Snapshot response, got {:?}", other),
     }
 }

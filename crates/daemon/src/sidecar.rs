@@ -124,6 +124,8 @@ impl TerminalSidecar {
             cursor_row: self.terminal.cursor_y()?,
             cursor_col: self.terminal.cursor_x()?,
             cursor_visible: self.terminal.is_cursor_visible()?,
+            saved_at: 0,
+            sequence: 0,
             vt,
         })
     }
@@ -421,6 +423,8 @@ mod tests {
             cursor_row: 1,
             cursor_col: 2,
             cursor_visible: true,
+            saved_at: 0,
+            sequence: 0,
             vt: "hello".to_string(),
         };
 
@@ -454,6 +458,8 @@ mod tests {
             cursor_row: 0,
             cursor_col: 0,
             cursor_visible: true,
+            saved_at: 0,
+            sequence: 0,
             vt: "ignored".to_string(),
         };
 

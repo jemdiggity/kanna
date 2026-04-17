@@ -154,6 +154,9 @@ describe("useTerminal", () => {
           serialized: "restored scrollback",
           cols: 80,
           rows: 24,
+          cursorRow: 1,
+          cursorCol: 0,
+          cursorVisible: true,
           savedAt: 1,
           sequence: 1,
         };
@@ -337,6 +340,9 @@ describe("useTerminal", () => {
           serialized: "restored scrollback",
           cols: 80,
           rows: 24,
+          cursorRow: 1,
+          cursorCol: 0,
+          cursorVisible: true,
           savedAt: 1,
           sequence: 7,
         };
@@ -659,6 +665,9 @@ describe("useTerminal", () => {
           serialized: "restored scrollback",
           cols: 80,
           rows: 24,
+          cursorRow: 1,
+          cursorCol: 0,
+          cursorVisible: true,
           savedAt: 1,
           sequence: 7,
         };
@@ -871,6 +880,9 @@ describe("useTerminal", () => {
           serialized: "restored copilot scrollback",
           cols: 80,
           rows: 24,
+          cursorRow: 1,
+          cursorCol: 0,
+          cursorVisible: true,
           savedAt: 1,
           sequence: 10,
         };
@@ -980,6 +992,9 @@ describe("useTerminal", () => {
           serialized: "restored scrollback",
           cols: 80,
           rows: 24,
+          cursorRow: 1,
+          cursorCol: 0,
+          cursorVisible: true,
           savedAt: 1,
           sequence: 12,
         };

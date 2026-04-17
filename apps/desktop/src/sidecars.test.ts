@@ -29,6 +29,21 @@ describe("desktop sidecar packaging", () => {
     expect(stageSidecarsScript).toContain("kanna-server");
   });
 
+  it("stages and bundles the task transfer sidecar", () => {
+    const stageSidecarsScript = readFileSync(
+      new URL("../../../scripts/stage-sidecars.sh", import.meta.url),
+      "utf8",
+    );
+    const shipScript = readFileSync(
+      new URL("../../../scripts/ship.sh", import.meta.url),
+      "utf8",
+    );
+    expect(desktopPkg.scripts?.["build:sidecars"]).toContain("crates/task-transfer/Cargo.toml");
+    expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-task-transfer");
+    expect(stageSidecarsScript).toContain("kanna-task-transfer");
+    expect(shipScript).toContain("crates/task-transfer/Cargo.toml");
+  });
+
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {
     expect(desktopPkg.scripts?.dev).not.toContain("build:sidecars");
     expect(desktopPkg.scripts?.dev).toContain("vite");

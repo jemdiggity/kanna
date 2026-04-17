@@ -235,8 +235,44 @@ export async function runMigrations(db: DbHandle): Promise<void> {
       }
     }
   });
-
   await runMigration("010_rename_torndown_stage", async () => {
     await db.execute(`UPDATE pipeline_item SET stage = 'teardown' WHERE stage = 'torndown'`);
+  });
+
+  await runMigration("011_task_transfer_tables", async () => {
+    await db.execute(`CREATE TABLE IF NOT EXISTS trusted_peer (
+      id TEXT PRIMARY KEY,
+      peer_id TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      public_key TEXT NOT NULL,
+      capabilities_json TEXT NOT NULL,
+      paired_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT,
+      revoked_at TEXT
+    )`);
+    await db.execute(`CREATE TABLE IF NOT EXISTS task_transfer (
+      id TEXT PRIMARY KEY,
+      direction TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_peer_id TEXT,
+      target_peer_id TEXT,
+      source_task_id TEXT,
+      local_task_id TEXT REFERENCES pipeline_item(id) ON DELETE CASCADE,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      completed_at TEXT,
+      error TEXT,
+      payload_json TEXT
+    )`);
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_task_transfer_local_task ON task_transfer(local_task_id, started_at DESC)`);
+    await db.execute(`CREATE TABLE IF NOT EXISTS task_transfer_provenance (
+      pipeline_item_id TEXT PRIMARY KEY REFERENCES pipeline_item(id) ON DELETE CASCADE,
+      source_peer_id TEXT NOT NULL,
+      source_task_id TEXT NOT NULL,
+      source_machine_task_label TEXT,
+      imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+  });
+  await runMigration("012_task_transfer_payload_json", async () => {
+    await addColumn("task_transfer", "payload_json", "TEXT");
   });
 }

@@ -115,7 +115,6 @@ export async function resetDatabase(client: WebDriverClient): Promise<void> {
   await callVueMethod(client, "refreshRepos");
 }
 
-/** Clean up test-created git worktrees for a repo. Best-effort — never throws. */
 export async function cleanupWorktrees(
   client: WebDriverClient,
   repoPath: string
