@@ -355,7 +355,7 @@ mod tests {
             .build();
         let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--permission-mode").unwrap();
-        assert_eq!(args[idx + 1], "accept-edits");
+        assert_eq!(args[idx + 1], "acceptEdits");
     }
 
     #[test]
@@ -365,7 +365,7 @@ mod tests {
             .build();
         let args = opts.to_cli_args(None);
         let idx = args.iter().position(|a| a == "--permission-mode").unwrap();
-        assert_eq!(args[idx + 1], "dont-ask");
+        assert_eq!(args[idx + 1], "dontAsk");
     }
 
     #[test]
