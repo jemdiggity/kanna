@@ -346,6 +346,37 @@ describe("NewTaskModal", () => {
     wrapper.unmount();
   });
 
+  it("submits with Cmd+Enter while the base branch search input is focused", async () => {
+    const wrapper = mount(NewTaskModal, {
+      attachTo: document.body,
+      props: {
+        defaultAgentProvider: "claude",
+        pipelines: ["default"],
+        defaultPipeline: "default",
+        baseBranches: ["origin/main", "main", "release/2026.04"],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get("textarea").setValue("Ship branch picker submit");
+    await wrapper.get('[data-testid="base-branch-toggle"]').trigger("click");
+    await flushPromises();
+
+    const search = wrapper.get('[data-testid="base-branch-search"]');
+    expect(document.activeElement).toBe(search.element);
+
+    await search.trigger("keydown", { key: "Enter", metaKey: true });
+
+    expect(wrapper.emitted("submit")).toEqual([
+      ["Ship branch picker submit", "claude", "default", undefined],
+    ]);
+
+    wrapper.unmount();
+  });
+
   it("shows the selected base branch inline before the picker is opened", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {
