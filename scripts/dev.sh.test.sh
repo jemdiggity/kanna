@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/dev.sh"
+MOBILE_SCRIPT="$ROOT_DIR/scripts/mobile-dev.sh"
 TMPDIR_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
@@ -12,6 +13,7 @@ TMUX_STATE="$TMPDIR_ROOT/tmux-state"
 TMUX_LOG="$TMPDIR_ROOT/tmux-log"
 SQLITE_LOG="$TMPDIR_ROOT/sqlite-log"
 mkdir -p "$TEST_ROOT/apps/desktop/src-tauri" "$TEST_ROOT/apps/desktop/tests/e2e" "$TEST_ROOT/apps/desktop" "$FAKE_BIN"
+mkdir -p "$TEST_ROOT/apps/mobile" "$TEST_ROOT/services/relay/node_modules"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 : > "$SQLITE_LOG"
@@ -156,6 +158,27 @@ run_dev_sh() {
   printf '%s\n===STATUS:%s===\n' "$output" "$status"
 }
 
+run_mobile_dev_sh() {
+  set +e
+  local output
+  output="$(
+    PATH="$FAKE_BIN:/usr/bin:/bin" \
+    HOME="$TMPDIR_ROOT/home" \
+    env \
+      -u KANNA_DB_PATH \
+      -u KANNA_DB_NAME \
+      -u KANNA_DAEMON_DIR \
+      KANNA_WORKTREE=1 \
+      KANNA_DEV_PORT=1452 \
+      HOME="$TMPDIR_ROOT/home" \
+      "$@" \
+      bash "$MOBILE_SCRIPT" 2>&1
+  )"
+  local status=$?
+  set -e
+  printf '%s\n===STATUS:%s===\n' "$output" "$status"
+}
+
 RESULT="$(run_dev_sh start)"
 OUTPUT="${RESULT%===STATUS:*===}"
 STATUS="${RESULT##*===STATUS:}"
@@ -239,14 +262,30 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
+<<<<<<< HEAD
 if ! grep -Fq "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected inherited KANNA_DB_NAME to be ignored, got:\n' >&2
+||||||| parent of 032d7177 (chore(scripts): update mobile dev workflow for expo)
+if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_DB_NAME to be ignored, got:\n' >&2
+=======
+if ! grep -Fq "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/shared.db" "$TMUX_LOG"; then
+  printf 'expected explicit KANNA_DB_NAME to set the derived db path, got:\n' >&2
+>>>>>>> 032d7177 (chore(scripts): update mobile dev workflow for expo)
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
+<<<<<<< HEAD
 if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected derived worktree KANNA_DB_NAME to remain canonical, got:\n' >&2
+||||||| parent of 032d7177 (chore(scripts): update mobile dev workflow for expo)
+if ! grep -Fq "KANNA_DB_NAME='kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+  printf 'expected derived worktree KANNA_DB_NAME to remain canonical, got:\n' >&2
+=======
+if ! grep -Fq "KANNA_DB_NAME=shared.db" "$TMUX_LOG"; then
+  printf 'expected explicit KANNA_DB_NAME to be preserved, got:\n' >&2
+>>>>>>> 032d7177 (chore(scripts): update mobile dev workflow for expo)
   cat "$TMUX_LOG" >&2
   exit 1
 fi
@@ -266,8 +305,16 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
+<<<<<<< HEAD
 if ! grep -Fq "KANNA_DAEMON_DIR=$TEST_ROOT/.kanna-daemon" "$TMUX_LOG"; then
   printf 'expected inherited KANNA_DAEMON_DIR to be ignored, got:\n' >&2
+||||||| parent of 032d7177 (chore(scripts): update mobile dev workflow for expo)
+if ! grep -Fq "KANNA_DAEMON_DIR='$TEST_ROOT/.kanna-daemon'" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_DAEMON_DIR to be ignored, got:\n' >&2
+=======
+if ! grep -Fq "KANNA_DAEMON_DIR=/tmp/shared-daemon-dir" "$TMUX_LOG"; then
+  printf 'expected explicit KANNA_DAEMON_DIR to be preserved, got:\n' >&2
+>>>>>>> 032d7177 (chore(scripts): update mobile dev workflow for expo)
   cat "$TMUX_LOG" >&2
   exit 1
 fi
@@ -284,9 +331,51 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db" "$SQLITE_LOG"; then
-  printf 'expected seed to ignore explicit KANNA_DB_NAME, got:\n' >&2
+if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/shared.db" "$SQLITE_LOG"; then
+  printf 'expected seed to honor explicit KANNA_DB_NAME, got:\n' >&2
   cat "$SQLITE_LOG" >&2
+  exit 1
+fi
+
+rm -f "$TMUX_STATE" "$TMUX_LOG"
+: > "$TMUX_STATE"
+: > "$TMUX_LOG"
+
+RESULT="$(run_dev_sh --mobile env KANNA_RELAY_PORT=9087 KANNA_MOBILE_PORT=1437)"
+OUTPUT="${RESULT%===STATUS:*===}"
+STATUS="${RESULT##*===STATUS:}"
+STATUS="${STATUS%===}"
+
+if [ "$STATUS" -ne 0 ]; then
+  printf 'expected dev.sh --mobile to start the Expo app alongside desktop dev, got:\n' >&2
+  printf '%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile pnpm run dev -- --port 1437" "$TMUX_LOG"; then
+  printf 'expected dev.sh --mobile to launch Expo in the mobile window, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+rm -f "$TMUX_STATE" "$TMUX_LOG"
+: > "$TMUX_STATE"
+: > "$TMUX_LOG"
+
+RESULT="$(run_dev_sh --mobile)"
+OUTPUT="${RESULT%===STATUS:*===}"
+STATUS="${RESULT##*===STATUS:}"
+STATUS="${STATUS%===}"
+
+if [ "$STATUS" -ne 0 ]; then
+  printf 'expected dev.sh --mobile to use the default Expo port, got:\n' >&2
+  printf '%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile pnpm run dev -- --port 8081" "$TMUX_LOG"; then
+  printf 'expected dev.sh --mobile to default to port 8081 for Expo, got:\n' >&2
+  cat "$TMUX_LOG" >&2
   exit 1
 fi
 
@@ -305,14 +394,51 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
+<<<<<<< HEAD
 if ! grep -Fq "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected inherited KANNA_DB_PATH to be ignored, got:\n' >&2
+||||||| parent of 032d7177 (chore(scripts): update mobile dev workflow for expo)
+if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_DB_PATH to be ignored, got:\n' >&2
+=======
+if ! grep -Fq "KANNA_DB_PATH=/tmp/shared-kanna.db" "$TMUX_LOG"; then
+  printf 'expected explicit KANNA_DB_PATH to be preserved, got:\n' >&2
+>>>>>>> 032d7177 (chore(scripts): update mobile dev workflow for expo)
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
+<<<<<<< HEAD
 if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected KANNA_DB_NAME to remain worktree-derived, got:\n' >&2
+||||||| parent of 032d7177 (chore(scripts): update mobile dev workflow for expo)
+if ! grep -Fq "KANNA_DB_NAME='kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+  printf 'expected KANNA_DB_NAME to remain worktree-derived, got:\n' >&2
+=======
+if ! grep -Fq "KANNA_DB_NAME=shared-kanna.db" "$TMUX_LOG"; then
+  printf 'expected KANNA_DB_NAME to follow explicit KANNA_DB_PATH basename, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+rm -f "$TMUX_STATE" "$TMUX_LOG"
+: > "$TMUX_STATE"
+: > "$TMUX_LOG"
+
+RESULT="$(run_mobile_dev_sh env KANNA_MOBILE_PORT=1555)"
+OUTPUT="${RESULT%===STATUS:*===}"
+STATUS="${RESULT##*===STATUS:}"
+STATUS="${STATUS%===}"
+
+if [ "$STATUS" -ne 0 ]; then
+  printf 'mobile-dev.sh exited with status %s\n' "$STATUS" >&2
+  printf '%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile pnpm run dev -- --port 1555" "$TMUX_LOG"; then
+  printf 'expected mobile-dev.sh to delegate to the Expo mobile workflow, got:\n' >&2
+>>>>>>> 032d7177 (chore(scripts): update mobile dev workflow for expo)
   cat "$TMUX_LOG" >&2
   exit 1
 fi
