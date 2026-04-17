@@ -58,6 +58,7 @@ tmux_env_args() {
     KANNA_DAEMON_DIR \
     KANNA_DEV_PORT \
     KANNA_APPIUM_PORT \
+    KANNA_WEBDRIVER_PORT \
     TAURI_WEBDRIVER_PORT \
     CARGO_BUILD_BUILD_DIR; do
     if [ -n "${!key:-}" ]; then
