@@ -5,13 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-<<<<<<< HEAD
     "build:sidecars": "cargo build --manifest-path ../../crates/daemon/Cargo.toml && cargo build --manifest-path ../../crates/kanna-cli/Cargo.toml && cargo build --manifest-path ../../crates/kanna-server/Cargo.toml && cargo build --manifest-path ../../packages/terminal-recovery/Cargo.toml && cargo build --manifest-path ../../crates/task-transfer/Cargo.toml && ../../scripts/stage-sidecars.sh",
-||||||| parent of 91ddb6dd (Implement LAN task transfer repo acquisition)
-    "build:sidecars": "cargo build --manifest-path ../../crates/daemon/Cargo.toml && cargo build --manifest-path ../../crates/kanna-cli/Cargo.toml && cargo build --manifest-path ../../packages/terminal-recovery/Cargo.toml && ../../scripts/stage-sidecars.sh",
-=======
-    "build:sidecars": "cargo build --manifest-path ../../crates/daemon/Cargo.toml && cargo build --manifest-path ../../crates/kanna-cli/Cargo.toml && cargo build --manifest-path ../../packages/terminal-recovery/Cargo.toml && cargo build --manifest-path ../../crates/task-transfer/Cargo.toml && ../../scripts/stage-sidecars.sh",
->>>>>>> 91ddb6dd (Implement LAN task transfer repo acquisition)
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
