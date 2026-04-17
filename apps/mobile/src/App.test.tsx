@@ -75,8 +75,11 @@ describe("createAppModel", () => {
     expect(model.navigator.tabs.map((tab) => tab.label)).toEqual([
       "Tasks",
       "Recent",
-      "Desktops",
       "More"
+    ]);
+    expect(model.navigator.utilityActions.map((action) => action.label)).toEqual([
+      "Search",
+      "New Task"
     ]);
     expect(typeof model.controller.bootstrap).toBe("function");
     expect((await model.client.getStatus()).desktopName).toBe("Studio Mac");

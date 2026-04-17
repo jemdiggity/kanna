@@ -8,7 +8,7 @@ export interface MobileController {
   refresh(): Promise<void>;
   showView(view: MobileView): void;
   selectDesktop(desktopId: string): void;
-  selectRepo(repoId: string): void;
+  selectRepo(repoId: string): Promise<void>;
   openTask(taskId: string): void;
   closeTask(): void;
   openComposer(): void;
@@ -36,6 +36,7 @@ export function createMobileController(
   const findTask = (taskId: string): TaskSummary | null => {
     const state = store.getState();
     return (
+      state.repoTasks.find((task) => task.id === taskId) ??
       state.recentTasks.find((task) => task.id === taskId) ??
       state.searchResults.find((task) => task.id === taskId) ??
       null
@@ -45,6 +46,16 @@ export function createMobileController(
   const stopTaskTerminal = () => {
     activeTaskTerminal?.subscription.close();
     activeTaskTerminal = null;
+  };
+
+  const loadRepoTasks = async (repoId: string | null) => {
+    if (!repoId) {
+      store.setRepoTasks([]);
+      return;
+    }
+
+    const repoTasks = await client.listRepoTasks(repoId);
+    store.setRepoTasks(repoTasks);
   };
 
   const startTaskTerminal = (taskId: string) => {
@@ -88,6 +99,17 @@ export function createMobileController(
     store.setDesktops(desktops);
     store.setRepos(repos);
     store.setRecentTasks(recentTasks);
+    await loadRepoTasks(store.getState().selectedRepoId);
+  };
+
+  const refreshTaskCollections = async () => {
+    const selectedRepoId = store.getState().selectedRepoId;
+    const [recentTasks, repoTasks] = await Promise.all([
+      client.listRecentTasks(),
+      selectedRepoId ? client.listRepoTasks(selectedRepoId) : Promise.resolve([])
+    ]);
+    store.setRecentTasks(recentTasks);
+    store.setRepoTasks(repoTasks);
   };
 
   const fail = (error: unknown) => {
@@ -148,8 +170,14 @@ export function createMobileController(
       store.clearTaskTerminal();
     },
 
-    selectRepo(repoId) {
+    async selectRepo(repoId) {
       store.selectRepo(repoId);
+      try {
+        await loadRepoTasks(repoId);
+        store.setErrorMessage(null);
+      } catch (error) {
+        fail(error);
+      }
     },
 
     openTask(taskId) {
@@ -210,8 +238,13 @@ export function createMobileController(
           createdTask,
           ...state.recentTasks.filter((task) => task.id !== createdTask.id)
         ];
+        const repoTasks =
+          state.selectedRepoId === createdTask.repoId
+            ? [createdTask, ...state.repoTasks.filter((task) => task.id !== createdTask.id)]
+            : state.repoTasks;
 
         store.setRecentTasks(recentTasks);
+        store.setRepoTasks(repoTasks);
         store.setComposerState(false, "");
         this.openTask(createdTask.id);
         store.setErrorMessage(null);
@@ -223,8 +256,7 @@ export function createMobileController(
     async runMergeAgent(taskId) {
       try {
         const response = await client.runMergeAgent(taskId);
-        const recentTasks = await client.listRecentTasks();
-        store.setRecentTasks(recentTasks);
+        await refreshTaskCollections();
         this.openTask(response.taskId);
         store.setErrorMessage(null);
       } catch (error) {
@@ -235,8 +267,7 @@ export function createMobileController(
     async advanceDesktopTaskStage(taskId) {
       try {
         const response = await client.advanceTaskStage(taskId);
-        const recentTasks = await client.listRecentTasks();
-        store.setRecentTasks(recentTasks);
+        await refreshTaskCollections();
         this.openTask(response.taskId);
         store.setErrorMessage(null);
       } catch (error) {
@@ -260,9 +291,8 @@ export function createMobileController(
     async closeDesktopTask(taskId) {
       try {
         await client.closeTask(taskId);
-        const recentTasks = await client.listRecentTasks();
         stopTaskTerminal();
-        store.setRecentTasks(recentTasks);
+        await refreshTaskCollections();
         store.setSelectedTask(null);
         store.clearTaskTerminal();
         store.setActiveView("tasks");

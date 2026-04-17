@@ -46,6 +46,27 @@ function createClientMock(): ClientMock {
       { id: "repo-1", name: "Repo One" },
       { id: "repo-2", name: "Repo Two" }
     ]),
+    listRepoTasks: vi.fn().mockImplementation(async (repoId: string) => {
+      if (repoId === "repo-2") {
+        return [
+          {
+            id: "task-repo-2",
+            repoId: "repo-2",
+            title: "Repo Two task",
+            stage: "pr"
+          }
+        ];
+      }
+
+      return [
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ];
+    }),
     listRecentTasks: vi.fn().mockResolvedValue([
       {
         id: "task-1",
@@ -108,6 +129,7 @@ describe("createMobileController", () => {
       activeView: "tasks"
     });
     expect(store.getState().recentTasks).toHaveLength(1);
+    expect(store.getState().repoTasks.map((task) => task.id)).toEqual(["task-1"]);
   });
 
   it("searches tasks and switches to the search surface", async () => {
@@ -139,6 +161,19 @@ describe("createMobileController", () => {
     expect(store.getState().selectedTaskId).toBe("task-3");
     expect(store.getState().isComposerOpen).toBe(false);
     expect(store.getState().composerPrompt).toBe("");
+  });
+
+  it("selects a repo and refreshes the repo-scoped task list", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    await controller.selectRepo("repo-2");
+
+    expect(client.listRepoTasks).toHaveBeenLastCalledWith("repo-2");
+    expect(store.getState().selectedRepoId).toBe("repo-2");
+    expect(store.getState().repoTasks.map((task) => task.id)).toEqual(["task-repo-2"]);
   });
 
   it("creates a pairing session and refreshes the desktop state", async () => {
@@ -241,6 +276,16 @@ describe("createMobileController", () => {
         }
       ])
       .mockResolvedValueOnce([]);
+    vi.mocked(client.listRepoTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ])
+      .mockResolvedValueOnce([]);
     const controller = createMobileController(client, store);
 
     await controller.bootstrap();
@@ -250,6 +295,7 @@ describe("createMobileController", () => {
     expect(client.closeTask).toHaveBeenCalledWith("task-1");
     expect(store.getState().selectedTaskId).toBeNull();
     expect(store.getState().recentTasks).toEqual([]);
+    expect(store.getState().repoTasks).toEqual([]);
   });
 
   it("advances the selected task stage and opens the replacement task", async () => {

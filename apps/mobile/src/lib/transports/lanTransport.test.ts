@@ -27,6 +27,16 @@ describe("createLanTransport", () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
+        json: async () => [{
+          id: "task-repo-1",
+          repoId: "repo-1",
+          title: "Repo task",
+          stage: "in progress"
+        }]
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
         json: async () => ({
           taskId: "task-1",
           repoId: "repo-1",
@@ -73,6 +83,14 @@ describe("createLanTransport", () => {
     await expect(transport.listRepos()).resolves.toEqual([
       { id: "repo-1", name: "Repo One" }
     ]);
+    await expect(transport.listRepoTasks("repo-1")).resolves.toEqual([
+      {
+        id: "task-repo-1",
+        repoId: "repo-1",
+        title: "Repo task",
+        stage: "in progress"
+      }
+    ]);
     await expect(transport.createTask({
       repoId: "repo-1",
       prompt: "Ship it"
@@ -103,6 +121,11 @@ describe("createLanTransport", () => {
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
       3,
+      "http://127.0.0.1:48120/v1/repos/repo-1/tasks",
+      undefined
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      4,
       "http://127.0.0.1:48120/v1/tasks",
       {
         method: "POST",
@@ -114,28 +137,28 @@ describe("createLanTransport", () => {
       }
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      4,
+      5,
       "http://127.0.0.1:48120/v1/tasks/task-1/actions/run-merge-agent",
       {
         method: "POST"
       }
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      5,
+      6,
       "http://127.0.0.1:48120/v1/tasks/task-1/actions/advance-stage",
       {
         method: "POST"
       }
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      6,
+      7,
       "http://127.0.0.1:48120/v1/tasks/task-1/actions/close",
       {
         method: "POST"
       }
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      7,
+      8,
       "http://127.0.0.1:48120/v1/tasks/task-1/input",
       {
         method: "POST",

@@ -16,6 +16,20 @@ describe("createKannaClient", () => {
       listDesktops: vi.fn().mockResolvedValue([
         { id: "desktop-1", name: "Studio Mac", online: true, mode: "lan" }
       ]),
+      listRepos: vi.fn().mockResolvedValue([
+        { id: "repo-1", name: "Repo One" }
+      ]),
+      listRepos: vi.fn().mockResolvedValue([
+        { id: "repo-1", name: "Repo One" }
+      ]),
+      listRepoTasks: vi.fn().mockResolvedValue([
+        {
+          id: "task-repo-1",
+          repoId: "repo-1",
+          title: "Repo task",
+          stage: "in progress"
+        }
+      ]),
       listRecentTasks: vi.fn().mockResolvedValue([
         {
           id: "task-1",
@@ -58,6 +72,13 @@ describe("createKannaClient", () => {
     const client = createKannaClient(transport);
 
     expect(await client.listDesktops()).toHaveLength(1);
+    expect(await client.listRepos()).toEqual([
+      { id: "repo-1", name: "Repo One" }
+    ]);
+    expect(await client.listRepos()).toEqual([
+      { id: "repo-1", name: "Repo One" }
+    ]);
+    expect(await client.listRepoTasks("repo-1")).toHaveLength(1);
     expect(await client.listRecentTasks()).toHaveLength(1);
     expect((await client.listRecentTasks())[0]?.snippet).toBe("Latest agent output preview");
     expect(await client.searchTasks("search")).toHaveLength(1);

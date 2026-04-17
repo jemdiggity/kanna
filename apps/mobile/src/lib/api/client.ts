@@ -22,6 +22,9 @@ export interface TaskTerminalSubscription {
 export interface KannaTransport {
   getStatus(): Promise<MobileServerStatus>;
   listDesktops(): Promise<DesktopSummary[]>;
+  listRepos(): Promise<RepoSummary[]>;
+  listRepos(): Promise<RepoSummary[]>;
+  listRepoTasks(repoId: string): Promise<TaskSummary[]>;
   listRecentTasks(): Promise<TaskSummary[]>;
   searchTasks(query: string): Promise<TaskSummary[]>;
   createTask(input: CreateTaskRequest): Promise<CreateTaskResponse>;
@@ -39,6 +42,9 @@ export interface KannaTransport {
 export interface KannaClient {
   getStatus(): Promise<MobileServerStatus>;
   listDesktops(): Promise<DesktopSummary[]>;
+  listRepos(): Promise<RepoSummary[]>;
+  listRepos(): Promise<RepoSummary[]>;
+  listRepoTasks(repoId: string): Promise<TaskSummary[]>;
   listRecentTasks(): Promise<TaskSummary[]>;
   searchTasks(query: string): Promise<TaskSummary[]>;
   createTask(input: CreateTaskRequest): Promise<CreateTaskResponse>;
@@ -57,6 +63,9 @@ export function createKannaClient(transport: KannaTransport): KannaClient {
   return {
     getStatus: () => transport.getStatus(),
     listDesktops: () => transport.listDesktops(),
+    listRepos: () => transport.listRepos(),
+    listRepos: () => transport.listRepos(),
+    listRepoTasks: (repoId) => transport.listRepoTasks(repoId),
     listRecentTasks: () => transport.listRecentTasks(),
     searchTasks: (query) => transport.searchTasks(query),
     createTask: (input) => transport.createTask(input),
