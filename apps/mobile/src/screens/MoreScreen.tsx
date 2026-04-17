@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
+import { buildMoreCommandSections, type MoreCommandAction } from "./moreCommands";
 
 interface MoreScreenProps {
   pairingCode: string | null;
@@ -21,6 +22,30 @@ export function MoreScreen({
   onOpenComposer,
   onRunMergeAgent
 }: MoreScreenProps) {
+  const sections = buildMoreCommandSections({ pairingCode, selectedTask });
+
+  const handleAction = (action: MoreCommandAction) => {
+    switch (action.id) {
+      case "refresh":
+        onRefresh();
+        break;
+      case "pair":
+        onStartPairing();
+        break;
+      case "desktops":
+        onShowDesktops();
+        break;
+      case "compose":
+        onOpenComposer();
+        break;
+      case "merge-agent":
+        if (selectedTask) {
+          onRunMergeAgent(selectedTask.id);
+        }
+        break;
+    }
+  };
+
   return (
     <View style={styles.wrap}>
       <Text style={styles.heading}>More</Text>
@@ -28,49 +53,23 @@ export function MoreScreen({
         Command palette actions for desktop selection, refresh, pairing, and task management.
       </Text>
 
-      <View style={styles.commandCard}>
-        <Text style={styles.commandLabel}>Active pairing code</Text>
-        <Text style={styles.commandValue}>{pairingCode ?? "No pairing session"}</Text>
-      </View>
-
-      <Pressable style={styles.action} onPress={onRefresh}>
-        <Text style={styles.actionTitle}>Refresh Data</Text>
-        <Text style={styles.actionCopy}>Reload desktops, repos, and recent tasks.</Text>
-      </Pressable>
-
-      <Pressable style={styles.action} onPress={onStartPairing}>
-        <Text style={styles.actionTitle}>Start Pairing</Text>
-        <Text style={styles.actionCopy}>Generate a fresh LAN pairing code.</Text>
-      </Pressable>
-
-      <Pressable style={styles.action} onPress={onShowDesktops}>
-        <Text style={styles.actionTitle}>Switch Desktop</Text>
-        <Text style={styles.actionCopy}>Jump to the desktop picker.</Text>
-      </Pressable>
-
-      <Pressable style={styles.action} onPress={onOpenComposer}>
-        <Text style={styles.actionTitle}>Create Task</Text>
-        <Text style={styles.actionCopy}>Open the new-task composer.</Text>
-      </Pressable>
-
-      {selectedTask ? (
-        <Pressable style={styles.action} onPress={() => onRunMergeAgent(selectedTask.id)}>
-          <Text style={styles.actionTitle}>Run Merge Agent</Text>
-          <Text style={styles.actionCopy}>
-            Spawn the follow-up merge task for {selectedTask.title}.
-          </Text>
-        </Pressable>
-      ) : null}
-
-      <View style={styles.commandCard}>
-        <Text style={styles.commandLabel}>Selected task</Text>
-        <Text style={styles.commandValue}>
-          {selectedTask ? selectedTask.title : "No task selected"}
-        </Text>
-        <Text style={styles.commandHint}>
-          Stage advance and merge-agent commands will land once the mobile session API exposes them.
-        </Text>
-      </View>
+      {sections.map((section) => (
+        <View key={section.title} style={styles.commandCard}>
+          <Text style={styles.commandLabel}>{section.title}</Text>
+          <Text style={styles.commandValue}>{section.headline}</Text>
+          <Text style={styles.commandHint}>{section.detail}</Text>
+          {section.actions?.map((action) => (
+            <Pressable
+              key={action.id}
+              style={styles.action}
+              onPress={() => handleAction(action)}
+            >
+              <Text style={styles.actionTitle}>{action.title}</Text>
+              <Text style={styles.actionCopy}>{action.copy}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ))}
     </View>
   );
 }
@@ -94,7 +93,7 @@ const styles = StyleSheet.create({
     borderColor: "#22304D",
     borderRadius: 18,
     borderWidth: 1,
-    gap: 8,
+    gap: 10,
     padding: 16
   },
   commandLabel: {
@@ -116,10 +115,10 @@ const styles = StyleSheet.create({
   action: {
     backgroundColor: "#111B2C",
     borderColor: "#20304C",
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     gap: 6,
-    padding: 16
+    padding: 14
   },
   actionTitle: {
     color: "#F5F7FB",
