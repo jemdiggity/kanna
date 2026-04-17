@@ -120,6 +120,9 @@ function extractStages(obj: Record<string, unknown>): PipelineStage[] {
     if (typeof s["environment"] === "string") {
       stage.environment = s["environment"];
     }
+    if (typeof s["follow_task"] === "boolean") {
+      stage.follow_task = s["follow_task"];
+    }
 
     return stage;
   });
