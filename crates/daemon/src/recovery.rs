@@ -645,14 +645,14 @@ async fn recovery_worker(
     while let Some(message) = rx.recv().await {
         match message {
             WorkerMessage::FireAndForget(command) => {
-                if let Err(message) = send_command(&mut stdin, &mut lines, &command).await {
+                if let Err(message) = send_fire_and_forget(&mut stdin, &command).await {
                     log::warn!("recovery mirrored command failed: {}", message);
                     break;
                 }
             }
             WorkerMessage::Request { command, reply } => {
                 let is_shutdown = matches!(command, RecoveryCommand::FlushAndShutdown);
-                let result = send_command(&mut stdin, &mut lines, &command).await;
+                let result = send_request(&mut stdin, &mut lines, &command).await;
                 let should_break = is_shutdown || result.is_err();
                 let _ = reply.send(result);
                 if should_break {
@@ -668,9 +668,8 @@ async fn recovery_worker(
 
 async fn send_command(
     stdin: &mut tokio::process::ChildStdin,
-    lines: &mut Lines<BufReader<ChildStdout>>,
     command: &RecoveryCommand,
-) -> Result<RecoveryResponse, String> {
+) -> Result<(), String> {
     let mut line = serde_json::to_string(command)
         .map_err(|error| format!("failed to encode recovery command: {}", error))?;
     line.push('\n');
@@ -682,7 +681,22 @@ async fn send_command(
     stdin
         .flush()
         .await
-        .map_err(|error| format!("failed to flush recovery command: {}", error))?;
+        .map_err(|error| format!("failed to flush recovery command: {}", error))
+}
+
+async fn send_fire_and_forget(
+    stdin: &mut tokio::process::ChildStdin,
+    command: &RecoveryCommand,
+) -> Result<(), String> {
+    send_command(stdin, command).await
+}
+
+async fn send_request(
+    stdin: &mut tokio::process::ChildStdin,
+    lines: &mut Lines<BufReader<ChildStdout>>,
+    command: &RecoveryCommand,
+) -> Result<RecoveryResponse, String> {
+    send_command(stdin, command).await?;
 
     let Some(response_line) = lines
         .next_line()
