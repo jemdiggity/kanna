@@ -16,8 +16,8 @@ BAZEL_OUTPUT_BASE="$HOME/Library/Caches/bazel/_bazel_${USER_NAME}/${OUTPUT_BASE_
 mkdir -p "$BAZEL_OUTPUT_BASE/execroot/_main/bazel-out"
 printf 'artifact\n' > "$BAZEL_OUTPUT_BASE/execroot/_main/bazel-out/fake.txt"
 
-SHARED_DISK_CACHE="$HOME/Library/Caches/bazel-disk-cache"
-SHARED_REPO_CACHE="$HOME/Library/Caches/bazel-repository-cache"
+SHARED_DISK_CACHE="$HOME/Library/Caches/kanna-bazel/disk-cache"
+SHARED_REPO_CACHE="$HOME/Library/Caches/kanna-bazel/repository-cache"
 mkdir -p "$SHARED_DISK_CACHE" "$SHARED_REPO_CACHE"
 printf 'keep\n' > "$SHARED_DISK_CACHE/keep.txt"
 printf 'keep\n' > "$SHARED_REPO_CACHE/keep.txt"
