@@ -832,6 +832,103 @@ describe("kanna store task base branch integration", () => {
     });
   });
 
+  it("keeps selection on the next visible item when the destination stage sets follow_task to false", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "pr", transition: "manual", follow_task: false },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        created_at: "2026-04-14T00:02:00.000Z",
+        updated_at: "2026-04-14T00:02:00.000Z",
+      }),
+      mockState.makeItem({
+        id: "item-next",
+        branch: "task-next",
+        stage: "in progress",
+        created_at: "2026-04-14T00:01:00.000Z",
+        updated_at: "2026-04-14T00:01:00.000Z",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-source");
+    await flushStore();
+
+    await store.advanceStage("item-source");
+    await flushStore();
+
+    expect(store.selectedItemId).toBe("item-next");
+  });
+
+  it("still follows the spawned task when follow_task is omitted", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "review", transition: "manual" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+      }),
+      mockState.makeItem({
+        id: "item-next",
+        branch: "task-next",
+        stage: "in progress",
+        created_at: "2026-04-14T00:01:00.000Z",
+        updated_at: "2026-04-14T00:01:00.000Z",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-source");
+    await flushStore();
+
+    await store.advanceStage("item-source");
+
+    await vi.waitFor(() => {
+      expect(
+        mockState.pipelineItems.some((item) => item.id === store.selectedItemId && item.stage === "review"),
+      ).toBe(true);
+    });
+  });
+
+  it("leaves selection unset when follow_task is false and there is no next visible item", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "pr", transition: "manual", follow_task: false },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-source");
+    await flushStore();
+
+    await store.advanceStage("item-source");
+    await flushStore();
+
+    expect(store.selectedItemId).toBeNull();
+  });
+
   it("does not auto-select a created task when selectOnCreate is false", async () => {
     mockState.pipelineItems = [
       mockState.makeItem({

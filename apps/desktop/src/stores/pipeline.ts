@@ -21,6 +21,29 @@ export interface PipelineApi {
 }
 
 export function createPipelineApi(context: StoreContext): PipelineApi {
+  function computeNextVisibleItemId(currentItemId: string): string | null {
+    const sortedItems = requireService(context.services.sortedItemsForCurrentRepo, "sortedItemsForCurrentRepo").value;
+    const currentIndex = sortedItems.findIndex((candidate) => candidate.id === currentItemId);
+    if (currentIndex === -1) return null;
+
+    const remainingItems = sortedItems.filter((candidate) => candidate.id !== currentItemId);
+    const nextIndex = currentIndex >= remainingItems.length ? remainingItems.length - 1 : currentIndex;
+    return remainingItems[nextIndex]?.id ?? null;
+  }
+
+  async function restoreStageAdvanceSelection(itemId: string | null) {
+    if (itemId) {
+      const item = context.state.items.value.find((candidate) => candidate.id === itemId);
+      const isItemHidden = requireService(context.services.isItemHidden, "isItemHidden");
+      if (item && !isItemHidden(item) && item.repo_id === context.state.selectedRepoId.value) {
+        await requireService(context.services.selectItem, "selectItem")(itemId);
+        return;
+      }
+    }
+
+    context.state.selectedItemId.value = null;
+  }
+
   async function loadPipeline(repoPath: string, pipelineName: string): Promise<PipelineDefinition> {
     const cacheKey = `${repoPath}::${pipelineName}`;
     const cached = context.state.pipelineCache.get(cacheKey);
@@ -112,6 +135,9 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       return;
     }
 
+    const shouldFollowTask = nextStage.follow_task !== false;
+    const preservedSelectionId = shouldFollowTask ? null : computeNextVisibleItemId(item.id);
+
     let stagePrompt = "";
     let agentOpts: Record<string, unknown> = { agentProvider: item.agent_provider };
 
@@ -153,8 +179,13 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       baseBranch: item.branch,
       pipelineName: item.pipeline,
       stage: nextStage.name,
+      selectOnCreate: shouldFollowTask,
       ...agentOpts,
     });
+
+    if (!shouldFollowTask) {
+      await restoreStageAdvanceSelection(preservedSelectionId);
+    }
   }
 
   function parseTaskPortEnv(portEnv: string | null): Record<string, string> | undefined {
