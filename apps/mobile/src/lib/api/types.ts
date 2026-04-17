@@ -58,4 +58,5 @@ export interface TaskSummary {
   repoId: string;
   title: string;
   stage: string | null;
+  snippet?: string | null;
 }

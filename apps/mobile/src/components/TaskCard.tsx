@@ -18,9 +18,11 @@ export function TaskCard({ task, onPress }: TaskCardProps) {
       </View>
       <Text style={styles.meta}>Repo {task.repoId}</Text>
       <Text style={styles.preview}>
-        {task.stage === "pr"
-          ? "Ready for review from mobile."
-          : "Latest desktop activity is available in the task detail view."}
+        {task.snippet?.trim()
+          ? task.snippet
+          : task.stage === "pr"
+            ? "Ready for review from mobile."
+            : "Latest desktop activity is available in the task detail view."}
       </Text>
     </Pressable>
   );
