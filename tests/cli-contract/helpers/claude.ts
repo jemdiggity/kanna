@@ -13,6 +13,8 @@ export interface ClaudeResult {
 const CLAUDE_UNAVAILABLE_PATTERNS = [
   "does not have access to Claude",
   "Please login again or contact your administrator.",
+  "Failed to authenticate.",
+  "Invalid authentication credentials",
 ];
 
 async function pathExists(path: string): Promise<boolean> {
@@ -131,10 +133,18 @@ export function isClaudeUnavailable(result: ClaudeResult): boolean {
   }
 
   const output = resultLine.result;
+  const apiErrorStatus = resultLine.api_error_status;
+  const errorCode = resultLine.error;
   return (
     resultLine.is_error === true &&
-    typeof output === "string" &&
-    CLAUDE_UNAVAILABLE_PATTERNS.some((pattern) => output.includes(pattern))
+    (
+      apiErrorStatus === 401 ||
+      errorCode === "authentication_failed" ||
+      (
+        typeof output === "string" &&
+        CLAUDE_UNAVAILABLE_PATTERNS.some((pattern) => output.includes(pattern))
+      )
+    )
   );
 }
 

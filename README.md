@@ -85,11 +85,12 @@ Release outputs land in `bazel-bin/release/`:
 - `Kanna-arm64-notarized.dmg`
 - `Kanna-x86_64-notarized.dmg`
 
-To reuse Bazel work across worktrees without sharing `output_base`, configure shared caches in `~/.bazelrc`:
+The checked-in `.bazelrc` enables shared caches so Bazel work is reused across
+worktrees without sharing `output_base`:
 
 ```bazelrc
-build --disk_cache=/Users/<you>/Library/Caches/bazel-disk-cache
-build --repository_cache=/Users/<you>/Library/Caches/bazel-repository-cache
+build --disk_cache=~/Library/Caches/kanna-bazel/disk-cache
+build --repository_cache=~/Library/Caches/kanna-bazel/repository-cache
 ```
 
 That shares cacheable Bazel action results and downloaded external repositories across worktrees. It does not share the live local output tree (`output_base`, `bazel-out`, or `bazel-bin`), which remains isolated per worktree.

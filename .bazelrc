@@ -1,5 +1,8 @@
 try-import %workspace%/.bazelrc.user
 
+build --disk_cache=~/Library/Caches/kanna-bazel/disk-cache
+build --repository_cache=~/Library/Caches/kanna-bazel/repository-cache
+
 build --action_env=KANNA_UPDATER_PUBKEY
 build:notarize --action_env=APPLE_ID
 build:notarize --action_env=APPLE_PASSWORD

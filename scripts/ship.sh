@@ -18,7 +18,6 @@ trap cleanup ERR
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT/.build"
-HOME_BAZELRC="${HOME}/.bazelrc"
 
 read_current_version() {
     tr -d '[:space:]' < "$ROOT/VERSION"
@@ -208,14 +207,6 @@ process.stdout.write(
 EOF
 }
 
-bazel_cache_configured() {
-    if [[ ! -f "$HOME_BAZELRC" ]]; then
-        return 1
-    fi
-
-    grep -Eq -- '--disk_cache=|--repository_cache=' "$HOME_BAZELRC"
-}
-
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -377,13 +368,6 @@ if [[ "$RELEASE" = true && ${#ARCH_LABELS[@]} -ne 2 ]]; then
 fi
 
 echo "    Prerequisites OK"
-
-if ! bazel_cache_configured; then
-    echo "    Note: shared Bazel caches are not configured in $HOME_BAZELRC"
-    echo "          For faster, more space-efficient release builds across worktrees, add:"
-    echo "          build --disk_cache=$HOME/Library/Caches/bazel-disk-cache"
-    echo "          build --repository_cache=$HOME/Library/Caches/bazel-repository-cache"
-fi
 
 # --- Bump version ---
 
