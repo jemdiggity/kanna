@@ -80,8 +80,29 @@ impl TransferSidecarClient {
         Ok(peers)
     }
 
-    pub async fn start_peer_pairing(&mut self, _peer_id: String) -> Result<Value, String> {
-        Err("peer pairing is not implemented for local transfer yet".to_string())
+    pub async fn start_peer_pairing(&mut self, peer_id: String) -> Result<Value, String> {
+        let request_id = self.next_request_id("pair");
+        let response = self
+            .send_request(
+                json!({
+                    "type": "start_pairing",
+                    "request_id": request_id,
+                    "target_peer_id": peer_id,
+                }),
+                &request_id,
+            )
+            .await?;
+
+        Ok(json!({
+            "peer": response
+                .get("peer")
+                .cloned()
+                .ok_or_else(|| "transfer sidecar start_pairing response missing peer".to_string())?,
+            "verificationCode": required_string(
+                &response,
+                &["verification_code", "verificationCode"],
+            )?,
+        }))
     }
 
     pub async fn prepare_outgoing_transfer(&mut self, payload: Value) -> Result<Value, String> {
@@ -328,6 +349,11 @@ fn spawn_reader(
 
             if value.get("type").and_then(Value::as_str) == Some("incoming_transfer_request") {
                 let _ = app.emit("transfer-request", &value);
+                continue;
+            }
+
+            if value.get("type").and_then(Value::as_str) == Some("pairing_completed") {
+                let _ = app.emit("pairing-completed", &value);
                 continue;
             }
 

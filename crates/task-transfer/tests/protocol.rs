@@ -58,6 +58,19 @@ fn outgoing_transfer_committed_event_roundtrips() {
 }
 
 #[test]
+fn pairing_completed_event_roundtrips() {
+    let event = SidecarEvent::PairingCompleted {
+        peer_id: "peer-1".into(),
+        display_name: "Primary".into(),
+        verification_code: "123456".into(),
+    };
+
+    let json = serde_json::to_string(&event).unwrap();
+    let parsed: SidecarEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, event);
+}
+
+#[test]
 fn control_and_peer_message_roundtrips_with_request_ids() {
     let control_response = ControlResponse::PrepareTransferPreflight {
         request_id: "req-2".into(),
@@ -73,7 +86,7 @@ fn control_and_peer_message_roundtrips_with_request_ids() {
     let peer_request = PeerRequest::SubmitTransferPayload {
         request_id: "req-3".into(),
         transfer_id: "transfer-3".into(),
-        payload: json!({ "task": { "source_task_id": "task-source" } }),
+        sealed_payload: "sealed-submit".into(),
     };
 
     let peer_json = serde_json::to_string(&peer_request).unwrap();
@@ -121,15 +134,14 @@ fn transfer_artifact_control_messages_roundtrip() {
     assert_roundtrip(PeerRequest::FetchTransferArtifact {
         request_id: "req-peer-fetch".into(),
         transfer_id: "transfer-1".into(),
-        artifact_id: "artifact-1".into(),
+        requester_peer_id: "peer-destination".into(),
+        sealed_payload: "sealed-fetch".into(),
     });
 
     assert_roundtrip(PeerResponse::FetchTransferArtifact {
         request_id: "req-peer-fetch".into(),
         transfer_id: "transfer-1".into(),
-        artifact_id: "artifact-1".into(),
-        filename: "transfer-1.bundle".into(),
-        payload_b64: "YnVuZGxl".into(),
+        sealed_payload: "sealed-response".into(),
     });
 }
 
@@ -170,7 +182,7 @@ fn wire_messages_use_expected_json_shapes() {
     let peer_request = PeerRequest::SubmitTransferPayload {
         request_id: "req-3".into(),
         transfer_id: "transfer-3".into(),
-        payload: json!({ "task": { "source_task_id": "task-source" } }),
+        sealed_payload: "sealed-submit".into(),
     };
     assert_eq!(
         serde_json::to_value(&peer_request).unwrap(),
@@ -178,7 +190,7 @@ fn wire_messages_use_expected_json_shapes() {
             "type": "submit_transfer_payload",
             "request_id": "req-3",
             "transfer_id": "transfer-3",
-            "payload": { "task": { "source_task_id": "task-source" } },
+            "sealed_payload": "sealed-submit",
         })
     );
 
@@ -253,11 +265,15 @@ fn remaining_protocol_variants_use_expected_json_shapes() {
 
     let list_peers_response = ControlResponse::ListPeers {
         request_id: "req-7".into(),
-        peers: vec![kanna_task_transfer::protocol::PeerRegistryEntry {
+        peers: vec![kanna_task_transfer::protocol::DiscoveredPeer {
             peer_id: "peer-a".into(),
             display_name: "Alpha".into(),
             endpoint: "127.0.0.1:4455".into(),
             pid: 1234,
+            public_key: "pub-a".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
+            trusted: true,
         }],
     };
     assert_eq!(
@@ -270,7 +286,44 @@ fn remaining_protocol_variants_use_expected_json_shapes() {
                 "display_name": "Alpha",
                 "endpoint": "127.0.0.1:4455",
                 "pid": 1234,
+                "public_key": "pub-a",
+                "protocol_version": 1,
+                "accepting_transfers": true,
+                "trusted": true,
             }],
+        })
+    );
+
+    let pairing_response = ControlResponse::StartPairing {
+        request_id: "req-7b".into(),
+        peer: kanna_task_transfer::protocol::DiscoveredPeer {
+            peer_id: "peer-b".into(),
+            display_name: "Beta".into(),
+            endpoint: "127.0.0.1:4456".into(),
+            pid: 5678,
+            public_key: "pub-b".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
+            trusted: true,
+        },
+        verification_code: "123456".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&pairing_response).unwrap(),
+        json!({
+            "type": "start_pairing",
+            "request_id": "req-7b",
+            "peer": {
+                "peer_id": "peer-b",
+                "display_name": "Beta",
+                "endpoint": "127.0.0.1:4456",
+                "pid": 5678,
+                "public_key": "pub-b",
+                "protocol_version": 1,
+                "accepting_transfers": true,
+                "trusted": true,
+            },
+            "verification_code": "123456",
         })
     );
 
@@ -302,16 +355,16 @@ fn remaining_protocol_variants_use_expected_json_shapes() {
 
     let peer_prepare = PeerRequest::PrepareTransfer {
         request_id: "req-10".into(),
-        source_task_id: "task-source".into(),
         source_peer_id: "peer-source".into(),
+        sealed_payload: "sealed-prepare".into(),
     };
     assert_eq!(
         serde_json::to_value(&peer_prepare).unwrap(),
         json!({
             "type": "prepare_transfer",
             "request_id": "req-10",
-            "source_task_id": "task-source",
             "source_peer_id": "peer-source",
+            "sealed_payload": "sealed-prepare",
         })
     );
 
@@ -335,8 +388,8 @@ fn remaining_protocol_variants_use_expected_json_shapes() {
     let peer_ack = PeerRequest::ImportCommitted {
         request_id: "req-12".into(),
         transfer_id: "transfer-12".into(),
-        source_task_id: "task-source".into(),
-        destination_local_task_id: "task-dest".into(),
+        requester_peer_id: "peer-destination".into(),
+        sealed_payload: "sealed-ack".into(),
     };
     assert_eq!(
         serde_json::to_value(&peer_ack).unwrap(),
@@ -344,15 +397,16 @@ fn remaining_protocol_variants_use_expected_json_shapes() {
             "type": "import_committed",
             "request_id": "req-12",
             "transfer_id": "transfer-12",
-            "source_task_id": "task-source",
-            "destination_local_task_id": "task-dest",
+            "requester_peer_id": "peer-destination",
+            "sealed_payload": "sealed-ack",
         })
     );
 
     let peer_fetch_artifact = PeerRequest::FetchTransferArtifact {
         request_id: "req-13".into(),
         transfer_id: "transfer-13".into(),
-        artifact_id: "artifact-13".into(),
+        requester_peer_id: "peer-destination".into(),
+        sealed_payload: "sealed-fetch".into(),
     };
     assert_eq!(
         serde_json::to_value(&peer_fetch_artifact).unwrap(),
@@ -360,7 +414,8 @@ fn remaining_protocol_variants_use_expected_json_shapes() {
             "type": "fetch_transfer_artifact",
             "request_id": "req-13",
             "transfer_id": "transfer-13",
-            "artifact_id": "artifact-13",
+            "requester_peer_id": "peer-destination",
+            "sealed_payload": "sealed-fetch",
         })
     );
 
@@ -379,12 +434,25 @@ fn remaining_protocol_variants_use_expected_json_shapes() {
         })
     );
 
+    let pairing_event = SidecarEvent::PairingCompleted {
+        peer_id: "peer-b".into(),
+        display_name: "Beta".into(),
+        verification_code: "123456".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&pairing_event).unwrap(),
+        json!({
+            "type": "pairing_completed",
+            "peer_id": "peer-b",
+            "display_name": "Beta",
+            "verification_code": "123456",
+        })
+    );
+
     let peer_fetch_artifact_response = PeerResponse::FetchTransferArtifact {
         request_id: "req-14".into(),
         transfer_id: "transfer-13".into(),
-        artifact_id: "artifact-13".into(),
-        filename: "transfer-13.bundle".into(),
-        payload_b64: "YnVuZGxl".into(),
+        sealed_payload: "sealed-response".into(),
     };
     assert_eq!(
         serde_json::to_value(&peer_fetch_artifact_response).unwrap(),
@@ -392,9 +460,7 @@ fn remaining_protocol_variants_use_expected_json_shapes() {
             "type": "fetch_transfer_artifact",
             "request_id": "req-14",
             "transfer_id": "transfer-13",
-            "artifact_id": "artifact-13",
-            "filename": "transfer-13.bundle",
-            "payload_b64": "YnVuZGxl",
+            "sealed_payload": "sealed-response",
         })
     );
 

@@ -26,6 +26,7 @@ pub enum RegistryError {
     InvalidPeerId,
 }
 
+#[derive(Clone)]
 pub struct PeerRegistry {
     root: PathBuf,
 }

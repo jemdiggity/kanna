@@ -13,6 +13,9 @@ fn registry_lists_live_peers_and_filters_self() {
             display_name: "Primary".into(),
             endpoint: "127.0.0.1:4455".into(),
             pid: std::process::id(),
+            public_key: "pub-self".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap();
     registry
@@ -21,6 +24,9 @@ fn registry_lists_live_peers_and_filters_self() {
             display_name: "Secondary".into(),
             endpoint: "127.0.0.1:4456".into(),
             pid: std::process::id(),
+            public_key: "pub-other".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap();
 
@@ -40,6 +46,9 @@ fn registry_prunes_zero_pid_entries() {
             display_name: "Live".into(),
             endpoint: "127.0.0.1:4457".into(),
             pid: std::process::id(),
+            public_key: "pub-live".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap();
     registry
@@ -48,6 +57,9 @@ fn registry_prunes_zero_pid_entries() {
             display_name: "Stale".into(),
             endpoint: "127.0.0.1:4458".into(),
             pid: 0,
+            public_key: "pub-stale".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap();
 
@@ -67,6 +79,9 @@ fn registry_skips_corrupt_entries_without_failing_the_directory() {
             display_name: "Good".into(),
             endpoint: "127.0.0.1:4459".into(),
             pid: std::process::id(),
+            public_key: "pub-good".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap();
 
@@ -89,6 +104,9 @@ fn registry_prunes_stale_nonzero_pid_entries() {
             display_name: "Live".into(),
             endpoint: "127.0.0.1:4460".into(),
             pid: std::process::id(),
+            public_key: "pub-live".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap();
     registry
@@ -97,6 +115,9 @@ fn registry_prunes_stale_nonzero_pid_entries() {
             display_name: "Stale".into(),
             endpoint: "127.0.0.1:4461".into(),
             pid: 999_999,
+            public_key: "pub-stale".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap();
 
@@ -121,6 +142,9 @@ fn registry_rejects_path_like_peer_ids() {
             display_name: "Outside".into(),
             endpoint: "127.0.0.1:4462".into(),
             pid: std::process::id(),
+            public_key: "pub-outside".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap_err();
     assert!(matches!(error, RegistryError::InvalidPeerId));
@@ -133,6 +157,9 @@ fn registry_rejects_path_like_peer_ids() {
             display_name: "Nested".into(),
             endpoint: "127.0.0.1:4463".into(),
             pid: std::process::id(),
+            public_key: "pub-nested".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap_err();
     assert!(matches!(error, RegistryError::InvalidPeerId));
@@ -147,7 +174,7 @@ fn registry_skips_and_prunes_invalid_peer_ids_on_read() {
     std::fs::write(
         temp.path().join("bad-entry.json"),
         format!(
-            r#"{{"peer_id":"../outside","display_name":"Bad","endpoint":"127.0.0.1:4464","pid":{}}}"#,
+            r#"{{"peer_id":"../outside","display_name":"Bad","endpoint":"127.0.0.1:4464","pid":{},"public_key":"pub-bad","protocol_version":1,"accepting_transfers":true}}"#,
             std::process::id()
         ),
     )
@@ -158,6 +185,9 @@ fn registry_skips_and_prunes_invalid_peer_ids_on_read() {
             display_name: "Good".into(),
             endpoint: "127.0.0.1:4465".into(),
             pid: std::process::id(),
+            public_key: "pub-good".into(),
+            protocol_version: 1,
+            accepting_transfers: true,
         })
         .unwrap();
 

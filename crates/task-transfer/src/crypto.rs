@@ -33,6 +33,8 @@ pub enum CryptoError {
     InvalidCiphertextLength(usize),
     #[error("invalid public key length: expected 32 bytes, got {0}")]
     InvalidPublicKeyLength(usize),
+    #[error("invalid secret key length: expected 32 bytes, got {0}")]
+    InvalidSecretKeyLength(usize),
     #[error("shared key derivation failed")]
     KeyDerivation,
     #[error("payload encryption failed")]
@@ -54,6 +56,24 @@ impl TransferIdentity {
         let secret = generate_secret();
         let public_key = PublicKey::from(&secret);
         Self { secret, public_key }
+    }
+
+    pub fn from_secret_bytes(secret_bytes: [u8; 32]) -> Self {
+        let secret = StaticSecret::from(secret_bytes);
+        let public_key = PublicKey::from(&secret);
+        Self { secret, public_key }
+    }
+
+    pub fn secret_key_string(&self) -> String {
+        URL_SAFE_NO_PAD.encode(self.secret.to_bytes())
+    }
+
+    pub fn from_secret_string(encoded: &str) -> Result<Self, CryptoError> {
+        let secret_bytes = URL_SAFE_NO_PAD.decode(encoded)?;
+        let secret_array: [u8; 32] = secret_bytes
+            .try_into()
+            .map_err(|bytes: Vec<u8>| CryptoError::InvalidSecretKeyLength(bytes.len()))?;
+        Ok(Self::from_secret_bytes(secret_array))
     }
 }
 

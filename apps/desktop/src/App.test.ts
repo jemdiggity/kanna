@@ -57,6 +57,7 @@ const store = {
   hideRepo: vi.fn(async () => {}),
   spawnPtySession: vi.fn(async () => {}),
 };
+const toastInfoMock = vi.fn();
 
 let capturedKeyboardActions: KeyboardActions | null = null;
 
@@ -160,6 +161,7 @@ vi.mock("./composables/useAppUpdate", () => ({
 vi.mock("./composables/useToast", () => ({
   useToast: () => ({
     error: vi.fn(),
+    info: toastInfoMock,
     warning: vi.fn(),
   }),
 }));
@@ -320,6 +322,7 @@ describe("App", () => {
     dbSelectMock.mockReset();
     dbSelectMock.mockResolvedValue([]);
     invokeMock.mockClear();
+    toastInfoMock.mockClear();
     appUpdateStartMock.mockClear();
     appUpdateMock.dispose.mockClear();
     appUpdateMock.dismiss.mockClear();
@@ -648,6 +651,7 @@ describe("App", () => {
   it("forwards outgoing transfer commit events to the store", async () => {
     await mountApp(SidebarWithRepoStub);
     await flushPromises();
+    await flushPromises();
 
     const handler = listenHandlers.get("outgoing-transfer-committed");
     expect(handler).toBeTypeOf("function");
@@ -660,6 +664,25 @@ describe("App", () => {
       sourceTaskId: "task-source",
       destinationLocalTaskId: "task-imported",
     });
+  });
+
+  it("shows the pairing verification code when another machine pairs with this one", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    const handler = listenHandlers.get("pairing-completed");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({
+      type: "pairing_completed",
+      peer_id: "peer-1",
+      display_name: "Peer 1",
+      verification_code: "654321",
+    });
+    await flushPromises();
+
+    expect(toastInfoMock).toHaveBeenCalledWith(expect.stringContaining("654321"));
+    wrapper.unmount();
   });
 
   it("dismiss closes the entire file flow after preview-local dismiss is exhausted", async () => {
