@@ -38,21 +38,27 @@ async fn recovery_end_session_removes_snapshot_artifact() {
         .expect("test recovery manager should start");
 
     recovery
-        .start_session("session-2", 80, 24, false)
+        .seed_snapshot(
+            "session-2",
+            &SeededRecoverySnapshot {
+                serialized: "bye\r\n".to_string(),
+                cols: 80,
+                rows: 24,
+                cursor_row: 0,
+                cursor_col: 0,
+                cursor_visible: true,
+            },
+        )
+        .expect("should seed persisted recovery snapshot");
+
+    recovery
+        .start_session("session-2", 80, 24, true)
         .await
         .expect("start_session should succeed");
     recovery.write_output("session-2", b"bye\r\n", 1).await;
 
     let snapshot_path = recovery.snapshot_file_for_test("session-2");
-    let mut persisted = false;
-    for _ in 0..60 {
-        if snapshot_path.exists() {
-            persisted = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(persisted, "snapshot file should be persisted");
+    assert!(snapshot_path.exists(), "snapshot file should be seeded");
 
     recovery.end_session("session-2").await;
 

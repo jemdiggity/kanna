@@ -1,5 +1,6 @@
 use claude_agent_sdk::{PermissionMode, Session, SessionOptions};
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
@@ -26,6 +27,7 @@ pub async fn create_agent_session(
     session_id: String,
     cwd: String,
     prompt: String,
+    env: Option<HashMap<String, String>>,
     system_prompt: Option<String>,
     model: Option<String>,
     allowed_tools: Option<Vec<String>>,
@@ -34,9 +36,19 @@ pub async fn create_agent_session(
     max_budget_usd: Option<f64>,
     permission_mode: Option<String>,
 ) -> Result<(), String> {
+    let mut explicit_env = HashMap::from([("KANNA_WORKTREE".to_string(), "1".to_string())]);
+    if let Some(env) = env {
+        explicit_env.extend(env);
+    }
+    let child_env = crate::subprocess_env::build_child_env(explicit_env);
     let mut builder = SessionOptions::builder()
         .cwd(&cwd)
+        .inherit_parent_env(false)
         .permission_mode(parse_permission_mode(permission_mode.as_deref()));
+
+    for (key, value) in child_env {
+        builder = builder.env(key, value);
+    }
 
     if let Some(sp) = &system_prompt {
         builder = builder.system_prompt(sp);
@@ -194,7 +206,9 @@ fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
 #[tauri::command]
 pub async fn get_claude_usage() -> Result<String, String> {
     tokio::task::spawn_blocking(|| {
-        let output = std::process::Command::new("bash")
+        let mut command = std::process::Command::new("bash");
+        crate::subprocess_env::apply_child_env(&mut command, HashMap::<String, String>::new());
+        let output = command
             .args(["-lc", "echo '/usage' | claude"])
             .stdin(std::process::Stdio::null())
             .output()

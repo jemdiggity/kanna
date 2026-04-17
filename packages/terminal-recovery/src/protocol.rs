@@ -49,6 +49,15 @@ pub enum RecoveryCommand {
     FlushAndShutdown,
 }
 
+impl RecoveryCommand {
+    pub fn expects_response(&self) -> bool {
+        matches!(
+            self,
+            Self::StartSession { .. } | Self::GetSnapshot { .. } | Self::FlushAndShutdown
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum RecoveryResponse {

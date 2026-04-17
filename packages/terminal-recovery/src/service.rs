@@ -19,7 +19,7 @@ struct TrackedSession {
     dirty_since: Option<u64>,
 }
 
-const DEFAULT_PERSIST_DEBOUNCE_MS: u64 = 2_500;
+const DEFAULT_PERSIST_DEBOUNCE_MS: u64 = 5 * 60 * 1_000;
 
 impl RecoveryService {
     pub fn new(snapshot_store: SnapshotStore) -> Self {
@@ -81,17 +81,22 @@ impl RecoveryService {
                 continue;
             }
 
-            let response = match crate::protocol::parse_command(&line) {
-                Ok(command) => self.handle_command(command),
-                Err(message) => RecoveryResponse::Error { message },
+            let (expects_response, response) = match crate::protocol::parse_command(&line) {
+                Ok(command) => {
+                    let expects_response = command.expects_response();
+                    (expects_response, self.handle_command(command))
+                }
+                Err(message) => (true, RecoveryResponse::Error { message }),
             };
 
-            output.write_all(
-                crate::protocol::format_response(&response)
-                    .map_err(std::io::Error::other)?
-                    .as_bytes(),
-            )?;
-            output.flush()?;
+            if expects_response || matches!(response, RecoveryResponse::Error { .. }) {
+                output.write_all(
+                    crate::protocol::format_response(&response)
+                        .map_err(std::io::Error::other)?
+                        .as_bytes(),
+                )?;
+                output.flush()?;
+            }
 
             if self.stopping {
                 break;

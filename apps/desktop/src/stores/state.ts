@@ -70,6 +70,7 @@ export interface CreateItemOptions {
   model?: string;
   permissionMode?: string;
   allowedTools?: string[];
+  selectOnCreate?: boolean;
 }
 
 export interface StoreState {

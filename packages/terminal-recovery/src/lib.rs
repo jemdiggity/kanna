@@ -1,3 +1,4 @@
+pub mod bench;
 pub mod logging;
 pub mod protocol;
 pub mod service;

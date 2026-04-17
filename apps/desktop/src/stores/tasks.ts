@@ -39,11 +39,13 @@ import { getTaskCloseBehavior } from "./taskCloseBehavior";
 import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import { getCreateWorktreeStartPoint, resolveInitialBaseRef } from "./taskBaseBranch";
+import { buildTaskRuntimeEnv } from "./kannaCliEnv";
 import {
   reportCloseSessionError,
   reportPrewarmSessionError,
 } from "./kannaCleanup";
 import { isTeardownStage, TEARDOWN_STAGE } from "./taskStages";
+import { resolveDbName } from "./db";
 import { readRepoConfig, requireService, type CreateItemOptions, type StoreContext, type WorktreeBootstrapResult } from "./state";
 
 export interface TasksApi {
@@ -313,10 +315,19 @@ export function createTasksApi(
         }
 
         if (agentType !== "pty") {
+          const sdkEnv = buildTaskRuntimeEnv({
+            taskId: id,
+            dbName: await resolveDbName(),
+            appDataDir: await invoke<string>("get_app_data_dir"),
+            socketPath: await invoke<string>("get_pipeline_socket_path"),
+            portEnv,
+            kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
+          });
           await invoke("create_agent_session", {
             sessionId: id,
             cwd: worktreePath,
             prompt,
+            env: sdkEnv,
             systemPrompt: null,
             permissionMode: opts?.customTask?.permissionMode ?? null,
             model: opts?.customTask?.model ?? null,
@@ -371,8 +382,10 @@ export function createTasksApi(
       console.log(`[perf:setup] spawnSession: ${(performance.now() - s1).toFixed(1)}ms`);
 
       s1 = performance.now();
-      await requireService(context.services.selectItem, "selectItem")(id);
-      console.log(`[perf:setup] selectItem: ${(performance.now() - s1).toFixed(1)}ms`);
+      if (opts?.selectOnCreate !== false) {
+        await requireService(context.services.selectItem, "selectItem")(id);
+        console.log(`[perf:setup] selectItem: ${(performance.now() - s1).toFixed(1)}ms`);
+      }
       console.log(`[perf:setup] TOTAL (background): ${(performance.now() - s0).toFixed(1)}ms`);
     } finally {
       context.state.pendingSetupIds.value = context.state.pendingSetupIds.value.filter((pendingId) => pendingId !== id);

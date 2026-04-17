@@ -4,7 +4,7 @@ import { invoke } from "../invoke";
 import { isTauri } from "../tauri-mock";
 import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
 import { resolveDbName } from "./db";
-import { buildKannaCliEnv } from "./kannaCliEnv";
+import { buildTaskRuntimeEnv } from "./kannaCliEnv";
 import { getAgentPermissionFlags } from "./agent-permissions";
 import {
   requireResolvedAgentProvider,
@@ -239,11 +239,10 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
       }
     }
 
-    env.KANNA_WORKTREE = "1";
-
+    let resolvedKannaCliPath: string | null = null;
     try {
       kannaCliPath = await invoke<string>("which_binary", { name: "kanna-cli" });
-      env.KANNA_CLI_PATH = kannaCliPath;
+      resolvedKannaCliPath = kannaCliPath;
     } catch (error) {
       console.error("[store] failed to resolve kanna-cli path:", error);
     }
@@ -254,11 +253,12 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
         resolveDbName(),
         invoke<string>("get_pipeline_socket_path"),
       ]);
-      Object.assign(env, buildKannaCliEnv({
+      Object.assign(env, buildTaskRuntimeEnv({
         taskId: sessionId,
         dbName,
         appDataDir,
         socketPath,
+        kannaCliPath: resolvedKannaCliPath,
       }));
     } catch (error) {
       console.error("[store] failed to resolve kanna-cli env:", error);

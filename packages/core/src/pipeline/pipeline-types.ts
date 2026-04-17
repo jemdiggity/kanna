@@ -11,6 +11,7 @@ export interface PipelineStage {
   agent_provider?: string;
   environment?: string;
   transition: "manual" | "auto";
+  follow_task?: boolean;
 }
 
 export interface PipelineDefinition {

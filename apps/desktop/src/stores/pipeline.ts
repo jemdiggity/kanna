@@ -5,10 +5,12 @@ import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { AgentDefinition, PipelineDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { clearPipelineItemStageResult, getRepo } from "@kanna/db";
 import { invoke } from "../invoke";
+import { buildTaskRuntimeEnv } from "./kannaCliEnv";
 import {
   getPreferredAgentProviders,
   resolveAgentProvider,
 } from "./agent-provider";
+import { resolveDbName } from "./db";
 import { requireService, type StoreContext } from "./state";
 
 export interface PipelineApi {
@@ -19,6 +21,29 @@ export interface PipelineApi {
 }
 
 export function createPipelineApi(context: StoreContext): PipelineApi {
+  function computeNextVisibleItemId(currentItemId: string): string | null {
+    const sortedItems = requireService(context.services.sortedItemsForCurrentRepo, "sortedItemsForCurrentRepo").value;
+    const currentIndex = sortedItems.findIndex((candidate) => candidate.id === currentItemId);
+    if (currentIndex === -1) return null;
+
+    const remainingItems = sortedItems.filter((candidate) => candidate.id !== currentItemId);
+    const nextIndex = currentIndex >= remainingItems.length ? remainingItems.length - 1 : currentIndex;
+    return remainingItems[nextIndex]?.id ?? null;
+  }
+
+  async function restoreStageAdvanceSelection(itemId: string | null) {
+    if (itemId) {
+      const item = context.state.items.value.find((candidate) => candidate.id === itemId);
+      const isItemHidden = requireService(context.services.isItemHidden, "isItemHidden");
+      if (item && !isItemHidden(item) && item.repo_id === context.state.selectedRepoId.value) {
+        await requireService(context.services.selectItem, "selectItem")(itemId);
+        return;
+      }
+    }
+
+    context.state.selectedItemId.value = null;
+  }
+
   async function loadPipeline(repoPath: string, pipelineName: string): Promise<PipelineDefinition> {
     const cacheKey = `${repoPath}::${pipelineName}`;
     const cached = context.state.pipelineCache.get(cacheKey);
@@ -110,6 +135,9 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       return;
     }
 
+    const shouldFollowTask = nextStage.follow_task !== false;
+    const preservedSelectionId = shouldFollowTask ? null : computeNextVisibleItemId(item.id);
+
     let stagePrompt = "";
     let agentOpts: Record<string, unknown> = { agentProvider: item.agent_provider };
 
@@ -151,8 +179,18 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       baseBranch: item.branch,
       pipelineName: item.pipeline,
       stage: nextStage.name,
+      selectOnCreate: shouldFollowTask,
       ...agentOpts,
     });
+
+    if (!shouldFollowTask) {
+      await restoreStageAdvanceSelection(preservedSelectionId);
+    }
+  }
+
+  function parseTaskPortEnv(portEnv: string | null): Record<string, string> | undefined {
+    if (!portEnv) return undefined;
+    return JSON.parse(portEnv) as Record<string, string>;
   }
 
   async function rerunStage(taskId: string): Promise<void> {
@@ -186,8 +224,17 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       if (env?.setup?.length) {
         const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
         try {
+          const portEnv = parseTaskPortEnv(item.port_env);
+          const scriptEnv = buildTaskRuntimeEnv({
+            taskId,
+            dbName: await resolveDbName(),
+            appDataDir: await invoke<string>("get_app_data_dir"),
+            socketPath: await invoke<string>("get_pipeline_socket_path"),
+            portEnv,
+            kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
+          });
           for (const script of env.setup) {
-            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
+            await invoke("run_script", { script, cwd: worktreePath, env: scriptEnv });
           }
         } catch (error) {
           console.error("[store] rerunStage: setup script failed:", error);
