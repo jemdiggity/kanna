@@ -160,10 +160,29 @@ export KANNA_DB_NAME="$RESOLVED_DB_NAME"
 export KANNA_DB_PATH="$RESOLVED_DB_PATH"
 export KANNA_DAEMON_DIR="$RESOLVED_DAEMON_DIR"
 
+detect_mobile_server_host() {
+  if [ -n "${KANNA_MOBILE_SERVER_HOST:-}" ]; then
+    printf '%s\n' "$KANNA_MOBILE_SERVER_HOST"
+    return
+  fi
+
+  if [ -x /usr/sbin/ipconfig ]; then
+    local detected_ip
+    detected_ip="$(/usr/sbin/ipconfig getifaddr en0 2>/dev/null || true)"
+    if [ -n "$detected_ip" ]; then
+      printf '%s\n' "$detected_ip"
+      return
+    fi
+  fi
+
+  printf '127.0.0.1\n'
+}
+
 start_mobile() {
   local MOBILE_PORT
   MOBILE_PORT="$(read_port KANNA_MOBILE_PORT 8081)"
   local MOBILE_CWD="$ROOT/apps/mobile"
+  local MOBILE_SERVER_URL="${KANNA_MOBILE_SERVER_URL:-http://$(detect_mobile_server_host):48120}"
 
   if [ ! -d "$MOBILE_CWD" ]; then
     echo "Mobile app not found at $MOBILE_CWD"
@@ -171,8 +190,9 @@ start_mobile() {
   fi
 
   tmux new-window -t "$SESSION" -n mobile -c "$MOBILE_CWD" \
-    "pnpm run dev -- --port ${MOBILE_PORT}"
+    "EXPO_PUBLIC_KANNA_SERVER_URL=${MOBILE_SERVER_URL} pnpm run dev -- --port ${MOBILE_PORT}"
   echo "Started Expo mobile app on port ${MOBILE_PORT} in tmux window '$SESSION:mobile'."
+  echo "Expo mobile app will target ${MOBILE_SERVER_URL}."
 }
 
 start() {

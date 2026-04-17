@@ -322,22 +322,29 @@ if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-
 fi
 
 reset_logs
-RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_PORT=1437)"
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_PORT=1437 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 expect_success "dev.sh --mobile" "$RESULT" >/dev/null
 
-assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile pnpm run dev -- --port 1437"
+assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1437"
+assert_tmux_log_contains "EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120"
 
 reset_logs
-RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile)"
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 expect_success "dev.sh --mobile default port" "$RESULT" >/dev/null
 
-assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile pnpm run dev -- --port 8081"
+assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 8081"
 
 reset_logs
-RESULT="$(run_mobile_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" env KANNA_MOBILE_PORT=1555)"
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_URL=http://desktop.lan:48120)"
+expect_success "dev.sh --mobile explicit server url" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "EXPO_PUBLIC_KANNA_SERVER_URL=http://desktop.lan:48120"
+
+reset_logs
+RESULT="$(run_mobile_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" env KANNA_MOBILE_PORT=1555 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 expect_success "mobile-dev.sh" "$RESULT" >/dev/null
 
-assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile pnpm run dev -- --port 1555"
+assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1555"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_DB_PATH=/tmp/shared-kanna.db)"
