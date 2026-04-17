@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Kanna Mobile",
-    "slug": "kanna-mobile-native",
+    "slug": "kanna-mobile",
     "scheme": "kanna",
     "platforms": ["ios", "android"]
   }

@@ -1,46 +1,22 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "useDefineForClassFields": true,
     "module": "ESNext",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "skipLibCheck": true,
-
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "preserve",
-
+    "strict": true,
+    "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@desktop/*": ["../desktop/src/*"],
-      "@kanna/db": ["../../packages/db/src"],
-      "@kanna/db/*": ["../../packages/db/src/*"],
-      "@kanna/core": ["../../packages/core/src"]
+      "@/*": ["src/*"]
     },
-
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "lib": ["ES2020", "DOM"]
   },
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.d.ts",
-    "src/**/*.tsx",
-    "src/**/*.vue",
-    "../desktop/src/**/*.ts",
-    "../desktop/src/**/*.d.ts",
-    "../desktop/src/**/*.vue",
-    "../../packages/db/src/**/*.ts",
-    "../../packages/core/src/**/*.ts"
-  ],
-  "exclude": [
-    "src/**/*.test.ts",
-    "../desktop/src/**/*.test.ts"
-  ],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["App.tsx", "src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "references": []
 }
