@@ -13,7 +13,7 @@ import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { PipelineDefinition, AgentDefinition, StageCompleteResult } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { createNavigationHistory } from "../composables/useNavigationHistory";
 import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
-import { loadSessionRecoveryState } from "../composables/sessionRecoveryState";
+import { loadSessionRecoveryState, type SessionRecoveryState } from "../composables/sessionRecoveryState";
 import { clearCachedTerminalState } from "../composables/terminalStateCache";
 import {
   closePipelineItemAndClearCachedTerminalState,
@@ -79,7 +79,7 @@ import {
   getRepo, getSetting, setSetting,
   insertTaskBlocker, removeTaskBlocker, removeAllBlockersForItem,
   listBlockersForItem, listBlockedByItem, getUnblockedItems,
-  hasCircularDependency, insertOperatorEvent, updateClaudeSessionId,
+  hasCircularDependency, insertOperatorEvent, updateAgentSessionId,
   insertTaskTransfer, listTaskPorts, listTaskPortsForItem, deleteTaskPortsForItem,
   getTaskTransfer, markTaskTransferCompleted, markTaskTransferRejected,
   insertTaskTransferProvenance,
@@ -134,6 +134,8 @@ interface CreateItemOptions {
   permissionMode?: string;
   allowedTools?: string[];
   displayName?: string | null;
+  resumeSessionId?: string | null;
+  recoverySnapshot?: SessionRecoveryState | null;
 }
 
 interface PreparedPtySession {
@@ -364,7 +366,7 @@ async function persistExitedSessionResumeId(
     [sessionId],
   );
   if (rows[0]?.agent_provider !== "codex") return;
-  await updateClaudeSessionId(_db, sessionId, resumeSessionId);
+  await updateAgentSessionId(_db, sessionId, resumeSessionId);
 }
 
 function tt(key: string): string { return i18n.global.t(key); }
@@ -1114,6 +1116,9 @@ export const useKannaStore = defineStore("kanna", () => {
             `UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?`,
             [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
           );
+          if (opts?.resumeSessionId) {
+            await updateAgentSessionId(_db, id, opts.resumeSessionId);
+          }
         } catch (e) {
           if (pipelineItemInserted) {
             await _db.execute("DELETE FROM pipeline_item WHERE id = ?", [id]).catch(() => undefined);
@@ -1233,6 +1238,7 @@ export const useKannaStore = defineStore("kanna", () => {
             setupCmdsOverride: opts?.customTask?.setup,
             portEnv,
             setupCmds: ptySetupCmds,
+            resumeSessionId: opts?.resumeSessionId ?? undefined,
           });
           const bootstrapAgentCmd = buildTaskShellCommand(agentCmd, [], { kannaCliPath });
           const bootstrapCmd = buildTaskBootstrapCommand({
@@ -1251,6 +1257,17 @@ export const useKannaStore = defineStore("kanna", () => {
             rows: 24,
             agentProvider,
           });
+          if (opts?.recoverySnapshot) {
+            await invoke("seed_session_recovery_state", {
+              sessionId: id,
+              serialized: opts.recoverySnapshot.serialized,
+              cols: opts.recoverySnapshot.cols,
+              rows: opts.recoverySnapshot.rows,
+              cursorRow: opts.recoverySnapshot.cursorRow,
+              cursorCol: opts.recoverySnapshot.cursorCol,
+              cursorVisible: opts.recoverySnapshot.cursorVisible,
+            });
+          }
           await syncTaskStatusesFromDaemon();
         }
       } catch (e) {
@@ -1478,7 +1495,7 @@ export const useKannaStore = defineStore("kanna", () => {
       // doesn't exist yet, or resumes it if it does.
       const copilotSessionId = options?.resumeSessionId || crypto.randomUUID();
       if (!options?.resumeSessionId) {
-        await updateClaudeSessionId(_db, sessionId, copilotSessionId);
+        await updateAgentSessionId(_db, sessionId, copilotSessionId);
       }
       copilotFlags.push(`--resume=${copilotSessionId}`);
 
@@ -1486,14 +1503,18 @@ export const useKannaStore = defineStore("kanna", () => {
         ? `copilot ${copilotFlags.join(" ")}`
         : `copilot ${copilotFlags.join(" ")} -i '${escapedPrompt}'`;
     } else if (provider === "codex") {
-      // Build Codex flags
-      const codexFlags: string[] = [...permissionFlags];
-      if (options?.model) codexFlags.push(`-m ${options.model}`);
-      // maxTurns and maxBudgetUsd have no Codex equivalent — skip silently
+      if (options?.resumeSessionId) {
+        agentCmd = `codex resume ${shellQuote(options.resumeSessionId)}`;
+      } else {
+        // Build Codex flags
+        const codexFlags: string[] = [...permissionFlags];
+        if (options?.model) codexFlags.push(`-m ${options.model}`);
+        // maxTurns and maxBudgetUsd have no Codex equivalent — skip silently
 
-      agentCmd = escapedPrompt
-        ? `codex ${codexFlags.join(" ")} '${escapedPrompt}'`
-        : `codex ${codexFlags.join(" ")}`;
+        agentCmd = escapedPrompt
+          ? `codex ${codexFlags.join(" ")} '${escapedPrompt}'`
+          : `codex ${codexFlags.join(" ")}`;
+      }
     } else {
       // Claude: inject hooks via --settings flag
       const flags: string[] = [...permissionFlags];
@@ -1510,7 +1531,7 @@ export const useKannaStore = defineStore("kanna", () => {
       // Session ID: reuse for resume, generate new for fresh sessions
       const claudeSessionId = options?.resumeSessionId || crypto.randomUUID();
       if (!options?.resumeSessionId) {
-        await updateClaudeSessionId(_db, sessionId, claudeSessionId);
+        await updateAgentSessionId(_db, sessionId, claudeSessionId);
       }
 
       if (options?.resumeSessionId) {
@@ -1748,10 +1769,10 @@ export const useKannaStore = defineStore("kanna", () => {
             item.agent_provider,
             await getAgentProviderAvailability(),
           );
-          await spawnPtySession(item.id, worktreePath, "", 80, 24, {
+          await spawnPtySession(item.id, worktreePath, item.prompt || "", 80, 24, {
             agentProvider,
             portEnv,
-            ...(item.claude_session_id ? { resumeSessionId: item.claude_session_id } : {}),
+            ...(item.agent_session_id ? { resumeSessionId: item.agent_session_id } : {}),
           });
           await updatePipelineItemActivity(_db, item.id, "working");
           bump();
@@ -2115,6 +2136,8 @@ export const useKannaStore = defineStore("kanna", () => {
         pipelineName: payload.task.pipeline,
         stage: payload.task.stage,
         displayName: payload.task.display_name,
+        resumeSessionId: payload.task.resume_session_id ?? null,
+        recoverySnapshot: payload.recovery,
       },
     );
 
@@ -2410,7 +2433,7 @@ export const useKannaStore = defineStore("kanna", () => {
       pr_number: null,
       pr_url: null,
       branch: null,
-      claude_session_id: null,
+      agent_session_id: null,
       port_offset: null,
       port_env: null,
       activity: "idle",

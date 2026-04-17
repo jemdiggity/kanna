@@ -92,7 +92,7 @@ export async function deleteTaskPortsForItem(
 
 export async function insertPipelineItem(
   db: DbHandle,
-  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "claude_session_id" | "previous_stage" | "last_output_preview"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
+  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "agent_session_id" | "previous_stage"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
 ): Promise<void> {
   if (!item.agent_provider) {
     throw new Error("No agent provider configured for pipeline item insertion.");
@@ -245,14 +245,14 @@ export async function updatePipelineItemLastOutputPreview(
   );
 }
 
-export async function updateClaudeSessionId(
+export async function updateAgentSessionId(
   db: DbHandle,
   id: string,
-  claudeSessionId: string
+  agentSessionId: string
 ): Promise<void> {
   await db.execute(
-    "UPDATE pipeline_item SET claude_session_id = ?, updated_at = datetime('now') WHERE id = ?",
-    [claudeSessionId, id]
+    "UPDATE pipeline_item SET agent_session_id = ?, updated_at = datetime('now') WHERE id = ?",
+    [agentSessionId, id]
   );
 }
 

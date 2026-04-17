@@ -75,7 +75,7 @@ function item(id: string, overrides: Partial<PipelineItem>): PipelineItem {
     closed_at: null,
     agent_type: null,
     agent_provider: "claude",
-    claude_session_id: null,
+    agent_session_id: null,
     activity: "idle",
     activity_changed_at: null,
     unread_at: null,

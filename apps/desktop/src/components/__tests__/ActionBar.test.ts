@@ -35,7 +35,7 @@ function makeItem(overrides: Partial<PipelineItem> = {}): PipelineItem {
     pinned: 0,
     pin_order: null,
     base_ref: "main",
-    claude_session_id: null,
+    agent_session_id: null,
     previous_stage: null,
     created_at: "2026-04-08T00:00:00Z",
     updated_at: "2026-04-08T00:00:00Z",

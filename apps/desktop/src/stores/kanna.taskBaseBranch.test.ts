@@ -49,7 +49,7 @@ const mockState = vi.hoisted(() => {
       pinned: 0,
       pin_order: null,
       base_ref: null,
-      claude_session_id: null,
+      agent_session_id: null,
       previous_stage: null,
       created_at: now,
       updated_at: now,
@@ -425,7 +425,7 @@ vi.mock("@kanna/db", () => ({
   getUnblockedItems: vi.fn(async () => []),
   hasCircularDependency: vi.fn(async () => false),
   insertOperatorEvent: vi.fn(async () => {}),
-  updateClaudeSessionId: vi.fn(async () => {}),
+  updateAgentSessionId: vi.fn(async () => {}),
   listTaskPorts: vi.fn(async () => [...mockState.taskPorts].sort((a, b) => a.port - b.port)),
   listTaskPortsForItem: vi.fn(async (_db: DbHandle, itemId: string) =>
     mockState.taskPorts
@@ -992,7 +992,7 @@ describe("kanna store task base branch integration", () => {
       mockState.makeItem({
         id: "item-active",
         branch: "task-item-active",
-        claude_session_id: "claude-item-active",
+        agent_session_id: "claude-item-active",
         prompt: "Investigate sidebar lag",
         display_name: "Sidebar lag",
       }),
@@ -1019,7 +1019,7 @@ describe("kanna store task base branch integration", () => {
 
     const active = mockState.pipelineItems.find((item) => item.id === "item-active");
     expect(active?.branch).toBe("task-item-active");
-    expect(active?.claude_session_id).toBe("claude-item-active");
+    expect(active?.agent_session_id).toBe("claude-item-active");
     expect(JSON.parse(active?.tags ?? "[]")).toContain("blocked");
     expect(store.selectedItemId).toBe("item-active");
     expect(store.currentItem?.id).toBe("item-active");
@@ -1043,7 +1043,7 @@ describe("kanna store task base branch integration", () => {
       mockState.makeItem({
         id: "item-blocked",
         branch: "task-item-blocked",
-        claude_session_id: "claude-item-blocked",
+        agent_session_id: "claude-item-blocked",
         tags: '["blocked"]',
       }),
       blocker,
@@ -1077,7 +1077,7 @@ describe("kanna store task base branch integration", () => {
       mockState.makeItem({
         id: "item-blocked",
         branch: "task-item-blocked",
-        claude_session_id: "claude-item-blocked",
+        agent_session_id: "claude-item-blocked",
         tags: '["blocked"]',
       }),
     ];
@@ -1104,7 +1104,7 @@ describe("kanna store task base branch integration", () => {
       mockState.makeItem({
         id: "item-blocked",
         branch: null,
-        claude_session_id: null,
+        agent_session_id: null,
         tags: '["blocked"]',
       }),
       blocker,

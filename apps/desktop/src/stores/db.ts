@@ -134,7 +134,7 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     await addColumn("pipeline_item", "unread_at", "TEXT");
     await addColumn("repo", "hidden", "INTEGER NOT NULL DEFAULT 0");
     await addColumn("pipeline_item", "closed_at", "TEXT");
-    await addColumn("pipeline_item", "claude_session_id", "TEXT");
+    await addColumn("pipeline_item", "agent_session_id", "TEXT");
     await addColumn("pipeline_item", "tags", "TEXT NOT NULL DEFAULT '[]'");
     await addColumn("pipeline_item", "base_ref", "TEXT");
     await addColumn("pipeline_item", "agent_provider", "TEXT NOT NULL DEFAULT 'claude'");
@@ -277,5 +277,19 @@ export async function runMigrations(db: DbHandle): Promise<void> {
   });
   await runMigration("013_task_transfer_payload_json", async () => {
     await addColumn("task_transfer", "payload_json", "TEXT");
+  });
+
+  await runMigration("014_agent_session_id_rename", async () => {
+    await addColumn("pipeline_item", "agent_session_id", "TEXT");
+    try {
+      await db.execute(
+        `UPDATE pipeline_item
+            SET agent_session_id = claude_session_id
+          WHERE agent_session_id IS NULL
+            AND claude_session_id IS NOT NULL`,
+      );
+    } catch (e) {
+      console.debug("[db] agent_session_id backfill:", e);
+    }
   });
 }
