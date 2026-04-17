@@ -85,6 +85,39 @@ describe("parsePipelineJson", () => {
     expect(stage.agent_provider).toBeUndefined();
     expect(stage.environment).toBeUndefined();
   });
+
+  it("parses follow_task when explicitly false", () => {
+    const json = JSON.stringify({
+      name: "My Pipeline",
+      stages: [{ name: "PR", transition: "manual", follow_task: false }],
+    });
+
+    const result = parsePipelineJson(json);
+
+    expect(result.stages[0].follow_task).toBe(false);
+  });
+
+  it("parses follow_task when explicitly true", () => {
+    const json = JSON.stringify({
+      name: "My Pipeline",
+      stages: [{ name: "Stage 1", transition: "manual", follow_task: true }],
+    });
+
+    const result = parsePipelineJson(json);
+
+    expect(result.stages[0].follow_task).toBe(true);
+  });
+
+  it("ignores non-boolean follow_task values", () => {
+    const json = JSON.stringify({
+      name: "My Pipeline",
+      stages: [{ name: "Stage 1", transition: "manual", follow_task: "nope" }],
+    });
+
+    const result = parsePipelineJson(json);
+
+    expect(result.stages[0].follow_task).toBeUndefined();
+  });
 });
 
 describe("validatePipeline", () => {
