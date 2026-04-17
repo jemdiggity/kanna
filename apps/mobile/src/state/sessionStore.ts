@@ -8,6 +8,7 @@ import type { PersistedSessionContext } from "./sessionPersistence";
 
 export type ConnectionState = "idle" | "connecting" | "connected" | "error";
 export type MobileView = "tasks" | "recent" | "search" | "desktops" | "more";
+export type TaskTerminalStatus = "idle" | "connecting" | "live" | "closed" | "error";
 
 export interface SessionState {
   connectionMode: DesktopMode | null;
@@ -27,6 +28,9 @@ export interface SessionState {
   pairingCode: string | null;
   isComposerOpen: boolean;
   composerPrompt: string;
+  taskTerminalTaskId: string | null;
+  taskTerminalStatus: TaskTerminalStatus;
+  taskTerminalOutput: string;
 }
 
 export interface SessionStore {
@@ -48,6 +52,10 @@ export interface SessionStore {
   setActiveView(view: MobileView): void;
   setPairingCode(code: string | null): void;
   setComposerState(isOpen: boolean, prompt: string): void;
+  beginTaskTerminal(taskId: string, initialOutput: string): void;
+  appendTaskTerminal(taskId: string, chunk: string): void;
+  setTaskTerminalStatus(taskId: string, status: TaskTerminalStatus): void;
+  clearTaskTerminal(): void;
 }
 
 export function createSessionStore(): SessionStore {
@@ -68,7 +76,10 @@ export function createSessionStore(): SessionStore {
     activeView: "tasks",
     pairingCode: null,
     isComposerOpen: false,
-    composerPrompt: ""
+    composerPrompt: "",
+    taskTerminalTaskId: null,
+    taskTerminalStatus: "idle",
+    taskTerminalOutput: ""
   };
 
   const listeners = new Set<() => void>();
@@ -161,7 +172,10 @@ export function createSessionStore(): SessionStore {
       state = {
         ...state,
         recentTasks: tasks,
-        selectedTaskId: hasSelectedTask ? state.selectedTaskId : null
+        selectedTaskId: hasSelectedTask ? state.selectedTaskId : null,
+        taskTerminalTaskId: hasSelectedTask ? state.taskTerminalTaskId : null,
+        taskTerminalStatus: hasSelectedTask ? state.taskTerminalStatus : "idle",
+        taskTerminalOutput: hasSelectedTask ? state.taskTerminalOutput : ""
       };
       publish();
     },
@@ -174,7 +188,16 @@ export function createSessionStore(): SessionStore {
       publish();
     },
     setSelectedTask(selectedTaskId) {
-      state = { ...state, selectedTaskId };
+      state = {
+        ...state,
+        selectedTaskId,
+        taskTerminalTaskId:
+          selectedTaskId === null ? null : state.taskTerminalTaskId,
+        taskTerminalStatus:
+          selectedTaskId === null ? "idle" : state.taskTerminalStatus,
+        taskTerminalOutput:
+          selectedTaskId === null ? "" : state.taskTerminalOutput
+      };
       publish();
     },
     setActiveView(activeView) {
@@ -187,6 +210,48 @@ export function createSessionStore(): SessionStore {
     },
     setComposerState(isComposerOpen, composerPrompt) {
       state = { ...state, isComposerOpen, composerPrompt };
+      publish();
+    },
+    beginTaskTerminal(taskId, initialOutput) {
+      state = {
+        ...state,
+        taskTerminalTaskId: taskId,
+        taskTerminalStatus: "connecting",
+        taskTerminalOutput: initialOutput
+      };
+      publish();
+    },
+    appendTaskTerminal(taskId, chunk) {
+      if (state.taskTerminalTaskId !== taskId) {
+        return;
+      }
+
+      const nextOutput = `${state.taskTerminalOutput}${chunk}`;
+      state = {
+        ...state,
+        taskTerminalStatus: "live",
+        taskTerminalOutput: nextOutput.slice(-12000)
+      };
+      publish();
+    },
+    setTaskTerminalStatus(taskId, taskTerminalStatus) {
+      if (state.taskTerminalTaskId !== taskId) {
+        return;
+      }
+
+      state = {
+        ...state,
+        taskTerminalStatus
+      };
+      publish();
+    },
+    clearTaskTerminal() {
+      state = {
+        ...state,
+        taskTerminalTaskId: null,
+        taskTerminalStatus: "idle",
+        taskTerminalOutput: ""
+      };
       publish();
     }
   };

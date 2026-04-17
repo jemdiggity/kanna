@@ -62,6 +62,8 @@ export default function App() {
           desktopName={state.desktopName}
           repoName={selectedRepo?.name ?? null}
           task={selectedTask}
+          terminalOutput={state.taskTerminalOutput}
+          terminalStatus={state.taskTerminalStatus}
           onBack={() => controller.closeTask()}
           onOpenMore={() => controller.showView("more")}
           onShowSearch={() => controller.showView("search")}
