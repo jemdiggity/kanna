@@ -75,6 +75,7 @@ case "\$cmd" in
     exit 1
     ;;
   new-session)
+    printf '%s %s\n' "\$cmd" "\$*" >> "\$log_file"
     session=""
     while [ \$# -gt 0 ]; do
       case "\$1" in
@@ -94,7 +95,7 @@ case "\$cmd" in
     fi
     printf '%s\n' "\$normalized_session" >> "\$state_file"
     ;;
-  send-keys|capture-pane|new-window|kill-session|list-windows|attach)
+  send-keys|capture-pane|new-window|kill-session|list-windows|attach|set-option)
     printf '%s %s\n' "\$cmd" "\$*" >> "\$log_file"
     target=""
     while [ \$# -gt 0 ]; do
@@ -171,29 +172,37 @@ if ! grep -Fq "Started tmux session 'kanna-v0_0_30'" <<<"$OUTPUT"; then
   exit 1
 fi
 
-if ! grep -Fq "send-keys -t kanna-v0_0_30:desktop" "$TMUX_LOG"; then
-  printf 'expected send-keys to target sanitized tmux session, got:\n' >&2
+if ! grep -Fq "new-session -d" "$TMUX_LOG" || ! grep -Fq -- "-s kanna-v0_0_30" "$TMUX_LOG"; then
+  printf 'expected new-session to target sanitized tmux session, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected default worktree db path in tmux command, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_NAME='kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected default worktree db name in tmux command, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DAEMON_DIR='$TEST_ROOT/.kanna-daemon'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DAEMON_DIR=$TEST_ROOT/.kanna-daemon" "$TMUX_LOG"; then
   printf 'expected default worktree daemon dir in tmux command, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
+
+for leaked in KANNA_TASK_ID= KANNA_CLI_DB_PATH= KANNA_SOCKET_PATH= KANNA_CLI_PATH=; do
+  if grep -Fq "$leaked" "$TMUX_LOG"; then
+    printf 'expected tmux launch env to omit leaked task-local var %s, got:\n' "$leaked" >&2
+    cat "$TMUX_LOG" >&2
+    exit 1
+  fi
+done
 
 rm -f "$TMUX_STATE" "$TMUX_LOG"
 : > "$TMUX_STATE"
@@ -230,13 +239,13 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected inherited KANNA_DB_NAME to be ignored, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_NAME='kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected derived worktree KANNA_DB_NAME to remain canonical, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
@@ -257,7 +266,7 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DAEMON_DIR='$TEST_ROOT/.kanna-daemon'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DAEMON_DIR=$TEST_ROOT/.kanna-daemon" "$TMUX_LOG"; then
   printf 'expected inherited KANNA_DAEMON_DIR to be ignored, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
@@ -296,13 +305,13 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_PATH='$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected inherited KANNA_DB_PATH to be ignored, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
 
-if ! grep -Fq "KANNA_DB_NAME='kanna-wt-v0.0.30.db'" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected KANNA_DB_NAME to remain worktree-derived, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1

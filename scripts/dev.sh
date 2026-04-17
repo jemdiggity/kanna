@@ -50,10 +50,20 @@ canonical_tmux_session_name() {
 
 tmux_env_args() {
   local key
-  local value
-  while IFS='=' read -r key value; do
-    printf '%s\0%s\0' "-e" "${key}=${value}"
-  done < <(env | grep -E '^(KANNA_|TAURI_WEBDRIVER_PORT=)')
+  for key in \
+    KANNA_WORKTREE \
+    KANNA_BUILD_BRANCH \
+    KANNA_BUILD_COMMIT \
+    KANNA_BUILD_WORKTREE \
+    KANNA_DB_NAME \
+    KANNA_DB_PATH \
+    KANNA_DAEMON_DIR \
+    KANNA_DEV_PORT \
+    TAURI_WEBDRIVER_PORT; do
+    if [ -n "${!key:-}" ]; then
+      printf '%s\0%s\0' "-e" "${key}=${!key}"
+    fi
+  done
 }
 
 # Auto-detect worktree by checking if we're inside .kanna-worktrees/
@@ -87,7 +97,7 @@ read_port() {
 }
 
 resolve_db_name() {
-  if [ -n "${KANNA_DB_NAME:-}" ]; then
+  if [ -z "${KANNA_WORKTREE:-}" ] && [ -n "${KANNA_DB_NAME:-}" ]; then
     printf '%s\n' "$KANNA_DB_NAME"
     return
   fi
@@ -99,7 +109,7 @@ resolve_db_name() {
 }
 
 resolve_db_path() {
-  if [ -n "${KANNA_DB_PATH:-}" ]; then
+  if [ -z "${KANNA_WORKTREE:-}" ] && [ -n "${KANNA_DB_PATH:-}" ]; then
     printf '%s\n' "$KANNA_DB_PATH"
     return
   fi
@@ -107,7 +117,7 @@ resolve_db_path() {
 }
 
 resolve_daemon_dir() {
-  if [ -n "${KANNA_DAEMON_DIR:-}" ]; then
+  if [ -z "${KANNA_WORKTREE:-}" ] && [ -n "${KANNA_DAEMON_DIR:-}" ]; then
     printf '%s\n' "$KANNA_DAEMON_DIR"
     return
   fi
