@@ -1,7 +1,7 @@
 import type { TaskSummary } from "../lib/api/types";
 
 export interface MoreCommandAction {
-  id: "refresh" | "pair" | "desktops" | "compose" | "merge-agent" | "close-task";
+  id: "refresh" | "pair" | "desktops" | "compose" | "advance-stage" | "merge-agent" | "close-task";
   title: string;
   copy: string;
 }
@@ -70,6 +70,11 @@ export function buildMoreCommandSections({
       headline: selectedTask.stage ?? "unknown",
       detail: "Contextual actions for the currently selected task.",
       actions: [
+        {
+          id: "advance-stage",
+          title: "Advance Stage",
+          copy: `Create the next-stage task after ${selectedTask.title}.`
+        },
         {
           id: "merge-agent",
           title: "Run Merge Agent",
