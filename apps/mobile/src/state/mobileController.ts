@@ -22,6 +22,8 @@ export interface MobileController {
   closeDesktopTask(taskId: string): Promise<void>;
 }
 
+const BACKGROUND_REFRESH_INTERVAL_MS = 3_000;
+
 export function createMobileController(
   client: KannaClient,
   store: SessionStore
@@ -32,6 +34,8 @@ export function createMobileController(
         subscription: TaskTerminalSubscription;
       }
     | null = null;
+  let backgroundRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  let backgroundRefreshInFlight = false;
 
   const findTask = (taskId: string): TaskSummary | null => {
     const state = store.getState();
@@ -112,6 +116,25 @@ export function createMobileController(
     store.setRepoTasks(repoTasks);
   };
 
+  const startBackgroundRefresh = () => {
+    if (backgroundRefreshTimer) {
+      return;
+    }
+
+    backgroundRefreshTimer = setInterval(() => {
+      if (backgroundRefreshInFlight || store.getState().connectionState !== "connected") {
+        return;
+      }
+
+      backgroundRefreshInFlight = true;
+      void refreshTaskCollections()
+        .catch(fail)
+        .finally(() => {
+          backgroundRefreshInFlight = false;
+        });
+    }, BACKGROUND_REFRESH_INTERVAL_MS);
+  };
+
   const fail = (error: unknown) => {
     store.setConnectionState("error");
     store.setErrorMessage(error instanceof Error ? error.message : "Mobile app request failed");
@@ -133,6 +156,7 @@ export function createMobileController(
         store.setConnectionMode("lan");
         store.setConnectionState("connected");
         await loadCollections();
+        startBackgroundRefresh();
         const selectedTaskId = store.getState().selectedTaskId;
         if (selectedTaskId) {
           startTaskTerminal(selectedTaskId);
@@ -281,7 +305,7 @@ export function createMobileController(
       }
 
       try {
-        await client.sendTaskInput(taskId, input);
+        await client.sendTaskInput(taskId, normalizeSubmittedInput(input));
         store.setErrorMessage(null);
       } catch (error) {
         fail(error);
@@ -311,4 +335,8 @@ function mapCreatedTask(response: CreateTaskResponse): TaskSummary {
     title: response.title,
     stage: response.stage
   };
+}
+
+function normalizeSubmittedInput(input: string): string {
+  return input.endsWith("\n") ? input : `${input}\n`;
 }

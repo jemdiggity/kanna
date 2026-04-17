@@ -252,6 +252,72 @@ describe("createMobileController", () => {
     expect(store.getState().taskTerminalOutput).toContain("Second line");
   });
 
+  it("refreshes desktop-originated task list changes in the background", async () => {
+    vi.useFakeTimers();
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.listRecentTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        },
+        {
+          id: "task-desktop",
+          repoId: "repo-1",
+          title: "Created on desktop",
+          stage: "in progress"
+        }
+      ]);
+    vi.mocked(client.listRepoTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        },
+        {
+          id: "task-desktop",
+          repoId: "repo-1",
+          title: "Created on desktop",
+          stage: "in progress"
+        }
+      ]);
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(store.getState().recentTasks.map((task) => task.id)).toEqual([
+      "task-1",
+      "task-desktop"
+    ]);
+    expect(store.getState().repoTasks.map((task) => task.id)).toEqual([
+      "task-1",
+      "task-desktop"
+    ]);
+    vi.useRealTimers();
+  });
+
   it("sends task input to the desktop daemon", async () => {
     const store = createSessionStore();
     const client = createClientMock();
@@ -260,7 +326,7 @@ describe("createMobileController", () => {
     await controller.bootstrap();
     await controller.sendTaskInput("task-1", "continue");
 
-    expect(client.sendTaskInput).toHaveBeenCalledWith("task-1", "continue");
+    expect(client.sendTaskInput).toHaveBeenCalledWith("task-1", "continue\n");
   });
 
   it("closes the selected desktop task and clears the mobile task view", async () => {

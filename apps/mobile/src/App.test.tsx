@@ -125,6 +125,37 @@ describe("createAppModel", () => {
     });
   });
 
+  it("preserves selected task detail state until the user routes back to the shell", async () => {
+    const persistence = {
+      load: vi.fn().mockResolvedValue({
+        selectedDesktopId: "desktop-1",
+        selectedRepoId: "repo-1",
+        selectedTaskId: "task-1",
+        activeView: "tasks"
+      }),
+      save: vi.fn().mockResolvedValue(undefined)
+    };
+    const model = createAppModel(
+      "http://desktop.test",
+      createFetchMock(),
+      persistence
+    );
+
+    await model.initialize();
+
+    expect(model.sessionStore.getState()).toMatchObject({
+      selectedTaskId: "task-1",
+      activeView: "tasks"
+    });
+
+    model.controller.showView("more");
+
+    expect(model.sessionStore.getState()).toMatchObject({
+      selectedTaskId: "task-1",
+      activeView: "more"
+    });
+  });
+
   it("persists desktop context whenever the user changes it", async () => {
     const persistence = {
       load: vi.fn().mockResolvedValue(null),

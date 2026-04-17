@@ -1,111 +1,81 @@
 import React, { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
 import type { TaskTerminalStatus } from "../state/sessionStore";
+import { TerminalWebView } from "./TerminalWebView";
 import { buildTaskWorkspaceModel } from "./taskWorkspace";
 
 interface TaskScreenProps {
-  desktopName: string | null;
-  repoName: string | null;
   task: TaskSummary;
   terminalOutput: string;
   terminalStatus: TaskTerminalStatus;
   onBack(): void;
   onOpenMore(): void;
-  onShowSearch(): void;
   onSendInput(input: string): void;
 }
 
 export function TaskScreen({
-  desktopName,
-  repoName,
   task,
   terminalOutput,
   terminalStatus,
   onBack,
   onOpenMore,
-  onShowSearch,
   onSendInput
 }: TaskScreenProps) {
-  const model = buildTaskWorkspaceModel({ desktopName, repoName, task });
+  const model = buildTaskWorkspaceModel({ task, terminalStatus });
   const [draftInput, setDraftInput] = useState("");
-  const terminalText =
-    terminalOutput.trim() ||
-    (terminalStatus === "connecting"
-      ? "Connecting to desktop daemon..."
-      : "Waiting for terminal output...");
+  const sendDisabled = model.isComposerDisabled || !draftInput.trim();
 
   return (
-    <View style={styles.wrap}>
-      <View style={styles.topRow}>
+    <View style={styles.screen}>
+      <View style={styles.terminalCanvas}>
+        {model.isTerminalHealthy ? (
+          <TerminalWebView fullscreen output={terminalOutput} status={terminalStatus} />
+        ) : (
+          <View style={styles.terminalSkeleton}>
+            <View style={styles.skeletonLineWide} />
+            <View style={styles.skeletonLineMid} />
+            <View style={styles.skeletonLineShort} />
+            {model.overlayLabel ? (
+              <View style={styles.terminalOverlay}>
+                <Text style={styles.terminalOverlayLabel}>{model.overlayLabel}</Text>
+              </View>
+            ) : null}
+          </View>
+        )}
+      </View>
+
+      <View style={styles.topChrome}>
         <Pressable style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backLabel}>Tasks</Text>
+          <Text style={styles.backLabel}>{"<"}</Text>
         </Pressable>
-        <Pressable style={styles.topActionButton} onPress={onShowSearch}>
-          <Text style={styles.topActionLabel}>Search</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.channelCard}>
-        <View style={styles.header}>
-          <Text style={styles.title}>{task.title}</Text>
-          <View style={styles.stagePill}>
-            <Text style={styles.stageLabel}>{task.stage ?? "unknown"}</Text>
-          </View>
-        </View>
-
-        <Text style={styles.meta}>{repoName ?? `Repo ${task.repoId}`}</Text>
-        <Text style={styles.summaryCopy}>{model.summaryCopy}</Text>
-
-        <View style={styles.contextRow}>
-          {model.facts.map((fact) => (
-            <View key={fact.label} style={styles.contextPill}>
-              <Text style={styles.contextLabel}>{fact.label}</Text>
-              <Text style={styles.contextValue}>{fact.value}</Text>
-            </View>
-          ))}
+        <View style={styles.titleChip}>
+          <Text style={styles.stageLabel}>{model.stageLabel}</Text>
+          <Text numberOfLines={1} style={styles.title}>
+            {model.title}
+          </Text>
         </View>
       </View>
 
-      <View style={styles.terminalCard}>
-        <View style={styles.terminalHeader}>
-          <View style={styles.terminalHeaderCopy}>
-            <Text style={styles.terminalLabel}>Agent Terminal</Text>
-            <Text style={styles.terminalSubhead}>{model.summaryLabel}</Text>
-          </View>
-          <View style={styles.terminalHeaderActions}>
-            <View style={styles.terminalStatusPill}>
-              <Text style={styles.terminalStatusLabel}>{terminalStatus}</Text>
-            </View>
-            <Pressable style={styles.actionButtonPrimary} onPress={onOpenMore}>
-              <Text style={styles.actionButtonPrimaryLabel}>{model.primaryActionLabel}</Text>
-            </Pressable>
-          </View>
+      <View style={styles.bottomChrome}>
+        <View style={styles.composerActions}>
+          <Pressable style={styles.plusButton} onPress={onOpenMore}>
+            <Text style={styles.plusButtonLabel}>+</Text>
+          </Pressable>
         </View>
 
-        <ScrollView
-          contentContainerStyle={styles.terminalOutput}
-          nestedScrollEnabled
-          showsVerticalScrollIndicator={false}
-          style={styles.terminalViewport}
-        >
-          <Text style={styles.terminalLine}>{terminalText}</Text>
-        </ScrollView>
-
-        <Text style={styles.terminalHint}>
-          This stays attached to the selected desktop task. Use More for task actions while the
-          stream remains live.
-        </Text>
         <View style={styles.inputComposer}>
           <TextInput
+            editable={!model.isComposerDisabled}
             onChangeText={setDraftInput}
-            placeholder="Send input to the agent"
+            placeholder="Reply…"
             placeholderTextColor="#6F89AE"
-            style={styles.inputField}
+            style={[styles.inputField, model.isComposerDisabled ? styles.inputFieldDisabled : null]}
             value={draftInput}
           />
           <Pressable
-            style={styles.sendButton}
+            disabled={sendDisabled}
+            style={[styles.sendButton, sendDisabled ? styles.sendButtonDisabled : null]}
             onPress={() => {
               const nextInput = draftInput.trim();
               if (!nextInput) {
@@ -119,226 +89,182 @@ export function TaskScreen({
             <Text style={styles.sendButtonLabel}>Send</Text>
           </Pressable>
         </View>
-        {model.terminalLines.map((line) => (
-          <Text key={line} style={styles.terminalMetaLine}>
-            {`> ${line}`}
-          </Text>
-        ))}
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    gap: 14
+  screen: {
+    backgroundColor: "#040811",
+    flex: 1,
+    position: "relative"
   },
-  topRow: {
+  terminalCanvas: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0
+  },
+  terminalSkeleton: {
+    backgroundColor: "#050B14",
+    gap: 14,
+    justifyContent: "center",
+    minHeight: 680,
+    paddingHorizontal: 18,
+    paddingVertical: 120,
+    position: "relative"
+  },
+  skeletonLineWide: {
+    backgroundColor: "#101A29",
+    borderRadius: 999,
+    height: 10,
+    width: "88%"
+  },
+  skeletonLineMid: {
+    backgroundColor: "#101A29",
+    borderRadius: 999,
+    height: 10,
+    width: "62%"
+  },
+  skeletonLineShort: {
+    backgroundColor: "#101A29",
+    borderRadius: 999,
+    height: 10,
+    width: "46%"
+  },
+  terminalOverlay: {
+    alignItems: "center",
+    bottom: 0,
+    justifyContent: "center",
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0
+  },
+  terminalOverlayLabel: {
+    backgroundColor: "rgba(8, 17, 30, 0.92)",
+    borderColor: "#2A4267",
+    borderRadius: 999,
+    borderWidth: 1,
+    color: "#E6EDF8",
+    fontSize: 13,
+    fontWeight: "700",
+    overflow: "hidden",
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  topChrome: {
     alignItems: "center",
     flexDirection: "row",
-    justifyContent: "space-between"
+    gap: 10,
+    left: 14,
+    position: "absolute",
+    right: 14,
+    top: 16,
+    zIndex: 3
   },
   backButton: {
-    alignSelf: "flex-start",
-    backgroundColor: "#152036",
+    alignItems: "center",
+    backgroundColor: "rgba(13, 21, 36, 0.78)",
     borderColor: "#22304D",
     borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8
+    height: 36,
+    justifyContent: "center",
+    width: 36
   },
   backLabel: {
     color: "#D5DEEC",
-    fontSize: 13,
-    fontWeight: "700"
+    fontSize: 19,
+    fontWeight: "700",
+    lineHeight: 19
   },
-  topActionButton: {
-    backgroundColor: "#152036",
-    borderColor: "#22304D",
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8
-  },
-  topActionLabel: {
-    color: "#D5DEEC",
-    fontSize: 13,
-    fontWeight: "700"
-  },
-  channelCard: {
-    backgroundColor: "#10192A",
-    borderColor: "#22304D",
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 10,
-    padding: 18
-  },
-  header: {
+  titleChip: {
     alignItems: "center",
+    backgroundColor: "rgba(13, 21, 36, 0.78)",
+    borderColor: "#22304D",
+    borderRadius: 18,
+    borderWidth: 1,
+    flex: 1,
     flexDirection: "row",
     gap: 10,
-    justifyContent: "space-between"
+    minWidth: 0,
+    paddingHorizontal: 14,
+    paddingVertical: 10
+  },
+  stageLabel: {
+    color: "#7FA7D9",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    maxWidth: 96,
+    textTransform: "uppercase"
   },
   title: {
     color: "#F5F7FB",
     flex: 1,
-    fontSize: 24,
-    fontWeight: "700"
-  },
-  stagePill: {
-    backgroundColor: "#172843",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6
-  },
-  stageLabel: {
-    color: "#9EB6DC",
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "700",
-    textTransform: "uppercase"
-  },
-  meta: {
-    color: "#8EA3C4",
-    fontSize: 13,
-    fontWeight: "600"
-  },
-  summaryCopy: {
-    color: "#E6EDF8",
-    fontSize: 15,
-    lineHeight: 22
-  },
-  contextRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10
-  },
-  contextPill: {
-    backgroundColor: "#111B2C",
-    borderColor: "#20304C",
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 10
-  },
-  contextLabel: {
-    color: "#7FA7D9",
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase"
-  },
-  contextValue: {
-    color: "#F5F7FB",
-    fontSize: 13,
-    fontWeight: "700"
-  },
-  terminalCard: {
-    backgroundColor: "#08111E",
-    borderColor: "#20304C",
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 10,
-    minHeight: 280,
-    padding: 18
-  },
-  terminalHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between"
-  },
-  terminalHeaderCopy: {
-    gap: 4
-  },
-  terminalLabel: {
-    color: "#7FA7D9",
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase"
-  },
-  terminalSubhead: {
-    color: "#F5F7FB",
-    fontSize: 16,
-    fontWeight: "700"
-  },
-  terminalHeaderActions: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 8
-  },
-  terminalStatusPill: {
-    backgroundColor: "#172843",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6
-  },
-  terminalStatusLabel: {
-    color: "#9EB6DC",
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase"
-  },
-  actionButtonPrimary: {
-    backgroundColor: "#E8F1FF",
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10
-  },
-  actionButtonPrimaryLabel: {
-    color: "#0B1220",
-    fontSize: 13,
-    fontWeight: "700",
-    textAlign: "center"
-  },
-  terminalViewport: {
-    backgroundColor: "#050B14",
-    borderColor: "#15243C",
-    borderRadius: 16,
-    borderWidth: 1,
-    maxHeight: 280
-  },
-  terminalOutput: {
-    minHeight: 220,
-    padding: 14
-  },
-  terminalLine: {
-    color: "#B9D4FF",
-    fontFamily: "Courier",
-    fontSize: 13,
-    lineHeight: 18
-  },
-  terminalMetaLine: {
-    color: "#6F89AE",
-    fontFamily: "Courier",
-    fontSize: 12,
     lineHeight: 17
   },
-  terminalHint: {
-    color: "#95A9C8",
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 2
+  bottomChrome: {
+    bottom: 14,
+    left: 14,
+    position: "absolute",
+    right: 14,
+    zIndex: 3
+  },
+  composerActions: {
+    alignItems: "flex-end",
+    marginBottom: 8
+  },
+  plusButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(13, 21, 36, 0.82)",
+    borderColor: "#22304D",
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: "center",
+    width: 40
+  },
+  plusButtonLabel: {
+    color: "#E8F1FF",
+    fontSize: 22,
+    fontWeight: "500",
+    lineHeight: 22
   },
   inputComposer: {
     alignItems: "center",
+    backgroundColor: "rgba(8, 15, 27, 0.88)",
+    borderColor: "#20304C",
+    borderRadius: 20,
+    borderWidth: 1,
     flexDirection: "row",
-    gap: 10
+    gap: 10,
+    padding: 10
   },
   inputField: {
-    backgroundColor: "#10192A",
-    borderColor: "#20304C",
-    borderRadius: 14,
-    borderWidth: 1,
     color: "#F5F7FB",
     flex: 1,
     fontSize: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12
+    paddingHorizontal: 8,
+    paddingVertical: 10
+  },
+  inputFieldDisabled: {
+    color: "#6F89AE",
+    opacity: 0.65
   },
   sendButton: {
     backgroundColor: "#E8F1FF",
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 11
+  },
+  sendButtonDisabled: {
+    opacity: 0.45
   },
   sendButtonLabel: {
     color: "#0B1220",
