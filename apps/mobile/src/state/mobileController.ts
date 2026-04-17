@@ -55,7 +55,6 @@ export function createMobileController(
 
         store.setConnectionMode("lan");
         store.setConnectionState("connected");
-        store.setActiveView("tasks");
         await loadCollections();
       } catch (error) {
         fail(error);

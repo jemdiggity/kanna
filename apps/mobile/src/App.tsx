@@ -32,13 +32,14 @@ export default function App() {
   const { controller, navigator } = model;
 
   useEffect(() => {
-    void controller.bootstrap();
-  }, [controller]);
+    void model.initialize();
+  }, [model]);
 
   const selectedTask =
     state.recentTasks.find((task) => task.id === state.selectedTaskId) ??
     state.searchResults.find((task) => task.id === state.selectedTaskId) ??
     null;
+  const selectedRepo = state.repos.find((repo) => repo.id === selectedTask?.repoId) ?? null;
 
   const mainContent = (() => {
     if (state.connectionState !== "connected") {
@@ -59,8 +60,11 @@ export default function App() {
       return (
         <TaskScreen
           desktopName={state.desktopName}
+          repoName={selectedRepo?.name ?? null}
           task={selectedTask}
           onBack={() => controller.closeTask()}
+          onOpenMore={() => controller.showView("more")}
+          onShowSearch={() => controller.showView("search")}
         />
       );
     }

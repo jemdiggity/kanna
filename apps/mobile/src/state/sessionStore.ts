@@ -4,6 +4,7 @@ import type {
   RepoSummary,
   TaskSummary
 } from "../lib/api/types";
+import type { PersistedSessionContext } from "./sessionPersistence";
 
 export type ConnectionState = "idle" | "connecting" | "connected" | "error";
 export type MobileView = "tasks" | "recent" | "search" | "desktops" | "more";
@@ -31,6 +32,8 @@ export interface SessionState {
 export interface SessionStore {
   getState(): SessionState;
   subscribe(listener: () => void): () => void;
+  getPersistedContext(): PersistedSessionContext;
+  hydrateContext(context: PersistedSessionContext): void;
   setConnectionMode(mode: DesktopMode | null): void;
   setConnectionState(state: ConnectionState): void;
   setDesktopStatus(status: string | null, desktopName: string | null, pairingCode: string | null): void;
@@ -82,6 +85,24 @@ export function createSessionStore(): SessionStore {
       return () => {
         listeners.delete(listener);
       };
+    },
+    getPersistedContext() {
+      return {
+        selectedDesktopId: state.selectedDesktopId,
+        selectedRepoId: state.selectedRepoId,
+        selectedTaskId: state.selectedTaskId,
+        activeView: state.activeView
+      };
+    },
+    hydrateContext(context) {
+      state = {
+        ...state,
+        selectedDesktopId: context.selectedDesktopId,
+        selectedRepoId: context.selectedRepoId,
+        selectedTaskId: context.selectedTaskId,
+        activeView: context.activeView
+      };
+      publish();
     },
     setConnectionMode(mode) {
       state = { ...state, connectionMode: mode };
@@ -136,7 +157,12 @@ export function createSessionStore(): SessionStore {
       publish();
     },
     setRecentTasks(tasks) {
-      state = { ...state, recentTasks: tasks };
+      const hasSelectedTask = tasks.some((task) => task.id === state.selectedTaskId);
+      state = {
+        ...state,
+        recentTasks: tasks,
+        selectedTaskId: hasSelectedTask ? state.selectedTaskId : null
+      };
       publish();
     },
     setSearchResults(query, results) {

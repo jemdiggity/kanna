@@ -6,25 +6,68 @@ import {
   type MobileController
 } from "./state/mobileController";
 import { createSessionStore, type SessionStore } from "./state/sessionStore";
+import {
+  createDefaultSessionPersistence,
+  type SessionPersistence
+} from "./state/sessionPersistence";
 
 const DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:48120";
 
 export interface AppModel {
   client: KannaClient;
   controller: MobileController;
+  initialize(): Promise<void>;
   navigator: ReturnType<typeof createRootNavigator>;
   sessionStore: SessionStore;
 }
 
 export function createAppModel(
   baseUrl = DEFAULT_SERVER_BASE_URL,
-  fetchImpl = globalThis.fetch as unknown as FetchLike
+  fetchImpl = globalThis.fetch as unknown as FetchLike,
+  persistence?: SessionPersistence
 ): AppModel {
   const client = createKannaClient(createLanTransport(baseUrl, fetchImpl));
   const sessionStore = createSessionStore();
+  const controller = createMobileController(client, sessionStore);
+  let persistencePromise: Promise<SessionPersistence> | null = persistence
+    ? Promise.resolve(persistence)
+    : null;
+
+  const getPersistence = () => {
+    if (!persistencePromise) {
+      persistencePromise = createDefaultSessionPersistence();
+    }
+
+    return persistencePromise;
+  };
+
+  let lastSavedContextJson: string | null = null;
+  const persistContext = () => {
+    const context = sessionStore.getPersistedContext();
+    const serializedContext = JSON.stringify(context);
+    if (serializedContext === lastSavedContextJson) {
+      return;
+    }
+
+    lastSavedContextJson = serializedContext;
+    void getPersistence().then((resolvedPersistence) => resolvedPersistence.save(context));
+  };
+
+  sessionStore.subscribe(persistContext);
+
   return {
     client,
-    controller: createMobileController(client, sessionStore),
+    controller,
+    async initialize() {
+      const resolvedPersistence = await getPersistence();
+      const persistedContext = await resolvedPersistence.load();
+      if (persistedContext) {
+        sessionStore.hydrateContext(persistedContext);
+        lastSavedContextJson = JSON.stringify(persistedContext);
+      }
+
+      await controller.bootstrap();
+    },
     navigator: createRootNavigator(),
     sessionStore
   };
