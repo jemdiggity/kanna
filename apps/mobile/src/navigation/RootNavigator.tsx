@@ -1,22 +1,33 @@
-export type TabName = "Desktops" | "Tasks" | "Recent";
+export type TabName = "tasks" | "recent" | "desktops" | "more";
 
 export interface TabRoute {
   name: TabName;
   label: string;
 }
 
+export interface UtilityAction {
+  name: "search" | "create";
+  label: string;
+}
+
 export interface RootNavigatorModel {
   initialRouteName: TabName;
   tabs: TabRoute[];
+  utilityActions: UtilityAction[];
 }
 
 export function createRootNavigator(): RootNavigatorModel {
   return {
-    initialRouteName: "Desktops",
+    initialRouteName: "tasks",
     tabs: [
-      { name: "Desktops", label: "Desktops" },
-      { name: "Tasks", label: "Tasks" },
-      { name: "Recent", label: "Recent" }
+      { name: "tasks", label: "Tasks" },
+      { name: "recent", label: "Recent" },
+      { name: "desktops", label: "Desktops" },
+      { name: "more", label: "More" }
+    ],
+    utilityActions: [
+      { name: "search", label: "Search" },
+      { name: "create", label: "New Task" }
     ]
   };
 }

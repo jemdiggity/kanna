@@ -15,6 +15,12 @@ it("creates an app model with desktop navigation and a LAN client", async () => 
     })
   })));
 
-  expect(model.navigator.tabs.map((tab) => tab.label)).toContain("Desktops");
+  expect(model.navigator.tabs.map((tab) => tab.label)).toEqual([
+    "Tasks",
+    "Recent",
+    "Desktops",
+    "More"
+  ]);
+  expect(typeof model.controller.bootstrap).toBe("function");
   expect((await model.client.getStatus()).desktopName).toBe("Studio Mac");
 });
