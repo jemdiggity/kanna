@@ -16,6 +16,7 @@ export interface MobileController {
   updateComposerPrompt(prompt: string): void;
   searchTasks(query: string): Promise<void>;
   createTask(): Promise<void>;
+  runMergeAgent(taskId: string): Promise<void>;
 }
 
 export function createMobileController(
@@ -149,6 +150,19 @@ export function createMobileController(
         store.setRecentTasks(recentTasks);
         store.setSelectedTask(createdTask.id);
         store.setComposerState(false, "");
+        store.setActiveView("tasks");
+        store.setErrorMessage(null);
+      } catch (error) {
+        fail(error);
+      }
+    },
+
+    async runMergeAgent(taskId) {
+      try {
+        const response = await client.runMergeAgent(taskId);
+        const recentTasks = await client.listRecentTasks();
+        store.setRecentTasks(recentTasks);
+        store.setSelectedTask(response.taskId);
         store.setActiveView("tasks");
         store.setErrorMessage(null);
       } catch (error) {

@@ -31,6 +31,28 @@ export interface PairingSession {
   expiresAtUnixMs: number;
 }
 
+export interface CreateTaskRequest {
+  repoId: string;
+  prompt: string;
+  pipelineName?: string;
+  baseRef?: string;
+  stage?: string;
+  agentProvider?: string;
+  model?: string;
+  permissionMode?: string;
+  allowedTools?: string[];
+}
+
+export interface CreateTaskResponse {
+  taskId: string;
+  repoId: string;
+  title: string;
+  stage: string;
+}
+
+export interface TaskActionResponse {
+  taskId: string;
+}
 export interface TaskSummary {
   id: string;
   repoId: string;
