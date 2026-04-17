@@ -21,6 +21,20 @@ export interface PipelineApi {
 }
 
 export function createPipelineApi(context: StoreContext): PipelineApi {
+  function buildWorktreePath(repoPath: string, branch: string): string {
+    return `${repoPath}/.kanna-worktrees/${branch}`;
+  }
+
+  function resolveSourceWorktree(repoPath: string, branch: string | null | undefined): string | undefined {
+    if (!branch) return undefined;
+    return buildWorktreePath(repoPath, branch);
+  }
+
+  function resolvePriorTaskSourceWorktree(repoPath: string, baseRef: string | null): string | undefined {
+    if (!baseRef?.startsWith("task-")) return undefined;
+    return buildWorktreePath(repoPath, baseRef);
+  }
+
   function computeNextVisibleItemId(currentItemId: string): string | null {
     const sortedItems = requireService(context.services.sortedItemsForCurrentRepo, "sortedItemsForCurrentRepo").value;
     const currentIndex = sortedItems.findIndex((candidate) => candidate.id === currentItemId);
@@ -149,6 +163,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
           taskPrompt: item.prompt ?? "",
           prevResult,
           branch: item.branch ?? undefined,
+          sourceWorktree: resolveSourceWorktree(repo.path, item.branch),
         });
 
         const preferredProviders = getPreferredAgentProviders({
@@ -196,6 +211,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
   async function rerunStage(taskId: string): Promise<void> {
     const item = context.state.items.value.find((candidate) => candidate.id === taskId);
     if (!item) return;
+    if (!item.branch) return;
 
     const repo = context.state.repos.value.find((candidate) => candidate.id === item.repo_id)
       ?? await getRepo(context.requireDb(), item.repo_id);
@@ -222,7 +238,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     if (currentStage.environment) {
       const env = pipeline.environments?.[currentStage.environment];
       if (env?.setup?.length) {
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        const worktreePath = buildWorktreePath(repo.path, item.branch);
         try {
           const portEnv = parseTaskPortEnv(item.port_env);
           const scriptEnv = buildTaskRuntimeEnv({
@@ -250,8 +266,9 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
         const stagePrompt = buildStagePrompt(agent.prompt, currentStage.prompt, {
           taskPrompt: item.prompt ?? "",
           branch: item.branch ?? undefined,
+          sourceWorktree: resolvePriorTaskSourceWorktree(repo.path, item.base_ref),
         });
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
+        const worktreePath = buildWorktreePath(repo.path, item.branch);
         const preferredProviders = getPreferredAgentProviders({
           stage: currentStage.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
           agent: agent.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
