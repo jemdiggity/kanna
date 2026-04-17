@@ -1,6 +1,21 @@
-import React, { useRef } from "react";
-import { Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useRef, useSyncExternalStore } from "react";
+import {
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View
+} from "react-native";
 import { createAppModel, type AppModel } from "./appModel";
+import { FloatingToolbar } from "./components/FloatingToolbar";
+import { CreateTaskComposer } from "./components/CreateTaskComposer";
+import { ConnectionScreen } from "./screens/ConnectionScreen";
+import { DesktopsScreen } from "./screens/DesktopsScreen";
+import { MoreScreen } from "./screens/MoreScreen";
+import { SearchScreen } from "./screens/SearchScreen";
+import { TaskScreen } from "./screens/TaskScreen";
+import { TasksScreen } from "./screens/TasksScreen";
 
 export default function App() {
   const modelRef = useRef<AppModel | null>(null);
@@ -9,44 +24,183 @@ export default function App() {
   }
 
   const model = modelRef.current;
-  const state = model.sessionStore.getState();
+  const state = useSyncExternalStore(
+    model.sessionStore.subscribe,
+    model.sessionStore.getState,
+    model.sessionStore.getState
+  );
+  const { controller, navigator } = model;
+
+  useEffect(() => {
+    void controller.bootstrap();
+  }, [controller]);
+
+  const selectedTask =
+    state.recentTasks.find((task) => task.id === state.selectedTaskId) ??
+    state.searchResults.find((task) => task.id === state.selectedTaskId) ??
+    null;
+
+  const mainContent = (() => {
+    if (state.connectionState !== "connected") {
+      return (
+        <ConnectionScreen
+          connectionState={state.connectionState}
+          desktopName={state.desktopName}
+          errorMessage={state.errorMessage}
+          pairingCode={state.pairingCode}
+          onConnectLocal={() => {
+            void controller.connectLocal();
+          }}
+        />
+      );
+    }
+
+    if (selectedTask) {
+      return (
+        <TaskScreen
+          desktopName={state.desktopName}
+          task={selectedTask}
+          onBack={() => controller.closeTask()}
+        />
+      );
+    }
+
+    switch (state.activeView) {
+      case "recent":
+        return (
+          <TasksScreen
+            heading="Recent"
+            subheading="Most recently updated tasks across the paired desktop."
+            repos={state.repos}
+            selectedRepoId={state.selectedRepoId}
+            tasks={state.recentTasks}
+            onSelectRepo={(repoId) => controller.selectRepo(repoId)}
+            onOpenTask={(taskId) => controller.openTask(taskId)}
+          />
+        );
+      case "desktops":
+        return (
+          <DesktopsScreen
+            desktops={state.desktops}
+            selectedDesktopId={state.selectedDesktopId}
+            onSelectDesktop={(desktopId) => controller.selectDesktop(desktopId)}
+          />
+        );
+      case "search":
+        return (
+          <SearchScreen
+            query={state.searchQuery}
+            results={state.searchResults}
+            onChangeQuery={(query) => {
+              void controller.searchTasks(query);
+            }}
+            onOpenTask={(taskId) => controller.openTask(taskId)}
+          />
+        );
+      case "more":
+        return (
+          <MoreScreen
+            pairingCode={state.pairingCode}
+            selectedTask={selectedTask}
+            onRefresh={() => {
+              void controller.refresh();
+            }}
+            onShowDesktops={() => controller.showView("desktops")}
+            onStartPairing={() => {
+              void controller.connectLocal();
+            }}
+            onOpenComposer={() => controller.openComposer()}
+          />
+        );
+      case "tasks":
+      default:
+        return (
+          <TasksScreen
+            heading="Tasks"
+            subheading="Open a desktop task to drill into the channel-style detail view."
+            repos={state.repos}
+            selectedRepoId={state.selectedRepoId}
+            tasks={state.recentTasks}
+            onSelectRepo={(repoId) => controller.selectRepo(repoId)}
+            onOpenTask={(taskId) => controller.openTask(taskId)}
+          />
+        );
+    }
+  })();
+
+  const toolbarTab =
+    state.activeView === "search" ? navigator.initialRouteName : state.activeView;
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <View style={styles.backgroundGlow} />
+      <View style={styles.backgroundOrb} />
       <View style={styles.shell}>
-        <Text style={styles.eyebrow}>Kanna Mobile</Text>
-        <Text style={styles.title}>Desktop Pairing</Text>
-        <Text style={styles.copy}>
-          Connect to a desktop daemon over the local network first, then switch
-          between paired desktops from the task surfaces below.
-        </Text>
-
-        <View style={styles.actions}>
-          <Pressable style={styles.primaryButton}>
-            <Text style={styles.primaryLabel}>Connect on Local Network</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryButton}>
-            <Text style={styles.secondaryLabel}>Sign In for Remote Access</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Tabs</Text>
-          <View style={styles.tabRow}>
-            {model.navigator.tabs.map((tab) => (
-              <View key={tab.name} style={styles.tabPill}>
-                <Text style={styles.tabLabel}>{tab.label}</Text>
-              </View>
-            ))}
+        {state.connectionState === "connected" ? (
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.eyebrow}>Kanna Mobile</Text>
+              <Text style={styles.desktopTitle}>
+                {state.desktopName ?? "Desktop not connected"}
+              </Text>
+            </View>
+            <View style={styles.headerActions}>
+              <Pressable
+                style={styles.utilityButton}
+                onPress={() => controller.showView("search")}
+              >
+                <Text style={styles.utilityLabel}>
+                  {navigator.utilityActions[0]?.label ?? "Search"}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.utilityButtonPrimary}
+                onPress={() => controller.openComposer()}
+              >
+                <Text style={styles.utilityLabelPrimary}>
+                  {navigator.utilityActions[1]?.label ?? "New Task"}
+                </Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
+        ) : null}
 
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Selected Desktop</Text>
-          <Text style={styles.sectionValue}>
-            {state.selectedDesktopId ?? "No desktop selected yet"}
-          </Text>
-        </View>
+        {state.errorMessage && state.connectionState === "connected" ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{state.errorMessage}</Text>
+          </View>
+        ) : null}
+
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            state.connectionState === "connected" ? styles.scrollContentPadded : null
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          {mainContent}
+        </ScrollView>
+
+        {state.connectionState === "connected" ? (
+          <FloatingToolbar
+            activeTab={toolbarTab}
+            onSelectTab={(tab) => controller.showView(tab)}
+            tabs={navigator.tabs}
+          />
+        ) : null}
+
+        <CreateTaskComposer
+          isOpen={state.isComposerOpen}
+          prompt={state.composerPrompt}
+          repos={state.repos}
+          selectedRepoId={state.selectedRepoId}
+          onClose={() => controller.closeComposer()}
+          onSelectRepo={(repoId) => controller.selectRepo(repoId)}
+          onChangePrompt={(prompt) => controller.updateComposerPrompt(prompt)}
+          onSubmit={() => {
+            void controller.createTask();
+          }}
+        />
       </View>
     </SafeAreaView>
   );
@@ -54,14 +208,44 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safeArea: {
-    flex: 1,
-    backgroundColor: "#0B1220"
+    backgroundColor: "#08111E",
+    flex: 1
+  },
+  backgroundGlow: {
+    backgroundColor: "#122B51",
+    borderRadius: 280,
+    height: 280,
+    opacity: 0.22,
+    position: "absolute",
+    right: -70,
+    top: -40,
+    width: 280
+  },
+  backgroundOrb: {
+    backgroundColor: "#163057",
+    borderRadius: 220,
+    bottom: 120,
+    height: 220,
+    left: -90,
+    opacity: 0.16,
+    position: "absolute",
+    width: 220
   },
   shell: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 28,
-    gap: 18
+    paddingTop: 18
+  },
+  header: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+    marginBottom: 18
+  },
+  headerActions: {
+    alignItems: "flex-end",
+    gap: 8
   },
   eyebrow: {
     color: "#7FA7D9",
@@ -70,79 +254,54 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     textTransform: "uppercase"
   },
-  title: {
+  desktopTitle: {
     color: "#F5F7FB",
-    fontSize: 32,
-    fontWeight: "700"
-  },
-  copy: {
-    color: "#B5C0D4",
-    fontSize: 15,
-    lineHeight: 22
-  },
-  actions: {
-    gap: 10
-  },
-  primaryButton: {
-    backgroundColor: "#E8F1FF",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14
-  },
-  primaryLabel: {
-    color: "#0B1220",
-    fontSize: 15,
+    fontSize: 28,
     fontWeight: "700",
-    textAlign: "center"
+    marginTop: 4
   },
-  secondaryButton: {
+  utilityButton: {
     backgroundColor: "#152036",
     borderColor: "#22304D",
-    borderRadius: 16,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14
-  },
-  secondaryLabel: {
-    color: "#D5DEEC",
-    fontSize: 15,
-    fontWeight: "600",
-    textAlign: "center"
-  },
-  section: {
-    backgroundColor: "#10192A",
-    borderColor: "#22304D",
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 10,
-    padding: 16
-  },
-  sectionLabel: {
-    color: "#7FA7D9",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1,
-    textTransform: "uppercase"
-  },
-  sectionValue: {
-    color: "#F5F7FB",
-    fontSize: 16,
-    fontWeight: "600"
-  },
-  tabRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8
-  },
-  tabPill: {
-    backgroundColor: "#17243B",
     borderRadius: 999,
+    borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8
   },
-  tabLabel: {
-    color: "#DCE6F5",
+  utilityButtonPrimary: {
+    backgroundColor: "#E8F1FF",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9
+  },
+  utilityLabel: {
+    color: "#D5DEEC",
     fontSize: 13,
-    fontWeight: "600"
+    fontWeight: "700"
+  },
+  utilityLabelPrimary: {
+    color: "#0B1220",
+    fontSize: 13,
+    fontWeight: "700"
+  },
+  errorBanner: {
+    backgroundColor: "rgba(97, 33, 36, 0.38)",
+    borderColor: "rgba(214, 102, 114, 0.34)",
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 14
+  },
+  errorText: {
+    color: "#FFC7CE",
+    fontSize: 14,
+    lineHeight: 20
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 32
+  },
+  scrollContentPadded: {
+    paddingBottom: 140
   }
 });
