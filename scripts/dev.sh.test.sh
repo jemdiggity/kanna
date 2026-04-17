@@ -341,7 +341,7 @@ rm -f "$TMUX_STATE" "$TMUX_LOG"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 
-RESULT="$(run_dev_sh --mobile env KANNA_RELAY_PORT=9087 KANNA_MOBILE_PORT=1437)"
+RESULT="$(run_dev_sh --mobile env KANNA_RELAY_PORT=9087 KANNA_MOBILE_PORT=1437 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 OUTPUT="${RESULT%===STATUS:*===}"
 STATUS="${RESULT##*===STATUS:}"
 STATUS="${STATUS%===}"
@@ -352,8 +352,14 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile pnpm run dev -- --port 1437" "$TMUX_LOG"; then
+if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1437" "$TMUX_LOG"; then
   printf 'expected dev.sh --mobile to launch Expo in the mobile window, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120" "$TMUX_LOG"; then
+  printf 'expected dev.sh --mobile to inject the Expo server URL, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
@@ -362,7 +368,7 @@ rm -f "$TMUX_STATE" "$TMUX_LOG"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 
-RESULT="$(run_dev_sh --mobile)"
+RESULT="$(run_dev_sh --mobile env KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 OUTPUT="${RESULT%===STATUS:*===}"
 STATUS="${RESULT##*===STATUS:}"
 STATUS="${STATUS%===}"
@@ -373,8 +379,29 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile pnpm run dev -- --port 8081" "$TMUX_LOG"; then
+if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 8081" "$TMUX_LOG"; then
   printf 'expected dev.sh --mobile to default to port 8081 for Expo, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+rm -f "$TMUX_STATE" "$TMUX_LOG"
+: > "$TMUX_STATE"
+: > "$TMUX_LOG"
+
+RESULT="$(run_dev_sh --mobile env KANNA_MOBILE_SERVER_URL=http://desktop.lan:48120)"
+OUTPUT="${RESULT%===STATUS:*===}"
+STATUS="${RESULT##*===STATUS:}"
+STATUS="${STATUS%===}"
+
+if [ "$STATUS" -ne 0 ]; then
+  printf 'expected dev.sh --mobile to honor explicit server URL override, got:\n' >&2
+  printf '%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if ! grep -Fq "EXPO_PUBLIC_KANNA_SERVER_URL=http://desktop.lan:48120" "$TMUX_LOG"; then
+  printf 'expected dev.sh --mobile to pass the explicit server URL override to Expo, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
@@ -425,7 +452,7 @@ rm -f "$TMUX_STATE" "$TMUX_LOG"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 
-RESULT="$(run_mobile_dev_sh env KANNA_MOBILE_PORT=1555)"
+RESULT="$(run_mobile_dev_sh env KANNA_MOBILE_PORT=1555 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 OUTPUT="${RESULT%===STATUS:*===}"
 STATUS="${RESULT##*===STATUS:}"
 STATUS="${STATUS%===}"
@@ -436,7 +463,7 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile pnpm run dev -- --port 1555" "$TMUX_LOG"; then
+if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1555" "$TMUX_LOG"; then
   printf 'expected mobile-dev.sh to delegate to the Expo mobile workflow, got:\n' >&2
 >>>>>>> 032d7177 (chore(scripts): update mobile dev workflow for expo)
   cat "$TMUX_LOG" >&2

@@ -13,6 +13,10 @@ import {
 
 const DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:48120";
 
+interface ExpoPublicEnv {
+  EXPO_PUBLIC_KANNA_SERVER_URL?: string;
+}
+
 export interface AppModel {
   client: KannaClient;
   controller: MobileController;
@@ -21,8 +25,20 @@ export interface AppModel {
   sessionStore: SessionStore;
 }
 
+function readExpoPublicEnv(): ExpoPublicEnv {
+  const globalEnv = (globalThis as { process?: { env?: ExpoPublicEnv } }).process?.env;
+  return globalEnv ?? {};
+}
+
+export function resolveServerBaseUrl(
+  env: ExpoPublicEnv = readExpoPublicEnv()
+): string {
+  const configuredBaseUrl = env.EXPO_PUBLIC_KANNA_SERVER_URL?.trim();
+  return configuredBaseUrl || DEFAULT_SERVER_BASE_URL;
+}
+
 export function createAppModel(
-  baseUrl = DEFAULT_SERVER_BASE_URL,
+  baseUrl = resolveServerBaseUrl(),
   fetchImpl = globalThis.fetch as unknown as FetchLike,
   persistence?: SessionPersistence
 ): AppModel {

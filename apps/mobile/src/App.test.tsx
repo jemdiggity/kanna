@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAppModel } from "./appModel";
+import { createAppModel, resolveServerBaseUrl } from "./appModel";
 import type { FetchLike } from "./lib/transports/lanTransport";
 
 function createFetchMock(): FetchLike {
@@ -69,6 +69,20 @@ function createFetchMock(): FetchLike {
 }
 
 describe("createAppModel", () => {
+  it("resolves the mobile server URL from Expo public env", () => {
+    vi.stubEnv("EXPO_PUBLIC_KANNA_SERVER_URL", "http://desktop.lan:48120");
+
+    expect(resolveServerBaseUrl()).toBe("http://desktop.lan:48120");
+
+    vi.unstubAllEnvs();
+  });
+
+  it("falls back to localhost when no Expo public server URL is provided", () => {
+    vi.unstubAllEnvs();
+
+    expect(resolveServerBaseUrl()).toBe("http://127.0.0.1:48120");
+  });
+
   it("creates an app model with desktop navigation and a LAN client", async () => {
     const model = createAppModel("http://desktop.test", createFetchMock());
 
