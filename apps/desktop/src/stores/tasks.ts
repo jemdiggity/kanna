@@ -382,8 +382,10 @@ export function createTasksApi(
       console.log(`[perf:setup] spawnSession: ${(performance.now() - s1).toFixed(1)}ms`);
 
       s1 = performance.now();
-      await requireService(context.services.selectItem, "selectItem")(id);
-      console.log(`[perf:setup] selectItem: ${(performance.now() - s1).toFixed(1)}ms`);
+      if (opts?.selectOnCreate !== false) {
+        await requireService(context.services.selectItem, "selectItem")(id);
+        console.log(`[perf:setup] selectItem: ${(performance.now() - s1).toFixed(1)}ms`);
+      }
       console.log(`[perf:setup] TOTAL (background): ${(performance.now() - s0).toFixed(1)}ms`);
     } finally {
       context.state.pendingSetupIds.value = context.state.pendingSetupIds.value.filter((pendingId) => pendingId !== id);

@@ -832,6 +832,31 @@ describe("kanna store task base branch integration", () => {
     });
   });
 
+  it("does not auto-select a created task when selectOnCreate is false", async () => {
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-active",
+        branch: "task-item-active",
+        prompt: "Keep me selected",
+        created_at: "2026-04-14T00:01:00.000Z",
+        updated_at: "2026-04-14T00:01:00.000Z",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-active");
+    await flushStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Spawn without follow", "sdk", {
+      agentProvider: "claude",
+      selectOnCreate: false,
+    });
+
+    await flushStore();
+
+    expect(store.selectedItemId).toBe("item-active");
+  });
+
   it("marks the current task blocked in place without killing its live session", async () => {
     mockState.pipelineItems = [
       mockState.makeItem({
