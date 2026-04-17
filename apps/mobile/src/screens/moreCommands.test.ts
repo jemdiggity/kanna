@@ -29,7 +29,8 @@ describe("buildMoreCommandSections", () => {
       headline: "Review mobile shell"
     });
     expect(sections[3]?.actions.map((action) => action.id)).toEqual([
-      "merge-agent"
+      "merge-agent",
+      "close-task"
     ]);
   });
 

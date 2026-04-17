@@ -18,6 +18,7 @@ export interface MobileController {
   createTask(): Promise<void>;
   runMergeAgent(taskId: string): Promise<void>;
   sendTaskInput(taskId: string, input: string): Promise<void>;
+  closeDesktopTask(taskId: string): Promise<void>;
 }
 
 export function createMobileController(
@@ -237,6 +238,21 @@ export function createMobileController(
 
       try {
         await client.sendTaskInput(taskId, input);
+        store.setErrorMessage(null);
+      } catch (error) {
+        fail(error);
+      }
+    },
+
+    async closeDesktopTask(taskId) {
+      try {
+        await client.closeTask(taskId);
+        const recentTasks = await client.listRecentTasks();
+        stopTaskTerminal();
+        store.setRecentTasks(recentTasks);
+        store.setSelectedTask(null);
+        store.clearTaskTerminal();
+        store.setActiveView("tasks");
         store.setErrorMessage(null);
       } catch (error) {
         fail(error);

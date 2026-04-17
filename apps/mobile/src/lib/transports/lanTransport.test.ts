@@ -45,6 +45,11 @@ describe("createLanTransport", () => {
         ok: true,
         status: 204,
         json: async () => undefined
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        json: async () => undefined
       });
 
     const transport = createLanTransport("http://127.0.0.1:48120", fetchImpl);
@@ -73,6 +78,7 @@ describe("createLanTransport", () => {
     await expect(transport.runMergeAgent("task-1")).resolves.toEqual({
       taskId: "task-2"
     });
+    await expect(transport.closeTask("task-1")).resolves.toBeUndefined();
     await expect(transport.sendTaskInput("task-1", "continue")).resolves.toBeUndefined();
 
     expect(fetchImpl).toHaveBeenNthCalledWith(
@@ -106,6 +112,13 @@ describe("createLanTransport", () => {
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
       5,
+      "http://127.0.0.1:48120/v1/tasks/task-1/actions/close",
+      {
+        method: "POST"
+      }
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      6,
       "http://127.0.0.1:48120/v1/tasks/task-1/input",
       {
         method: "POST",

@@ -11,6 +11,7 @@ interface MoreScreenProps {
   onStartPairing(): void;
   onOpenComposer(): void;
   onRunMergeAgent(taskId: string): void;
+  onCloseTask(taskId: string): void;
 }
 
 export function MoreScreen({
@@ -20,7 +21,8 @@ export function MoreScreen({
   onShowDesktops,
   onStartPairing,
   onOpenComposer,
-  onRunMergeAgent
+  onRunMergeAgent,
+  onCloseTask
 }: MoreScreenProps) {
   const sections = buildMoreCommandSections({ pairingCode, selectedTask });
 
@@ -41,6 +43,11 @@ export function MoreScreen({
       case "merge-agent":
         if (selectedTask) {
           onRunMergeAgent(selectedTask.id);
+        }
+        break;
+      case "close-task":
+        if (selectedTask) {
+          onCloseTask(selectedTask.id);
         }
         break;
     }
