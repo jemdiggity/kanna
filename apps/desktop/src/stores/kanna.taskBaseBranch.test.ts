@@ -110,6 +110,9 @@ const mockState = vi.hoisted(() => {
         return "/tmp/kanna";
       case "get_pipeline_socket_path":
         return "/tmp/kanna.sock";
+      case "read_env_var":
+        if (args?.name === "KANNA_DB_NAME") return "kanna-wt-task-existing.db";
+        return "";
       case "read_builtin_resource":
         return "{}";
       case "read_text_file":
@@ -363,12 +366,17 @@ vi.mock("./agent-permissions", () => ({
 }));
 
 vi.mock("./db", () => ({
-  resolveDbName: vi.fn(async () => "kanna-test.db"),
+  resolveDbName: vi.fn(async () => "kanna-wt-task-existing.db"),
 }));
 
-vi.mock("./kannaCliEnv", () => ({
-  buildKannaCliEnv: vi.fn(() => ({})),
-}));
+vi.mock("./kannaCliEnv", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./kannaCliEnv")>();
+  return {
+    ...actual,
+    buildKannaCliEnv: vi.fn(actual.buildKannaCliEnv),
+    buildTaskRuntimeEnv: vi.fn(actual.buildTaskRuntimeEnv),
+  };
+});
 
 vi.mock("../i18n", () => ({
   default: {
@@ -644,6 +652,86 @@ describe("kanna store task base branch integration", () => {
       KANNA_DEV_PORT: "1422",
       API_PORT: "3002",
     }));
+  });
+
+  it("passes task-scoped port and kanna-cli env to sdk agent sessions", async () => {
+    mockState.repoConfig = {
+      ports: {
+        KANNA_DEV_PORT: 1420,
+        API_PORT: 3000,
+      },
+    };
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Ship sdk env", "sdk", {
+      agentProvider: "claude",
+    });
+
+    const createdItem = mockState.pipelineItems.at(-1);
+    expect(createdItem).toBeTruthy();
+    expect(mockState.invokeMock).toHaveBeenCalledWith(
+      "create_agent_session",
+      expect.objectContaining({
+        sessionId: createdItem?.id,
+        env: expect.objectContaining({
+          KANNA_WORKTREE: "1",
+          KANNA_DEV_PORT: "1421",
+          API_PORT: "3001",
+          KANNA_CLI_PATH: "/usr/bin/kanna-cli",
+          KANNA_TASK_ID: createdItem?.id,
+          KANNA_CLI_DB_PATH: "/tmp/kanna/kanna-wt-task-existing.db",
+          KANNA_SOCKET_PATH: "/tmp/kanna.sock",
+        }),
+      }),
+    );
+  });
+
+  it("passes task-scoped port and kanna-cli env to rerun stage setup scripts", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      environments: {
+        dev: {
+          setup: ["echo setup"],
+        },
+      },
+      stages: [
+        { name: "in progress", environment: "dev" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-existing",
+        branch: "task-existing",
+        stage: "in progress",
+        port_env: JSON.stringify({
+          KANNA_DEV_PORT: "1421",
+          API_PORT: "3001",
+        }),
+      }),
+    ];
+
+    const store = await createStore();
+    await vi.waitFor(() => {
+      expect(store.items).toHaveLength(1);
+    });
+
+    await store.rerunStage("item-existing");
+
+    expect(mockState.invokeMock).toHaveBeenCalledWith(
+      "run_script",
+      expect.objectContaining({
+        cwd: "/tmp/repo/.kanna-worktrees/task-existing",
+        env: expect.objectContaining({
+          KANNA_WORKTREE: "1",
+          KANNA_DEV_PORT: "1421",
+          API_PORT: "3001",
+          KANNA_CLI_PATH: "/usr/bin/kanna-cli",
+          KANNA_TASK_ID: "item-existing",
+          KANNA_CLI_DB_PATH: "/tmp/kanna/kanna-wt-task-existing.db",
+          KANNA_SOCKET_PATH: "/tmp/kanna.sock",
+        }),
+      }),
+    );
   });
 
   it("assigns ports freshly on undo close instead of restoring the task's previous assignment", async () => {

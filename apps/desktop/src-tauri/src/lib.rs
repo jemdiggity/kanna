@@ -1,5 +1,6 @@
 mod commands;
 mod daemon_client;
+mod subprocess_env;
 
 use commands::agent::AgentState;
 use commands::daemon::{
@@ -353,15 +354,17 @@ async fn ensure_daemon_running() {
     use std::os::unix::process::CommandExt;
     // setsid() detaches daemon from our process group so Ctrl+C doesn't kill it
     let mut cmd = std::process::Command::new(&daemon_bin);
+    let mut explicit_env = Vec::new();
+    if is_worktree {
+        explicit_env.push(("KANNA_WORKTREE".to_string(), "1".to_string()));
+    }
+    if let Ok(daemon_dir) = std::env::var("KANNA_DAEMON_DIR") {
+        explicit_env.push(("KANNA_DAEMON_DIR".to_string(), daemon_dir));
+    }
+    subprocess_env::apply_child_env(&mut cmd, explicit_env);
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    if is_worktree {
-        cmd.env("KANNA_WORKTREE", "1");
-    }
-    if let Ok(daemon_dir) = std::env::var("KANNA_DAEMON_DIR") {
-        cmd.env("KANNA_DAEMON_DIR", &daemon_dir);
-    }
     match unsafe {
         cmd.pre_exec(|| {
             libc::setsid();

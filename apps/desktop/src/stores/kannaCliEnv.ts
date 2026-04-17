@@ -14,3 +14,19 @@ export function buildKannaCliEnv(options: BuildKannaCliEnvOptions): Record<strin
     KANNA_SOCKET_PATH: socketPath,
   };
 }
+
+interface BuildTaskRuntimeEnvOptions extends BuildKannaCliEnvOptions {
+  portEnv?: Record<string, string>;
+  kannaCliPath?: string | null;
+}
+
+export function buildTaskRuntimeEnv(options: BuildTaskRuntimeEnvOptions): Record<string, string> {
+  const { portEnv, kannaCliPath, ...kannaCliEnvOptions } = options;
+
+  return {
+    KANNA_WORKTREE: "1",
+    ...(portEnv ?? {}),
+    ...(kannaCliPath ? { KANNA_CLI_PATH: kannaCliPath } : {}),
+    ...buildKannaCliEnv(kannaCliEnvOptions),
+  };
+}

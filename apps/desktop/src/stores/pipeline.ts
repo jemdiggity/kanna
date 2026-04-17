@@ -5,10 +5,12 @@ import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { AgentDefinition, PipelineDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { clearPipelineItemStageResult, getRepo } from "@kanna/db";
 import { invoke } from "../invoke";
+import { buildTaskRuntimeEnv } from "./kannaCliEnv";
 import {
   getPreferredAgentProviders,
   resolveAgentProvider,
 } from "./agent-provider";
+import { resolveDbName } from "./db";
 import { requireService, type StoreContext } from "./state";
 
 export interface PipelineApi {
@@ -155,6 +157,11 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     });
   }
 
+  function parseTaskPortEnv(portEnv: string | null): Record<string, string> | undefined {
+    if (!portEnv) return undefined;
+    return JSON.parse(portEnv) as Record<string, string>;
+  }
+
   async function rerunStage(taskId: string): Promise<void> {
     const item = context.state.items.value.find((candidate) => candidate.id === taskId);
     if (!item) return;
@@ -186,8 +193,17 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       if (env?.setup?.length) {
         const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
         try {
+          const portEnv = parseTaskPortEnv(item.port_env);
+          const scriptEnv = buildTaskRuntimeEnv({
+            taskId,
+            dbName: await resolveDbName(),
+            appDataDir: await invoke<string>("get_app_data_dir"),
+            socketPath: await invoke<string>("get_pipeline_socket_path"),
+            portEnv,
+            kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
+          });
           for (const script of env.setup) {
-            await invoke("run_script", { script, cwd: worktreePath, env: { KANNA_WORKTREE: "1" } });
+            await invoke("run_script", { script, cwd: worktreePath, env: scriptEnv });
           }
         } catch (error) {
           console.error("[store] rerunStage: setup script failed:", error);

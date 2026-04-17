@@ -39,11 +39,13 @@ import { getTaskCloseBehavior } from "./taskCloseBehavior";
 import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import { getCreateWorktreeStartPoint, resolveInitialBaseRef } from "./taskBaseBranch";
+import { buildTaskRuntimeEnv } from "./kannaCliEnv";
 import {
   reportCloseSessionError,
   reportPrewarmSessionError,
 } from "./kannaCleanup";
 import { isTeardownStage, TEARDOWN_STAGE } from "./taskStages";
+import { resolveDbName } from "./db";
 import { readRepoConfig, requireService, type CreateItemOptions, type StoreContext, type WorktreeBootstrapResult } from "./state";
 
 export interface TasksApi {
@@ -313,10 +315,19 @@ export function createTasksApi(
         }
 
         if (agentType !== "pty") {
+          const sdkEnv = buildTaskRuntimeEnv({
+            taskId: id,
+            dbName: await resolveDbName(),
+            appDataDir: await invoke<string>("get_app_data_dir"),
+            socketPath: await invoke<string>("get_pipeline_socket_path"),
+            portEnv,
+            kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
+          });
           await invoke("create_agent_session", {
             sessionId: id,
             cwd: worktreePath,
             prompt,
+            env: sdkEnv,
             systemPrompt: null,
             permissionMode: opts?.customTask?.permissionMode ?? null,
             model: opts?.customTask?.model ?? null,

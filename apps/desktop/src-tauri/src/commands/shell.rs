@@ -59,12 +59,13 @@ pub async fn run_script(
     env: HashMap<String, String>,
 ) -> Result<String, String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    let output = Command::new(&shell)
+    let mut command = Command::new(&shell);
+    crate::subprocess_env::apply_child_env(&mut command, env);
+    let output = command
         .arg("-l")
         .arg("-c")
         .arg(&script)
         .current_dir(&cwd)
-        .envs(&env)
         .output()
         .map_err(|e| format!("failed to run script: {}", e))?;
 
@@ -77,5 +78,79 @@ pub async fn run_script(
             "script exited with status {}: {}{}",
             output.status, stderr, stdout
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_script;
+    use std::collections::HashMap;
+    use std::ffi::CString;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    unsafe fn set_env_var(key: &str, value: &str) {
+        let key = CString::new(key).expect("env key should be valid");
+        let value = CString::new(value).expect("env value should be valid");
+        assert_eq!(libc::setenv(key.as_ptr(), value.as_ptr(), 1), 0);
+    }
+
+    unsafe fn unset_env_var(key: &str) {
+        let key = CString::new(key).expect("env key should be valid");
+        assert_eq!(libc::unsetenv(key.as_ptr()), 0);
+    }
+
+    #[tokio::test]
+    async fn run_script_does_not_inherit_kanna_control_plane_env() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        unsafe {
+            set_env_var("KANNA_TMUX_SESSION", "leaked-session");
+            set_env_var("KANNA_DB_NAME", "leaked.db");
+            set_env_var("TAURI_WEBDRIVER_PORT", "4555");
+        }
+
+        let output = run_script(
+            "printf '%s|%s|%s' \"${KANNA_TMUX_SESSION:-}\" \"${KANNA_DB_NAME:-}\" \"${TAURI_WEBDRIVER_PORT:-}\"".to_string(),
+            "/".to_string(),
+            HashMap::new(),
+        )
+        .await
+        .expect("script should succeed");
+
+        unsafe {
+            unset_env_var("KANNA_TMUX_SESSION");
+            unset_env_var("KANNA_DB_NAME");
+            unset_env_var("TAURI_WEBDRIVER_PORT");
+        }
+
+        assert_eq!(output, "||");
+    }
+
+    #[tokio::test]
+    async fn run_script_preserves_explicit_kanna_env_over_scrubbed_parent_values() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        unsafe {
+            set_env_var("KANNA_WORKTREE", "0");
+            set_env_var("KANNA_TMUX_SESSION", "leaked-session");
+        }
+
+        let output = run_script(
+            "printf '%s|%s' \"${KANNA_WORKTREE:-}\" \"${KANNA_TMUX_SESSION:-}\"".to_string(),
+            "/".to_string(),
+            HashMap::from([("KANNA_WORKTREE".to_string(), "1".to_string())]),
+        )
+        .await
+        .expect("script should succeed");
+
+        unsafe {
+            unset_env_var("KANNA_WORKTREE");
+            unset_env_var("KANNA_TMUX_SESSION");
+        }
+
+        assert_eq!(output, "1|");
     }
 }
