@@ -17,7 +17,13 @@ describe("createKannaClient", () => {
         { id: "desktop-1", name: "Studio Mac", online: true, mode: "lan" }
       ]),
       listRecentTasks: vi.fn().mockResolvedValue([
-        { id: "task-1", repoId: "repo-1", title: "Refactor mobile client", stage: "in progress" }
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile client",
+          stage: "in progress",
+          snippet: "Latest agent output preview"
+        }
       ]),
       searchTasks: vi.fn().mockResolvedValue([
         { id: "task-2", repoId: "repo-1", title: "Search result", stage: "pr" }
@@ -45,6 +51,7 @@ describe("createKannaClient", () => {
 
     expect(await client.listDesktops()).toHaveLength(1);
     expect(await client.listRecentTasks()).toHaveLength(1);
+    expect((await client.listRecentTasks())[0]?.snippet).toBe("Latest agent output preview");
     expect(await client.searchTasks("search")).toHaveLength(1);
     expect(await client.createTask({
       repoId: "repo-1",
