@@ -1,5 +1,5 @@
-import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
 import type { TaskTerminalStatus } from "../state/sessionStore";
 import { buildTaskWorkspaceModel } from "./taskWorkspace";
@@ -13,6 +13,7 @@ interface TaskScreenProps {
   onBack(): void;
   onOpenMore(): void;
   onShowSearch(): void;
+  onSendInput(input: string): void;
 }
 
 export function TaskScreen({
@@ -23,9 +24,11 @@ export function TaskScreen({
   terminalStatus,
   onBack,
   onOpenMore,
-  onShowSearch
+  onShowSearch,
+  onSendInput
 }: TaskScreenProps) {
   const model = buildTaskWorkspaceModel({ desktopName, repoName, task });
+  const [draftInput, setDraftInput] = useState("");
   const terminalText =
     terminalOutput.trim() ||
     (terminalStatus === "connecting"
@@ -82,6 +85,29 @@ export function TaskScreen({
           This feed follows the selected desktop task. Command palette actions stay available from
           More while the stream remains attached to the task.
         </Text>
+        <View style={styles.inputComposer}>
+          <TextInput
+            onChangeText={setDraftInput}
+            placeholder="Send input to the agent"
+            placeholderTextColor="#6F89AE"
+            style={styles.inputField}
+            value={draftInput}
+          />
+          <Pressable
+            style={styles.sendButton}
+            onPress={() => {
+              const nextInput = draftInput.trim();
+              if (!nextInput) {
+                return;
+              }
+
+              onSendInput(nextInput);
+              setDraftInput("");
+            }}
+          >
+            <Text style={styles.sendButtonLabel}>Send</Text>
+          </Pressable>
+        </View>
         {model.terminalLines.map((line) => (
           <Text key={line} style={styles.terminalMetaLine}>
             {`> ${line}`}
@@ -264,5 +290,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     marginTop: 10
+  },
+  inputComposer: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10
+  },
+  inputField: {
+    backgroundColor: "#10192A",
+    borderColor: "#20304C",
+    borderRadius: 14,
+    borderWidth: 1,
+    color: "#F5F7FB",
+    flex: 1,
+    fontSize: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12
+  },
+  sendButton: {
+    backgroundColor: "#E8F1FF",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 11
+  },
+  sendButtonLabel: {
+    color: "#0B1220",
+    fontSize: 13,
+    fontWeight: "700"
   }
 });

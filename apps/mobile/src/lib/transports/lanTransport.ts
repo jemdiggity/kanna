@@ -47,6 +47,10 @@ export function createLanTransport(
       throw new Error(`LAN request failed (${response.status}) for ${path}`);
     }
 
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
     return response.json() as Promise<T>;
   };
 
@@ -68,6 +72,12 @@ export function createLanTransport(
     runMergeAgent: (taskId: string) =>
       request<TaskActionResponse>(`/v1/tasks/${encodeURIComponent(taskId)}/actions/run-merge-agent`, {
         method: "POST"
+      }),
+    sendTaskInput: (taskId: string, input: string) =>
+      request<void>(`/v1/tasks/${encodeURIComponent(taskId)}/input`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input })
       }),
     observeTaskTerminal(taskId, listener) {
       const socket = createSocket(buildTaskTerminalWebSocketUrl(baseUrl, taskId));

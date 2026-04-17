@@ -37,6 +37,7 @@ describe("createKannaClient", () => {
       runMergeAgent: vi.fn().mockResolvedValue({
         taskId: "task-4"
       }),
+      sendTaskInput: vi.fn().mockResolvedValue(undefined),
       observeTaskTerminal: vi.fn().mockReturnValue({
         close: vi.fn()
       }),
@@ -68,6 +69,7 @@ describe("createKannaClient", () => {
     expect(await client.runMergeAgent("task-1")).toEqual({
       taskId: "task-4"
     });
+    await expect(client.sendTaskInput("task-1", "continue")).resolves.toBeUndefined();
     expect(typeof client.observeTaskTerminal("task-1", vi.fn()).close).toBe("function");
     expect((await client.createPairingSession()).code).toBe("ABC123");
   });

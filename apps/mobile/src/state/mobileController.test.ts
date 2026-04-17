@@ -71,6 +71,7 @@ function createClientMock(): ClientMock {
     runMergeAgent: vi.fn().mockResolvedValue({
       taskId: "task-merge"
     }),
+    sendTaskInput: vi.fn().mockResolvedValue(undefined),
     observeTaskTerminal: vi.fn().mockImplementation((_taskId, listener) => {
       terminalStream.subscription.setListener(listener);
       return terminalStream.subscription;
@@ -210,6 +211,17 @@ describe("createMobileController", () => {
     });
     expect(store.getState().taskTerminalOutput).toContain("First line");
     expect(store.getState().taskTerminalOutput).toContain("Second line");
+  });
+
+  it("sends task input to the desktop daemon", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    await controller.sendTaskInput("task-1", "continue");
+
+    expect(client.sendTaskInput).toHaveBeenCalledWith("task-1", "continue");
   });
 });
 interface ClientMock extends KannaClient {
