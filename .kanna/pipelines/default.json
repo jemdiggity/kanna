@@ -14,7 +14,8 @@
       "description": "Agent creates a GitHub PR",
       "agent": "pr",
       "prompt": "Create a PR for the work on branch $BRANCH. Previous result: $PREV_RESULT",
-      "transition": "manual"
+      "transition": "manual",
+      "follow_task": false
     }
   ]
 }
