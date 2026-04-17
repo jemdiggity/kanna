@@ -1,18 +1,69 @@
+use crate::config::Config;
 use crate::daemon_client::DaemonClient;
 use crate::db::Db;
-use kanna_daemon::protocol::{Command as DaemonCommand, Event as DaemonEvent};
+use crate::mobile_api::MobileApi;
+use crate::task_creator;
+use kanna_daemon::protocol::{Command as DaemonCommand, ErrorCode, Event as DaemonEvent};
 use serde_json::Value;
+
+async fn kill_session_if_present(
+    daemon: &mut DaemonClient,
+    session_id: &str,
+) -> Result<(), String> {
+    let event = daemon
+        .send_command(&DaemonCommand::Kill {
+            session_id: session_id.to_string(),
+        })
+        .await
+        .map_err(|e| format!("daemon error: {}", e))?;
+
+    match event {
+        DaemonEvent::Ok => Ok(()),
+        DaemonEvent::Error {
+            code: Some(ErrorCode::SessionNotFound),
+            ..
+        } => Ok(()),
+        DaemonEvent::Error { message, .. } => Err(format!("daemon error: {}", message)),
+        other => Err(format!("unexpected daemon response: {:?}", other)),
+    }
+}
 
 pub async fn handle_invoke(
     command: &str,
     args: &Value,
     db: &Db,
     daemon: &mut DaemonClient,
+    config: &Config,
 ) -> Result<Value, String> {
+    let mobile_api = || {
+        Db::open(&config.db_path)
+            .map(|db| MobileApi::new(config.clone(), db))
+            .map_err(|e| format!("db error: {}", e))
+    };
+
     match command {
+        "list_desktops" => {
+            let api = mobile_api()?;
+            serde_json::to_value(api.list_desktops()?)
+                .map_err(|e| format!("serialize error: {}", e))
+        }
         "list_repos" => {
             let repos = db.list_repos().map_err(|e| format!("db error: {}", e))?;
             serde_json::to_value(&repos).map_err(|e| format!("serialize error: {}", e))
+        }
+        "list_recent_tasks" => {
+            let api = mobile_api()?;
+            serde_json::to_value(api.list_recent_tasks()?)
+                .map_err(|e| format!("serialize error: {}", e))
+        }
+        "search_tasks" => {
+            let api = mobile_api()?;
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing required arg: query".to_string())?;
+            serde_json::to_value(api.search_tasks(query)?)
+                .map_err(|e| format!("serialize error: {}", e))
         }
         "list_pipeline_items" => {
             let repo_id = args
@@ -41,10 +92,9 @@ pub async fn handle_invoke(
                 .map_err(|e| format!("daemon error: {}", e))?;
             match event {
                 DaemonEvent::SessionList { sessions } => {
-                    serde_json::to_value(&sessions)
-                        .map_err(|e| format!("serialize error: {}", e))
+                    serde_json::to_value(&sessions).map_err(|e| format!("serialize error: {}", e))
                 }
-                DaemonEvent::Error { message } => Err(format!("daemon error: {}", message)),
+                DaemonEvent::Error { message, .. } => Err(format!("daemon error: {}", message)),
                 other => Err(format!("unexpected daemon response: {:?}", other)),
             }
         }
@@ -66,9 +116,35 @@ pub async fn handle_invoke(
                 .map_err(|e| format!("daemon error: {}", e))?;
             match event {
                 DaemonEvent::Ok => Ok(Value::Null),
-                DaemonEvent::Error { message } => Err(format!("daemon error: {}", message)),
+                DaemonEvent::Error { message, .. } => Err(format!("daemon error: {}", message)),
                 other => Err(format!("unexpected daemon response: {:?}", other)),
             }
+        }
+        "close_task" => {
+            let task_id = args
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing required arg: task_id".to_string())?;
+
+            for session_id in [
+                task_id.to_string(),
+                format!("shell-wt-{task_id}"),
+                format!("td-{task_id}"),
+            ] {
+                kill_session_if_present(daemon, &session_id).await?;
+            }
+
+            db.close_pipeline_item(task_id)
+                .map_err(|e| format!("db error: {}", e))?;
+            Ok(Value::Null)
+        }
+        "run_merge_agent" => {
+            let task_id = args
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing required arg: task_id".to_string())?;
+            let new_task_id = task_creator::run_merge_agent(db, daemon, config, task_id).await?;
+            Ok(serde_json::json!({ "task_id": new_task_id }))
         }
         // Note: attach_session and detach_session are handled directly in main.rs
         // because they require long-lived daemon connections for streaming.

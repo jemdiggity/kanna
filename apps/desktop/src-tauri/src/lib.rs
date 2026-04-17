@@ -499,7 +499,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_delta_updater::init());
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(debug_assertions)]
     {
@@ -555,6 +556,18 @@ pub fn run() {
                 .item(&window_submenu)
                 .build()?;
             app.set_menu(menu)?;
+
+            let mobile_app_data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| PathBuf::from("."));
+            let mobile_manager = commands::mobile::MobileServerManager::new(mobile_app_data_dir);
+            app.manage(mobile_manager.clone());
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = mobile_manager.start().await {
+                    eprintln!("[mobile] failed to start kanna-server: {}", err);
+                }
+            });
 
             // Restore webview focus when the window gains focus.
             // This catches fullscreen exit (green button, View menu) and app
@@ -618,6 +631,7 @@ pub fn run() {
             commands::git::git_log,
             commands::git::git_graph,
             commands::git::git_default_branch,
+            commands::git::git_list_base_branches,
             commands::git::git_remote_url,
             commands::git::git_push,
             commands::git::git_fetch,
@@ -644,6 +658,9 @@ pub fn run() {
             commands::fs::read_dir_entries,
             commands::fs::read_builtin_resource,
             commands::fs::list_builtin_resources,
+            // Mobile commands
+            commands::mobile::mobile_server_status,
+            commands::mobile::create_mobile_pairing_session,
             // Shell commands
             commands::shell::run_script,
             commands::shell::ensure_term_init,

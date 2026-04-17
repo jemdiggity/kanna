@@ -1,6 +1,6 @@
 [package]
 name = "kanna-desktop"
-version = "0.0.35"
+version = "0.0.40"
 description = "Kanna Desktop App"
 authors = []
 edition = "2021"
@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -18,18 +19,20 @@ tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 git2 = { version = "0.19", features = ["vendored-libgit2", "vendored-openssl"] }
 tokio = { version = "1", features = ["full"] }
 dashmap = "6"
 claude-agent-sdk = { path = "../../../crates/claude-agent-sdk" }
-tauri-plugin-delta-updater = { path = "../../../crates/tauri-plugin-delta-updater" }
 chrono = "0.4"
 libc = "0.2"
 base64 = "0.22"
 tauri-plugin-webdriver = "0.2"
 ignore = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

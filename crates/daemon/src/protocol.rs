@@ -39,6 +39,27 @@ pub struct HandoffSession {
     pub rows: u16,
     pub cols: u16,
     pub snapshot: Option<TerminalSnapshot>,
+    #[serde(default)]
+    pub agent_provider: Option<AgentProvider>,
+    #[serde(default)]
+    pub status: SessionStatus,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProvider {
+    Claude,
+    Copilot,
+    Codex,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatus {
+    Busy,
+    Waiting,
+    #[default]
+    Idle,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,12 +73,18 @@ pub enum Command {
         env: HashMap<String, String>,
         cols: u16,
         rows: u16,
+        #[serde(default)]
+        agent_provider: Option<AgentProvider>,
     },
     Attach {
         session_id: String,
+        #[serde(default)]
+        emulate_terminal: bool,
     },
     AttachSnapshot {
         session_id: String,
+        #[serde(default)]
+        emulate_terminal: bool,
     },
     Detach {
         session_id: String,
@@ -108,7 +135,7 @@ pub enum Event {
     },
     StatusChanged {
         session_id: String,
-        status: String,
+        status: SessionStatus,
     },
     SessionCreated {
         session_id: String,
@@ -140,6 +167,7 @@ pub struct SessionInfo {
     pub cwd: String,
     pub state: SessionState,
     pub idle_seconds: u64,
+    pub status: SessionStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +193,7 @@ mod tests {
             env,
             cols: 80,
             rows: 24,
+            agent_provider: Some(AgentProvider::Codex),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let decoded: Command = serde_json::from_str(&json).unwrap();
@@ -174,12 +203,14 @@ mod tests {
                 executable,
                 cols,
                 rows,
+                agent_provider,
                 ..
             } => {
                 assert_eq!(session_id, "abc123");
                 assert_eq!(executable, "/bin/bash");
                 assert_eq!(cols, 80);
                 assert_eq!(rows, 24);
+                assert_eq!(agent_provider, Some(AgentProvider::Codex));
             }
             _ => panic!("wrong variant"),
         }
@@ -331,6 +362,8 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 snapshot: None,
+                agent_provider: None,
+                status: SessionStatus::Idle,
             }],
         };
 
@@ -406,6 +439,7 @@ mod tests {
             cwd: "/home/user".to_string(),
             state: SessionState::Active,
             idle_seconds: 30,
+            status: SessionStatus::Idle,
         };
         let json = serde_json::to_string(&info).unwrap();
         let decoded: SessionInfo = serde_json::from_str(&json).unwrap();
@@ -432,6 +466,7 @@ mod tests {
                 cwd: "/tmp".to_string(),
                 state: SessionState::Suspended,
                 idle_seconds: 10,
+                status: SessionStatus::Idle,
             }],
         };
         let json = serde_json::to_string(&evt).unwrap();

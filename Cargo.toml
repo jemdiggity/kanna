@@ -4,6 +4,7 @@ members = [
     "crates/claude-agent-sdk",
     "crates/daemon",
     "crates/kanna-cli",
+    "crates/kanna-server",
     "crates/tauri-plugin-delta-updater",
     "packages/terminal-recovery",
 ]

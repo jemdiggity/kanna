@@ -2,8 +2,12 @@ mod commands;
 mod config;
 mod daemon_client;
 mod db;
+mod http_api;
+mod mobile_api;
+mod pairing;
 mod register;
 mod relay_client;
+mod task_creator;
 
 use config::Config;
 use futures_util::{SinkExt, StreamExt};
@@ -51,6 +55,25 @@ async fn main() {
 
     log::info!("Database opened: {}", config.db_path);
 
+    let http_state = Arc::new(http_api::AppState::new(config.clone()));
+    let lan_task = tokio::spawn(http_api::serve(http_state));
+    let relay_loop = run_relay_loop(config, db);
+    tokio::pin!(relay_loop);
+
+    tokio::select! {
+        result = lan_task => match result {
+            Ok(Ok(())) => log::warn!("LAN API exited unexpectedly"),
+            Ok(Err(err)) => log::error!("LAN API failed: {}", err),
+            Err(err) => log::error!("LAN API task join error: {}", err),
+        },
+        result = &mut relay_loop => match result {
+            Ok(()) => log::warn!("relay loop exited unexpectedly"),
+            Err(err) => log::error!("relay loop failed: {}", err),
+        },
+    };
+}
+
+async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
     // Reconnection loop
     loop {
         log::info!("Connecting to relay at {}...", config.relay_url);
@@ -100,21 +123,19 @@ async fn main() {
 
                             // Special-case: attach_session needs a long-lived daemon connection
                             if command == "attach_session" {
-                                let session_id = match args
-                                    .get("session_id")
-                                    .and_then(|v| v.as_str())
-                                {
-                                    Some(s) => s.to_string(),
-                                    None => {
-                                        send_response(
-                                            &sink,
-                                            id,
-                                            Err("missing required arg: session_id".to_string()),
-                                        )
-                                        .await;
-                                        continue;
-                                    }
-                                };
+                                let session_id =
+                                    match args.get("session_id").and_then(|v| v.as_str()) {
+                                        Some(s) => s.to_string(),
+                                        None => {
+                                            send_response(
+                                                &sink,
+                                                id,
+                                                Err("missing required arg: session_id".to_string()),
+                                            )
+                                            .await;
+                                            continue;
+                                        }
+                                    };
 
                                 // Cancel existing observer for this session
                                 if let Some(handle) = observe_tasks.remove(&session_id) {
@@ -158,8 +179,7 @@ async fn main() {
                                 {
                                     Ok(DaemonEvent::Ok) => {
                                         // Send success response
-                                        send_response(&sink, id, Ok(serde_json::Value::Null))
-                                            .await;
+                                        send_response(&sink, id, Ok(serde_json::Value::Null)).await;
 
                                         // Spawn background task to forward daemon events
                                         let sink_clone = Arc::clone(&sink);
@@ -169,7 +189,7 @@ async fn main() {
                                         });
                                         observe_tasks.insert(session_id, handle);
                                     }
-                                    Ok(DaemonEvent::Error { message }) => {
+                                    Ok(DaemonEvent::Error { message, .. }) => {
                                         send_response(
                                             &sink,
                                             id,
@@ -181,10 +201,7 @@ async fn main() {
                                         send_response(
                                             &sink,
                                             id,
-                                            Err(format!(
-                                                "unexpected daemon response: {:?}",
-                                                other
-                                            )),
+                                            Err(format!("unexpected daemon response: {:?}", other)),
                                         )
                                         .await;
                                     }
@@ -202,21 +219,19 @@ async fn main() {
 
                             // Special-case: detach_session just aborts the observer task
                             if command == "detach_session" {
-                                let session_id = match args
-                                    .get("session_id")
-                                    .and_then(|v| v.as_str())
-                                {
-                                    Some(s) => s.to_string(),
-                                    None => {
-                                        send_response(
-                                            &sink,
-                                            id,
-                                            Err("missing required arg: session_id".to_string()),
-                                        )
-                                        .await;
-                                        continue;
-                                    }
-                                };
+                                let session_id =
+                                    match args.get("session_id").and_then(|v| v.as_str()) {
+                                        Some(s) => s.to_string(),
+                                        None => {
+                                            send_response(
+                                                &sink,
+                                                id,
+                                                Err("missing required arg: session_id".to_string()),
+                                            )
+                                            .await;
+                                            continue;
+                                        }
+                                    };
 
                                 if let Some(handle) = observe_tasks.remove(&session_id) {
                                     handle.abort();
@@ -234,7 +249,11 @@ async fn main() {
                             let response = match daemon_result {
                                 Ok(mut daemon) => {
                                     match commands::handle_invoke(
-                                        &command, &args, &db, &mut daemon,
+                                        &command,
+                                        &args,
+                                        &db,
+                                        &mut daemon,
+                                        &config,
                                     )
                                     .await
                                     {
@@ -275,8 +294,11 @@ async fn main() {
                                 }
                             };
 
-                            if let Err(e) =
-                                sink.lock().await.send(Message::Text(response_json.into())).await
+                            if let Err(e) = sink
+                                .lock()
+                                .await
+                                .send(Message::Text(response_json.into()))
+                                .await
                             {
                                 log::error!("Failed to send response: {}", e);
                                 break;
@@ -309,7 +331,10 @@ async fn main() {
 
         // Clean up all observer tasks on disconnect
         for (session_id, handle) in observe_tasks.drain() {
-            log::info!("Cleaning up observer for session {} on disconnect", session_id);
+            log::info!(
+                "Cleaning up observer for session {} on disconnect",
+                session_id
+            );
             handle.abort();
         }
 

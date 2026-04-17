@@ -48,6 +48,15 @@ enum Cmd {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SessionStatus {
+    Busy,
+    Waiting,
+    Idle,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum Evt {
     Output {
@@ -67,6 +76,10 @@ enum Evt {
     Snapshot {
         session_id: String,
         snapshot: SnapshotPayload,
+    },
+    StatusChanged {
+        session_id: String,
+        status: SessionStatus,
     },
     Ok,
     Error {
@@ -237,10 +250,13 @@ fn attach(conn: &mut ClientConn, id: &str) {
     conn.send(&Cmd::Attach {
         session_id: id.to_string(),
     });
-    match conn.recv() {
-        Evt::Ok => {}
-        Evt::Error { message } => panic!("attach failed: {}", message),
-        other => panic!("expected Ok, got: {:?}", other),
+    loop {
+        match conn.recv() {
+            Evt::Ok => break,
+            Evt::StatusChanged { .. } => continue,
+            Evt::Error { message } => panic!("attach failed: {}", message),
+            other => panic!("expected Ok, got: {:?}", other),
+        }
     }
 }
 
@@ -253,6 +269,7 @@ fn send_input(conn: &mut ClientConn, id: &str, data: &[u8]) {
         match conn.recv() {
             Evt::Ok => break,
             Evt::Output { .. } => continue,
+            Evt::StatusChanged { .. } => continue,
             Evt::Error { message } => panic!("input failed: {}", message),
             other => panic!("expected Ok, got: {:?}", other),
         }
