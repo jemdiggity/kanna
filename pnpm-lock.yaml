@@ -129,6 +129,9 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@react-native-async-storage/async-storage':
+        specifier: ^3.0.2
+        version: 3.0.2(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0)
       '@react-navigation/bottom-tabs':
         specifier: ^7.0.0
         version: 7.15.9(@react-navigation/native@7.2.2(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0))(react-native-safe-area-context@5.7.0(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0))(react-native-screens@4.24.0(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0))(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0)
@@ -1297,6 +1300,12 @@ packages:
 
   '@protobufjs/utf8@1.1.0':
     resolution: {integrity: sha512-Vvn3zZrhQZkkBE8LSuW3em98c0FwgO4nxzv6OdSxPKJIEKY2bGbHn+mhGIPerzI4twdxaP8/0+06HBpwf345Lw==}
+
+  '@react-native-async-storage/async-storage@3.0.2':
+    resolution: {integrity: sha512-XP0zDIl+1XoeuQ7f878qXKdl77zLwzLALPpxvNRc7ZtDh9ew36WSvOdQOhFkexMySapFAWxEbZxS8K8J2DU4eg==}
+    peerDependencies:
+      react: '*'
+      react-native: '*'
 
   '@react-native/assets-registry@0.79.2':
     resolution: {integrity: sha512-5h2Z7/+/HL/0h88s0JHOdRCW4CXMCJoROxqzHqxdrjGL6EBD1DdaB4ZqkCOEVSW4Vjhir5Qb97C8i/MPWEYPtg==}
@@ -2980,6 +2989,9 @@ packages:
   https-proxy-agent@7.0.6:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
     engines: {node: '>= 14'}
+
+  idb@8.0.3:
+    resolution: {integrity: sha512-LtwtVyVYO5BqRvcsKuB2iUMnHwPVByPCXFXOpuU96IZPPoPN6xjOGxZQ74pgSVVLQWtUOYgyeL4GE98BY5D3wg==}
 
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
@@ -6020,6 +6032,12 @@ snapshots:
   '@protobufjs/utf8@1.1.0':
     optional: true
 
+  '@react-native-async-storage/async-storage@3.0.2(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0)':
+    dependencies:
+      idb: 8.0.3
+      react: 19.0.0
+      react-native: 0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0)
+
   '@react-native/assets-registry@0.79.2': {}
 
   '@react-native/babel-plugin-codegen@0.79.6(@babel/core@7.29.0)':
@@ -7976,6 +7994,8 @@ snapshots:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
+
+  idb@8.0.3: {}
 
   ieee754@1.2.1: {}
 
