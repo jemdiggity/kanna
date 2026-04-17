@@ -35,7 +35,8 @@
     "externalBin": [
       "binaries/kanna-daemon",
       "binaries/kanna-cli",
-      "binaries/kanna-terminal-recovery"
+      "binaries/kanna-terminal-recovery",
+      "binaries/kanna-server"
     ],
     "resources": {
       "../../../.kanna/agents/": ".kanna/agents/",

@@ -47,7 +47,7 @@ stage_if_changed() {
     cp "$src" "$dest"
 }
 
-for BIN in kanna-daemon kanna-cli kanna-terminal-recovery; do
+for BIN in kanna-daemon kanna-cli kanna-terminal-recovery kanna-server; do
     SRC="$SRC_DIR/$BIN"
     DEST="$BINARIES_DIR/${BIN}-${TARGET}"
     if [[ ! -f "$SRC" ]]; then
