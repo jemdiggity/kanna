@@ -142,7 +142,15 @@ function clampSelectedBaseBranchIndex(nextIndex: number): number {
   return Math.min(Math.max(nextIndex, 0), visibleBaseBranches.value.length - 1);
 }
 
+function isSubmitShortcut(event: KeyboardEvent): boolean {
+  return (event.metaKey || event.ctrlKey) && event.key === "Enter" && !event.altKey;
+}
+
 function handleBaseBranchSearchKeydown(event: KeyboardEvent) {
+  if (isSubmitShortcut(event)) {
+    return;
+  }
+
   if (event.key === "Escape") {
     event.preventDefault();
     showBaseBranchPicker.value = false;
@@ -247,10 +255,16 @@ function handlePipelineOptionKeydown(e: KeyboardEvent, index: number) {
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+  if (e.defaultPrevented) {
+    return;
+  }
+
+  if (isSubmitShortcut(e)) {
     e.preventDefault();
     handleSubmit();
+    return;
   }
+
   // ⇧⌘[ / ⇧⌘] to switch agent provider
   if (e.metaKey && e.shiftKey && (e.key === "[" || e.key === "{")) {
     e.preventDefault();
@@ -273,7 +287,7 @@ function handleKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="modal-overlay" :style="{ zIndex }" @click.self="emit('cancel')">
-    <div class="modal">
+    <div class="modal" @keydown="handleKeydown">
       <div class="modal-header">
         <h3>{{ $t('tasks.newTask') }}</h3>
         <button class="agent-provider" type="button" @mousedown.prevent @click="cycleProvider(1)">
@@ -288,7 +302,6 @@ function handleKeydown(e: KeyboardEvent) {
           class="prompt-input"
           :placeholder="$t('tasks.descriptionPlaceholder')"
           rows="6"
-          @keydown="handleKeydown"
         />
         <div class="pipeline-row">
           <label class="pipeline-label">{{ $t("tasks.baseBranch") }}</label>
