@@ -308,12 +308,13 @@ useLessScroll(contentRef, {
 });
 
 /** Layered dismiss: close search first, then close modal. */
-function dismiss() {
+function dismiss(): boolean {
   if (isSearching.value) {
     closeSearch();
-  } else {
-    emit("close");
+    return false;
   }
+
+  return true;
 }
 
 defineExpose({ dismiss });

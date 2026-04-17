@@ -129,4 +129,64 @@ describe("FilePreviewModal", () => {
 
     wrapper.unmount();
   });
+
+  it("dismiss closes search before closing the modal", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "read_text_file") {
+        return "alpha beta alpha";
+      }
+      if (command === "run_script") {
+        return "";
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const wrapper = mount(FilePreviewModal, {
+      props: {
+        filePath: "example.ts",
+        worktreePath: "/repo",
+      },
+      attachTo: document.body,
+      global: {
+        mocks: {
+          $t: (key: string) => key,
+        },
+      },
+    });
+
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "/",
+      bubbles: true,
+    }));
+    await flushPromises();
+
+    expect(wrapper.find(".search-input").exists()).toBe(true);
+
+    const firstDismissResult = (wrapper.vm as { dismiss: () => boolean }).dismiss();
+    await flushPromises();
+
+    expect(firstDismissResult).toBe(false);
+    expect(wrapper.emitted("close")).toBeUndefined();
+    expect(wrapper.find(".search-input").exists()).toBe(false);
+
+    const secondDismissResult = (wrapper.vm as { dismiss: () => boolean }).dismiss();
+    await flushPromises();
+
+    expect(secondDismissResult).toBe(true);
+    expect(wrapper.emitted("close")).toBeUndefined();
+
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "q",
+      bubbles: true,
+    }));
+    await flushPromises();
+
+    expect(wrapper.emitted("close")).toHaveLength(1);
+
+    wrapper.unmount();
+  });
 });

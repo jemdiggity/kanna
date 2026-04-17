@@ -165,6 +165,37 @@ const SidebarWithoutRepoStub = defineComponent({
   template: '<button data-testid="open-new-task" @click="$emit(\'new-task\')">open</button>',
 });
 
+const FilePickerModalTestStub = defineComponent({
+  name: "FilePickerModal",
+  emits: ["close", "select"],
+  template: `
+    <div data-testid="file-picker-modal">
+      <button data-testid="file-picker-select" @click="$emit('select', 'src/example.ts')">select</button>
+      <button data-testid="file-picker-close" @click="$emit('close')">close</button>
+    </div>
+  `,
+});
+
+const FilePreviewModalTestStub = defineComponent({
+  name: "FilePreviewModal",
+  emits: ["close"],
+  setup(_props, { emit, expose }) {
+    function dismiss() {
+      emit("close");
+      return true;
+    }
+
+    expose({ dismiss });
+
+    return {};
+  },
+  template: `
+    <div data-testid="file-preview-modal">
+      <button data-testid="file-preview-close" @click="$emit('close')">close</button>
+    </div>
+  `,
+});
+
 async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof SidebarWithoutRepoStub) {
   vi.stubGlobal("__KANNA_MOBILE__", false);
   const { default: App } = await import("./App.vue");
@@ -410,5 +441,59 @@ describe("App", () => {
     wrapper.unmount();
 
     expect(appUpdateMock.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismiss closes the entire file flow after preview-local dismiss is exhausted", async () => {
+    vi.stubGlobal("__KANNA_MOBILE__", false);
+    const { default: App } = await import("./App.vue");
+    const wrapper = mount(App, {
+      global: {
+        provide: {
+          db: {},
+          dbName: "test.db",
+        },
+        mocks: {
+          $t: (key: string) => key,
+        },
+        stubs: {
+          Sidebar: SidebarWithRepoStub,
+          MainPanel: true,
+          AddRepoModal: true,
+          KeyboardShortcutsModal: true,
+          FilePickerModal: FilePickerModalTestStub,
+          FilePreviewModal: FilePreviewModalTestStub,
+          TreeExplorerModal: true,
+          DiffModal: true,
+          CommitGraphModal: true,
+          ShellModal: true,
+          CommandPaletteModal: true,
+          AnalyticsModal: true,
+          BlockerSelectModal: true,
+          PreferencesPanel: true,
+          ToastContainer: true,
+          KeepAlive: false,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(true);
+
+    await wrapper.get('[data-testid="file-picker-select"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+
+    const handled = capturedKeyboardActions?.dismiss();
+    await flushPromises();
+
+    expect(handled).toBe(true);
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
   });
 });
