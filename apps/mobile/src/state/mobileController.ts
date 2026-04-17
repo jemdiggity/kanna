@@ -1,5 +1,5 @@
 import type { CreateTaskResponse, TaskSummary } from "../lib/api/types";
-import type { KannaClient } from "../lib/api/client";
+import type { KannaClient, TaskTerminalSubscription } from "../lib/api/client";
 import type { MobileView, SessionStore } from "./sessionStore";
 
 export interface MobileController {
@@ -23,6 +23,58 @@ export function createMobileController(
   client: KannaClient,
   store: SessionStore
 ): MobileController {
+  let activeTaskTerminal:
+    | {
+        taskId: string;
+        subscription: TaskTerminalSubscription;
+      }
+    | null = null;
+
+  const findTask = (taskId: string): TaskSummary | null => {
+    const state = store.getState();
+    return (
+      state.recentTasks.find((task) => task.id === taskId) ??
+      state.searchResults.find((task) => task.id === taskId) ??
+      null
+    );
+  };
+
+  const stopTaskTerminal = () => {
+    activeTaskTerminal?.subscription.close();
+    activeTaskTerminal = null;
+  };
+
+  const startTaskTerminal = (taskId: string) => {
+    if (activeTaskTerminal?.taskId === taskId) {
+      return;
+    }
+
+    stopTaskTerminal();
+
+    const task = findTask(taskId);
+    store.beginTaskTerminal(taskId, task?.snippet?.trim() ? `${task.snippet}\n\n` : "");
+
+    const subscription = client.observeTaskTerminal(taskId, (event) => {
+      switch (event.type) {
+        case "ready":
+          store.setTaskTerminalStatus(taskId, "live");
+          break;
+        case "output":
+          store.appendTaskTerminal(taskId, event.text);
+          break;
+        case "exit":
+          store.setTaskTerminalStatus(taskId, "closed");
+          break;
+        case "error":
+          store.setTaskTerminalStatus(taskId, "error");
+          store.setErrorMessage(event.message);
+          break;
+      }
+    });
+
+    activeTaskTerminal = { taskId, subscription };
+  };
+
   const loadCollections = async () => {
     const [desktops, repos, recentTasks] = await Promise.all([
       client.listDesktops(),
@@ -56,6 +108,10 @@ export function createMobileController(
         store.setConnectionMode("lan");
         store.setConnectionState("connected");
         await loadCollections();
+        const selectedTaskId = store.getState().selectedTaskId;
+        if (selectedTaskId) {
+          startTaskTerminal(selectedTaskId);
+        }
       } catch (error) {
         fail(error);
       }
@@ -83,8 +139,10 @@ export function createMobileController(
     },
 
     selectDesktop(desktopId) {
+      stopTaskTerminal();
       store.selectDesktop(desktopId);
       store.setSelectedTask(null);
+      store.clearTaskTerminal();
     },
 
     selectRepo(repoId) {
@@ -93,10 +151,14 @@ export function createMobileController(
 
     openTask(taskId) {
       store.setSelectedTask(taskId);
+      store.setActiveView("tasks");
+      startTaskTerminal(taskId);
     },
 
     closeTask() {
+      stopTaskTerminal();
       store.setSelectedTask(null);
+      store.clearTaskTerminal();
     },
 
     openComposer() {
@@ -147,9 +209,8 @@ export function createMobileController(
         ];
 
         store.setRecentTasks(recentTasks);
-        store.setSelectedTask(createdTask.id);
         store.setComposerState(false, "");
-        store.setActiveView("tasks");
+        this.openTask(createdTask.id);
         store.setErrorMessage(null);
       } catch (error) {
         fail(error);
@@ -161,8 +222,7 @@ export function createMobileController(
         const response = await client.runMergeAgent(taskId);
         const recentTasks = await client.listRecentTasks();
         store.setRecentTasks(recentTasks);
-        store.setSelectedTask(response.taskId);
-        store.setActiveView("tasks");
+        this.openTask(response.taskId);
         store.setErrorMessage(null);
       } catch (error) {
         fail(error);

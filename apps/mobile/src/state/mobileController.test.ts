@@ -1,9 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
 import { createSessionStore } from "./sessionStore";
 import { createMobileController } from "./mobileController";
-import type { KannaClient } from "../lib/api/client";
+import type {
+  KannaClient,
+  TaskTerminalStreamEvent,
+  TaskTerminalSubscription
+} from "../lib/api/client";
 
-function createClientMock(): KannaClient {
+function createTerminalSubscriptionMock(): {
+  subscription: TaskTerminalSubscription;
+  emit(event: TaskTerminalStreamEvent): void;
+} {
+  let listener: ((event: TaskTerminalStreamEvent) => void) | null = null;
+
+  return {
+    subscription: {
+      close: vi.fn(),
+      setListener(nextListener) {
+        listener = nextListener;
+      }
+    },
+    emit(event) {
+      listener?.(event);
+    }
+  };
+}
+
+function createClientMock(): ClientMock {
+  const terminalStream = createTerminalSubscriptionMock();
+
   return {
     getStatus: vi.fn().mockResolvedValue({
       state: "running",
@@ -46,6 +71,10 @@ function createClientMock(): KannaClient {
     runMergeAgent: vi.fn().mockResolvedValue({
       taskId: "task-merge"
     }),
+    observeTaskTerminal: vi.fn().mockImplementation((_taskId, listener) => {
+      terminalStream.subscription.setListener(listener);
+      return terminalStream.subscription;
+    }),
     createPairingSession: vi.fn().mockResolvedValue({
       code: "ABC123",
       desktopId: "desktop-1",
@@ -53,7 +82,8 @@ function createClientMock(): KannaClient {
       lanHost: "0.0.0.0",
       lanPort: 48120,
       expiresAtUnixMs: 1
-    })
+    }),
+    __terminalStream: terminalStream
   };
 }
 
@@ -147,4 +177,41 @@ describe("createMobileController", () => {
     expect(store.getState().selectedTaskId).toBe("task-merge");
     expect(store.getState().recentTasks[0]?.id).toBe("task-merge");
   });
+
+  it("opens a task terminal stream and accumulates live output", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    controller.openTask("task-1");
+    client.__terminalStream.emit({
+      type: "ready",
+      taskId: "task-1"
+    });
+    client.__terminalStream.emit({
+      type: "output",
+      taskId: "task-1",
+      text: "First line\n"
+    });
+    client.__terminalStream.emit({
+      type: "output",
+      taskId: "task-1",
+      text: "Second line"
+    });
+
+    expect(client.observeTaskTerminal).toHaveBeenCalledWith(
+      "task-1",
+      expect.any(Function)
+    );
+    expect(store.getState()).toMatchObject({
+      selectedTaskId: "task-1",
+      taskTerminalStatus: "live"
+    });
+    expect(store.getState().taskTerminalOutput).toContain("First line");
+    expect(store.getState().taskTerminalOutput).toContain("Second line");
+  });
 });
+interface ClientMock extends KannaClient {
+  __terminalStream: ReturnType<typeof createTerminalSubscriptionMock>;
+}

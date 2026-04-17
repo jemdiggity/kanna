@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createLanTransport, type FetchLike } from "./lanTransport";
+import {
+  createLanTransport,
+  type FetchLike,
+  type WebSocketLike
+} from "./lanTransport";
 
 describe("createLanTransport", () => {
   it("calls the shared LAN API routes for task listing, repo listing, and task creation", async () => {
@@ -94,5 +98,55 @@ describe("createLanTransport", () => {
         method: "POST"
       }
     );
+  });
+
+  it("observes task terminal output over the LAN websocket route", () => {
+    const fetchImpl = vi.fn<FetchLike>();
+    const socket: WebSocketLike = {
+      close: vi.fn(),
+      onopen: null,
+      onclose: null,
+      onerror: null,
+      onmessage: null
+    };
+    const socketFactory = vi.fn(() => socket);
+    const transport = createLanTransport(
+      "http://127.0.0.1:48120",
+      fetchImpl,
+      socketFactory
+    );
+    const events: unknown[] = [];
+
+    const subscription = transport.observeTaskTerminal("task-1", (event) => {
+      events.push(event);
+    });
+
+    socket.onopen?.();
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "output",
+        taskId: "task-1",
+        text: "hello from daemon"
+      })
+    });
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "exit",
+        taskId: "task-1",
+        code: 0
+      })
+    });
+    socket.onclose?.();
+    subscription.close();
+
+    expect(socketFactory).toHaveBeenCalledWith(
+      "ws://127.0.0.1:48120/v1/tasks/task-1/terminal"
+    );
+    expect(events).toEqual([
+      { type: "ready", taskId: "task-1" },
+      { type: "output", taskId: "task-1", text: "hello from daemon" },
+      { type: "exit", taskId: "task-1", code: 0 }
+    ]);
+    expect(socket.close).toHaveBeenCalledTimes(1);
   });
 });

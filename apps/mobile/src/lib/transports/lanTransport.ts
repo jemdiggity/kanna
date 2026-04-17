@@ -1,4 +1,8 @@
-import type { KannaTransport } from "../api/client";
+import type {
+  KannaTransport,
+  TaskTerminalStreamEvent,
+  TaskTerminalSubscription
+} from "../api/client";
 import type {
   DesktopDescriptor,
   DesktopSummary,
@@ -22,9 +26,20 @@ export type FetchLike = (
   }
 ) => Promise<FetchResponseLike>;
 
+export interface WebSocketLike {
+  close(): void;
+  onopen: (() => void) | null;
+  onclose: (() => void) | null;
+  onerror: (() => void) | null;
+  onmessage: ((event: { data: string }) => void) | null;
+}
+
+export type WebSocketFactory = (url: string) => WebSocketLike;
+
 export function createLanTransport(
   baseUrl: string,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  createSocket: WebSocketFactory = (url) => new WebSocket(url) as unknown as WebSocketLike
 ): KannaTransport {
   const request = async <T>(path: string, init?: { method?: string }): Promise<T> => {
     const response = await fetchImpl(`${baseUrl}${path}`, init);
@@ -54,9 +69,52 @@ export function createLanTransport(
       request<TaskActionResponse>(`/v1/tasks/${encodeURIComponent(taskId)}/actions/run-merge-agent`, {
         method: "POST"
       }),
+    observeTaskTerminal(taskId, listener) {
+      const socket = createSocket(buildTaskTerminalWebSocketUrl(baseUrl, taskId));
+      let streamEnded = false;
+
+      socket.onopen = () => {
+        listener({ type: "ready", taskId });
+      };
+      socket.onmessage = (event) => {
+        const parsed = JSON.parse(event.data) as TaskTerminalStreamEvent;
+        if (parsed.type === "exit" || parsed.type === "error") {
+          streamEnded = true;
+        }
+        listener(parsed);
+      };
+      socket.onerror = () => {
+        streamEnded = true;
+        listener({
+          type: "error",
+          taskId,
+          message: `Task terminal stream failed for ${taskId}`
+        });
+      };
+      socket.onclose = () => {
+        if (streamEnded) {
+          return;
+        }
+        listener({ type: "exit", taskId, code: 0 });
+      };
+
+      return {
+        close() {
+          socket.close();
+        }
+      } satisfies TaskTerminalSubscription;
+    },
     createPairingSession: () =>
       request<PairingSession>("/v1/pairing/sessions", { method: "POST" })
   };
+}
+
+function buildTaskTerminalWebSocketUrl(baseUrl: string, taskId: string): string {
+  const url = new URL(baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = `/v1/tasks/${encodeURIComponent(taskId)}/terminal`;
+  url.search = "";
+  return url.toString();
 }
 
 function mapDesktopSummary(desktop: DesktopDescriptor): DesktopSummary {

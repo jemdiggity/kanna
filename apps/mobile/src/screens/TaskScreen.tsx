@@ -1,12 +1,15 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
+import type { TaskTerminalStatus } from "../state/sessionStore";
 import { buildTaskWorkspaceModel } from "./taskWorkspace";
 
 interface TaskScreenProps {
   desktopName: string | null;
   repoName: string | null;
   task: TaskSummary;
+  terminalOutput: string;
+  terminalStatus: TaskTerminalStatus;
   onBack(): void;
   onOpenMore(): void;
   onShowSearch(): void;
@@ -16,11 +19,18 @@ export function TaskScreen({
   desktopName,
   repoName,
   task,
+  terminalOutput,
+  terminalStatus,
   onBack,
   onOpenMore,
   onShowSearch
 }: TaskScreenProps) {
   const model = buildTaskWorkspaceModel({ desktopName, repoName, task });
+  const terminalText =
+    terminalOutput.trim() ||
+    (terminalStatus === "connecting"
+      ? "Connecting to desktop daemon..."
+      : "Waiting for terminal output...");
 
   return (
     <View style={styles.wrap}>
@@ -61,15 +71,22 @@ export function TaskScreen({
       </View>
 
       <View style={styles.terminalCard}>
+        <View style={styles.terminalHeader}>
+          <Text style={styles.terminalLabel}>Agent Terminal</Text>
+          <View style={styles.terminalStatusPill}>
+            <Text style={styles.terminalStatusLabel}>{terminalStatus}</Text>
+          </View>
+        </View>
+        <Text style={styles.terminalLine}>{terminalText}</Text>
+        <Text style={styles.terminalHint}>
+          This feed follows the selected desktop task. Command palette actions stay available from
+          More while the stream remains attached to the task.
+        </Text>
         {model.terminalLines.map((line) => (
-          <Text key={line} style={styles.terminalLine}>
+          <Text key={line} style={styles.terminalMetaLine}>
             {`> ${line}`}
           </Text>
         ))}
-        <Text style={styles.terminalHint}>
-          Live terminal streaming is the next API slice. Until that lands, this screen keeps the
-          selected task, its current stage, and the fastest mobile actions in one place.
-        </Text>
       </View>
     </View>
   );
@@ -207,11 +224,40 @@ const styles = StyleSheet.create({
     minHeight: 280,
     padding: 18
   },
+  terminalHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between"
+  },
+  terminalLabel: {
+    color: "#7FA7D9",
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase"
+  },
+  terminalStatusPill: {
+    backgroundColor: "#172843",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6
+  },
+  terminalStatusLabel: {
+    color: "#9EB6DC",
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase"
+  },
   terminalLine: {
     color: "#B9D4FF",
     fontFamily: "Courier",
     fontSize: 13,
     lineHeight: 18
+  },
+  terminalMetaLine: {
+    color: "#6F89AE",
+    fontFamily: "Courier",
+    fontSize: 12,
+    lineHeight: 17
   },
   terminalHint: {
     color: "#95A9C8",
