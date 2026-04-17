@@ -10,6 +10,13 @@ async function flushPromises() {
   await nextTick();
 }
 
+const listenHandlers = new Map<string, (event: unknown) => void | Promise<void>>();
+const dbSelectMock = vi.fn(async () => []);
+const dbMock = {
+  select: dbSelectMock,
+  execute: vi.fn(async () => ({ rowsAffected: 0 })),
+};
+
 const store = {
   repos: [{ id: "repo-1", path: "/tmp/repo", name: "repo" }],
   items: [],
@@ -27,6 +34,10 @@ const store = {
   hideShortcutsOnStartup: true,
   init: vi.fn(async () => {}),
   createItem: vi.fn(async () => {}),
+  recordIncomingTransfer: vi.fn(async () => {}),
+  approveIncomingTransfer: vi.fn(async () => "task-imported"),
+  rejectIncomingTransfer: vi.fn(async () => {}),
+  handleOutgoingTransferCommitted: vi.fn(async () => {}),
   listBlockedByItem: vi.fn(async () => []),
   listBlockersForItem: vi.fn(async () => []),
   blockTask: vi.fn(async () => {}),
@@ -65,6 +76,15 @@ vi.mock("./stores/kanna", () => ({
 
 vi.mock("./invoke", () => ({
   invoke: (command: string, args?: { name?: string; repoPath?: string }) => invokeMock(command, args),
+}));
+
+vi.mock("./listen", () => ({
+  listen: vi.fn(async (event: string, handler: (event: unknown) => void | Promise<void>) => {
+    listenHandlers.set(event, handler);
+    return () => {
+      listenHandlers.delete(event);
+    };
+  }),
 }));
 
 vi.mock("@kanna/core", () => ({
@@ -196,13 +216,66 @@ const FilePreviewModalTestStub = defineComponent({
   `,
 });
 
+function buildIncomingTransferEvent() {
+  return {
+    payload: {
+      type: "incoming_transfer_request",
+      transfer_id: "transfer-1",
+      source_peer_id: "peer-source",
+      source_task_id: "task-source",
+      source_name: "Primary",
+      payload: {
+        target_peer_id: "peer-target",
+        task: {
+          source_peer_id: "peer-source",
+          source_task_id: "task-source",
+          prompt: "Fix handoff",
+          stage: "in progress",
+          branch: "task-source",
+          pipeline: "default",
+          display_name: "Transferred task",
+          base_ref: "main",
+          agent_type: "sdk",
+          agent_provider: "claude",
+        },
+        repo: {
+          mode: "reuse-local",
+          remote_url: "git@github.com:jemdiggity/kanna.git",
+          path: "/tmp/repo",
+          name: "repo",
+          default_branch: "main",
+        },
+        recovery: null,
+      },
+    },
+  };
+}
+
+function buildPendingIncomingTransferRow() {
+  return {
+    id: "transfer-1",
+    source_peer_id: "peer-source",
+    payload_json: JSON.stringify(buildIncomingTransferEvent().payload.payload),
+  };
+}
+
+function buildOutgoingTransferCommittedEvent() {
+  return {
+    payload: {
+      type: "outgoing_transfer_committed",
+      transfer_id: "transfer-1",
+      source_task_id: "task-source",
+      destination_local_task_id: "task-imported",
+    },
+  };
+}
 async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof SidebarWithoutRepoStub) {
   vi.stubGlobal("__KANNA_MOBILE__", false);
   const { default: App } = await import("./App.vue");
   return mount(App, {
     global: {
       provide: {
-        db: {},
+        db: dbMock,
         dbName: "test.db",
       },
       mocks: {
@@ -234,11 +307,18 @@ describe("App", () => {
   beforeEach(() => {
     store.init.mockClear();
     store.createItem.mockClear();
+    store.recordIncomingTransfer.mockClear();
+    store.approveIncomingTransfer.mockClear();
+    store.rejectIncomingTransfer.mockClear();
+    store.handleOutgoingTransferCommitted.mockClear();
     store.selectedRepoId = "repo-1";
     store.selectedRepo = { id: "repo-1", path: "/tmp/repo", name: "repo" };
     store.sortedItemsForCurrentRepo = [];
     store.sortedItemsAllRepos = [];
+    listenHandlers.clear();
     capturedKeyboardActions = null;
+    dbSelectMock.mockReset();
+    dbSelectMock.mockResolvedValue([]);
     invokeMock.mockClear();
     appUpdateStartMock.mockClear();
     appUpdateMock.dispose.mockClear();
@@ -426,7 +506,7 @@ describe("App", () => {
     const wrapper = mount(App, {
       global: {
         provide: {
-          db: {},
+          db: dbMock,
           dbName: "test.db",
         },
         mocks: {
@@ -474,7 +554,6 @@ describe("App", () => {
     expect(wrapper.get('[data-testid="diff-scope"]').text()).toBe("branch");
     expect(wrapper.get('[data-testid="diff-working-scroll"]').text()).toBe("240");
   });
-
   it("starts the updater controller and renders the global update prompt", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
 
@@ -499,6 +578,89 @@ describe("App", () => {
 
     expect(appUpdateMock.dispose).toHaveBeenCalledTimes(1);
   });
+  it("approves an incoming transfer from the modal using the persisted transfer id", async () => {
+    dbSelectMock.mockResolvedValue([]);
+    const wrapper = await mountApp(SidebarWithRepoStub);
+
+    await flushPromises();
+    const handler = listenHandlers.get("transfer-request");
+    expect(handler).toBeTypeOf("function");
+    dbSelectMock.mockResolvedValue([buildPendingIncomingTransferRow()]);
+
+    await handler?.(buildIncomingTransferEvent());
+    await flushPromises();
+
+    expect(store.recordIncomingTransfer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transferId: "transfer-1",
+        sourcePeerId: "peer-source",
+      }),
+    );
+    expect(wrapper.text()).toContain("peer-source");
+
+    dbSelectMock.mockResolvedValue([]);
+    await wrapper.get(".btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(store.approveIncomingTransfer).toHaveBeenCalledWith("transfer-1");
+    expect(wrapper.text()).not.toContain("peer-source");
+  });
+
+  it("hydrates a pending incoming transfer from the database on mount", async () => {
+    dbSelectMock.mockResolvedValue([
+      {
+        ...buildPendingIncomingTransferRow(),
+        id: "transfer-db-1",
+      },
+    ]);
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("peer-source");
+
+    await wrapper.get(".btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(store.approveIncomingTransfer).toHaveBeenCalledWith("transfer-db-1");
+  });
+
+  it("rejects an incoming transfer from the modal using the persisted transfer id", async () => {
+    dbSelectMock.mockResolvedValue([]);
+    const wrapper = await mountApp(SidebarWithRepoStub);
+
+    await flushPromises();
+    const handler = listenHandlers.get("transfer-request");
+    expect(handler).toBeTypeOf("function");
+    dbSelectMock.mockResolvedValue([buildPendingIncomingTransferRow()]);
+
+    await handler?.(buildIncomingTransferEvent());
+    await flushPromises();
+
+    dbSelectMock.mockResolvedValue([]);
+    await wrapper.get(".btn-danger").trigger("click");
+    await flushPromises();
+
+    expect(store.rejectIncomingTransfer).toHaveBeenCalledWith("transfer-1");
+    expect(wrapper.text()).not.toContain("Primary");
+  });
+
+  it("forwards outgoing transfer commit events to the store", async () => {
+    await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    const handler = listenHandlers.get("outgoing-transfer-committed");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.(buildOutgoingTransferCommittedEvent());
+    await flushPromises();
+
+    expect(store.handleOutgoingTransferCommitted).toHaveBeenCalledWith({
+      transferId: "transfer-1",
+      sourceTaskId: "task-source",
+      destinationLocalTaskId: "task-imported",
+    });
+  });
 
   it("dismiss closes the entire file flow after preview-local dismiss is exhausted", async () => {
     vi.stubGlobal("__KANNA_MOBILE__", false);
@@ -506,7 +668,7 @@ describe("App", () => {
     const wrapper = mount(App, {
       global: {
         provide: {
-          db: {},
+          db: dbMock,
           dbName: "test.db",
         },
         mocks: {

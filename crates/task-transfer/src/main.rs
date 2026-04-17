@@ -1,0 +1,191 @@
+use kanna_task_transfer::protocol::{ControlRequest, ControlResponse, SidecarEvent};
+use kanna_task_transfer::runtime::{RuntimeConfig, RuntimeError, RuntimeEvent, TransferRuntime};
+use std::io::{BufRead, Write};
+use std::sync::Arc;
+use std::sync::Mutex;
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = Arc::new(TransferRuntime::spawn(RuntimeConfig::from_env()?).await?);
+    let stdout = Arc::new(Mutex::new(std::io::stdout()));
+    let event_runtime = Arc::clone(&runtime);
+    let event_stdout = Arc::clone(&stdout);
+
+    let event_task = tokio::spawn(async move {
+        loop {
+            let event = match event_runtime.next_event().await {
+                Ok(event) => event,
+                Err(RuntimeError::IncomingEventChannelClosed) => break,
+                Err(error) => {
+                    let response = ControlResponse::Error {
+                        request_id: String::new(),
+                        message: error.to_string(),
+                    };
+                    let _ = write_json_line(&event_stdout, &response);
+                    break;
+                }
+            };
+
+            let payload = match event {
+                RuntimeEvent::IncomingTransferRequest(event) => {
+                    SidecarEvent::IncomingTransferRequest {
+                        transfer_id: event.transfer_id,
+                        source_peer_id: event.source_peer_id,
+                        source_task_id: event.source_task_id,
+                        source_name: event.source_name,
+                        payload: event.payload,
+                    }
+                }
+                RuntimeEvent::OutgoingTransferCommitted(event) => {
+                    SidecarEvent::OutgoingTransferCommitted {
+                        transfer_id: event.transfer_id,
+                        source_task_id: event.source_task_id,
+                        destination_local_task_id: event.destination_local_task_id,
+                    }
+                }
+            };
+
+            if write_json_line(&event_stdout, &payload).is_err() {
+                break;
+            }
+        }
+    });
+
+    for line in std::io::stdin().lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request_id = extract_request_id(&line);
+        let response = match serde_json::from_str::<ControlRequest>(&line) {
+            Ok(request) => handle_request(&runtime, request).await,
+            Err(error) => ControlResponse::Error {
+                request_id,
+                message: error.to_string(),
+            },
+        };
+
+        write_json_line(&stdout, &response)?;
+    }
+
+    event_task.abort();
+    Ok(())
+}
+
+async fn handle_request(runtime: &TransferRuntime, request: ControlRequest) -> ControlResponse {
+    match request {
+        ControlRequest::ListPeers { request_id } => match runtime.list_peers().await {
+            Ok(peers) => ControlResponse::ListPeers { request_id, peers },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::StageTransferArtifact {
+            request_id,
+            transfer_id,
+            artifact_id,
+            path,
+        } => match runtime
+            .stage_transfer_artifact(&transfer_id, &artifact_id, path.into())
+            .await
+        {
+            Ok(()) => ControlResponse::StageTransferArtifact {
+                request_id,
+                transfer_id,
+                artifact_id,
+            },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::FetchTransferArtifact {
+            request_id,
+            transfer_id,
+            artifact_id,
+        } => match runtime
+            .fetch_transfer_artifact(&transfer_id, &artifact_id)
+            .await
+        {
+            Ok(artifact) => ControlResponse::FetchTransferArtifact {
+                request_id,
+                transfer_id,
+                artifact_id,
+                path: artifact.path.to_string_lossy().into_owned(),
+            },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::PrepareTransferPreflight {
+            request_id,
+            source_task_id,
+            target_peer_id,
+        } => match runtime
+            .prepare_transfer_preflight(&target_peer_id, &source_task_id)
+            .await
+        {
+            Ok(result) => ControlResponse::PrepareTransferPreflight {
+                request_id,
+                transfer_id: result.transfer_id,
+                source_peer_id: result.source_peer_id,
+                target_has_repo: result.target_has_repo,
+            },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::PrepareTransferCommit {
+            request_id,
+            transfer_id,
+            payload,
+        } => match runtime.prepare_transfer_commit(&transfer_id, payload).await {
+            Ok(()) => ControlResponse::PrepareTransferCommit {
+                request_id,
+                transfer_id,
+            },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::AcknowledgeImportCommitted {
+            request_id,
+            transfer_id,
+            source_task_id,
+            destination_local_task_id,
+        } => match runtime
+            .acknowledge_import_committed(&transfer_id, &source_task_id, &destination_local_task_id)
+            .await
+        {
+            Ok(()) => ControlResponse::AcknowledgeImportCommitted {
+                request_id,
+                transfer_id,
+            },
+            Err(error) => control_error(request_id, error),
+        },
+    }
+}
+
+fn control_error(request_id: String, error: RuntimeError) -> ControlResponse {
+    ControlResponse::Error {
+        request_id,
+        message: error.to_string(),
+    }
+}
+
+fn extract_request_id(line: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("request_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+fn write_json_line<T>(stdout: &Arc<Mutex<std::io::Stdout>>, value: &T) -> std::io::Result<()>
+where
+    T: serde::Serialize,
+{
+    let encoded = serde_json::to_vec(value)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let mut writer = stdout
+        .lock()
+        .map_err(|_| std::io::Error::other("stdout mutex poisoned"))?;
+    writer.write_all(&encoded)?;
+    writer.write_all(b"\n")?;
+    writer.flush()?;
+    Ok(())
+}

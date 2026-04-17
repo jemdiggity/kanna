@@ -16,7 +16,7 @@ mkdir -p "$FIXTURE_REPO/scripts" "$BINARIES_DIR" "$BUILD_DIR/$HOST_TARGET/debug"
 cp "$SCRIPT" "$FIXTURE_SCRIPT"
 chmod +x "$FIXTURE_SCRIPT"
 
-for bin in kanna-daemon kanna-cli kanna-terminal-recovery kanna-server; do
+for bin in kanna-daemon kanna-cli kanna-terminal-recovery kanna-server kanna-task-transfer; do
   printf 'fixture-%s\n' "$bin" > "$BUILD_DIR/$HOST_TARGET/debug/$bin"
   chmod +x "$BUILD_DIR/$HOST_TARGET/debug/$bin"
 done
@@ -32,7 +32,7 @@ if ! grep -Fq "Staged sidecars for" <<<"$OUTPUT"; then
   exit 1
 fi
 
-for bin in kanna-daemon kanna-cli kanna-terminal-recovery kanna-server; do
+for bin in kanna-daemon kanna-cli kanna-terminal-recovery kanna-server kanna-task-transfer; do
   if ! compgen -G "$BINARIES_DIR/${bin}-*" >/dev/null; then
     printf 'expected staged binary for %s\n' "$bin" >&2
     exit 1

@@ -1,7 +1,7 @@
 import { ref, onUnmounted } from "vue";
 import { shortcuts } from "./useKeyboardShortcuts";
 
-export type ShortcutContext = "main" | "diff" | "file" | "shell" | "tree" | "newTask" | "graph";
+export type ShortcutContext = "main" | "diff" | "file" | "shell" | "tree" | "newTask" | "graph" | "transfer";
 
 export interface ContextShortcut {
   label: string;
@@ -112,6 +112,7 @@ export function getContextTitle(t: (key: string) => string, ctx: ShortcutContext
     tree: "shortcutContexts.tree",
     newTask: "shortcutContexts.newTask",
     graph: "shortcutContexts.graph",
+    transfer: "shortcutContexts.transfer",
   };
   return t(keys[ctx]);
 }

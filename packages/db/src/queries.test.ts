@@ -22,10 +22,29 @@ import {
   pinPipelineItem,
   unpinPipelineItem,
   reorderPinnedItems,
+  insertTrustedPeer,
+  listTrustedPeers,
+  revokeTrustedPeer,
+  insertTaskTransfer,
+  listTaskTransfersForItem,
+  getTaskTransfer,
+  markTaskTransferCompleted,
+  markTaskTransferRejected,
+  insertTaskTransferProvenance,
+  getTaskTransferProvenance,
   insertOperatorEvent,
   type DbHandle,
 } from "./queries.js";
-import type { Repo, PipelineItem, Setting, OperatorEvent, TaskPort } from "./schema.js";
+import type {
+  Repo,
+  PipelineItem,
+  Setting,
+  OperatorEvent,
+  TaskPort,
+  TrustedPeer,
+  TaskTransfer,
+  TaskTransferProvenance,
+} from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // In-memory DbHandle for testing
@@ -36,6 +55,9 @@ function createMockDb(): DbHandle & {
     repo: Repo[];
     pipeline_item: PipelineItem[];
     task_port: TaskPort[];
+    trusted_peer: TrustedPeer[];
+    task_transfer: TaskTransfer[];
+    task_transfer_provenance: TaskTransferProvenance[];
     settings: Setting[];
     operator_event: Omit<OperatorEvent, "id" | "created_at">[];
   };
@@ -44,6 +66,9 @@ function createMockDb(): DbHandle & {
     repo: [] as Repo[],
     pipeline_item: [] as PipelineItem[],
     task_port: [] as TaskPort[],
+    trusted_peer: [] as TrustedPeer[],
+    task_transfer: [] as TaskTransfer[],
+    task_transfer_provenance: [] as TaskTransferProvenance[],
     settings: [] as Setting[],
     operator_event: [] as Omit<OperatorEvent, "id" | "created_at">[],
   };
@@ -118,6 +143,81 @@ function createMockDb(): DbHandle & {
             env_name,
             created_at: new Date().toISOString(),
           });
+        }
+      } else if (q.startsWith("INSERT INTO TRUSTED_PEER")) {
+        const [id, peer_id, display_name, public_key, capabilities_json] = bindValues as [
+          string,
+          string,
+          string,
+          string,
+          string,
+        ];
+        tables.trusted_peer.push({
+          id,
+          peer_id,
+          display_name,
+          public_key,
+          capabilities_json,
+          paired_at: new Date().toISOString(),
+          last_seen_at: null,
+          revoked_at: null,
+        });
+      } else if (q.startsWith("UPDATE TRUSTED_PEER SET REVOKED_AT")) {
+        const [peerId] = bindValues as [string];
+        const peer = tables.trusted_peer.find((row) => row.peer_id === peerId);
+        if (peer) peer.revoked_at = new Date().toISOString();
+      } else if (q.startsWith("INSERT INTO TASK_TRANSFER_PROVENANCE")) {
+        const [pipeline_item_id, source_peer_id, source_task_id, source_machine_task_label] = bindValues as [
+          string,
+          string,
+          string,
+          string | null,
+        ];
+        tables.task_transfer_provenance.push({
+          pipeline_item_id,
+          source_peer_id,
+          source_task_id,
+          source_machine_task_label,
+          imported_at: new Date().toISOString(),
+        });
+      } else if (q.startsWith("INSERT INTO TASK_TRANSFER")) {
+        const [id, direction, status, source_peer_id, target_peer_id, source_task_id, local_task_id, error, payload_json] =
+          bindValues as [
+            string,
+            TaskTransfer["direction"],
+            TaskTransfer["status"],
+            string | null,
+            string | null,
+            string | null,
+            string | null,
+            string | null,
+            string | null,
+          ];
+        tables.task_transfer.push({
+          id,
+          direction,
+          status,
+          source_peer_id,
+          target_peer_id,
+          source_task_id,
+          local_task_id,
+          started_at: new Date().toISOString(),
+          completed_at: status === "completed" || status === "failed" ? new Date().toISOString() : null,
+          error,
+          payload_json,
+        });
+      } else if (q.startsWith("UPDATE TASK_TRANSFER")) {
+        const [firstValue, secondValue] = bindValues as [string, string];
+        const transfer = tables.task_transfer.find((row) => row.id === secondValue);
+        if (transfer && q.includes("STATUS = 'COMPLETED'")) {
+          transfer.status = "completed";
+          transfer.local_task_id = firstValue;
+          transfer.completed_at = new Date().toISOString();
+          transfer.error = null;
+        } else if (transfer && q.includes("STATUS = 'REJECTED'")) {
+          transfer.status = "rejected";
+          transfer.completed_at = new Date().toISOString();
+          transfer.error = firstValue;
         }
       } else if (q.startsWith("DELETE FROM TASK_PORT WHERE PIPELINE_ITEM_ID")) {
         const [itemId] = bindValues as [string];
@@ -240,6 +340,24 @@ function createMockDb(): DbHandle & {
         ) as unknown as T[];
       } else if (q.startsWith("SELECT * FROM TASK_PORT")) {
         return [...tables.task_port].sort((a, b) => a.port - b.port) as unknown as T[];
+      } else if (q.startsWith("SELECT * FROM TRUSTED_PEER")) {
+        return [...tables.trusted_peer].sort((a, b) => {
+          const aTime = new Date(a.last_seen_at ?? a.paired_at).getTime();
+          const bTime = new Date(b.last_seen_at ?? b.paired_at).getTime();
+          return bTime - aTime;
+        }) as unknown as T[];
+      } else if (q.startsWith("SELECT * FROM TASK_TRANSFER WHERE LOCAL_TASK_ID")) {
+        const [localTaskId] = bindValues as [string];
+        return tables.task_transfer
+          .filter((transfer) => transfer.local_task_id === localTaskId)
+          .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()) as unknown as T[];
+      } else if (q.startsWith("SELECT * FROM TASK_TRANSFER WHERE ID")) {
+        const [transferId] = bindValues as [string];
+        return tables.task_transfer
+          .filter((transfer) => transfer.id === transferId) as unknown as T[];
+      } else if (q.startsWith("SELECT * FROM TASK_TRANSFER_PROVENANCE WHERE PIPELINE_ITEM_ID")) {
+        const [pipelineItemId] = bindValues as [string];
+        return tables.task_transfer_provenance.filter((row) => row.pipeline_item_id === pipelineItemId) as unknown as T[];
       } else if (q.startsWith("SELECT PIPELINE_ITEM_ID FROM TASK_PORT WHERE PORT")) {
         const [port] = bindValues as [number];
         const row = tables.task_port.find((p) => p.port === port);
@@ -693,6 +811,156 @@ describe("pin queries", () => {
     expect((db.tables.pipeline_item.find((p) => p.id === "pi3") as any).pin_order).toBe(0);
     expect((db.tables.pipeline_item.find((p) => p.id === "pi1") as any).pin_order).toBe(1);
     expect((db.tables.pipeline_item.find((p) => p.id === "pi2") as any).pin_order).toBe(2);
+  });
+});
+
+describe("trusted_peer queries", () => {
+  let db: ReturnType<typeof createMockDb>;
+
+  beforeEach(() => {
+    db = createMockDb();
+  });
+
+  it("stores and revokes trusted peers", async () => {
+    await insertTrustedPeer(db, {
+      id: "peer-row-1",
+      peer_id: "peer-alpha",
+      display_name: "Jeremy's MacBook Pro",
+      public_key: "pubkey-1",
+      capabilities_json: JSON.stringify({ version: 1, providers: ["claude", "copilot"] }),
+    });
+
+    expect(await listTrustedPeers(db)).toHaveLength(1);
+
+    await revokeTrustedPeer(db, "peer-alpha");
+
+    const peers = await listTrustedPeers(db);
+    expect(peers[0]?.revoked_at).toEqual(expect.any(String));
+  });
+});
+
+describe("task_transfer queries", () => {
+  let db: ReturnType<typeof createMockDb>;
+
+  beforeEach(() => {
+    db = createMockDb();
+  });
+
+  it("records transfer history and imported provenance", async () => {
+    await insertTaskTransfer(db, {
+      id: "tx-1",
+      direction: "outgoing",
+      status: "completed",
+      source_peer_id: "peer-alpha",
+      target_peer_id: "peer-beta",
+      source_task_id: "task-source",
+      local_task_id: "task-local",
+      error: null,
+      payload_json: null,
+    });
+    db.tables.task_transfer.push({
+      id: "tx-0",
+      direction: "incoming",
+      status: "pending",
+      source_peer_id: "peer-gamma",
+      target_peer_id: "peer-delta",
+      source_task_id: "task-older",
+      local_task_id: "task-local",
+      started_at: "2026-04-08T00:00:00.000Z",
+      completed_at: null,
+      error: "waiting",
+      payload_json: null,
+    });
+    db.tables.task_transfer[0]!.started_at = "2026-04-08T00:00:01.000Z";
+
+    await insertTaskTransferProvenance(db, {
+      pipeline_item_id: "task-local",
+      source_peer_id: "peer-alpha",
+      source_task_id: "task-source",
+      source_machine_task_label: "Fix daemon handoff",
+    });
+
+    const transfers = await listTaskTransfersForItem(db, "task-local");
+    expect(transfers.map((transfer) => transfer.id)).toEqual(["tx-1", "tx-0"]);
+    expect(transfers[0]).toMatchObject({
+      source_peer_id: "peer-alpha",
+      source_task_id: "task-source",
+      target_peer_id: "peer-beta",
+      status: "completed",
+    });
+    expect(await getTaskTransferProvenance(db, "task-local")).toMatchObject({
+      source_peer_id: "peer-alpha",
+      source_task_id: "task-source",
+    });
+  });
+
+  it("returns null for missing provenance", async () => {
+    expect(await getTaskTransferProvenance(db, "missing-task")).toBeNull();
+  });
+
+  it("getTaskTransfer returns the matching transfer row", async () => {
+    await insertTaskTransfer(db, {
+      id: "transfer-1",
+      direction: "incoming",
+      status: "pending",
+      source_peer_id: "peer-source",
+      target_peer_id: "peer-target",
+      source_task_id: "task-source",
+      local_task_id: null,
+      error: null,
+      payload_json: "{}",
+    });
+
+    expect(await getTaskTransfer(db, "transfer-1")).toMatchObject({
+      id: "transfer-1",
+      status: "pending",
+    });
+    expect(await getTaskTransfer(db, "missing-transfer")).toBeNull();
+  });
+
+  it("markTaskTransferCompleted records completion state and local task id", async () => {
+    await insertTaskTransfer(db, {
+      id: "transfer-1",
+      direction: "incoming",
+      status: "pending",
+      source_peer_id: "peer-source",
+      target_peer_id: "peer-target",
+      source_task_id: "task-source",
+      local_task_id: null,
+      error: "pending",
+      payload_json: "{}",
+    });
+
+    await markTaskTransferCompleted(db, "transfer-1", "task-local");
+
+    expect(await getTaskTransfer(db, "transfer-1")).toMatchObject({
+      id: "transfer-1",
+      status: "completed",
+      local_task_id: "task-local",
+      error: null,
+    });
+  });
+
+  it("markTaskTransferRejected records rejection state", async () => {
+    await insertTaskTransfer(db, {
+      id: "transfer-1",
+      direction: "incoming",
+      status: "pending",
+      source_peer_id: "peer-source",
+      target_peer_id: "peer-target",
+      source_task_id: "task-source",
+      local_task_id: null,
+      error: null,
+      payload_json: "{}",
+    });
+
+    await markTaskTransferRejected(db, "transfer-1", "Rejected locally");
+
+    expect(await getTaskTransfer(db, "transfer-1")).toMatchObject({
+      id: "transfer-1",
+      status: "rejected",
+      error: "Rejected locally",
+    });
   });
 });
 

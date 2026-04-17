@@ -88,6 +88,8 @@ export async function createFixtureRepo(
   name: string,
   options: CreateFixtureRepoOptions = {},
 ): Promise<string> {
+  // Never run E2E against the live Kanna checkout. Clone it into a disposable
+  // temp repo first so worktree cleanup cannot mutate the product repo.
   const sourceRepoPath = resolve(options.sourceRepoPath ?? getLiveRepoRoot());
   const tempRoot = options.tempRoot ?? join(tmpdir(), "kanna-e2e-fixtures");
 

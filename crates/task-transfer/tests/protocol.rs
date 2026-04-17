@@ -1,0 +1,585 @@
+use kanna_task_transfer::protocol::{
+    ControlRequest, ControlResponse, PeerRequest, PeerResponse, SidecarEvent,
+};
+use serde_json::json;
+
+fn assert_roundtrip<T>(value: T)
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+{
+    let encoded = serde_json::to_string(&value).unwrap();
+    let decoded = serde_json::from_str::<T>(&encoded).unwrap();
+    assert_eq!(decoded, value);
+}
+
+#[test]
+fn control_messages_roundtrip_with_request_ids() {
+    let message = ControlRequest::PrepareTransferPreflight {
+        request_id: "req-1".into(),
+        source_task_id: "task-source".into(),
+        target_peer_id: "peer-target".into(),
+    };
+
+    let json = serde_json::to_string(&message).unwrap();
+    let parsed: ControlRequest = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, message);
+}
+
+#[test]
+fn incoming_transfer_event_roundtrips() {
+    let event = SidecarEvent::IncomingTransferRequest {
+        transfer_id: "transfer-1".into(),
+        source_peer_id: "peer-source".into(),
+        source_task_id: "task-source".into(),
+        source_name: Some("Primary".into()),
+        payload: json!({
+            "task": {
+                "source_task_id": "task-source",
+            },
+        }),
+    };
+
+    let json = serde_json::to_string(&event).unwrap();
+    let parsed: SidecarEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, event);
+}
+
+#[test]
+fn outgoing_transfer_committed_event_roundtrips() {
+    let event = SidecarEvent::OutgoingTransferCommitted {
+        transfer_id: "transfer-1".into(),
+        source_task_id: "task-source".into(),
+        destination_local_task_id: "task-dest".into(),
+    };
+
+    let json = serde_json::to_string(&event).unwrap();
+    let parsed: SidecarEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, event);
+}
+
+#[test]
+fn control_and_peer_message_roundtrips_with_request_ids() {
+    let control_response = ControlResponse::PrepareTransferPreflight {
+        request_id: "req-2".into(),
+        transfer_id: "transfer-2".into(),
+        source_peer_id: "peer-source".into(),
+        target_has_repo: true,
+    };
+
+    let control_json = serde_json::to_string(&control_response).unwrap();
+    let parsed_control: ControlResponse = serde_json::from_str(&control_json).unwrap();
+    assert_eq!(parsed_control, control_response);
+
+    let peer_request = PeerRequest::SubmitTransferPayload {
+        request_id: "req-3".into(),
+        transfer_id: "transfer-3".into(),
+        payload: json!({ "task": { "source_task_id": "task-source" } }),
+    };
+
+    let peer_json = serde_json::to_string(&peer_request).unwrap();
+    let parsed_peer_request: PeerRequest = serde_json::from_str(&peer_json).unwrap();
+    assert_eq!(parsed_peer_request, peer_request);
+
+    let peer_response = PeerResponse::SubmitTransferPayload {
+        request_id: "req-4".into(),
+        transfer_id: "transfer-4".into(),
+    };
+
+    let peer_response_json = serde_json::to_string(&peer_response).unwrap();
+    let parsed_peer_response: PeerResponse = serde_json::from_str(&peer_response_json).unwrap();
+    assert_eq!(parsed_peer_response, peer_response);
+}
+
+#[test]
+fn transfer_artifact_control_messages_roundtrip() {
+    assert_roundtrip(ControlRequest::StageTransferArtifact {
+        request_id: "req-stage".into(),
+        transfer_id: "transfer-1".into(),
+        artifact_id: "artifact-1".into(),
+        path: "/tmp/transfer-1.bundle".into(),
+    });
+
+    assert_roundtrip(ControlRequest::FetchTransferArtifact {
+        request_id: "req-fetch".into(),
+        transfer_id: "transfer-1".into(),
+        artifact_id: "artifact-1".into(),
+    });
+
+    assert_roundtrip(ControlResponse::StageTransferArtifact {
+        request_id: "req-stage".into(),
+        transfer_id: "transfer-1".into(),
+        artifact_id: "artifact-1".into(),
+    });
+
+    assert_roundtrip(ControlResponse::FetchTransferArtifact {
+        request_id: "req-fetch".into(),
+        transfer_id: "transfer-1".into(),
+        artifact_id: "artifact-1".into(),
+        path: "/tmp/transfer-1.bundle".into(),
+    });
+
+    assert_roundtrip(PeerRequest::FetchTransferArtifact {
+        request_id: "req-peer-fetch".into(),
+        transfer_id: "transfer-1".into(),
+        artifact_id: "artifact-1".into(),
+    });
+
+    assert_roundtrip(PeerResponse::FetchTransferArtifact {
+        request_id: "req-peer-fetch".into(),
+        transfer_id: "transfer-1".into(),
+        artifact_id: "artifact-1".into(),
+        filename: "transfer-1.bundle".into(),
+        payload_b64: "YnVuZGxl".into(),
+    });
+}
+
+#[test]
+fn wire_messages_use_expected_json_shapes() {
+    let request = ControlRequest::PrepareTransferPreflight {
+        request_id: "req-1".into(),
+        source_task_id: "task-source".into(),
+        target_peer_id: "peer-target".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&request).unwrap(),
+        json!({
+            "type": "prepare_transfer_preflight",
+            "request_id": "req-1",
+            "source_task_id": "task-source",
+            "target_peer_id": "peer-target",
+        })
+    );
+
+    let response = ControlResponse::PrepareTransferPreflight {
+        request_id: "req-2".into(),
+        transfer_id: "transfer-2".into(),
+        source_peer_id: "peer-source".into(),
+        target_has_repo: false,
+    };
+    assert_eq!(
+        serde_json::to_value(&response).unwrap(),
+        json!({
+            "type": "prepare_transfer_preflight",
+            "request_id": "req-2",
+            "transfer_id": "transfer-2",
+            "source_peer_id": "peer-source",
+            "target_has_repo": false,
+        })
+    );
+
+    let peer_request = PeerRequest::SubmitTransferPayload {
+        request_id: "req-3".into(),
+        transfer_id: "transfer-3".into(),
+        payload: json!({ "task": { "source_task_id": "task-source" } }),
+    };
+    assert_eq!(
+        serde_json::to_value(&peer_request).unwrap(),
+        json!({
+            "type": "submit_transfer_payload",
+            "request_id": "req-3",
+            "transfer_id": "transfer-3",
+            "payload": { "task": { "source_task_id": "task-source" } },
+        })
+    );
+
+    let peer_response = PeerResponse::SubmitTransferPayload {
+        request_id: "req-4".into(),
+        transfer_id: "transfer-4".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&peer_response).unwrap(),
+        json!({
+            "type": "submit_transfer_payload",
+            "request_id": "req-4",
+            "transfer_id": "transfer-4",
+        })
+    );
+
+    let event = SidecarEvent::IncomingTransferRequest {
+        transfer_id: "transfer-1".into(),
+        source_peer_id: "peer-source".into(),
+        source_task_id: "task-source".into(),
+        source_name: Some("Primary".into()),
+        payload: json!({
+            "task": {
+                "source_task_id": "task-source",
+            },
+        }),
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        json!({
+            "type": "incoming_transfer_request",
+            "transfer_id": "transfer-1",
+            "source_peer_id": "peer-source",
+            "source_task_id": "task-source",
+            "source_name": "Primary",
+            "payload": {
+                "task": {
+                    "source_task_id": "task-source",
+                },
+            },
+        })
+    );
+}
+
+#[test]
+fn remaining_protocol_variants_use_expected_json_shapes() {
+    let list_peers_request = ControlRequest::ListPeers {
+        request_id: "req-5".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&list_peers_request).unwrap(),
+        json!({
+            "type": "list_peers",
+            "request_id": "req-5",
+        })
+    );
+
+    let commit_request = ControlRequest::PrepareTransferCommit {
+        request_id: "req-6".into(),
+        transfer_id: "transfer-6".into(),
+        payload: json!({ "target_peer_id": "peer-target" }),
+    };
+    assert_eq!(
+        serde_json::to_value(&commit_request).unwrap(),
+        json!({
+            "type": "prepare_transfer_commit",
+            "request_id": "req-6",
+            "transfer_id": "transfer-6",
+            "payload": { "target_peer_id": "peer-target" },
+        })
+    );
+
+    let list_peers_response = ControlResponse::ListPeers {
+        request_id: "req-7".into(),
+        peers: vec![kanna_task_transfer::protocol::PeerRegistryEntry {
+            peer_id: "peer-a".into(),
+            display_name: "Alpha".into(),
+            endpoint: "127.0.0.1:4455".into(),
+            pid: 1234,
+        }],
+    };
+    assert_eq!(
+        serde_json::to_value(&list_peers_response).unwrap(),
+        json!({
+            "type": "list_peers",
+            "request_id": "req-7",
+            "peers": [{
+                "peer_id": "peer-a",
+                "display_name": "Alpha",
+                "endpoint": "127.0.0.1:4455",
+                "pid": 1234,
+            }],
+        })
+    );
+
+    let commit_response = ControlResponse::PrepareTransferCommit {
+        request_id: "req-8".into(),
+        transfer_id: "transfer-8".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&commit_response).unwrap(),
+        json!({
+            "type": "prepare_transfer_commit",
+            "request_id": "req-8",
+            "transfer_id": "transfer-8",
+        })
+    );
+
+    let control_error = ControlResponse::Error {
+        request_id: "req-9".into(),
+        message: "boom".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&control_error).unwrap(),
+        json!({
+            "type": "error",
+            "request_id": "req-9",
+            "message": "boom",
+        })
+    );
+
+    let peer_prepare = PeerRequest::PrepareTransfer {
+        request_id: "req-10".into(),
+        source_task_id: "task-source".into(),
+        source_peer_id: "peer-source".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&peer_prepare).unwrap(),
+        json!({
+            "type": "prepare_transfer",
+            "request_id": "req-10",
+            "source_task_id": "task-source",
+            "source_peer_id": "peer-source",
+        })
+    );
+
+    let peer_prepare_response = PeerResponse::PrepareTransfer {
+        request_id: "req-11".into(),
+        transfer_id: "transfer-11".into(),
+        source_peer_id: "peer-source".into(),
+        target_has_repo: true,
+    };
+    assert_eq!(
+        serde_json::to_value(&peer_prepare_response).unwrap(),
+        json!({
+            "type": "prepare_transfer",
+            "request_id": "req-11",
+            "transfer_id": "transfer-11",
+            "source_peer_id": "peer-source",
+            "target_has_repo": true,
+        })
+    );
+
+    let peer_ack = PeerRequest::ImportCommitted {
+        request_id: "req-12".into(),
+        transfer_id: "transfer-12".into(),
+        source_task_id: "task-source".into(),
+        destination_local_task_id: "task-dest".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&peer_ack).unwrap(),
+        json!({
+            "type": "import_committed",
+            "request_id": "req-12",
+            "transfer_id": "transfer-12",
+            "source_task_id": "task-source",
+            "destination_local_task_id": "task-dest",
+        })
+    );
+
+    let peer_fetch_artifact = PeerRequest::FetchTransferArtifact {
+        request_id: "req-13".into(),
+        transfer_id: "transfer-13".into(),
+        artifact_id: "artifact-13".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&peer_fetch_artifact).unwrap(),
+        json!({
+            "type": "fetch_transfer_artifact",
+            "request_id": "req-13",
+            "transfer_id": "transfer-13",
+            "artifact_id": "artifact-13",
+        })
+    );
+
+    let outgoing_event = SidecarEvent::OutgoingTransferCommitted {
+        transfer_id: "transfer-13".into(),
+        source_task_id: "task-source".into(),
+        destination_local_task_id: "task-dest".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&outgoing_event).unwrap(),
+        json!({
+            "type": "outgoing_transfer_committed",
+            "transfer_id": "transfer-13",
+            "source_task_id": "task-source",
+            "destination_local_task_id": "task-dest",
+        })
+    );
+
+    let peer_fetch_artifact_response = PeerResponse::FetchTransferArtifact {
+        request_id: "req-14".into(),
+        transfer_id: "transfer-13".into(),
+        artifact_id: "artifact-13".into(),
+        filename: "transfer-13.bundle".into(),
+        payload_b64: "YnVuZGxl".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&peer_fetch_artifact_response).unwrap(),
+        json!({
+            "type": "fetch_transfer_artifact",
+            "request_id": "req-14",
+            "transfer_id": "transfer-13",
+            "artifact_id": "artifact-13",
+            "filename": "transfer-13.bundle",
+            "payload_b64": "YnVuZGxl",
+        })
+    );
+
+    let peer_error = PeerResponse::Error {
+        request_id: "req-15".into(),
+        message: "down".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&peer_error).unwrap(),
+        json!({
+            "type": "error",
+            "request_id": "req-15",
+            "message": "down",
+        })
+    );
+
+    let stage_artifact_request = ControlRequest::StageTransferArtifact {
+        request_id: "req-13".into(),
+        transfer_id: "transfer-13".into(),
+        artifact_id: "artifact-13".into(),
+        path: "/tmp/transfer-13.bundle".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&stage_artifact_request).unwrap(),
+        json!({
+            "type": "stage_transfer_artifact",
+            "request_id": "req-13",
+            "transfer_id": "transfer-13",
+            "artifact_id": "artifact-13",
+            "path": "/tmp/transfer-13.bundle",
+        })
+    );
+
+    let fetch_artifact_request = ControlRequest::FetchTransferArtifact {
+        request_id: "req-14".into(),
+        transfer_id: "transfer-13".into(),
+        artifact_id: "artifact-13".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&fetch_artifact_request).unwrap(),
+        json!({
+            "type": "fetch_transfer_artifact",
+            "request_id": "req-14",
+            "transfer_id": "transfer-13",
+            "artifact_id": "artifact-13",
+        })
+    );
+
+    let stage_artifact_response = ControlResponse::StageTransferArtifact {
+        request_id: "req-15".into(),
+        transfer_id: "transfer-13".into(),
+        artifact_id: "artifact-13".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&stage_artifact_response).unwrap(),
+        json!({
+            "type": "stage_transfer_artifact",
+            "request_id": "req-15",
+            "transfer_id": "transfer-13",
+            "artifact_id": "artifact-13",
+        })
+    );
+
+    let fetch_artifact_response = ControlResponse::FetchTransferArtifact {
+        request_id: "req-16".into(),
+        transfer_id: "transfer-13".into(),
+        artifact_id: "artifact-13".into(),
+        path: "/tmp/transfer-13.bundle".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&fetch_artifact_response).unwrap(),
+        json!({
+            "type": "fetch_transfer_artifact",
+            "request_id": "req-16",
+            "transfer_id": "transfer-13",
+            "artifact_id": "artifact-13",
+            "path": "/tmp/transfer-13.bundle",
+        })
+    );
+}
+
+#[test]
+fn legacy_wire_message_variants_use_expected_json_shapes() {
+    use kanna_task_transfer::protocol::WireMessage;
+
+    assert_eq!(
+        serde_json::to_value(&WireMessage::ListPeers).unwrap(),
+        json!({
+            "type": "list_peers",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&WireMessage::PairingRequest {
+            peer_id: "peer-a".into(),
+            display_name: "Alpha".into(),
+        })
+        .unwrap(),
+        json!({
+            "type": "pairing_request",
+            "peer_id": "peer-a",
+            "display_name": "Alpha",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&WireMessage::PairingAccept {
+            peer_id: "peer-a".into(),
+            code: "code-1".into(),
+            public_key: "pubkey".into(),
+        })
+        .unwrap(),
+        json!({
+            "type": "pairing_accept",
+            "peer_id": "peer-a",
+            "code": "code-1",
+            "public_key": "pubkey",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&WireMessage::PrepareTransfer {
+            transfer_id: "transfer-a".into(),
+            task_id: "task-a".into(),
+            provider: "claude".into(),
+        })
+        .unwrap(),
+        json!({
+            "type": "prepare_transfer",
+            "transfer_id": "transfer-a",
+            "task_id": "task-a",
+            "provider": "claude",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&WireMessage::PrepareTransferOk {
+            transfer_id: "transfer-a".into(),
+            ready_token: "ready".into(),
+        })
+        .unwrap(),
+        json!({
+            "type": "prepare_transfer_ok",
+            "transfer_id": "transfer-a",
+            "ready_token": "ready",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&WireMessage::TransferChunk {
+            transfer_id: "transfer-a".into(),
+            seq: 7,
+            payload_b64: "YWJj".into(),
+        })
+        .unwrap(),
+        json!({
+            "type": "transfer_chunk",
+            "transfer_id": "transfer-a",
+            "seq": 7,
+            "payload_b64": "YWJj",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&WireMessage::TransferCommit {
+            transfer_id: "transfer-a".into(),
+        })
+        .unwrap(),
+        json!({
+            "type": "transfer_commit",
+            "transfer_id": "transfer-a",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&WireMessage::TransferAck {
+            transfer_id: "transfer-a".into(),
+        })
+        .unwrap(),
+        json!({
+            "type": "transfer_ack",
+            "transfer_id": "transfer-a",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&WireMessage::Error {
+            message: "boom".into(),
+        })
+        .unwrap(),
+        json!({
+            "type": "error",
+            "message": "boom",
+        })
+    );
+}

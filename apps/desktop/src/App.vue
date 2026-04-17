@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { ref, reactive, computed, inject, onMounted, onBeforeUnmount, nextTick, type Ref } from "vue";
+import { ref, reactive, computed, inject, onMounted, onBeforeUnmount, onUnmounted, nextTick, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
+import { listen } from "./listen";
 import { parseRepoConfig } from "@kanna/core";
 import { getSetting, setSetting, type AgentProvider, type DbHandle } from "@kanna/db";
 import i18n from "./i18n";
 import Sidebar from "./components/Sidebar.vue";
 import MainPanel from "./components/MainPanel.vue";
+import ActionBar from "./components/ActionBar.vue";
 import NewTaskModal from "./components/NewTaskModal.vue";
 import AddRepoModal from "./components/AddRepoModal.vue";
 import KeyboardShortcutsModal from "./components/KeyboardShortcutsModal.vue";
@@ -22,6 +24,8 @@ import ShellModal from "./components/ShellModal.vue";
 import CommandPaletteModal from "./components/CommandPaletteModal.vue";
 import AnalyticsModal from "./components/AnalyticsModal.vue";
 import BlockerSelectModal from "./components/BlockerSelectModal.vue";
+import PeerPickerModal from "./components/PeerPickerModal.vue";
+import IncomingTransferModal from "./components/IncomingTransferModal.vue";
 import PreferencesPanel from "./components/PreferencesPanel.vue";
 import AppUpdatePrompt from "./components/AppUpdatePrompt.vue";
 import ToastContainer from "./components/ToastContainer.vue";
@@ -36,6 +40,11 @@ import { useAppUpdate } from "./composables/useAppUpdate";
 import { isTopModal } from "./composables/useModalZIndex";
 import { selectTaskByActivity } from "./utils/selectTaskByActivity";
 import { getDefaultBaseBranch } from "./utils/baseBranchPicker";
+import {
+  parseIncomingTransferRequest,
+  parsePersistedOutgoingTransferPayload,
+  parseOutgoingTransferCommittedEvent,
+} from "./utils/taskTransfer";
 import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
@@ -48,6 +57,12 @@ function hasTag(item: { tags: string }, tag: string): boolean {
   catch { return false; }
 }
 
+interface TransferPeerOption {
+  id: string;
+  name: string;
+  subtitle?: string;
+}
+
 const store = useKannaStore();
 const toast = useToast();
 const { t } = useI18n();
@@ -55,6 +70,8 @@ const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
 const appUpdate = useAppUpdate();
+const gcRef = ref<{ runGc: () => Promise<void> }>();
+const appUnlisteners: Array<() => void> = [];
 useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 
 // UI state
@@ -104,6 +121,13 @@ const commandUsageCounts = ref<Record<string, number>>({});
 const showAnalyticsModal = ref(false);
 const showBlockerSelect = ref(false);
 const blockerSelectMode = ref<"block" | "edit">("block");
+const selectedTransferTaskId = ref<string | null>(null);
+const showPeerPicker = ref(false);
+const transferPeers = ref<TransferPeerOption[]>([]);
+const transferPeersLoading = ref(false);
+const showIncomingTransfer = ref(false);
+const incomingTransferId = ref<string | null>(null);
+const incomingTransferSourceName = ref<string | null>(null);
 const showPreferencesPanel = ref(false);
 const preferences = reactive({
   suspendAfterMinutes: 30,
@@ -156,6 +180,12 @@ const commitGraphModalRef = ref<InstanceType<typeof CommitGraphModal> | null>(nu
 const treeExplorerRef = ref<InstanceType<typeof TreeExplorerModal> | null>(null);
 const filePreviewRef = ref<InstanceType<typeof FilePreviewModal> | null>(null);
 const preferencesRef = ref<InstanceType<typeof PreferencesPanel> | null>(null);
+
+interface PendingIncomingTransferRow {
+  id: string;
+  source_peer_id: string | null;
+  payload_json: string | null;
+}
 
 // Navigation
 function navigateItems(direction: -1 | 1) {
@@ -469,6 +499,7 @@ const currentShortcutContext = computed<ShortcutContext>(() => {
   // it is opened on top of a context like tree or shell that doesn't expose
   // the generic dismiss shortcut.
   if (showShortcutsModal.value) return "main";
+  if (showPeerPicker.value || showIncomingTransfer.value) return "transfer";
   if (showNewTaskModal.value) return "newTask";
   if (showFilePreviewModal.value) return "file";
   if (showTreeExplorer.value) return "tree";
@@ -507,6 +538,169 @@ function closeFilePreview(reopenPicker: boolean) {
   }
 }
 
+function parseTransferPeer(entry: unknown): TransferPeerOption | null {
+  if (typeof entry !== "object" || entry === null) return null;
+  const record = entry as Record<string, unknown>;
+  const id = typeof record.peer_id === "string"
+    ? record.peer_id
+    : typeof record.peerId === "string"
+      ? record.peerId
+      : typeof record.id === "string"
+        ? record.id
+        : null;
+  if (!id) return null;
+  const name = typeof record.display_name === "string"
+    ? record.display_name
+    : typeof record.displayName === "string"
+      ? record.displayName
+      : typeof record.name === "string"
+        ? record.name
+        : id;
+  const subtitle = typeof record.status === "string"
+    ? record.status
+    : typeof record.state === "string"
+      ? record.state
+      : typeof record.last_seen_at === "string"
+        ? record.last_seen_at
+        : typeof record.lastSeenAt === "string"
+          ? record.lastSeenAt
+          : undefined;
+  return { id, name, subtitle };
+}
+
+function parseTransferPeers(payload: unknown): TransferPeerOption[] {
+  if (!Array.isArray(payload)) return [];
+  return payload
+    .map(parseTransferPeer)
+    .filter((peer): peer is TransferPeerOption => peer !== null);
+}
+
+async function loadTransferPeers() {
+  transferPeersLoading.value = true;
+  try {
+    const raw = await invoke<unknown>("list_transfer_peers");
+    transferPeers.value = parseTransferPeers(raw);
+  } catch (e: unknown) {
+    console.error("[App] failed to list transfer peers:", e);
+    transferPeers.value = [];
+  } finally {
+    transferPeersLoading.value = false;
+  }
+}
+
+async function warmTransferSidecar() {
+  if (!isTauri) return;
+  try {
+    await invoke("list_transfer_peers");
+  } catch (e: unknown) {
+    console.error("[App] transfer sidecar warmup failed:", e);
+  }
+}
+
+function openPeerPicker(taskId: string) {
+  selectedTransferTaskId.value = taskId;
+  showPeerPicker.value = true;
+  void loadTransferPeers();
+}
+
+function closePeerPicker() {
+  showPeerPicker.value = false;
+  selectedTransferTaskId.value = null;
+}
+
+async function handlePeerSelected(peerId: string) {
+  const taskId = selectedTransferTaskId.value;
+  if (!taskId) return;
+  try {
+    await store.pushTaskToPeer(taskId, peerId);
+    closePeerPicker();
+  } catch (e: unknown) {
+    console.error("[App] task transfer push failed:", e);
+    toast.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function handlePairPeer(peerId: string) {
+  try {
+    await invoke("start_peer_pairing", { peerId });
+    await loadTransferPeers();
+  } catch (e: unknown) {
+    console.error("[App] peer pairing failed:", e);
+    toast.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function handleIncomingTransferApprove() {
+  const transferId = incomingTransferId.value;
+  if (!transferId) return;
+
+  try {
+    await store.approveIncomingTransfer(transferId);
+    await syncIncomingTransferModalFromDb();
+  } catch (e: unknown) {
+    console.error("[App] incoming transfer approval failed:", e);
+    toast.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function handleIncomingTransferReject() {
+  const transferId = incomingTransferId.value;
+  if (!transferId) {
+    showIncomingTransfer.value = false;
+    incomingTransferId.value = null;
+    incomingTransferSourceName.value = null;
+    return;
+  }
+
+  try {
+    await store.rejectIncomingTransfer(transferId);
+    await syncIncomingTransferModalFromDb();
+  } catch (e: unknown) {
+    console.error("[App] incoming transfer rejection failed:", e);
+    toast.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function syncIncomingTransferModalFromDb() {
+  const rows = await db.select<PendingIncomingTransferRow>(
+    `SELECT id, source_peer_id, payload_json
+       FROM task_transfer
+      WHERE direction = 'incoming' AND status = 'pending'
+      ORDER BY started_at DESC
+      LIMIT 1`,
+  );
+  const latest = rows[0];
+  if (!latest) {
+    showIncomingTransfer.value = false;
+    incomingTransferId.value = null;
+    incomingTransferSourceName.value = null;
+    return;
+  }
+
+  let sourceName = latest.source_peer_id;
+  try {
+    const payload = parsePersistedOutgoingTransferPayload(latest.payload_json);
+    sourceName = payload.task.source_peer_id ?? latest.source_peer_id;
+  } catch (error: unknown) {
+    console.error("[App] failed to parse pending incoming transfer payload:", error);
+  }
+
+  incomingTransferId.value = latest.id;
+  incomingTransferSourceName.value = sourceName;
+  showIncomingTransfer.value = true;
+}
+
+function handleActionBarAdvanceStage() {
+  const item = store.currentItem;
+  if (!item) return;
+  void store.advanceStage(item.id);
+}
+
+function handleActionBarPushToMachine() {
+  const item = store.currentItem;
+  if (!item) return;
+  openPeerPicker(item.id);
+}
 // Keyboard shortcuts
 const keyboardActions = {
   newTask: () => { openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e)); },
@@ -575,6 +769,8 @@ const keyboardActions = {
   dismiss: () => {
     if (showCommandPalette.value) { showCommandPalette.value = false; return true; }
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return true; }
+    if (showPeerPicker.value) { closePeerPicker(); return true; }
+    if (showIncomingTransfer.value) { void handleIncomingTransferReject(); return true; }
     if (showFilePreviewModal.value) {
       const shouldCloseFileFlow = filePreviewRef.value?.dismiss() ?? true;
       if (shouldCloseFileFlow) closeFileFlow();
@@ -736,7 +932,8 @@ const anyModalOpen = computed(() =>
   showNewTaskModal.value || showAddRepoModal.value || showShortcutsModal.value ||
   showFilePickerModal.value || showFilePreviewModal.value || showDiffModal.value ||
   showTreeExplorer.value || showShellModal.value || showAnalyticsModal.value ||
-  showBlockerSelect.value || showPreferencesPanel.value || showCommitGraphModal.value
+  showBlockerSelect.value || showPreferencesPanel.value || showCommitGraphModal.value ||
+  showPeerPicker.value || showIncomingTransfer.value
 );
 useRestoreFocus(anyModalOpen);
 
@@ -896,6 +1093,40 @@ async function handlePreferenceUpdate(key: string, value: string) {
 onMounted(async () => {
   appUpdate.start();
   await store.init(db);
+  await syncIncomingTransferModalFromDb();
+
+  try {
+    const unlistenTransferRequest = await listen("transfer-request", async (event: unknown) => {
+      try {
+        const payload = (event as { payload?: unknown })?.payload ?? event;
+        const request = parseIncomingTransferRequest(payload);
+        await store.recordIncomingTransfer(request);
+        await syncIncomingTransferModalFromDb();
+      } catch (e: unknown) {
+        console.error("[App] failed to persist incoming transfer request:", e);
+      }
+    });
+    appUnlisteners.push(unlistenTransferRequest);
+  } catch (e: unknown) {
+    console.error("[App] transfer-request listener registration failed:", e);
+  }
+
+  try {
+    const unlistenOutgoingTransferCommitted = await listen("outgoing-transfer-committed", async (event: unknown) => {
+      try {
+        const payload = (event as { payload?: unknown })?.payload ?? event;
+        const committed = parseOutgoingTransferCommittedEvent(payload);
+        await store.handleOutgoingTransferCommitted(committed);
+      } catch (e: unknown) {
+        console.error("[App] failed to handle outgoing transfer commit acknowledgment:", e);
+      }
+    });
+    appUnlisteners.push(unlistenOutgoingTransferCommitted);
+  } catch (e: unknown) {
+    console.error("[App] outgoing-transfer-committed listener registration failed:", e);
+  }
+
+  await warmTransferSidecar();
 
   // Cache $HOME for shell-at-home (no repo selected)
   invoke("read_env_var", { name: "HOME" }).then((val) => {
@@ -938,6 +1169,17 @@ onMounted(async () => {
   document.addEventListener("file-link-activate", handleFileLinkActivate);
 });
 
+onUnmounted(() => {
+  while (appUnlisteners.length > 0) {
+    const unlisten = appUnlisteners.pop();
+    try {
+      unlisten?.();
+    } catch (e: unknown) {
+      console.error("[App] failed to unlisten app event:", e);
+    }
+  }
+});
+
 onBeforeUnmount(() => {
   window.removeEventListener("dragenter", suppressFileDropNavigation);
   window.removeEventListener("dragover", suppressFileDropNavigation);
@@ -967,18 +1209,28 @@ onBeforeUnmount(() => {
       @rename-done="focusAgentTerminal"
       @hide-repo="store.hideRepo"
     />
-    <MainPanel
-      ref="mainPanelRef"
-      v-if="!isMobile || store.selectedItemId"
-      :item="store.currentItem"
-      :repo-path="store.selectedRepo?.path"
-      :spawn-pty-session="store.spawnPtySession"
-      :maximized="maximized"
-      :blockers="currentBlockers"
-      :has-repos="store.repos.length > 0"
-      @close-task="store.closeTask"
-      @back="store.selectedItemId = null"
-    />
+    <div v-if="!isMobile || store.selectedItemId" class="main-column">
+      <MainPanel
+        ref="mainPanelRef"
+        :item="store.currentItem"
+        :active-session-ids="activeSessionIds"
+        :active-pty-sessions="activePtySessions"
+        :repo-path="store.selectedRepo?.path"
+        :spawn-pty-session="store.spawnPtySession"
+        :maximized="maximized"
+        :blockers="currentBlockers"
+        :has-repos="store.repos.length > 0"
+        @close-task="store.closeTask"
+        @agent-completed="store.bump"
+        @back="store.selectedItemId = null"
+      />
+      <ActionBar
+        v-if="store.currentItem"
+        :item="store.currentItem"
+        @advance-stage="handleActionBarAdvanceStage"
+        @push-to-machine="handleActionBarPushToMachine"
+      />
+    </div>
 
     <NewTaskModal
       v-if="showNewTaskModal"
@@ -1094,6 +1346,20 @@ onBeforeUnmount(() => {
       @confirm="onBlockerConfirm"
       @cancel="showBlockerSelect = false"
     />
+    <PeerPickerModal
+      v-if="showPeerPicker"
+      :peers="transferPeers"
+      :loading="transferPeersLoading"
+      @cancel="closePeerPicker"
+      @select="handlePeerSelected"
+      @pair-peer="handlePairPeer"
+    />
+    <IncomingTransferModal
+      v-if="showIncomingTransfer"
+      :source-name="incomingTransferSourceName"
+      @approve="handleIncomingTransferApprove"
+      @reject="handleIncomingTransferReject"
+    />
     <PreferencesPanel
       v-if="showPreferencesPanel"
       ref="preferencesRef"
@@ -1141,6 +1407,13 @@ html, body, #app {
   width: 100%;
 }
 
+.main-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 @media (max-width: 768px) {
   .app {
     flex-direction: column;
@@ -1163,6 +1436,11 @@ html, body, #app {
 }
 
 .app.mobile .main-panel {
+  width: 100%;
+  height: 100%;
+}
+
+.app.mobile .main-column {
   width: 100%;
   height: 100%;
 }

@@ -4,6 +4,9 @@ export interface SessionRecoveryState {
   serialized: string;
   cols: number;
   rows: number;
+  cursorRow: number;
+  cursorCol: number;
+  cursorVisible: boolean;
   savedAt: number;
   sequence: number;
 }
@@ -21,6 +24,9 @@ function isSessionRecoveryState(value: unknown): value is SessionRecoveryState {
     typeof snapshot.serialized === "string" &&
     typeof snapshot.cols === "number" &&
     typeof snapshot.rows === "number" &&
+    typeof snapshot.cursorRow === "number" &&
+    typeof snapshot.cursorCol === "number" &&
+    typeof snapshot.cursorVisible === "boolean" &&
     typeof snapshot.savedAt === "number" &&
     typeof snapshot.sequence === "number"
   );

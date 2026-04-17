@@ -54,6 +54,39 @@ export interface TaskPort {
   created_at: string;
 }
 
+export interface TrustedPeer {
+  id: string;
+  peer_id: string;
+  display_name: string;
+  public_key: string;
+  capabilities_json: string;
+  paired_at: string;
+  last_seen_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface TaskTransfer {
+  id: string;
+  direction: "incoming" | "outgoing";
+  status: "pending" | "streaming" | "completed" | "failed" | "rejected";
+  source_peer_id: string | null;
+  target_peer_id: string | null;
+  source_task_id: string | null;
+  local_task_id: string | null;
+  started_at: string;
+  completed_at: string | null;
+  error: string | null;
+  payload_json: string | null;
+}
+
+export interface TaskTransferProvenance {
+  pipeline_item_id: string;
+  source_peer_id: string;
+  source_task_id: string;
+  source_machine_task_label: string | null;
+  imported_at: string;
+}
+
 export interface Worktree {
   id: string;
   pipeline_item_id: string;

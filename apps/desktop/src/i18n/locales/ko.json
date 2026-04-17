@@ -86,7 +86,8 @@
     "shell": "셸 단축키",
     "tree": "트리 탐색기 단축키",
     "newTask": "새 작업 단축키",
-    "graph": "커밋 그래프 단축키"
+    "graph": "커밋 그래프 단축키",
+    "transfer": "작업 전송 단축키"
   },
   "sidebar": {
     "searchPlaceholder": "작업 검색…  ⌘F",
@@ -293,6 +294,13 @@
       "restartNow": "지금 다시 시작",
       "later": "나중에"
     }
+  },
+  "taskTransfer": {
+    "pushToMachine": "머신으로 보내기",
+    "pairPeer": "머신 페어링",
+    "incomingTitle": "수신 작업 전송",
+    "approve": "승인",
+    "reject": "거절"
   },
   "common": {
     "loading": "로딩 중..."
