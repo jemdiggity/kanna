@@ -67,6 +67,9 @@ export default function App() {
           onBack={() => controller.closeTask()}
           onOpenMore={() => controller.showView("more")}
           onShowSearch={() => controller.showView("search")}
+          onSendInput={(input) => {
+            void controller.sendTaskInput(selectedTask.id, input);
+          }}
         />
       );
     }

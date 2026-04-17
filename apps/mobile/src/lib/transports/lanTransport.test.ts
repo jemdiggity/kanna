@@ -40,6 +40,11 @@ describe("createLanTransport", () => {
         json: async () => ({
           taskId: "task-2"
         })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        json: async () => undefined
       });
 
     const transport = createLanTransport("http://127.0.0.1:48120", fetchImpl);
@@ -68,6 +73,7 @@ describe("createLanTransport", () => {
     await expect(transport.runMergeAgent("task-1")).resolves.toEqual({
       taskId: "task-2"
     });
+    await expect(transport.sendTaskInput("task-1", "continue")).resolves.toBeUndefined();
 
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
@@ -96,6 +102,17 @@ describe("createLanTransport", () => {
       "http://127.0.0.1:48120/v1/tasks/task-1/actions/run-merge-agent",
       {
         method: "POST"
+      }
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      5,
+      "http://127.0.0.1:48120/v1/tasks/task-1/input",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input: "continue"
+        })
       }
     );
   });
