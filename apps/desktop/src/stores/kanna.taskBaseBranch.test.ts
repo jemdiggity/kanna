@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DbHandle, PipelineItem, Repo, TaskPort } from "@kanna/db";
 import type { PipelineDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
 import type { RepoConfig } from "@kanna/core";
+import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-builder";
 
 const mockState = vi.hoisted(() => {
   const repoPath = "/tmp/repo";
@@ -927,6 +928,38 @@ describe("kanna store task base branch integration", () => {
     await flushStore();
 
     expect(store.selectedItemId).toBeNull();
+  });
+
+  it("passes the source worktree path into the PR stage prompt context", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "pr", transition: "manual", follow_task: false, agent: "pr" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+      }),
+    ];
+
+    const store = await createStore();
+    await flushStore();
+
+    await store.advanceStage("item-source");
+
+    expect(buildStagePrompt).toHaveBeenCalledWith(
+      "Agent prompt",
+      undefined,
+      expect.objectContaining({
+        taskPrompt: "Ship it",
+        branch: "task-source",
+        sourceWorktree: "/tmp/repo/.kanna-worktrees/task-source",
+      }),
+    );
   });
 
   it("does not auto-select a created task when selectOnCreate is false", async () => {

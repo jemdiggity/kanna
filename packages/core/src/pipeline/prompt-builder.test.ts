@@ -30,6 +30,17 @@ describe("buildStagePrompt", () => {
     expect(result).toContain("Work on branch task-abc123.");
   });
 
+  it("replaces $SOURCE_WORKTREE with the source worktree path", () => {
+    const result = buildStagePrompt(
+      "Agent base prompt.",
+      "Check the source worktree at $SOURCE_WORKTREE.",
+      { sourceWorktree: "/tmp/repo/.kanna-worktrees/task-abc123" }
+    );
+    expect(result).toContain(
+      "Check the source worktree at /tmp/repo/.kanna-worktrees/task-abc123."
+    );
+  });
+
   it("is a no-op when no variables are present", () => {
     const stagePrompt = "No variables here.";
     const result = buildStagePrompt("Agent base prompt.", stagePrompt, {
@@ -43,10 +54,10 @@ describe("buildStagePrompt", () => {
   it("replaces undefined/missing variables with empty string", () => {
     const result = buildStagePrompt(
       "Base.",
-      "Task: $TASK_PROMPT, Prev: $PREV_RESULT, Branch: $BRANCH",
+      "Task: $TASK_PROMPT, Prev: $PREV_RESULT, Branch: $BRANCH, Source: $SOURCE_WORKTREE",
       {}
     );
-    expect(result).toBe("Base.\n\nTask: , Prev: , Branch: ");
+    expect(result).toBe("Base.\n\nTask: , Prev: , Branch: , Source: ");
   });
 
   it("combines agent base prompt with stage prompt separated by double newline", () => {
