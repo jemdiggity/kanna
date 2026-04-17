@@ -58,14 +58,22 @@ pub async fn run_script(
     cwd: String,
     env: HashMap<String, String>,
 ) -> Result<String, String> {
+    run_script_sync(&script, &cwd, env)
+}
+
+fn run_script_sync(
+    script: &str,
+    cwd: &str,
+    env: HashMap<String, String>,
+) -> Result<String, String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut command = Command::new(&shell);
     crate::subprocess_env::apply_child_env(&mut command, env);
     let output = command
         .arg("-l")
         .arg("-c")
-        .arg(&script)
-        .current_dir(&cwd)
+        .arg(script)
+        .current_dir(cwd)
         .output()
         .map_err(|e| format!("failed to run script: {}", e))?;
 
@@ -83,7 +91,7 @@ pub async fn run_script(
 
 #[cfg(test)]
 mod tests {
-    use super::run_script;
+    use super::run_script_sync;
     use std::collections::HashMap;
     use std::ffi::CString;
     use std::sync::{Mutex, OnceLock};
@@ -104,8 +112,8 @@ mod tests {
         assert_eq!(libc::unsetenv(key.as_ptr()), 0);
     }
 
-    #[tokio::test]
-    async fn run_script_does_not_inherit_kanna_control_plane_env() {
+    #[test]
+    fn run_script_does_not_inherit_kanna_control_plane_env() {
         let _guard = env_lock().lock().expect("env lock should not be poisoned");
         unsafe {
             set_env_var("KANNA_TMUX_SESSION", "leaked-session");
@@ -113,12 +121,11 @@ mod tests {
             set_env_var("TAURI_WEBDRIVER_PORT", "4555");
         }
 
-        let output = run_script(
-            "printf '%s|%s|%s' \"${KANNA_TMUX_SESSION:-}\" \"${KANNA_DB_NAME:-}\" \"${TAURI_WEBDRIVER_PORT:-}\"".to_string(),
-            "/".to_string(),
+        let output = run_script_sync(
+            "printf '%s|%s|%s' \"${KANNA_TMUX_SESSION:-}\" \"${KANNA_DB_NAME:-}\" \"${TAURI_WEBDRIVER_PORT:-}\"",
+            "/",
             HashMap::new(),
         )
-        .await
         .expect("script should succeed");
 
         unsafe {
@@ -130,20 +137,19 @@ mod tests {
         assert_eq!(output, "||");
     }
 
-    #[tokio::test]
-    async fn run_script_preserves_explicit_kanna_env_over_scrubbed_parent_values() {
+    #[test]
+    fn run_script_preserves_explicit_kanna_env_over_scrubbed_parent_values() {
         let _guard = env_lock().lock().expect("env lock should not be poisoned");
         unsafe {
             set_env_var("KANNA_WORKTREE", "0");
             set_env_var("KANNA_TMUX_SESSION", "leaked-session");
         }
 
-        let output = run_script(
-            "printf '%s|%s' \"${KANNA_WORKTREE:-}\" \"${KANNA_TMUX_SESSION:-}\"".to_string(),
-            "/".to_string(),
+        let output = run_script_sync(
+            "printf '%s|%s' \"${KANNA_WORKTREE:-}\" \"${KANNA_TMUX_SESSION:-}\"",
+            "/",
             HashMap::from([("KANNA_WORKTREE".to_string(), "1".to_string())]),
         )
-        .await
         .expect("script should succeed");
 
         unsafe {
