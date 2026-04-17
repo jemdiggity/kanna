@@ -174,6 +174,11 @@ Logs are written to both destinations simultaneously — the file for tooling/de
 | `KANNA_DAEMON_DIR` | Data directory (socket, PID, log files) | `~/Library/Application Support/Kanna` |
 | `RUST_LOG` | Log level filter | `info` |
 
+## Benchmarks
+
+Local daemon benchmark usage and the current synthetic benchmark baseline are
+documented in [`BENCHMARKS.md`](./BENCHMARKS.md).
+
 ## Dev Workflow
 
 `bun tauri dev` executes:
