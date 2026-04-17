@@ -68,7 +68,6 @@ const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
 const appUpdate = useAppUpdate();
-const gcRef = ref<{ runGc: () => Promise<void> }>();
 const appUnlisteners: Array<() => void> = [];
 useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 
@@ -1195,8 +1194,6 @@ onBeforeUnmount(() => {
       <MainPanel
         ref="mainPanelRef"
         :item="store.currentItem"
-        :active-session-ids="activeSessionIds"
-        :active-pty-sessions="activePtySessions"
         :repo-path="store.selectedRepo?.path"
         :spawn-pty-session="store.spawnPtySession"
         :maximized="maximized"

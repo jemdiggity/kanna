@@ -425,6 +425,7 @@ async fn observer_loop(
             Ok(DaemonEvent::Exit {
                 session_id: sid,
                 code,
+                ..
             }) => {
                 log::info!("Session {} exited with code {}", sid, code);
                 let evt = RelayMessage::Event {
