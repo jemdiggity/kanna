@@ -486,6 +486,27 @@ function onShellClose() {
   }
 }
 
+function closeFileFlow() {
+  showFilePreviewModal.value = false;
+  showFilePickerModal.value = false;
+  maximizedModal.value = maximizedModal.value === "file" ? null : maximizedModal.value;
+  previewHidden.value = false;
+  previewFromPicker.value = false;
+}
+
+function closeFilePreview(reopenPicker: boolean) {
+  showFilePreviewModal.value = false;
+  maximizedModal.value = maximizedModal.value === "file" ? null : maximizedModal.value;
+  previewHidden.value = false;
+
+  const shouldReopenPicker = reopenPicker && previewFromPicker.value;
+  previewFromPicker.value = false;
+
+  if (shouldReopenPicker) {
+    showFilePickerModal.value = true;
+  }
+}
+
 // Keyboard shortcuts
 const keyboardActions = {
   newTask: () => { openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e)); },
@@ -554,7 +575,11 @@ const keyboardActions = {
   dismiss: () => {
     if (showCommandPalette.value) { showCommandPalette.value = false; return true; }
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return true; }
-    if (showFilePreviewModal.value) { filePreviewRef.value?.dismiss(); return true; }
+    if (showFilePreviewModal.value) {
+      const shouldCloseFileFlow = filePreviewRef.value?.dismiss() ?? true;
+      if (shouldCloseFileFlow) closeFileFlow();
+      return true;
+    }
     if (showFilePickerModal.value) { showFilePickerModal.value = false; return true; }
     // Shell before diff: let Escape reach the shell terminal (vim, etc.)
     if (showShellModal.value) { return; }
@@ -1031,7 +1056,7 @@ onBeforeUnmount(() => {
       :ide-command="store.ideCommand"
       :initial-line="previewInitialLine"
       :maximized="maximizedModal === 'file'"
-      @close="showFilePreviewModal = false; maximizedModal = null; previewHidden = false; if (previewFromPicker) { showFilePickerModal = true; previewFromPicker = false; }"
+      @close="closeFilePreview(true)"
     />
     <AnalyticsModal
       v-if="showAnalyticsModal"
