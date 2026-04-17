@@ -182,24 +182,30 @@ impl TerminalSidecar {
         };
 
         let footer_lines = self.visible_footer_lines(STATUS_ROWS)?;
-        let flattened_footer = footer_lines.join(" ");
-        let normalized = flattened_footer.to_lowercase();
         let last_line = footer_lines
             .iter()
             .rev()
             .find(|line| !line.is_empty())
             .map(String::as_str)
             .unwrap_or("");
+        let has_waiting_marker =
+            any_line_contains_ascii_case_insensitive(&footer_lines, WAITING_MARKER);
+        let has_claude_permission =
+            any_line_contains_ascii_case_insensitive(&footer_lines, CLAUDE_PERMISSION_MARKER);
+        let has_interrupt_marker =
+            any_line_contains_ascii_case_insensitive(&footer_lines, INTERRUPT_MARKER);
+        let has_copilot_busy_marker =
+            any_line_contains_ascii_case_insensitive(&footer_lines, COPILOT_BUSY_MARKER);
 
-        if normalized.contains(WAITING_MARKER) {
+        if has_waiting_marker {
             return Ok(Some(SessionStatus::Waiting));
         }
 
         let status = match provider {
             AgentProvider::Claude => {
-                if normalized.contains(CLAUDE_PERMISSION_MARKER) {
+                if has_claude_permission {
                     Some(SessionStatus::Waiting)
-                } else if normalized.contains(INTERRUPT_MARKER)
+                } else if has_interrupt_marker
                     || footer_lines
                         .iter()
                         .any(|line| line_has_claude_spinner(line))
@@ -212,7 +218,7 @@ impl TerminalSidecar {
                 }
             }
             AgentProvider::Codex => {
-                if normalized.contains(INTERRUPT_MARKER) {
+                if has_interrupt_marker {
                     Some(SessionStatus::Busy)
                 } else if line_starts_with_prompt(last_line, &[CODEX_IDLE_PROMPT]) {
                     Some(SessionStatus::Idle)
@@ -221,7 +227,7 @@ impl TerminalSidecar {
                 }
             }
             AgentProvider::Copilot => copilot_status_from_lines(&footer_lines).or_else(|| {
-                if normalized.contains(COPILOT_BUSY_MARKER) {
+                if has_copilot_busy_marker {
                     Some(SessionStatus::Busy)
                 } else if line_starts_with_prompt(last_line, &[CLAUDE_IDLE_PROMPT]) {
                     Some(SessionStatus::Idle)
@@ -266,7 +272,41 @@ impl TerminalSidecar {
 }
 
 fn normalize_row_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut normalized = String::with_capacity(text.len());
+    let mut words = text.split_whitespace();
+    if let Some(first_word) = words.next() {
+        normalized.push_str(first_word);
+        for word in words {
+            normalized.push(' ');
+            normalized.push_str(word);
+        }
+    }
+    normalized
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    let needle_bytes = needle.as_bytes();
+    if needle_bytes.is_empty() {
+        return true;
+    }
+
+    haystack
+        .as_bytes()
+        .windows(needle_bytes.len())
+        .any(|window| window.eq_ignore_ascii_case(needle_bytes))
+}
+
+fn any_line_contains_ascii_case_insensitive(lines: &[String], needle: &str) -> bool {
+    lines
+        .iter()
+        .any(|line| contains_ascii_case_insensitive(line, needle))
+        || lines.windows(2).any(|pair| {
+            let mut combined = String::with_capacity(pair[0].len() + pair[1].len() + 1);
+            combined.push_str(&pair[0]);
+            combined.push(' ');
+            combined.push_str(&pair[1]);
+            contains_ascii_case_insensitive(&combined, needle)
+        })
 }
 
 fn line_has_claude_spinner(line: &str) -> bool {
@@ -300,10 +340,8 @@ fn line_contains_worktree_path(line: &str) -> bool {
 }
 
 fn copilot_line_has_busy_marker(line: &str) -> bool {
-    let normalized = line.to_lowercase();
-    normalized.contains(COPILOT_BUSY_MARKER)
-        || normalized.starts_with("thinking ")
-        || normalized.contains(" thinking ")
+    contains_ascii_case_insensitive(line, COPILOT_BUSY_MARKER)
+        || contains_ascii_case_insensitive(line, "thinking ")
 }
 
 fn copilot_status_from_lines(lines: &[String]) -> Option<SessionStatus> {
@@ -330,6 +368,22 @@ mod tests {
     use crate::protocol::{AgentProvider, SessionStatus};
 
     use super::{initial_session_status, TerminalSidecar, TerminalSnapshot};
+
+    #[test]
+    fn ascii_case_insensitive_contains_matches_status_markers() {
+        assert!(super::contains_ascii_case_insensitive(
+            "• Working (0s • Esc To Interrupt)",
+            super::INTERRUPT_MARKER
+        ));
+        assert!(super::contains_ascii_case_insensitive(
+            "⏵⏵ Bypass Permissions On (shift+tab to cycle)",
+            super::CLAUDE_PERMISSION_MARKER
+        ));
+        assert!(!super::contains_ascii_case_insensitive(
+            "Thinking hard",
+            super::INTERRUPT_MARKER
+        ));
+    }
 
     #[test]
     fn sidecar_snapshot_tracks_output_and_resize() {
