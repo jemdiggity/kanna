@@ -55,7 +55,7 @@ export default function App() {
       );
     }
 
-    if (selectedTask) {
+    if (selectedTask && state.activeView !== "more") {
       return (
         <TaskScreen
           desktopName={state.desktopName}
@@ -110,6 +110,9 @@ export default function App() {
               void controller.connectLocal();
             }}
             onOpenComposer={() => controller.openComposer()}
+            onRunMergeAgent={(taskId) => {
+              void controller.runMergeAgent(taskId);
+            }}
           />
         );
       case "tasks":

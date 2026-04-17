@@ -22,6 +22,15 @@ describe("createKannaClient", () => {
       searchTasks: vi.fn().mockResolvedValue([
         { id: "task-2", repoId: "repo-1", title: "Search result", stage: "pr" }
       ]),
+      createTask: vi.fn().mockResolvedValue({
+        taskId: "task-3",
+        repoId: "repo-1",
+        title: "Ship it",
+        stage: "in progress"
+      }),
+      runMergeAgent: vi.fn().mockResolvedValue({
+        taskId: "task-4"
+      }),
       createPairingSession: vi.fn().mockResolvedValue({
         code: "ABC123",
         desktopId: "desktop-1",
@@ -37,6 +46,18 @@ describe("createKannaClient", () => {
     expect(await client.listDesktops()).toHaveLength(1);
     expect(await client.listRecentTasks()).toHaveLength(1);
     expect(await client.searchTasks("search")).toHaveLength(1);
+    expect(await client.createTask({
+      repoId: "repo-1",
+      prompt: "Ship it"
+    })).toEqual({
+      taskId: "task-3",
+      repoId: "repo-1",
+      title: "Ship it",
+      stage: "in progress"
+    });
+    expect(await client.runMergeAgent("task-1")).toEqual({
+      taskId: "task-4"
+    });
     expect((await client.createPairingSession()).code).toBe("ABC123");
   });
 });

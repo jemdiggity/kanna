@@ -4,6 +4,8 @@ import type {
   DesktopSummary,
   MobileServerStatus,
   PairingSession,
+  RepoSummary,
+  TaskActionResponse,
   TaskSummary
 } from "../api/types";
 
@@ -42,6 +44,16 @@ export function createLanTransport(
     listRecentTasks: () => request<TaskSummary[]>("/v1/tasks/recent"),
     searchTasks: (query) =>
       request<TaskSummary[]>(`/v1/tasks/search?query=${encodeURIComponent(query)}`),
+    createTask: (input: CreateTaskRequest) =>
+      request<CreateTaskResponse>("/v1/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      }),
+    runMergeAgent: (taskId: string) =>
+      request<TaskActionResponse>(`/v1/tasks/${encodeURIComponent(taskId)}/actions/run-merge-agent`, {
+        method: "POST"
+      }),
     createPairingSession: () =>
       request<PairingSession>("/v1/pairing/sessions", { method: "POST" })
   };

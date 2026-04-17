@@ -9,6 +9,7 @@ interface MoreScreenProps {
   onShowDesktops(): void;
   onStartPairing(): void;
   onOpenComposer(): void;
+  onRunMergeAgent(taskId: string): void;
 }
 
 export function MoreScreen({
@@ -17,7 +18,8 @@ export function MoreScreen({
   onRefresh,
   onShowDesktops,
   onStartPairing,
-  onOpenComposer
+  onOpenComposer,
+  onRunMergeAgent
 }: MoreScreenProps) {
   return (
     <View style={styles.wrap}>
@@ -50,6 +52,15 @@ export function MoreScreen({
         <Text style={styles.actionTitle}>Create Task</Text>
         <Text style={styles.actionCopy}>Open the new-task composer.</Text>
       </Pressable>
+
+      {selectedTask ? (
+        <Pressable style={styles.action} onPress={() => onRunMergeAgent(selectedTask.id)}>
+          <Text style={styles.actionTitle}>Run Merge Agent</Text>
+          <Text style={styles.actionCopy}>
+            Spawn the follow-up merge task for {selectedTask.title}.
+          </Text>
+        </Pressable>
+      ) : null}
 
       <View style={styles.commandCard}>
         <Text style={styles.commandLabel}>Selected task</Text>

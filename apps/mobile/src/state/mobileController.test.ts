@@ -43,6 +43,9 @@ function createClientMock(): KannaClient {
       title: "Ship mobile shell",
       stage: "in progress"
     }),
+    runMergeAgent: vi.fn().mockResolvedValue({
+      taskId: "task-merge"
+    }),
     createPairingSession: vi.fn().mockResolvedValue({
       code: "ABC123",
       desktopId: "desktop-1",
@@ -113,5 +116,35 @@ describe("createMobileController", () => {
     expect(client.createPairingSession).toHaveBeenCalledTimes(1);
     expect(store.getState().pairingCode).toBe("ABC123");
     expect(store.getState().connectionState).toBe("connected");
+  });
+
+  it("runs the merge agent for the selected task and refreshes recent tasks", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.listRecentTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "task-merge",
+          repoId: "repo-1",
+          title: "Merge task",
+          stage: "merge"
+        }
+      ]);
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    await controller.runMergeAgent("task-1");
+
+    expect(client.runMergeAgent).toHaveBeenCalledWith("task-1");
+    expect(store.getState().selectedTaskId).toBe("task-merge");
+    expect(store.getState().recentTasks[0]?.id).toBe("task-merge");
   });
 });
