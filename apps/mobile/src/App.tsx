@@ -1,11 +1,6 @@
 import React, { useEffect, useRef, useSyncExternalStore } from "react";
-import {
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View
-} from "react-native";
+import { SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
+import { isTaskDetailVisible, shouldShowFloatingToolbar } from "./appShell";
 import { createAppModel, type AppModel } from "./appModel";
 import { FloatingToolbar } from "./components/FloatingToolbar";
 import { CreateTaskComposer } from "./components/CreateTaskComposer";
@@ -29,6 +24,7 @@ export default function App() {
     model.sessionStore.getState
   );
   const { controller, navigator } = model;
+  const taskDetailVisible = isTaskDetailVisible(state.selectedTaskId, state.activeView);
 
   useEffect(() => {
     void model.initialize();
@@ -39,8 +35,6 @@ export default function App() {
     state.recentTasks.find((task) => task.id === state.selectedTaskId) ??
     state.searchResults.find((task) => task.id === state.selectedTaskId) ??
     null;
-  const selectedRepo = state.repos.find((repo) => repo.id === selectedTask?.repoId) ?? null;
-
   const mainContent = (() => {
     if (state.connectionState !== "connected") {
       return (
@@ -56,17 +50,14 @@ export default function App() {
       );
     }
 
-    if (selectedTask && state.activeView !== "more") {
+    if (selectedTask && taskDetailVisible) {
       return (
         <TaskScreen
-          desktopName={state.desktopName}
-          repoName={selectedRepo?.name ?? null}
           task={selectedTask}
           terminalOutput={state.taskTerminalOutput}
           terminalStatus={state.taskTerminalStatus}
           onBack={() => controller.closeTask()}
           onOpenMore={() => controller.showView("more")}
-          onShowSearch={() => controller.showView("search")}
           onSendInput={(input) => {
             void controller.sendTaskInput(selectedTask.id, input);
           }}
@@ -168,35 +159,32 @@ export default function App() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.backgroundGlow} />
       <View style={styles.backgroundOrb} />
-      <View style={styles.shell}>
-        {state.connectionState === "connected" ? (
-          <View style={styles.header}>
-            <View>
-              <Text style={styles.eyebrow}>Kanna Mobile</Text>
-              <Text style={styles.desktopTitle}>
-                {state.desktopName ?? "Desktop not connected"}
-              </Text>
-            </View>
-          </View>
-        ) : null}
-
-        {state.errorMessage && state.connectionState === "connected" ? (
+      <View style={[styles.shell, taskDetailVisible ? styles.shellTaskDetail : null]}>
+        {state.errorMessage && state.connectionState === "connected" && !taskDetailVisible ? (
           <View style={styles.errorBanner}>
             <Text style={styles.errorText}>{state.errorMessage}</Text>
           </View>
         ) : null}
 
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            state.connectionState === "connected" ? styles.scrollContentPadded : null
-          ]}
-          showsVerticalScrollIndicator={false}
-        >
-          {mainContent}
-        </ScrollView>
+        {taskDetailVisible ? (
+          mainContent
+        ) : (
+          <ScrollView
+            contentContainerStyle={[
+              styles.scrollContent,
+              state.connectionState === "connected" ? styles.scrollContentPadded : null
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            {mainContent}
+          </ScrollView>
+        )}
 
-        {state.connectionState === "connected" ? (
+        {shouldShowFloatingToolbar(
+          state.connectionState,
+          state.selectedTaskId,
+          state.activeView
+        ) ? (
           <FloatingToolbar
             activeTab={toolbarTab}
             utilityActions={navigator.utilityActions}
@@ -262,21 +250,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 18
   },
-  header: {
-    marginBottom: 18
-  },
-  eyebrow: {
-    color: "#7FA7D9",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.2,
-    textTransform: "uppercase"
-  },
-  desktopTitle: {
-    color: "#F5F7FB",
-    fontSize: 28,
-    fontWeight: "700",
-    marginTop: 4
+  shellTaskDetail: {
+    paddingHorizontal: 0,
+    paddingTop: 0
   },
   errorBanner: {
     backgroundColor: "rgba(97, 33, 36, 0.38)",

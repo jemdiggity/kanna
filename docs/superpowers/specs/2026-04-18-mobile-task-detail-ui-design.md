@@ -83,6 +83,16 @@ The task detail screen should not show a persistent “healthy” terminal statu
 - Render a short overlay label over the terminal region, using states such as `Connecting`, `Reconnecting`, `Offline`, or `Error`.
 - Keep the rest of the layout stable while the terminal is unhealthy.
 
+### Terminal Scroll Behavior
+
+The terminal should behave like the desktop terminal's sticky-bottom mode.
+
+- Reserve a bottom reading zone equal to the floating bottom chrome height so the newest output sits above the composer when the user is at the bottom.
+- If the user is at or near the bottom, new terminal output should keep the view pinned to the bottom reading zone automatically.
+- If the user scrolls upward, sticky-bottom mode should turn off and new output must not yank the viewport back down.
+- If the user manually scrolls back to the bottom threshold, sticky-bottom mode should turn back on automatically.
+- While the user is scrolled up, terminal content may continue behind the floating composer and controls.
+
 ### Composer Behavior
 
 The composer remains visible even when terminal connectivity is degraded.
@@ -99,6 +109,7 @@ No new mobile API endpoints are required for this pass.
 - `taskTerminalOutput` and `taskTerminalStatus` remain the source of truth for terminal rendering.
 - `TaskSummary.stage` and `TaskSummary.title` provide the only persistent task header information needed in the new detail view.
 - Task actions continue to flow through the existing controller methods and More/command-palette plumbing.
+- Terminal scroll state should live inside the terminal `WebView` document rather than in React Native shell state.
 
 The only new derived presentation logic needed in this slice is task-detail-specific:
 
@@ -143,3 +154,4 @@ This pass should stay within the existing Vitest-based mobile testing approach.
 - The terminal visually dominates the screen in the healthy state.
 - The task screen shows no persistent healthy-state status badge.
 - Unhealthy terminal states switch to a skeleton plus overlay treatment and disable the composer without hiding it.
+- Healthy terminal output remains pinned above the composer only while the user stays near the bottom of the terminal.

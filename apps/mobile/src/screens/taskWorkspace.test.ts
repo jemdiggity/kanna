@@ -2,48 +2,60 @@ import { describe, expect, it } from "vitest";
 import { buildTaskWorkspaceModel } from "./taskWorkspace";
 
 describe("buildTaskWorkspaceModel", () => {
-  it("builds a resume-oriented workspace for in-progress tasks", () => {
+  it("returns a compact header model for healthy task detail state", () => {
     const model = buildTaskWorkspaceModel({
-      desktopName: "Studio Mac",
-      repoName: "kanna-tauri",
       task: {
         id: "task-123",
         repoId: "repo-1",
-        title: "Refactor mobile workspace",
-        stage: "in progress"
-      }
+        title: "Fix task reactivity in mobile app after desktop daemon reconnect regression",
+        stage: "in progress",
+        snippet: "recent output"
+      },
+      terminalStatus: "live"
     });
 
-    expect(model.summaryLabel).toBe("Resume agent task");
-    expect(model.summaryCopy).toContain("Refactor mobile workspace");
-    expect(model.primaryActionLabel).toBe("Command Palette");
-    expect(model.facts).toEqual([
-      { label: "Desktop", value: "Studio Mac" },
-      { label: "Repo", value: "kanna-tauri" },
-      { label: "Stage", value: "in progress" },
-      { label: "Task", value: "task-123" }
-    ]);
+    expect(model.stageLabel).toBe("in progress");
+    expect(model.title).toBe(
+      "Fix task reactivity in mobile app after desktop daemon reconnect regression"
+    );
+    expect(model.isTerminalHealthy).toBe(true);
+    expect(model.overlayLabel).toBeNull();
+    expect(model.isComposerDisabled).toBe(false);
+    expect(model.chromeStyle).toBe("floating");
+    expect(model.terminalLayout).toBe("fullscreen");
+    expect(model.titlePresentation).toBe("chip");
   });
 
-  it("adapts the guidance for review-stage tasks and falls back cleanly", () => {
-    const model = buildTaskWorkspaceModel({
-      desktopName: null,
-      repoName: null,
-      task: {
-        id: "task-pr",
-        repoId: "repo-2",
-        title: "Ship mobile shell",
-        stage: "pr"
-      }
+  it("maps unhealthy terminal states to overlay copy and disables the composer", () => {
+    expect(
+      buildTaskWorkspaceModel({
+        task: {
+          id: "task-closed",
+          repoId: "repo-1",
+          title: "Close the task",
+          stage: "pr"
+        },
+        terminalStatus: "closed"
+      })
+    ).toMatchObject({
+      isTerminalHealthy: false,
+      overlayLabel: "Offline",
+      isComposerDisabled: true,
+      chromeStyle: "floating",
+      terminalLayout: "fullscreen",
+      titlePresentation: "chip"
     });
 
-    expect(model.summaryLabel).toBe("Review task");
-    expect(model.summaryCopy).toContain("review-ready");
-    expect(model.facts).toEqual([
-      { label: "Desktop", value: "Unknown desktop" },
-      { label: "Repo", value: "repo-2" },
-      { label: "Stage", value: "pr" },
-      { label: "Task", value: "task-pr" }
-    ]);
+    expect(
+      buildTaskWorkspaceModel({
+        task: {
+          id: "task-error",
+          repoId: "repo-1",
+          title: "Reconnect the terminal",
+          stage: "in progress"
+        },
+        terminalStatus: "error"
+      }).overlayLabel
+    ).toBe("Error");
   });
 });
