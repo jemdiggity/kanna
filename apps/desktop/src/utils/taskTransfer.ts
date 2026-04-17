@@ -9,6 +9,7 @@ export interface OutgoingTransferPayload {
     source_peer_id: string;
     source_task_id: string;
     local_task_id?: string;
+    resume_session_id?: string | null;
     prompt: string | null;
     stage: string;
     branch: string | null;
@@ -39,7 +40,7 @@ export interface BuildOutgoingTransferPayloadInput {
   targetPeerId: string;
   item: Pick<
     PipelineItem,
-    "id" | "prompt" | "stage" | "branch" | "pipeline" | "display_name" | "base_ref" | "agent_type" | "agent_provider"
+    "id" | "prompt" | "stage" | "branch" | "pipeline" | "display_name" | "base_ref" | "agent_type" | "agent_provider" | "agent_session_id"
   >;
   repoPath?: string | null;
   repoName?: string | null;
@@ -154,6 +155,7 @@ export function buildOutgoingTransferPayload(
     task: {
       source_peer_id: input.sourcePeerId,
       source_task_id: input.sourceTaskId,
+      resume_session_id: input.item.agent_session_id,
       prompt: input.item.prompt,
       stage: input.item.stage,
       branch: input.item.branch,

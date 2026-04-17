@@ -5,7 +5,7 @@ import type { DbHandle, PipelineItem, Repo } from "@kanna/db";
 
 const mockState = vi.hoisted(() => {
   const now = "2026-04-16T00:00:00.000Z";
-  const updateClaudeSessionIdMock = vi.fn(async () => {});
+  const updateAgentSessionIdMock = vi.fn(async () => {});
 
   function makeRepo(overrides: Partial<Repo> = {}): Repo {
     return {
@@ -46,7 +46,7 @@ const mockState = vi.hoisted(() => {
       pinned: 0,
       pin_order: null,
       base_ref: null,
-      claude_session_id: null,
+      agent_session_id: null,
       previous_stage: null,
       created_at: now,
       updated_at: now,
@@ -135,7 +135,7 @@ const mockState = vi.hoisted(() => {
     invokeMock,
     listenMock,
     updatePipelineItemActivityMock,
-    updateClaudeSessionIdMock,
+    updateAgentSessionIdMock,
     emit,
     reset,
   };
@@ -288,7 +288,7 @@ vi.mock("@kanna/db", () => ({
   getUnblockedItems: vi.fn(async () => []),
   hasCircularDependency: vi.fn(async () => false),
   insertOperatorEvent: vi.fn(async () => {}),
-  updateClaudeSessionId: mockState.updateClaudeSessionIdMock,
+  updateAgentSessionId: mockState.updateAgentSessionIdMock,
   listTaskPorts: vi.fn(async () => []),
   listTaskPortsForItem: vi.fn(async () => []),
   deleteTaskPortsForItem: vi.fn(async () => {}),
@@ -331,7 +331,7 @@ describe("kanna runtime status reconciliation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockState.reset();
-    mockState.updateClaudeSessionIdMock.mockClear();
+    mockState.updateAgentSessionIdMock.mockClear();
   });
 
   it("reconciles a selected task to idle after terminal output when the daemon now reports waiting", async () => {
@@ -400,7 +400,7 @@ describe("kanna runtime status reconciliation", () => {
 
     await flushStore();
 
-    expect(mockState.updateClaudeSessionIdMock).toHaveBeenCalledWith(
+    expect(mockState.updateAgentSessionIdMock).toHaveBeenCalledWith(
       expect.anything(),
       "task-1",
       "019d99a5-aa94-7c73-b786-644cc095c037",

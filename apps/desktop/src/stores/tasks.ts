@@ -16,6 +16,7 @@ import {
   reorderPinnedItems,
   unhideRepo as unhideRepoQuery,
   updatePipelineItemActivity,
+  updateAgentSessionId,
   updatePipelineItemDisplayName,
   updatePipelineItemStage,
   updatePipelineItemTags,
@@ -132,7 +133,7 @@ export function createTasksApi(
   }
 
   function hasLiveTaskResources(item: PipelineItem): boolean {
-    return item.branch !== null || item.claude_session_id !== null || item.port_env !== null;
+    return item.branch !== null || item.agent_session_id !== null || item.port_env !== null;
   }
 
   function buildBlockedResumeMessage(blockers: PipelineItem[]): string {
@@ -351,6 +352,7 @@ export function createTasksApi(
               setupCmdsOverride: opts?.customTask?.setup,
               portEnv,
               setupCmds: ptySetupCmds,
+              resumeSessionId: opts?.resumeSessionId ?? undefined,
             },
           );
           const fullCmd = buildTaskBootstrapCommand({
@@ -369,6 +371,17 @@ export function createTasksApi(
             rows: 24,
             agentProvider,
           });
+          if (opts?.recoverySnapshot) {
+            await invoke("seed_session_recovery_state", {
+              sessionId: id,
+              serialized: opts.recoverySnapshot.serialized,
+              cols: opts.recoverySnapshot.cols,
+              rows: opts.recoverySnapshot.rows,
+              cursorRow: opts.recoverySnapshot.cursorRow,
+              cursorCol: opts.recoverySnapshot.cursorCol,
+              cursorVisible: opts.recoverySnapshot.cursorVisible,
+            });
+          }
           await requireService(context.services.syncTaskStatusesFromDaemon, "syncTaskStatusesFromDaemon")();
         }
       } catch (error) {
@@ -558,6 +571,9 @@ export function createTasksApi(
               "UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?",
               [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
             );
+            if (opts?.resumeSessionId) {
+              await updateAgentSessionId(context.requireDb(), id, opts.resumeSessionId);
+            }
           } catch (error) {
             if (pipelineItemInserted) {
               await context.requireDb().execute("DELETE FROM pipeline_item WHERE id = ?", [id]).catch(() => undefined);
@@ -771,7 +787,7 @@ export function createTasksApi(
           );
           await requireService(context.services.spawnPtySession, "spawnPtySession")(item.id, worktreePath, item.prompt || "", 80, 24, {
             agentProvider,
-            ...(item.claude_session_id ? { resumeSessionId: item.claude_session_id } : {}),
+            ...(item.agent_session_id ? { resumeSessionId: item.agent_session_id } : {}),
           });
           await updatePipelineItemActivity(context.requireDb(), item.id, "working");
           await reloadSnapshot();

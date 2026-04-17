@@ -2,6 +2,7 @@ import { ref, type ComputedRef, type Ref } from "vue";
 import { parseRepoConfig, type RepoConfig } from "@kanna/core";
 import type { AgentProvider, DbHandle, PipelineItem, Repo } from "@kanna/db";
 import type { PipelineDefinition, AgentDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
+import type { SessionRecoveryState } from "../composables/sessionRecoveryState";
 import { invoke } from "../invoke";
 import i18n from "../i18n";
 import { useToast } from "../composables/useToast";
@@ -71,6 +72,8 @@ export interface CreateItemOptions {
   permissionMode?: string;
   allowedTools?: string[];
   selectOnCreate?: boolean;
+  resumeSessionId?: string | null;
+  recoverySnapshot?: SessionRecoveryState | null;
 }
 
 export interface StoreState {

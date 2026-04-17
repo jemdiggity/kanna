@@ -126,7 +126,7 @@ function createMockDb(): DbHandle & {
           closed_at: null,
           display_name: null,
           base_ref: null,
-          claude_session_id: null,
+          agent_session_id: null,
           previous_stage: null,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
