@@ -1,0 +1,18 @@
+{
+  "name": "@kanna/firebase-functions",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm exec vitest run"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
+  }
+}
