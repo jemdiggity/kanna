@@ -5,7 +5,6 @@ mod subprocess_env;
 use commands::agent::AgentState;
 use commands::daemon::{
     ActiveAttachedStream, ActiveAttachedStreams, AttachedSessions, DaemonState,
-    PendingAttachedStreams,
 };
 use daemon_client::DaemonClient;
 use dashmap::DashMap;
@@ -38,7 +37,7 @@ fn setup_fn_f_fullscreen(app: tauri::AppHandle) {
     use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject};
-    use std::ffi::{c_char, CStr};
+    use std::ffi::{CStr, c_char};
     use std::ptr::{self, NonNull};
 
     let block = block2::RcBlock::new(move |event: NonNull<AnyObject>| -> *mut AnyObject {
@@ -520,9 +519,6 @@ pub fn run() {
             String,
             ActiveAttachedStream,
         >::new())) as ActiveAttachedStreams)
-        .manage(Arc::new(Mutex::new(
-            std::collections::HashMap::<String, DaemonClient>::new(),
-        )) as PendingAttachedStreams)
         .manage(Arc::new(Mutex::new(None)) as PipelineSocketState)
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -624,7 +620,6 @@ pub fn run() {
             commands::daemon::get_session_recovery_state,
             commands::daemon::attach_session,
             commands::daemon::attach_session_with_snapshot,
-            commands::daemon::resume_session_stream,
             commands::daemon::detach_session,
             // Git commands
             commands::git::git_diff,

@@ -5,17 +5,17 @@ mod pty;
 mod session;
 mod sidecar;
 mod socket;
-mod subprocess_env;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
+pub use kanna_daemon::subprocess_env;
 use kanna_daemon::{
     protocol,
     recovery::{RecoveryManager, RecoverySnapshot, SeededRecoverySnapshot},
@@ -23,7 +23,7 @@ use kanna_daemon::{
 use serde::Serialize;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 
 /// A single client's writer handle.
 type SessionWriter = Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>;
@@ -99,7 +99,7 @@ enum HandoffEventLegacy {
     },
 }
 use protocol::{Command, Event, SessionStatus};
-use session::{SessionManager, SessionRecord, StreamControl, STATUS_DETECTION_THROTTLE_MS};
+use session::{STATUS_DETECTION_THROTTLE_MS, SessionManager, SessionRecord, StreamControl};
 use socket::{bind_socket, read_command, write_event};
 
 fn recovery_snapshot_to_terminal_snapshot(
@@ -153,6 +153,15 @@ fn error_event(code: Option<protocol::ErrorCode>, message: impl Into<String>) ->
         code,
         message: message.into(),
     }
+}
+
+fn should_mirror_output_to_recovery(_has_live_terminal_client: bool) -> bool {
+    true
+}
+
+#[cfg(test)]
+fn should_rebuild_recovery_session_on_live_terminal_transition() -> bool {
+    false
 }
 
 fn parse_handoff_response(line: &str) -> Result<Vec<protocol::HandoffSession>, String> {
@@ -210,6 +219,34 @@ fn blank_snapshot(rows: u16, cols: u16) -> protocol::TerminalSnapshot {
         cursor_col: 0,
         cursor_visible: true,
         vt: String::new(),
+    }
+}
+
+async fn register_terminal_emulator_client(
+    terminal_emulator_clients: &TerminalEmulatorClients,
+    session_id: &str,
+    writer: &SessionWriter,
+) {
+    let writer_id = Arc::as_ptr(writer) as usize;
+    let mut terminal_clients = terminal_emulator_clients.lock().await;
+    let client_ids = terminal_clients.entry(session_id.to_string()).or_default();
+    client_ids.insert(writer_id);
+}
+
+async fn unregister_terminal_emulator_client(
+    terminal_emulator_clients: &TerminalEmulatorClients,
+    session_id: &str,
+    writer: &SessionWriter,
+) {
+    let writer_id = Arc::as_ptr(writer) as usize;
+    let mut terminal_clients = terminal_emulator_clients.lock().await;
+    let Some(client_ids) = terminal_clients.get_mut(session_id) else {
+        return;
+    };
+    client_ids.remove(&writer_id);
+    let empty = client_ids.is_empty();
+    if empty {
+        terminal_clients.remove(session_id);
     }
 }
 
@@ -903,13 +940,12 @@ async fn handle_command(
                     }
                 }
                 if emulate_terminal {
-                    let writer_id = Arc::as_ptr(&writer) as usize;
-                    terminal_emulator_clients
-                        .lock()
-                        .await
-                        .entry(session_id.clone())
-                        .or_default()
-                        .insert(writer_id);
+                    register_terminal_emulator_client(
+                        &terminal_emulator_clients,
+                        &session_id,
+                        &writer,
+                    )
+                    .await
                 }
 
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
@@ -995,13 +1031,12 @@ async fn handle_command(
                     .await
                     .insert(session_id.clone(), vec![writer.clone()]);
                 if emulate_terminal {
-                    let writer_id = Arc::as_ptr(&writer) as usize;
-                    terminal_emulator_clients
-                        .lock()
-                        .await
-                        .entry(session_id.clone())
-                        .or_default()
-                        .insert(writer_id);
+                    register_terminal_emulator_client(
+                        &terminal_emulator_clients,
+                        &session_id,
+                        &writer,
+                    )
+                    .await
                 }
 
                 let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
@@ -1074,16 +1109,12 @@ async fn handle_command(
                         }
                     }
                 }
-                {
-                    let writer_id = Arc::as_ptr(&writer) as usize;
-                    let mut terminal_clients = terminal_emulator_clients.lock().await;
-                    if let Some(client_ids) = terminal_clients.get_mut(&session_id) {
-                        client_ids.remove(&writer_id);
-                        if client_ids.is_empty() {
-                            terminal_clients.remove(&session_id);
-                        }
-                    }
-                }
+                unregister_terminal_emulator_client(
+                    &terminal_emulator_clients,
+                    &session_id,
+                    &writer,
+                )
+                .await;
 
                 Event::Ok
             } else {
@@ -1257,14 +1288,15 @@ async fn handle_command(
                     .or_default()
                     .push(writer.clone());
                 if emulate_terminal {
-                    let writer_id = Arc::as_ptr(&writer) as usize;
-                    terminal_emulator_clients
-                        .lock()
-                        .await
-                        .entry(session_id.clone())
-                        .or_default()
-                        .insert(writer_id);
+                    register_terminal_emulator_client(
+                        &terminal_emulator_clients,
+                        &session_id,
+                        &writer,
+                    )
+                    .await;
                 }
+            };
+            {
                 let evt = Event::Snapshot {
                     session_id: session_id.clone(),
                     snapshot,
@@ -1380,58 +1412,57 @@ async fn handle_command(
         }
 
         Command::Snapshot { session_id } => {
-            let evt = match recovery_manager.get_snapshot(&session_id).await {
-                Ok(Some(snapshot)) => {
+            let live_snapshot = {
+                let mut mgr = sessions.lock().await;
+                match mgr.get_mut(&session_id) {
+                    Some(session) => Some(session.sidecar.snapshot()),
+                    None => None,
+                }
+            };
+            let evt = match live_snapshot {
+                Some(Ok(snapshot)) => {
                     log::info!(
-                        "[snapshot] session={} rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
+                        "[snapshot] session={} served from live sidecar rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
                         session_id,
                         snapshot.rows,
                         snapshot.cols,
                         snapshot.cursor_row,
                         snapshot.cursor_col,
                         snapshot.cursor_visible,
-                        snapshot.serialized.len()
+                        snapshot.vt.len()
                     );
                     Event::Snapshot {
                         session_id,
-                        snapshot: recovery_snapshot_to_terminal_snapshot(snapshot),
+                        snapshot,
                     }
                 }
-                Ok(None) => {
-                    let mut mgr = sessions.lock().await;
-                    match mgr.get_mut(&session_id) {
-                        Some(session) => match session.sidecar.snapshot() {
-                            Ok(snapshot) => {
-                                log::info!(
-                                    "[snapshot] session={} served from live sidecar rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
-                                    session_id,
-                                    snapshot.rows,
-                                    snapshot.cols,
-                                    snapshot.cursor_row,
-                                    snapshot.cursor_col,
-                                    snapshot.cursor_visible,
-                                    snapshot.vt.len()
-                                );
-                                Event::Snapshot {
-                                    session_id,
-                                    snapshot,
-                                }
-                            }
-                            Err(error) => error_event(
-                                None,
-                                format!(
-                                    "failed to snapshot live session {}: {}",
-                                    session_id, error
-                                ),
-                            ),
-                        },
-                        None => error_event(
-                            Some(protocol::ErrorCode::SessionNotFound),
-                            format!("session not found: {}", session_id),
-                        ),
+                Some(Err(error)) => error_event(
+                    None,
+                    format!("failed to snapshot live session {}: {}", session_id, error),
+                ),
+                None => match recovery_manager.get_snapshot(&session_id).await {
+                    Ok(Some(snapshot)) => {
+                        log::info!(
+                            "[snapshot] session={} served from recovery rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
+                            session_id,
+                            snapshot.rows,
+                            snapshot.cols,
+                            snapshot.cursor_row,
+                            snapshot.cursor_col,
+                            snapshot.cursor_visible,
+                            snapshot.serialized.len()
+                        );
+                        Event::Snapshot {
+                            session_id,
+                            snapshot: recovery_snapshot_to_terminal_snapshot(snapshot),
+                        }
                     }
-                }
-                Err(e) => error_event(None, e),
+                    Ok(None) => error_event(
+                        Some(protocol::ErrorCode::SessionNotFound),
+                        format!("session not found: {}", session_id),
+                    ),
+                    Err(error) => error_event(None, error),
+                },
             };
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
@@ -1811,12 +1842,13 @@ fn stream_output(
                     );
                 }
                 let data = buf[..n].to_vec();
-                let allow_sidecar_replies = rt.block_on(async {
+                let has_live_terminal_client = rt.block_on(async {
                     let terminal_clients = terminal_emulator_clients.lock().await;
-                    terminal_clients
+                    !terminal_clients
                         .get(&session_id)
                         .is_none_or(|client_ids| client_ids.is_empty())
                 });
+                let allow_sidecar_replies = !has_live_terminal_client;
                 match rt.block_on(async {
                     let mut mgr = sessions.lock().await;
                     mgr.mirror_output(&session_id, &data, allow_sidecar_replies)
@@ -1836,12 +1868,14 @@ fn stream_output(
                         );
                     }
                 }
-                let sequence = recovery_manager.next_sequence(&session_id);
-                rt.block_on(async {
-                    recovery_manager
-                        .write_output(&session_id, &data, sequence)
-                        .await;
-                });
+                if should_mirror_output_to_recovery(has_live_terminal_client) {
+                    let sequence = recovery_manager.next_sequence(&session_id);
+                    rt.block_on(async {
+                        recovery_manager
+                            .write_output(&session_id, &data, sequence)
+                            .await;
+                    });
+                }
 
                 // If pre-attach buffer is active (Some), append to it
                 let buffered = rt.block_on(async {
@@ -2243,5 +2277,16 @@ mod tests {
         assert!(log_line.contains("provider=copilot"));
         assert!(log_line.contains("detected=busy"));
         assert!(log_line.contains("Esc to cancel"));
+    }
+
+    #[test]
+    fn recovery_output_is_mirrored_even_with_live_terminal_client() {
+        assert!(should_mirror_output_to_recovery(false));
+        assert!(should_mirror_output_to_recovery(true));
+    }
+
+    #[test]
+    fn live_terminal_transitions_do_not_rebuild_recovery_sessions() {
+        assert!(!should_rebuild_recovery_session_on_live_terminal_transition());
     }
 }

@@ -1,6 +1,16 @@
 --- a/build.rs
 +++ b/build.rs
-@@ -42,7 +42,10 @@
+@@ -19,6 +19,9 @@
+     println!("cargo:rerun-if-env-changed=GHOSTTY_SOURCE_DIR");
+     println!("cargo:rerun-if-env-changed=TARGET");
+     println!("cargo:rerun-if-env-changed=HOST");
++    println!("cargo:rerun-if-env-changed=DEBUG");
++    println!("cargo:rerun-if-env-changed=OPT_LEVEL");
++    println!("cargo:rerun-if-env-changed=PROFILE");
+     println!("cargo:rerun-if-changed=build.rs");
+ 
+     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
+@@ -42,10 +45,14 @@
      // Build libghostty-vt via zig.
      let install_prefix = out_dir.join("ghostty-install");
  
@@ -12,7 +22,11 @@
      build
          .arg("build")
          .arg("-Demit-lib-vt")
-@@ -60,7 +63,8 @@
++        .arg(format!("-Doptimize={}", zig_optimize_mode()))
+         .arg("--prefix")
+         .arg(&install_prefix)
+         .current_dir(&ghostty_dir);
+@@ -60,7 +67,8 @@
      run(build, "zig build");
  
      let lib_dir = install_prefix.join("lib");
@@ -22,7 +36,7 @@
  
      let lib_name = if target.contains("windows") {
          "ghostty-vt-static.lib"
-@@ -73,11 +77,17 @@
+@@ -73,11 +81,17 @@
          "expected static library at {}",
          lib_dir.join(lib_name).display()
      );
@@ -45,3 +59,25 @@
  
      println!("cargo:rustc-link-search=native={}", lib_dir.display());
      println!("cargo:rustc-link-lib=static=ghostty-vt");
+@@ -93,6 +107,21 @@
+         println!("cargo:rustc-link-lib=c++");
+     }
+     println!("cargo:include={}", include_dir.display());
++}
++
++fn zig_optimize_mode() -> &'static str {
++    if env::var("DEBUG")
++        .ok()
++        .is_some_and(|value| value.eq_ignore_ascii_case("true"))
++    {
++        return "Debug";
++    }
++
++    match env::var("OPT_LEVEL").as_deref() {
++        Ok("0") => "Debug",
++        Ok(_) => "ReleaseFast",
++        Err(_) => "ReleaseFast",
++    }
+ }
+ 
+ fn find_companion_static_libs(ghostty_dir: &Path) -> Vec<PathBuf> {

@@ -1,4 +1,4 @@
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("@terminal_recovery_crates//:defs.bzl", "all_crate_deps")
 
 package(default_visibility = ["//visibility:public"])
@@ -44,4 +44,15 @@ rust_binary(
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True),
     platform = "//tools/bazel:macos_x86_64",
+)
+
+rust_test(
+    name = "build_info_test",
+    srcs = ["tests/build_info.rs"],
+    crate_root = "tests/build_info.rs",
+    edition = "2021",
+    deps = all_crate_deps(normal = True) + [
+        ":kanna_terminal_recovery_lib",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
 )
