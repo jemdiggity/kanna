@@ -8,6 +8,7 @@ interface TaskListProps {
   isRecentView?: boolean;
   repoNameById?: Record<string, string>;
   tasks: TaskSummary[];
+  testID?: string;
   onOpenTask(taskId: string): void;
 }
 
@@ -15,19 +16,20 @@ export function TaskList({
   emptyLabel,
   isRecentView = false,
   repoNameById = {},
+  testID,
   tasks,
   onOpenTask
 }: TaskListProps) {
   if (!tasks.length) {
     return (
-      <View style={styles.emptyCard}>
+      <View collapsable={false} style={styles.emptyCard} testID={testID}>
         <Text style={styles.emptyLabel}>{emptyLabel}</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.list}>
+    <View collapsable={false} style={styles.list} testID={testID}>
       {tasks.map((task) => (
         <TaskCard
           key={task.id}

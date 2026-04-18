@@ -4,6 +4,7 @@ import { isTaskDetailVisible, shouldShowFloatingToolbar } from "./appShell";
 import { createAppModel, type AppModel } from "./appModel";
 import { FloatingToolbar } from "./components/FloatingToolbar";
 import { CreateTaskComposer } from "./components/CreateTaskComposer";
+import { MOBILE_E2E_IDS } from "./e2eTestIds";
 import { ConnectionScreen } from "./screens/ConnectionScreen";
 import { DesktopsScreen } from "./screens/DesktopsScreen";
 import { MoreScreen } from "./screens/MoreScreen";
@@ -156,7 +157,7 @@ export default function App() {
   })();
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} testID={MOBILE_E2E_IDS.appShell}>
       <View style={styles.backgroundGlow} />
       <View style={styles.backgroundOrb} />
       <View style={[styles.shell, taskDetailVisible ? styles.shellTaskDetail : null]}>
