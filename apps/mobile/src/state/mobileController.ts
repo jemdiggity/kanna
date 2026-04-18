@@ -37,6 +37,13 @@ export function createMobileController(
   let backgroundRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let backgroundRefreshInFlight = false;
 
+  const setTerminalStartupError = (taskId: string, error: unknown) => {
+    store.setTaskTerminalStatus(taskId, "error");
+    store.setErrorMessage(
+      error instanceof Error ? error.message : "Terminal stream failed to start"
+    );
+  };
+
   const findTask = (taskId: string): TaskSummary | null => {
     const state = store.getState();
     return (
@@ -72,25 +79,29 @@ export function createMobileController(
     const task = findTask(taskId);
     store.beginTaskTerminal(taskId, task?.snippet?.trim() ? `${task.snippet}\n\n` : "");
 
-    const subscription = client.observeTaskTerminal(taskId, (event) => {
-      switch (event.type) {
-        case "ready":
-          store.setTaskTerminalStatus(taskId, "live");
-          break;
-        case "output":
-          store.appendTaskTerminal(taskId, event.text);
-          break;
-        case "exit":
-          store.setTaskTerminalStatus(taskId, "closed");
-          break;
-        case "error":
-          store.setTaskTerminalStatus(taskId, "error");
-          store.setErrorMessage(event.message);
-          break;
-      }
-    });
+    try {
+      const subscription = client.observeTaskTerminal(taskId, (event) => {
+        switch (event.type) {
+          case "ready":
+            store.setTaskTerminalStatus(taskId, "live");
+            break;
+          case "output":
+            store.appendTaskTerminal(taskId, event.text);
+            break;
+          case "exit":
+            store.setTaskTerminalStatus(taskId, "closed");
+            break;
+          case "error":
+            store.setTaskTerminalStatus(taskId, "error");
+            store.setErrorMessage(event.message);
+            break;
+        }
+      });
 
-    activeTaskTerminal = { taskId, subscription };
+      activeTaskTerminal = { taskId, subscription };
+    } catch (error) {
+      setTerminalStartupError(taskId, error);
+    }
   };
 
   const loadCollections = async () => {
@@ -270,8 +281,8 @@ export function createMobileController(
         store.setRecentTasks(recentTasks);
         store.setRepoTasks(repoTasks);
         store.setComposerState(false, "");
-        this.openTask(createdTask.id);
         store.setErrorMessage(null);
+        this.openTask(createdTask.id);
       } catch (error) {
         fail(error);
       }
@@ -281,8 +292,8 @@ export function createMobileController(
       try {
         const response = await client.runMergeAgent(taskId);
         await refreshTaskCollections();
-        this.openTask(response.taskId);
         store.setErrorMessage(null);
+        this.openTask(response.taskId);
       } catch (error) {
         fail(error);
       }
@@ -292,8 +303,8 @@ export function createMobileController(
       try {
         const response = await client.advanceTaskStage(taskId);
         await refreshTaskCollections();
-        this.openTask(response.taskId);
         store.setErrorMessage(null);
+        this.openTask(response.taskId);
       } catch (error) {
         fail(error);
       }

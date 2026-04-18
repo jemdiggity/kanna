@@ -26,7 +26,8 @@ describe("buildMoreCommandSections", () => {
     ]);
     expect(sections[2]).toMatchObject({
       title: "Selected Task",
-      headline: "Review mobile shell"
+      headline: "Review mobile shell",
+      detail: "Agent says the branch is ready for review."
     });
     expect(sections[3]?.actions.map((action) => action.id)).toEqual([
       "advance-stage",
@@ -67,7 +68,8 @@ describe("buildMoreCommandSections", () => {
     expect(entries[0]).toMatchObject({
       id: "merge-agent",
       title: "Run Merge Agent",
-      sectionTitle: "Task Actions"
+      sectionTitle: "Task Actions",
+      sectionHeadline: "pr"
     });
   });
 

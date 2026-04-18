@@ -3,6 +3,13 @@
     "name": "Kanna Mobile",
     "slug": "kanna-mobile",
     "scheme": "kanna",
-    "platforms": ["ios", "android"]
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.anonymous.kanna-mobile",
+      "appleTeamId": "GY3LFAA59P"
+    }
   }
 }

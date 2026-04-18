@@ -163,6 +163,36 @@ describe("createMobileController", () => {
     expect(store.getState().composerPrompt).toBe("");
   });
 
+  it("keeps the created task visible when terminal startup throws after creation", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.observeTaskTerminal).mockImplementation(() => {
+      throw new Error("websocket bootstrap failed");
+    });
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    store.selectRepo("repo-2");
+    store.setComposerState(true, "Ship mobile shell");
+
+    await controller.createTask();
+
+    expect(client.createTask).toHaveBeenCalledWith({
+      repoId: "repo-2",
+      prompt: "Ship mobile shell"
+    });
+    expect(store.getState()).toMatchObject({
+      connectionState: "connected",
+      selectedTaskId: "task-3",
+      taskTerminalTaskId: "task-3",
+      taskTerminalStatus: "error",
+      isComposerOpen: false,
+      composerPrompt: ""
+    });
+    expect(store.getState().recentTasks[0]?.id).toBe("task-3");
+    expect(store.getState().errorMessage).toBe("websocket bootstrap failed");
+  });
+
   it("selects a repo and refreshes the repo-scoped task list", async () => {
     const store = createSessionStore();
     const client = createClientMock();

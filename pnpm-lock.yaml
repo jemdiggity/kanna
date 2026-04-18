@@ -138,6 +138,12 @@ importers:
       '@react-navigation/native':
         specifier: ^7.0.0
         version: 7.2.2(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0)
+      '@xterm/addon-fit':
+        specifier: 0.12.0-beta.195
+        version: 0.12.0-beta.195(@xterm/xterm@6.1.0-beta.195)
+      '@xterm/xterm':
+        specifier: 6.1.0-beta.195
+        version: 6.1.0-beta.195
       expo:
         specifier: ~53.0.0
         version: 53.0.27(@babel/core@7.29.0)(react-native-webview@13.13.5(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0))(react-native@0.79.2(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.0.0))(react@19.0.0)

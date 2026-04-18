@@ -25,6 +25,8 @@ export function TasksScreen({
   const filteredTasks = selectedRepoId
     ? tasks.filter((task) => task.repoId === selectedRepoId)
     : tasks;
+  const repoNameById = Object.fromEntries(repos.map((repo) => [repo.id, repo.name]));
+  const isRecentView = heading === "Recent";
 
   return (
     <View style={styles.wrap}>
@@ -59,6 +61,8 @@ export function TasksScreen({
 
       <TaskList
         emptyLabel="No tasks for the selected repo yet."
+        isRecentView={isRecentView}
+        repoNameById={repoNameById}
         tasks={filteredTasks}
         onOpenTask={onOpenTask}
       />

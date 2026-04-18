@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { StyleSheet, View } from "react-native";
-import { WebView } from "react-native-webview";
+import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { TaskTerminalStatus } from "../state/sessionStore";
 import {
+  buildTerminalAppendScript,
   buildTerminalDocument,
-  buildTerminalUpdateScript
+  buildTerminalReplaceScript
 } from "./buildTerminalDocument";
+import { planTerminalMutation } from "./terminalMutation";
 
 interface TerminalWebViewProps {
+  taskId: string;
   output: string;
   status: TaskTerminalStatus;
   fullscreen?: boolean;
@@ -16,11 +19,17 @@ interface TerminalWebViewProps {
 const FULLSCREEN_BOTTOM_INSET = 132;
 
 export function TerminalWebView({
+  taskId,
   output,
   status,
   fullscreen = false
 }: TerminalWebViewProps) {
   const webViewRef = useRef<WebView>(null);
+  const bridgeReadyRef = useRef(false);
+  const pendingScriptRef = useRef<string | null>(null);
+  const previousTaskIdRef = useRef<string | null>(null);
+  const previousOutputRef = useRef("");
+  const previousStatusRef = useRef<TaskTerminalStatus>("idle");
   const document = useMemo(
     () =>
       buildTerminalDocument({
@@ -28,26 +37,98 @@ export function TerminalWebView({
       }),
     [fullscreen]
   );
-  const updateScript = useMemo(
+  const replaceScript = useMemo(
     () =>
-      buildTerminalUpdateScript({
+      buildTerminalReplaceScript({
         output,
         status
       }),
     [output, status]
   );
 
+  const injectOrQueueScript = (script: string) => {
+    pendingScriptRef.current = script;
+
+    if (!bridgeReadyRef.current) {
+      return;
+    }
+
+    webViewRef.current?.injectJavaScript(script);
+    pendingScriptRef.current = null;
+  };
+
   useEffect(() => {
-    webViewRef.current?.injectJavaScript(updateScript);
-  }, [updateScript]);
+    const taskChanged = previousTaskIdRef.current !== taskId;
+
+    if (taskChanged) {
+      previousTaskIdRef.current = taskId;
+      previousOutputRef.current = output;
+      previousStatusRef.current = status;
+      injectOrQueueScript(replaceScript);
+      return;
+    }
+
+    const mutation = planTerminalMutation({
+      previousOutput: previousOutputRef.current,
+      previousStatus: previousStatusRef.current,
+      nextOutput: output,
+      nextStatus: status
+    });
+
+    previousOutputRef.current = output;
+    previousStatusRef.current = status;
+
+    switch (mutation.kind) {
+      case "append":
+        injectOrQueueScript(buildTerminalAppendScript(mutation.chunk));
+        break;
+      case "replace":
+        injectOrQueueScript(
+          buildTerminalReplaceScript({
+            output: mutation.output,
+            status: mutation.status
+          })
+        );
+        break;
+      case "none":
+      default:
+        break;
+    }
+  }, [output, replaceScript, status, taskId]);
+
+  const handleMessage = (event: WebViewMessageEvent) => {
+    let payload: { type?: string } | null = null;
+
+    try {
+      payload = JSON.parse(event.nativeEvent.data) as { type?: string };
+    } catch {
+      return;
+    }
+
+    if (payload?.type !== "terminal-ready") {
+      return;
+    }
+
+    bridgeReadyRef.current = true;
+    const pendingScript = pendingScriptRef.current ?? replaceScript;
+    webViewRef.current?.injectJavaScript(pendingScript);
+    pendingScriptRef.current = null;
+  };
 
   return (
     <View style={fullscreen ? styles.wrapFullscreen : styles.wrap}>
       <WebView
         ref={webViewRef}
         originWhitelist={["*"]}
+        onLoadStart={() => {
+          bridgeReadyRef.current = false;
+          pendingScriptRef.current = replaceScript;
+        }}
+        onMessage={handleMessage}
         onLoadEnd={() => {
-          webViewRef.current?.injectJavaScript(updateScript);
+          previousTaskIdRef.current = taskId;
+          previousOutputRef.current = output;
+          previousStatusRef.current = status;
         }}
         scrollEnabled
         source={{ html: document }}

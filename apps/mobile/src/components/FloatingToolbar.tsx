@@ -66,22 +66,22 @@ export function FloatingToolbar({
 const styles = StyleSheet.create({
   wrap: {
     alignItems: "center",
-    bottom: 18,
+    bottom: 16,
     flexDirection: "row",
-    gap: 10,
-    left: 20,
+    gap: 8,
+    left: 16,
     position: "absolute",
-    right: 20
+    right: 16
   },
   bar: {
-    backgroundColor: "rgba(10, 18, 32, 0.96)",
-    borderColor: "#20304C",
-    borderRadius: 26,
+    backgroundColor: "rgba(8, 15, 27, 0.97)",
+    borderColor: "#1E304C",
+    borderRadius: 28,
     borderWidth: 1,
     flexDirection: "row",
     flex: 1,
     justifyContent: "space-between",
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 8,
     shadowColor: "#02060E",
     shadowOffset: { width: 0, height: 14 },
@@ -89,8 +89,10 @@ const styles = StyleSheet.create({
     shadowRadius: 24
   },
   item: {
-    borderRadius: 18,
-    paddingHorizontal: 12,
+    alignItems: "center",
+    borderRadius: 20,
+    flex: 1,
+    paddingHorizontal: 10,
     paddingVertical: 10
   },
   itemActive: {
@@ -98,13 +100,14 @@ const styles = StyleSheet.create({
   },
   utilityButton: {
     alignItems: "center",
-    backgroundColor: "rgba(10, 18, 32, 0.96)",
-    borderColor: "#20304C",
-    borderRadius: 22,
+    backgroundColor: "rgba(8, 15, 27, 0.97)",
+    borderColor: "#1E304C",
+    borderRadius: 24,
     borderWidth: 1,
     minHeight: 52,
     justifyContent: "center",
-    paddingHorizontal: 14,
+    minWidth: 62,
+    paddingHorizontal: 12,
     shadowColor: "#02060E",
     shadowOffset: { width: 0, height: 14 },
     shadowOpacity: 0.28,
@@ -113,10 +116,11 @@ const styles = StyleSheet.create({
   utilityButtonPrimary: {
     alignItems: "center",
     backgroundColor: "#E8F1FF",
-    borderRadius: 22,
+    borderRadius: 24,
     minHeight: 52,
     justifyContent: "center",
-    paddingHorizontal: 14,
+    minWidth: 74,
+    paddingHorizontal: 12,
     shadowColor: "#02060E",
     shadowOffset: { width: 0, height: 14 },
     shadowOpacity: 0.28,
@@ -124,7 +128,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: "#8EA3C4",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700"
   },
   labelActive: {

@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "expo start",
     "ios": "expo run:ios",
+    "gen:terminal-assets": "node ./scripts/generate-terminal-assets.mjs",
     "test": "sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; if [ \"$1\" = \"--runInBand\" ]; then shift; fi; exec pnpm dlx vitest run \"$@\"' --",
-    "typecheck": "pnpm exec tsc --noEmit"
+    "typecheck": "pnpm exec tsc --noEmit",
+    "android": "expo run:android"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.0.2",
     "@react-navigation/bottom-tabs": "^7.0.0",
     "@react-navigation/native": "^7.0.0",
+    "@xterm/addon-fit": "0.12.0-beta.195",
+    "@xterm/xterm": "6.1.0-beta.195",
     "expo": "~53.0.0",
     "react": "19.0.0",
     "react-native": "0.79.2",

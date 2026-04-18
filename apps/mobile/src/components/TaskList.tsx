@@ -5,11 +5,19 @@ import { TaskCard } from "./TaskCard";
 
 interface TaskListProps {
   emptyLabel: string;
+  isRecentView?: boolean;
+  repoNameById?: Record<string, string>;
   tasks: TaskSummary[];
   onOpenTask(taskId: string): void;
 }
 
-export function TaskList({ emptyLabel, tasks, onOpenTask }: TaskListProps) {
+export function TaskList({
+  emptyLabel,
+  isRecentView = false,
+  repoNameById = {},
+  tasks,
+  onOpenTask
+}: TaskListProps) {
   if (!tasks.length) {
     return (
       <View style={styles.emptyCard}>
@@ -21,7 +29,13 @@ export function TaskList({ emptyLabel, tasks, onOpenTask }: TaskListProps) {
   return (
     <View style={styles.list}>
       {tasks.map((task) => (
-        <TaskCard key={task.id} task={task} onPress={() => onOpenTask(task.id)} />
+        <TaskCard
+          key={task.id}
+          isRecentView={isRecentView}
+          repoName={repoNameById[task.repoId] ?? null}
+          task={task}
+          onPress={() => onOpenTask(task.id)}
+        />
       ))}
     </View>
   );

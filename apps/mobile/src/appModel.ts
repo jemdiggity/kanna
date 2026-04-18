@@ -11,7 +11,9 @@ import {
   type SessionPersistence
 } from "./state/sessionPersistence";
 
-const DEFAULT_SERVER_BASE_URL = "http://127.0.0.1:48120";
+const DEFAULT_SERVER_HOST = "127.0.0.1";
+const DEFAULT_SERVER_PORT = 48120;
+const DEFAULT_SERVER_BASE_URL = `http://${DEFAULT_SERVER_HOST}:${DEFAULT_SERVER_PORT}`;
 
 interface ExpoPublicEnv {
   EXPO_PUBLIC_KANNA_SERVER_URL?: string;
@@ -30,11 +32,65 @@ function readExpoPublicEnv(): ExpoPublicEnv {
   return globalEnv ?? {};
 }
 
+interface SourceCodeModule {
+  getConstants?: () => { scriptURL?: string | null };
+  scriptURL?: string | null;
+}
+
+interface BatchedBridgeModuleConfig {
+  0?: string;
+  1?: { scriptURL?: string | null } | null;
+}
+
+function readReactNativeBundleUrl(): string | null {
+  const runtime = globalThis as {
+    __fbBatchedBridgeConfig?: {
+      remoteModuleConfig?: BatchedBridgeModuleConfig[];
+    };
+    nativeModuleProxy?: { SourceCode?: SourceCodeModule };
+  };
+
+  const sourceCodeModule = runtime.nativeModuleProxy?.SourceCode;
+  const sourceCodeConstants = sourceCodeModule?.getConstants?.();
+  const scriptUrl = sourceCodeConstants?.scriptURL ?? sourceCodeModule?.scriptURL;
+  if (typeof scriptUrl === "string" && scriptUrl.length > 0) {
+    return scriptUrl;
+  }
+
+  const sourceCodeBridgeConfig = runtime.__fbBatchedBridgeConfig?.remoteModuleConfig?.find(
+    (entry) => entry[0] === "SourceCode"
+  );
+  const bridgeScriptUrl = sourceCodeBridgeConfig?.[1]?.scriptURL;
+  if (typeof bridgeScriptUrl === "string" && bridgeScriptUrl.length > 0) {
+    return bridgeScriptUrl;
+  }
+
+  return typeof scriptUrl === "string" && scriptUrl.length > 0 ? scriptUrl : null;
+}
+
+function inferServerBaseUrl(bundleUrl: string | null): string | null {
+  if (!bundleUrl) {
+    return null;
+  }
+
+  try {
+    const parsedUrl = new URL(bundleUrl);
+    if (!parsedUrl.hostname) {
+      return null;
+    }
+
+    return `http://${parsedUrl.hostname}:${DEFAULT_SERVER_PORT}`;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveServerBaseUrl(
-  env: ExpoPublicEnv = readExpoPublicEnv()
+  env: ExpoPublicEnv = readExpoPublicEnv(),
+  bundleUrl: string | null = readReactNativeBundleUrl()
 ): string {
   const configuredBaseUrl = env.EXPO_PUBLIC_KANNA_SERVER_URL?.trim();
-  return configuredBaseUrl || DEFAULT_SERVER_BASE_URL;
+  return configuredBaseUrl || inferServerBaseUrl(bundleUrl) || DEFAULT_SERVER_BASE_URL;
 }
 
 export function createAppModel(

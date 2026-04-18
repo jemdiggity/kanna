@@ -76,6 +76,22 @@ export function MoreScreen({
         Search commands for desktop selection, refresh, pairing, and task management.
       </Text>
 
+      {selectedTask ? (
+        <View style={styles.activeTaskCard}>
+          <View style={styles.activeTaskHeader}>
+            <Text style={styles.commandLabel}>Selected Task</Text>
+            <View style={styles.taskStagePill}>
+              <Text style={styles.taskStageLabel}>{selectedTask.stage ?? "unknown"}</Text>
+            </View>
+          </View>
+          <Text style={styles.commandValue}>{selectedTask.title}</Text>
+          <Text style={styles.commandHint}>
+            {selectedTask.snippet?.trim() ||
+              "Use this surface for task-level actions while keeping the current task selected."}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.paletteCard}>
         <TextInput
           autoCapitalize="none"
@@ -96,6 +112,7 @@ export function MoreScreen({
               >
                 <Text style={styles.commandLabel}>{action.sectionTitle}</Text>
                 <Text style={styles.actionTitle}>{action.title}</Text>
+                <Text style={styles.actionSectionHeadline}>{action.sectionHeadline}</Text>
                 <Text style={styles.actionCopy}>{action.copy}</Text>
               </Pressable>
             ))
@@ -111,7 +128,7 @@ export function MoreScreen({
       </View>
 
       {sections
-        .filter((section) => !section.actions?.length)
+        .filter((section) => !section.actions?.length && section.title !== "Selected Task")
         .map((section) => (
         <View key={section.title} style={styles.commandCard}>
           <Text style={styles.commandLabel}>{section.title}</Text>
@@ -158,6 +175,19 @@ const styles = StyleSheet.create({
   paletteList: {
     gap: 10
   },
+  activeTaskCard: {
+    backgroundColor: "#10192A",
+    borderColor: "#22304D",
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 10,
+    padding: 16
+  },
+  activeTaskHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between"
+  },
   commandCard: {
     backgroundColor: "#10192A",
     borderColor: "#22304D",
@@ -176,6 +206,18 @@ const styles = StyleSheet.create({
     color: "#F5F7FB",
     fontSize: 18,
     fontWeight: "700"
+  },
+  taskStagePill: {
+    backgroundColor: "#172843",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6
+  },
+  taskStageLabel: {
+    color: "#9EB6DC",
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase"
   },
   commandHint: {
     color: "#93A7C8",
@@ -214,6 +256,11 @@ const styles = StyleSheet.create({
     color: "#F5F7FB",
     fontSize: 16,
     fontWeight: "700"
+  },
+  actionSectionHeadline: {
+    color: "#7E93B4",
+    fontSize: 12,
+    fontWeight: "600"
   },
   actionCopy: {
     color: "#B4C2D8",

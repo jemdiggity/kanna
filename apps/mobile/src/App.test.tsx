@@ -77,10 +77,21 @@ describe("createAppModel", () => {
     vi.unstubAllEnvs();
   });
 
+  it("infers the mobile server host from the Metro bundle URL when no Expo public server URL is provided", () => {
+    vi.unstubAllEnvs();
+
+    expect(
+      resolveServerBaseUrl(
+        {},
+        "http://192.168.68.56:8081/.expo/.virtual-metro-entry.bundle?platform=ios"
+      )
+    ).toBe("http://192.168.68.56:48120");
+  });
+
   it("falls back to localhost when no Expo public server URL is provided", () => {
     vi.unstubAllEnvs();
 
-    expect(resolveServerBaseUrl()).toBe("http://127.0.0.1:48120");
+    expect(resolveServerBaseUrl({}, null)).toBe("http://127.0.0.1:48120");
   });
 
   it("creates an app model with desktop navigation and a LAN client", async () => {

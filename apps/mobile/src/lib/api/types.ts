@@ -22,6 +22,11 @@ export interface DesktopSummary {
   mode: DesktopMode;
 }
 
+export interface RepoSummary {
+  id: string;
+  name: string;
+}
+
 export interface PairingSession {
   code: string;
   desktopId: string;
@@ -53,6 +58,7 @@ export interface CreateTaskResponse {
 export interface TaskActionResponse {
   taskId: string;
 }
+
 export interface TaskSummary {
   id: string;
   repoId: string;

@@ -1,28 +1,32 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
+import { buildTaskListItemModel } from "../screens/taskPresentation";
 
 interface TaskCardProps {
+  isRecentView: boolean;
+  repoName: string | null;
   task: TaskSummary;
   onPress(): void;
 }
 
-export function TaskCard({ task, onPress }: TaskCardProps) {
+export function TaskCard({ isRecentView, repoName, task, onPress }: TaskCardProps) {
+  const model = buildTaskListItemModel(task, repoName, isRecentView);
+
   return (
     <Pressable style={styles.card} onPress={onPress}>
+      <View style={styles.topRow}>
+        <Text style={styles.scopeLabel}>{model.scopeLabel}</Text>
+        <Text style={styles.repoLabel}>{model.repoLabel}</Text>
+      </View>
       <View style={styles.row}>
         <Text style={styles.title}>{task.title}</Text>
         <View style={styles.stagePill}>
-          <Text style={styles.stageLabel}>{task.stage ?? "unknown"}</Text>
+          <Text style={styles.stageLabel}>{model.stageLabel}</Text>
         </View>
       </View>
-      <Text style={styles.meta}>Repo {task.repoId}</Text>
-      <Text style={styles.preview}>
-        {task.snippet?.trim()
-          ? task.snippet
-          : task.stage === "pr"
-            ? "Ready for review from mobile."
-            : "Latest desktop activity is available in the task detail view."}
+      <Text numberOfLines={3} style={styles.preview}>
+        {model.preview}
       </Text>
     </Pressable>
   );
@@ -32,24 +36,41 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: "#111B2C",
     borderColor: "#20304C",
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
-    gap: 8,
+    gap: 10,
     padding: 16
   },
-  row: {
+  topRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 12,
     justifyContent: "space-between"
+  },
+  row: {
+    flexDirection: "row",
+    gap: 10,
+    justifyContent: "space-between"
+  },
+  scopeLabel: {
+    color: "#7FA7D9",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    textTransform: "uppercase"
+  },
+  repoLabel: {
+    color: "#8EA3C4",
+    fontSize: 12,
+    fontWeight: "600"
   },
   title: {
     color: "#F3F7FF",
     flex: 1,
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "700"
   },
   stagePill: {
+    alignSelf: "flex-start",
     backgroundColor: "#172843",
     borderRadius: 999,
     paddingHorizontal: 10,
@@ -60,11 +81,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     textTransform: "uppercase"
-  },
-  meta: {
-    color: "#7E93B4",
-    fontSize: 12,
-    fontWeight: "600"
   },
   preview: {
     color: "#B8C6DB",
