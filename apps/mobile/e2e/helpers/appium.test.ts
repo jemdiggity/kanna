@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getDefaultAppiumHome,
+  getXcuitestDeviceUtilitiesPath,
   isXcuitestDriverCompatible
 } from "./appium";
 
@@ -23,5 +24,11 @@ describe("mobile Appium helpers", () => {
         appiumVersion: "^3.0.0-rc.2"
       })
     ).toBe(false);
+  });
+
+  it("resolves the Appium XCUITest device utilities path from Appium home", () => {
+    expect(getXcuitestDeviceUtilitiesPath("/tmp/appium-home")).toBe(
+      "/tmp/appium-home/node_modules/appium-xcuitest-driver/node_modules/appium-ios-device/build/lib/utilities.js"
+    );
   });
 });

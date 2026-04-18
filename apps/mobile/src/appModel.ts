@@ -85,12 +85,36 @@ function inferServerBaseUrl(bundleUrl: string | null): string | null {
   }
 }
 
+function isLoopbackBaseUrl(baseUrl: string): boolean {
+  try {
+    const parsedUrl = new URL(baseUrl);
+    return (
+      parsedUrl.hostname === "127.0.0.1" ||
+      parsedUrl.hostname === "localhost" ||
+      parsedUrl.hostname === "::1"
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function resolveServerBaseUrl(
   env: ExpoPublicEnv = readExpoPublicEnv(),
   bundleUrl: string | null = readReactNativeBundleUrl()
 ): string {
   const configuredBaseUrl = env.EXPO_PUBLIC_KANNA_SERVER_URL?.trim();
-  return configuredBaseUrl || inferServerBaseUrl(bundleUrl) || DEFAULT_SERVER_BASE_URL;
+  const inferredBaseUrl = inferServerBaseUrl(bundleUrl);
+
+  if (
+    configuredBaseUrl &&
+    inferredBaseUrl &&
+    isLoopbackBaseUrl(configuredBaseUrl) &&
+    !isLoopbackBaseUrl(inferredBaseUrl)
+  ) {
+    return inferredBaseUrl;
+  }
+
+  return configuredBaseUrl || inferredBaseUrl || DEFAULT_SERVER_BASE_URL;
 }
 
 export function createAppModel(

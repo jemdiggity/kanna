@@ -186,6 +186,17 @@ cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignore
 # E2E tests (needs app running in a worktree dev instance)
 # Terminal 1: cd {repo}/.kanna-worktrees/task-{uuid} && ./scripts/dev.sh start -a
 # Terminal 2: cd apps/desktop && pnpm test:e2e
+
+# Mobile Appium E2E (local only)
+# Simulator: pnpm --dir apps/mobile run test:e2e:preflight
+# Simulator: pnpm --dir apps/mobile run test:e2e:smoke
+# Physical device: pnpm --dir apps/mobile run test:e2e:device:preflight
+# Physical device: pnpm --dir apps/mobile run test:e2e:device:smoke
+# Physical-device runs assume local Xcode signing already works and the app is installed.
+# If EXPO_PUBLIC_KANNA_SERVER_URL points at loopback (for example 127.0.0.1),
+# the physical-device Appium harness rewrites it to the host Mac's LAN IP before
+# preflight and smoke checks so the phone can reach the desktop-side mobile server.
+# Use KANNA_IOS_DEVICE_UDID when more than one iPhone is attached.
 ```
 
 ### First build in a worktree
