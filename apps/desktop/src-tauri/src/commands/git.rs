@@ -293,7 +293,7 @@ pub fn git_list_base_branches(repo_path: String) -> Result<Vec<String>, String> 
 
 #[cfg(test)]
 mod tests {
-    use super::git_list_base_branches;
+    use super::{format_git_command_failure, git_list_base_branches};
     use git2::{Repository, Signature};
     use std::{
         fs,
@@ -392,6 +392,31 @@ mod tests {
                 "origin/release/x".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn format_git_command_failure_includes_repo_and_process_context() {
+        let args = vec![
+            "worktree".to_string(),
+            "add".to_string(),
+            "/repo/.kanna-worktrees/task-2".to_string(),
+        ];
+
+        let message = format_git_command_failure(
+            "git worktree add",
+            "/repo",
+            &args,
+            "/app/cwd".to_string(),
+            "fatal: Unable to read current working directory: Operation not permitted".to_string(),
+        );
+
+        assert!(message.contains("git worktree add failed"));
+        assert!(message.contains("repo_path=/repo"));
+        assert!(message.contains("process_cwd=/app/cwd"));
+        assert!(message.contains("args=worktree add /repo/.kanna-worktrees/task-2"));
+        assert!(message.contains(
+            "stderr=fatal: Unable to read current working directory: Operation not permitted"
+        ));
     }
 }
 
@@ -498,6 +523,27 @@ pub fn git_merge_base(repo_path: String, ref_a: String, ref_b: String) -> Result
 
 // --- CLI-based commands (use system git for auth) ---
 
+fn read_process_cwd_for_diagnostics() -> String {
+    match std::env::current_dir() {
+        Ok(path) => path.display().to_string(),
+        Err(error) => format!("<unavailable: {}>", error),
+    }
+}
+
+fn format_git_command_failure(
+    command_label: &str,
+    repo_path: &str,
+    args: &[String],
+    process_cwd: String,
+    stderr: String,
+) -> String {
+    let rendered_args = args.join(" ");
+    let stderr = stderr.trim();
+    format!(
+        "{command_label} failed: repo_path={repo_path}; process_cwd={process_cwd}; args={rendered_args}; stderr={stderr}"
+    )
+}
+
 #[tauri::command]
 pub fn git_push(repo_path: String, branch: String) -> Result<String, String> {
     let output = Command::new("git")
@@ -526,7 +572,13 @@ pub fn git_fetch(repo_path: String, branch: Option<String>) -> Result<(), String
         .map_err(|e| format!("failed to run git fetch: {}", e))?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        return Err(format_git_command_failure(
+            "git fetch",
+            &repo_path,
+            &args,
+            read_process_cwd_for_diagnostics(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
     }
     Ok(())
 }
@@ -573,7 +625,13 @@ pub fn git_worktree_add(
         .map_err(|e| format!("failed to run git worktree add: {}", e))?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        return Err(format_git_command_failure(
+            "git worktree add",
+            &repo_path,
+            &args,
+            read_process_cwd_for_diagnostics(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
     }
 
     // Create .cargo/config.toml so Cargo builds in the worktree's own target dir.

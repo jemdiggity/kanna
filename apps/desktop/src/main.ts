@@ -4,6 +4,7 @@ import i18n from "./i18n";
 import { isTauri } from "./tauri-mock";
 import { loadDatabase, runMigrations } from "./stores/db";
 import { shouldMountBaseBranchDropdownPreview } from "./previewMode";
+import { formatLogArgument } from "./logForwarding";
 import App from "./App.vue";
 
 interface AppWithSetupState {
@@ -31,10 +32,7 @@ if (isTauri) {
   function forwardLog(level: string, origFn: (...args: any[]) => void) {
     return (...args: any[]) => {
       origFn.apply(console, args);
-      const msg = args.map(a => {
-        try { return typeof a === "string" ? a : JSON.stringify(a); }
-        catch { return String(a); }
-      }).join(" ");
+      const msg = args.map((arg) => formatLogArgument(arg)).join(" ");
       invoke("append_log", { message: `[${level}] ${msg}` }).catch(() => {});
     };
   }

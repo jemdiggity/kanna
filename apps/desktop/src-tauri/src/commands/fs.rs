@@ -33,6 +33,14 @@ fn webview_log_path() -> &'static str {
     })
 }
 
+fn format_log_timestamp<Tz>(timestamp: chrono::DateTime<Tz>) -> String
+where
+    Tz: chrono::TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+}
+
 #[tauri::command]
 pub fn get_app_data_dir(app: AppHandle) -> Result<String, String> {
     app.path()
@@ -390,8 +398,26 @@ pub fn append_log(message: String) -> Result<(), String> {
         .append(true)
         .open(webview_log_path())
         .map_err(|e| e.to_string())?;
-    let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
+    let timestamp = format_log_timestamp(chrono::Local::now());
     writeln!(file, "{} {}", timestamp, message).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_log_timestamp;
+    use chrono::{Duration, FixedOffset, TimeZone};
+
+    #[test]
+    fn format_log_timestamp_includes_local_date_and_time() {
+        let offset = FixedOffset::east_opt(9 * 60 * 60).expect("offset should exist");
+        let timestamp = offset
+            .with_ymd_and_hms(2026, 4, 19, 6, 55, 5)
+            .single()
+            .expect("timestamp should exist")
+            + Duration::milliseconds(123);
+
+        assert_eq!(format_log_timestamp(timestamp), "2026-04-19 06:55:05.123");
+    }
 }
 
 #[derive(Serialize)]
