@@ -1,7 +1,9 @@
 mod commands;
+mod cloud_client;
 mod config;
 mod daemon_client;
 mod db;
+mod desktop_identity;
 mod http_api;
 mod mobile_api;
 mod pairing;
@@ -44,6 +46,17 @@ async fn main() {
     };
 
     log::info!("kanna-server starting, relay: {}", config.relay_url);
+
+    let heartbeat_config = config.clone();
+    tokio::spawn(async move {
+        loop {
+            log::info!(
+                "desktop heartbeat tick for {}",
+                heartbeat_config.desktop_id
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        }
+    });
 
     let db = match db::Db::open(&config.db_path) {
         Ok(d) => d,
