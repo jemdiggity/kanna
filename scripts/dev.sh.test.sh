@@ -147,6 +147,7 @@ run_dev_sh() {
       -u KANNA_DB_PATH \
       -u KANNA_DB_NAME \
       -u KANNA_DAEMON_DIR \
+      -u KANNA_APPIUM_PORT \
       -u KANNA_MOBILE_PORT \
       -u KANNA_MOBILE_SERVER_HOST \
       -u KANNA_MOBILE_SERVER_URL \
@@ -171,6 +172,7 @@ run_mobile_dev_sh() {
       -u KANNA_DB_PATH \
       -u KANNA_DB_NAME \
       -u KANNA_DAEMON_DIR \
+      -u KANNA_APPIUM_PORT \
       -u KANNA_MOBILE_PORT \
       -u KANNA_MOBILE_SERVER_HOST \
       -u KANNA_MOBILE_SERVER_URL \
@@ -411,6 +413,27 @@ fi
 
 if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   printf 'expected KANNA_DB_NAME to remain worktree-derived, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+rm -f "$TMUX_STATE" "$TMUX_LOG"
+: > "$TMUX_STATE"
+: > "$TMUX_LOG"
+
+RESULT="$(run_dev_sh start env KANNA_APPIUM_PORT=4780)"
+OUTPUT="${RESULT%===STATUS:*===}"
+STATUS="${RESULT##*===STATUS:}"
+STATUS="${STATUS%===}"
+
+if [ "$STATUS" -ne 0 ]; then
+  printf 'dev.sh with KANNA_APPIUM_PORT exited with status %s\n' "$STATUS" >&2
+  printf '%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_APPIUM_PORT=4780" "$TMUX_LOG"; then
+  printf 'expected KANNA_APPIUM_PORT to be propagated into tmux, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
