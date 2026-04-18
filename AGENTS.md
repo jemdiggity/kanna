@@ -431,6 +431,26 @@ DB name is resolved by `dev.sh` from the current context: main instances use `ka
 - E2E tests access Vue internals via `__vue_app__._instance.setupState` — dev builds only
 - WebDriver is only available in debug builds (`#[cfg(debug_assertions)]`)
 
+### E2E coverage expectation
+
+Any behavior that crosses component or system boundaries should add or update at least one E2E test.
+
+Typical triggers include:
+
+- UI flows, navigation, and interactive user journeys
+- frontend or mobile client interactions with server or backend APIs
+- daemon, PTY, process, filesystem, git, or network behavior
+- persistence, reload, reconnect, or recovery behavior
+- asynchronous coordination where isolated tests do not prove the real wiring
+
+Unit and integration tests remain important, but they are not a substitute when the risk is in the wiring between systems.
+
+If a behavior should have E2E coverage but cannot reasonably get it yet, the change must explicitly document:
+
+- why it is not yet testable end to end
+- what would be needed to make it testable
+- what narrower tests were added in the meantime
+
 ## Conventions
 
 - Task stage tracked via `pipeline_item.stage` column (e.g., `'in progress'`, `'pr'`). The `tags` column is deprecated for stage management but still used internally for `blocked` tag until the blocker system is fully decoupled. `closed_at` indicates done tasks, not a tag.
