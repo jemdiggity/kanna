@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
 import { homedir } from "node:os";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -16,8 +17,25 @@ export interface InstalledAppiumDriver {
   version?: string;
 }
 
+interface AppiumIosDeviceUtilitiesModule {
+  getConnectedDevices?: () => Promise<string[]>;
+}
+
 export function getDefaultAppiumHome(homePath = homedir()): string {
   return `${homePath}/.appium`;
+}
+
+export function getXcuitestDeviceUtilitiesPath(appiumHome: string): string {
+  return join(
+    appiumHome,
+    "node_modules",
+    "appium-xcuitest-driver",
+    "node_modules",
+    "appium-ios-device",
+    "build",
+    "lib",
+    "utilities.js"
+  );
 }
 
 export function resolveAppiumEnv(
@@ -78,6 +96,30 @@ export async function assertXcuitestDriverInstalled(
   throw new Error(
     `A compatible Appium XCUITest driver was not found in ${appiumHome}. Install it with: pnpm --dir apps/mobile run test:e2e:appium:install-xcuitest`
   );
+}
+
+export async function listXcuitestConnectedDeviceUdids(
+  env: Record<string, string | undefined>
+): Promise<string[]> {
+  const appiumHome = resolveAppiumEnv(env).APPIUM_HOME ?? getDefaultAppiumHome();
+  const utilitiesPath = getXcuitestDeviceUtilitiesPath(appiumHome);
+
+  let utilitiesModule: AppiumIosDeviceUtilitiesModule;
+  try {
+    utilitiesModule = require(utilitiesPath) as AppiumIosDeviceUtilitiesModule;
+  } catch (error) {
+    throw new Error(
+      `Failed to load Appium iOS device utilities from ${utilitiesPath}. Reinstall the Appium XCUITest driver if its files are missing.`
+    );
+  }
+
+  if (typeof utilitiesModule.getConnectedDevices !== "function") {
+    throw new Error(
+      `Appium iOS device utilities at ${utilitiesPath} did not expose getConnectedDevices().`
+    );
+  }
+
+  return await utilitiesModule.getConnectedDevices();
 }
 
 export function startLocalAppiumServer(

@@ -88,6 +88,17 @@ describe("createAppModel", () => {
     ).toBe("http://192.168.68.56:48120");
   });
 
+  it("prefers the Metro-derived LAN host over a loopback Expo public server URL", () => {
+    vi.unstubAllEnvs();
+
+    expect(
+      resolveServerBaseUrl(
+        { EXPO_PUBLIC_KANNA_SERVER_URL: "http://127.0.0.1:48120" },
+        "http://192.168.68.56:8081/.expo/.virtual-metro-entry.bundle?platform=ios"
+      )
+    ).toBe("http://192.168.68.56:48120");
+  });
+
   it("falls back to localhost when no Expo public server URL is provided", () => {
     vi.unstubAllEnvs();
 
