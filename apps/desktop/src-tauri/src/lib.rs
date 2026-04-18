@@ -37,7 +37,7 @@ fn setup_fn_f_fullscreen(app: tauri::AppHandle) {
     use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject};
-    use std::ffi::{c_char, CStr};
+    use std::ffi::{CStr, c_char};
     use std::ptr::{self, NonNull};
 
     let block = block2::RcBlock::new(move |event: NonNull<AnyObject>| -> *mut AnyObject {

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
@@ -126,7 +126,7 @@ fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, Da
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_snapshot_response, require_option_mut, TerminalSnapshotPayload};
+    use super::{TerminalSnapshotPayload, parse_snapshot_response, require_option_mut};
 
     #[test]
     fn parse_snapshot_response_defaults_cursor_visible_for_older_payloads() {

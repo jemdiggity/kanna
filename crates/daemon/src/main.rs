@@ -11,8 +11,8 @@ use std::io::Read;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 pub use kanna_daemon::subprocess_env;
@@ -23,7 +23,7 @@ use kanna_daemon::{
 use serde::Serialize;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 
 /// A single client's writer handle.
 type SessionWriter = Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>;
@@ -99,7 +99,7 @@ enum HandoffEventLegacy {
     },
 }
 use protocol::{Command, Event, SessionStatus};
-use session::{SessionManager, SessionRecord, StreamControl, STATUS_DETECTION_THROTTLE_MS};
+use session::{STATUS_DETECTION_THROTTLE_MS, SessionManager, SessionRecord, StreamControl};
 use socket::{bind_socket, read_command, write_event};
 
 fn recovery_snapshot_to_terminal_snapshot(
