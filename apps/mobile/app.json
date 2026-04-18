@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Kanna Mobile",
+    "slug": "kanna-mobile",
+    "scheme": "kanna",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "ios": {
+      "bundleIdentifier": "build.kanna.mobile",
+      "appleTeamId": "GY3LFAA59P"
+    }
+  }
+}

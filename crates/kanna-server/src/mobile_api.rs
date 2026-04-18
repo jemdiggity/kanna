@@ -258,6 +258,7 @@ mod tests {
             "2026-04-17 08:00:00",
         )
         .unwrap();
+        db.close_pipeline_item("task-done").unwrap();
 
         let api = super::MobileApi::new(config, db);
         let tasks = api.list_recent_tasks().unwrap();
@@ -350,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn search_tasks_matches_display_name_or_prompt_and_excludes_done() {
+    fn search_tasks_matches_display_name_or_prompt_and_excludes_closed_tasks() {
         let config = Config {
             relay_url: "wss://relay.example".to_string(),
             device_token: "device-token".to_string(),
@@ -392,6 +393,7 @@ mod tests {
             "2026-04-17 08:00:00",
         )
         .unwrap();
+        db.close_pipeline_item("task-done").unwrap();
 
         let api = super::MobileApi::new(config, db);
         let tasks = api.search_tasks("merge").unwrap();

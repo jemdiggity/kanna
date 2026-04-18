@@ -235,7 +235,7 @@ impl Db {
              pr_number, pr_url, branch, agent_type, activity, activity_changed_at,
              pinned, pin_order, display_name, last_output_preview, created_at, updated_at
              FROM pipeline_item
-             WHERE stage IS NULL OR stage != 'done'
+             WHERE closed_at IS NULL
              ORDER BY updated_at DESC, created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -270,7 +270,7 @@ impl Db {
              pr_number, pr_url, branch, agent_type, activity, activity_changed_at,
              pinned, pin_order, display_name, last_output_preview, created_at, updated_at
              FROM pipeline_item
-             WHERE (stage IS NULL OR stage != 'done')
+             WHERE closed_at IS NULL
                AND (
                  lower(coalesce(display_name, '')) LIKE ?
                  OR lower(coalesce(prompt, '')) LIKE ?
@@ -326,7 +326,7 @@ impl Db {
             "SELECT id, repo_id, issue_number, issue_title, prompt, stage, \
              pr_number, pr_url, branch, agent_type, activity, activity_changed_at, \
              pinned, pin_order, display_name, last_output_preview, created_at, updated_at \
-             FROM pipeline_item WHERE repo_id = ? \
+             FROM pipeline_item WHERE repo_id = ? AND closed_at IS NULL \
              ORDER BY pin_order ASC, created_at DESC",
         )?;
         let rows = stmt.query_map([repo_id], |row| {
@@ -729,6 +729,62 @@ mod tests {
         assert_eq!(row.3, "in progress");
         assert_eq!(row.4, "working");
         assert_eq!(row.5, Some(1422));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn task_listing_queries_exclude_closed_items_even_when_stage_is_not_done() {
+        let path = Db::test_db_path("closed-item-filtering");
+        let db = Db::open_for_tests(&path).expect("open test db");
+        db.insert_test_repo("repo-1", "Repo One").expect("insert repo");
+        db.insert_test_pipeline_item(
+            "task-open",
+            "repo-1",
+            "visible task",
+            Some("Visible Task"),
+            "in progress",
+            "2026-04-18 10:00:00",
+        )
+        .expect("insert open task");
+        db.insert_test_pipeline_item(
+            "task-closed",
+            "repo-1",
+            "stale task",
+            Some("Stale Task"),
+            "in progress",
+            "2026-04-18 11:00:00",
+        )
+        .expect("insert stale task");
+        db.conn
+            .execute(
+                "UPDATE pipeline_item SET closed_at = datetime('now') WHERE id = ?",
+                ["task-closed"],
+            )
+            .expect("mark stale task closed");
+
+        let recent_ids = db
+            .list_recent_pipeline_items()
+            .expect("list recent tasks")
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+        let repo_ids = db
+            .list_pipeline_items("repo-1")
+            .expect("list repo tasks")
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+        let search_ids = db
+            .search_pipeline_items("task")
+            .expect("search tasks")
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(recent_ids, vec!["task-open"]);
+        assert_eq!(repo_ids, vec!["task-open"]);
+        assert_eq!(search_ids, vec!["task-open"]);
 
         let _ = std::fs::remove_file(path);
     }

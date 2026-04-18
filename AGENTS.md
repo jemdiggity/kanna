@@ -157,14 +157,18 @@ This means the main Kanna app and a dev worktree can run simultaneously without 
 
 Always use `./scripts/dev.sh` to start the dev server — never run `pnpm run dev`, `pnpm exec tauri dev`, or `cargo tauri dev` directly. `pnpm run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon paths internally, and runs in a background tmux session.
 
+For mobile development, the same rule applies at the app level: use `./scripts/dev.sh --mobile` or `./scripts/mobile-dev.sh` for end-to-end testing instead of launching Expo directly from `apps/mobile`. The desktop app startup path is what spawns the desktop-side `kanna-server` LAN API on port `48120`. Running `pnpm run dev -- --ios` or `expo start` inside `apps/mobile` is only appropriate for UI-only work when the desktop-side mobile server is already running elsewhere; by itself it will not start `kanna-server`, so the mobile app will boot but fail to connect to desktop data.
+
 ```bash
 # Development (from repo root or worktree root)
 ./scripts/dev.sh             # start in tmux (auto-detects worktree)
+./scripts/dev.sh --mobile    # start desktop + Expo mobile app together
 ./scripts/dev.sh start --seed # start with seed data (run from a worktree)
 ./scripts/dev.sh stop        # stop the tmux session
 ./scripts/dev.sh restart     # stop + start
 ./scripts/dev.sh log         # print recent tmux output
 ./scripts/dev.sh start -a    # start and attach to tmux session
+./scripts/mobile-dev.sh      # shorthand for ./scripts/dev.sh --mobile
 
 # Build
 cd apps/desktop && pnpm exec tauri build
@@ -182,6 +186,23 @@ cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignore
 # E2E tests (needs app running in a worktree dev instance)
 # Terminal 1: cd {repo}/.kanna-worktrees/task-{uuid} && ./scripts/dev.sh start -a
 # Terminal 2: cd apps/desktop && pnpm test:e2e
+
+# Mobile Appium E2E (local only)
+# Simulator: pnpm --dir apps/mobile run test:e2e:preflight
+# Simulator: pnpm --dir apps/mobile run test:e2e:smoke
+# Physical device: pnpm --dir apps/mobile run test:e2e:device:preflight
+# Physical device: pnpm --dir apps/mobile run test:e2e:device:smoke
+# Physical-device runs assume local Xcode signing already works and the app is installed.
+# Device smoke now starts or reuses Metro on KANNA_MOBILE_PORT automatically and
+# force-relaunches the app so stale Expo bundles do not leak across runs.
+# If the app is missing on the device, install it with the same Metro port:
+# pnpm --dir apps/mobile ios --device <udid> --port "$KANNA_MOBILE_PORT" --no-bundler
+# If EXPO_PUBLIC_KANNA_SERVER_URL points at loopback (for example 127.0.0.1),
+# the physical-device Appium harness rewrites it to the host Mac's LAN IP before
+# preflight and smoke checks so the phone can reach the desktop-side mobile server.
+# Use KANNA_IOS_DEVICE_UDID for an exact device, or KANNA_IOS_PHYSICAL_DEVICE_NAME
+# to target the visible phone name (for example "Jerome’s iPhone 15").
+# Set one of them when more than one iPhone is attached.
 ```
 
 ### First build in a worktree
@@ -416,6 +437,26 @@ DB name is resolved by `dev.sh` from the current context: main instances use `ka
 - E2E tests access Vue internals via `__vue_app__._instance.setupState` — dev builds only
 - WebDriver is only available in debug builds (`#[cfg(debug_assertions)]`)
 
+### E2E coverage expectation
+
+Any behavior that crosses component or system boundaries should add or update at least one E2E test.
+
+Typical triggers include:
+
+- UI flows, navigation, and interactive user journeys
+- frontend or mobile client interactions with server or backend APIs
+- daemon, PTY, process, filesystem, git, or network behavior
+- persistence, reload, reconnect, or recovery behavior
+- asynchronous coordination where isolated tests do not prove the real wiring
+
+Unit and integration tests remain important, but they are not a substitute when the risk is in the wiring between systems.
+
+If a behavior should have E2E coverage but cannot reasonably get it yet, the change must explicitly document:
+
+- why it is not yet testable end to end
+- what would be needed to make it testable
+- what narrower tests were added in the meantime
+
 ## Conventions
 
 - Task stage tracked via `pipeline_item.stage` column (e.g., `'in progress'`, `'pr'`). The `tags` column is deprecated for stage management but still used internally for `blocked` tag until the blocker system is fully decoupled. `closed_at` indicates done tasks, not a tag.
@@ -492,6 +533,7 @@ Single `VERSION` file is the source of truth for packaged app versioning. `ship.
 - The agent SDK pipes stderr to capture (not null) — check stderr output when debugging silent CLI failures.
 - `tauri-plugin-webdriver` on port 4445 for E2E testing. Only works in debug builds on macOS WKWebView.
 - Daemon must be detached from app process group (`setsid` via `pre_exec`) or Ctrl+C kills it.
+- End-to-end mobile runs must start from `./scripts/dev.sh --mobile` or `./scripts/mobile-dev.sh`. Launching Expo directly from `apps/mobile` does not start the desktop-side `kanna-server`, so `http://127.0.0.1:48120` will be down unless the desktop app is already running.
 - Frontend console logs are written to `/tmp/kanna-webview-*.log` via the log forwarding in [`apps/desktop/src/main.ts`](apps/desktop/src/main.ts) and the Tauri `append_log` command in [`apps/desktop/src-tauri/src/commands/fs.rs`](apps/desktop/src-tauri/src/commands/fs.rs). Each instance gets its own log file: worktrees use the directory name (for this worktree: `/tmp/kanna-webview-task-348cf000.log`), while main instances use a cwd path hash (for example `kanna-webview-1a2b3c4d.log`).
 - Rust build artifacts go to `.build/` (not `target/`) — configured in `.cargo/config.toml`.
 - Terminal output must be ANSI-stripped before pattern matching — raw escape sequences (colors, cursor movement) interfere with hook detection.

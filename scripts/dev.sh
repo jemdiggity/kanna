@@ -3,16 +3,14 @@
 #
 # Usage:
 #   ./scripts/dev.sh              # start desktop only
-#   ./scripts/dev.sh --mobile     # start desktop + mobile pipeline
+#   ./scripts/dev.sh --mobile     # start desktop + Expo mobile app
 #   ./scripts/dev.sh stop         # stop the session
 #   ./scripts/dev.sh stop -k      # stop the session and kill the daemon
 #   ./scripts/dev.sh restart      # stop + start
 #   ./scripts/dev.sh restart -k   # stop (kill daemon) + start
 #   ./scripts/dev.sh kill-daemon  # kill the daemon without touching tmux
 #   ./scripts/dev.sh log          # print desktop log
-#   ./scripts/dev.sh log relay    # print relay log (--mobile)
-#   ./scripts/dev.sh log server   # print kanna-server log (--mobile)
-#   ./scripts/dev.sh log mobile   # print tauri ios dev log (--mobile)
+#   ./scripts/dev.sh log mobile   # print Expo mobile log (--mobile)
 #   ./scripts/dev.sh seed         # seed the DB with test data (no server start)
 #   ./scripts/dev.sh start --seed # start + seed
 set -e
@@ -59,6 +57,7 @@ tmux_env_args() {
     KANNA_DB_PATH \
     KANNA_DAEMON_DIR \
     KANNA_DEV_PORT \
+    KANNA_APPIUM_PORT \
     TAURI_WEBDRIVER_PORT \
     CARGO_TARGET_DIR; do
     if [ -n "${!key:-}" ]; then
@@ -88,6 +87,11 @@ fi
 read_port() {
   local key="$1"
   local default="$2"
+  local env_value="${!key:-}"
+  if [ -n "$env_value" ]; then
+    printf '%s\n' "$env_value"
+    return
+  fi
   if command -v jq >/dev/null 2>&1; then
     jq -r ".ports.${key} // ${default}" "$ROOT/.kanna/config.json" 2>/dev/null || echo "$default"
   elif command -v python3 >/dev/null 2>&1; then
@@ -156,73 +160,42 @@ RESOLVED_DAEMON_DIR="$(resolve_daemon_dir)"
 export KANNA_DB_NAME="$RESOLVED_DB_NAME"
 export KANNA_DB_PATH="$RESOLVED_DB_PATH"
 export KANNA_DAEMON_DIR="$RESOLVED_DAEMON_DIR"
+export KANNA_APPIUM_PORT="$(read_port KANNA_APPIUM_PORT 4723)"
+export KANNA_MOBILE_SERVER_PORT="$(read_port KANNA_MOBILE_SERVER_PORT 48120)"
 
-start_mobile() {
-  local RELAY_PORT
-  RELAY_PORT="$(read_port KANNA_RELAY_PORT 9080)"
-  local MOBILE_PORT
-  MOBILE_PORT="$(read_port KANNA_MOBILE_PORT 1421)"
-  local CONFIG_DIR="$ROOT/.kanna-mobile"
-  local SERVER_CONFIG="$CONFIG_DIR/server.toml"
-  local DAEMON_DIR="$ROOT/.kanna-daemon"
-  local DB_PATH="$KANNA_DB_PATH"
-
-  # Install relay deps if needed
-  if [ ! -d "$ROOT/services/relay/node_modules" ]; then
-    echo "Installing relay dependencies..."
-    (cd "$ROOT/services/relay" && pnpm install)
+detect_mobile_server_host() {
+  if [ -n "${KANNA_MOBILE_SERVER_HOST:-}" ]; then
+    printf '%s\n' "$KANNA_MOBILE_SERVER_HOST"
+    return
   fi
 
-  # Generate kanna-server config
-  mkdir -p "$CONFIG_DIR"
-  cat > "$SERVER_CONFIG" <<EOF
-relay_url = "ws://localhost:${RELAY_PORT}"
-device_token = "local-dev-token"
-daemon_dir = "${DAEMON_DIR}"
-db_path = "${DB_PATH}"
-EOF
+  if [ -x /usr/sbin/ipconfig ]; then
+    local detected_ip
+    detected_ip="$(/usr/sbin/ipconfig getifaddr en0 2>/dev/null || true)"
+    if [ -n "$detected_ip" ]; then
+      printf '%s\n' "$detected_ip"
+      return
+    fi
+  fi
 
-  echo "  Relay:   localhost:${RELAY_PORT}"
-  echo "  Server:  ${SERVER_CONFIG}"
-  echo "  Mobile:  tauri ios dev (port ${MOBILE_PORT})"
-
-  # Write mobile tauri.conf.local.json with the isolated port
-  local MOBILE_LOCAL_CONF="$ROOT/apps/mobile/src-tauri/tauri.conf.local.json"
-  cat > "$MOBILE_LOCAL_CONF" <<MEOF
-{
-  "build": {
-    "devUrl": "http://localhost:${MOBILE_PORT}"
-  }
+  printf '127.0.0.1\n'
 }
-MEOF
 
-  # Window: relay broker
-  tmux new-window -t "$SESSION" -n relay -c "$ROOT/services/relay"
-  tmux send-keys -t "$SESSION:relay" \
-    "PORT=${RELAY_PORT} SKIP_AUTH=true pnpm run dev" Enter
+start_mobile() {
+  local MOBILE_PORT
+  MOBILE_PORT="$(read_port KANNA_MOBILE_PORT 8081)"
+  local MOBILE_CWD="$ROOT/apps/mobile"
+  local MOBILE_SERVER_URL="${KANNA_MOBILE_SERVER_URL:-http://$(detect_mobile_server_host):${KANNA_MOBILE_SERVER_PORT}}"
 
-  # Wait for relay to start
-  sleep 2
+  if [ ! -d "$MOBILE_CWD" ]; then
+    echo "Mobile app not found at $MOBILE_CWD"
+    exit 1
+  fi
 
-  # Window: kanna-server
-  tmux new-window -t "$SESSION" -n server -c "$ROOT"
-  tmux send-keys -t "$SESSION:server" \
-    "KANNA_SERVER_CONFIG=${SERVER_CONFIG} RUST_LOG=info cargo run --manifest-path crates/kanna-server/Cargo.toml" Enter
-
-  # Write mobile tauri.conf.local.json with the isolated port
-  local MOBILE_LOCAL_CONF="$ROOT/apps/mobile/src-tauri/tauri.conf.local.json"
-  cat > "$MOBILE_LOCAL_CONF" <<MEOF
-{
-  "build": {
-    "devUrl": "http://localhost:${MOBILE_PORT}"
-  }
-}
-MEOF
-
-  # Window: tauri ios dev
-  tmux new-window -t "$SESSION" -n mobile -c "$ROOT/apps/mobile"
-  tmux send-keys -t "$SESSION:mobile" \
-    "KANNA_DEV_PORT=${MOBILE_PORT} KANNA_RELAY_PORT=${RELAY_PORT} pnpm exec tauri ios dev" Enter
+  tmux new-window -t "$SESSION" -n mobile -c "$MOBILE_CWD" \
+    "EXPO_PUBLIC_KANNA_SERVER_URL=${MOBILE_SERVER_URL} pnpm run dev -- --port ${MOBILE_PORT}"
+  echo "Started Expo mobile app on port ${MOBILE_PORT} in tmux window '$SESSION:mobile'."
+  echo "Expo mobile app will target ${MOBILE_SERVER_URL}."
 }
 
 start() {

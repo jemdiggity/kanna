@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/dev.sh"
+MOBILE_SCRIPT="$ROOT_DIR/scripts/mobile-dev.sh"
 TMPDIR_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
@@ -25,7 +26,11 @@ mkdir -p "$FAKE_BIN"
 
 setup_worktree_fixture() {
   local worktree_root="$1"
-  mkdir -p "$worktree_root/apps/desktop/src-tauri" "$worktree_root/apps/desktop/tests/e2e" "$worktree_root/apps/desktop"
+  mkdir -p \
+    "$worktree_root/apps/desktop/src-tauri" \
+    "$worktree_root/apps/desktop/tests/e2e" \
+    "$worktree_root/apps/desktop" \
+    "$worktree_root/apps/mobile"
   printf '%s\n' '-- seed fixture' > "$worktree_root/apps/desktop/tests/e2e/seed.sql"
 }
 
@@ -182,6 +187,27 @@ run_dev_sh() {
   printf '%s\n===STATUS:%s===\n' "$output" "$status"
 }
 
+run_mobile_dev_sh() {
+  local worktree_root="$1"
+  local common_dir="$2"
+  shift 2 || true
+  set +e
+  local output
+  output="$(
+    env -i \
+      PATH="$FAKE_BIN:/usr/bin:/bin:/sbin" \
+      HOME="$TMPDIR_ROOT/home" \
+      GIT_FAKE_TOPLEVEL="$worktree_root" \
+      GIT_FAKE_COMMON_DIR="$common_dir" \
+      KANNA_DEV_PORT=1452 \
+      "$@" \
+      bash "$MOBILE_SCRIPT" 2>&1
+  )"
+  local status=$?
+  set -e
+  printf '%s\n===STATUS:%s===\n' "$output" "$status"
+}
+
 expect_success() {
   local label="$1"
   local result="$2"
@@ -296,6 +322,37 @@ if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-
 fi
 
 reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_PORT=1437 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
+expect_success "dev.sh --mobile" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1437"
+assert_tmux_log_contains "EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120"
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
+expect_success "dev.sh --mobile default port" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 8081"
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_URL=http://desktop.lan:48120)"
+expect_success "dev.sh --mobile explicit server url" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "EXPO_PUBLIC_KANNA_SERVER_URL=http://desktop.lan:48120"
+
+reset_logs
+RESULT="$(run_mobile_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" env KANNA_MOBILE_PORT=1555 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
+expect_success "mobile-dev.sh" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1555"
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_HOST=127.0.0.1 KANNA_MOBILE_SERVER_PORT=48129)"
+expect_success "dev.sh --mobile server port override" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48129 pnpm run dev -- --port 8081"
+
+reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_DB_PATH=/tmp/shared-kanna.db)"
 expect_success "dev.sh with KANNA_DB_PATH" "$RESULT" >/dev/null
 
@@ -310,6 +367,12 @@ if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
   cat "$TMUX_LOG" >&2
   exit 1
 fi
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_APPIUM_PORT=4780)"
+expect_success "dev.sh with KANNA_APPIUM_PORT" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "KANNA_APPIUM_PORT=4780"
 
 reset_logs
 RESULT="$(run_dev_sh "$ROOT_CHECKOUT" "$ROOT_CHECKOUT/.git" start env KANNA_DB_NAME=dev-root.db)"
