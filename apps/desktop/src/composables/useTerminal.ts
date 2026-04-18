@@ -695,6 +695,29 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
   }
 
+  async function resizeLiveSession(cols: number, rows: number, forceDouble: boolean) {
+    if (forceDouble) {
+      const shrinkCols = Math.max(1, cols - 1)
+      console.warn("[terminal][connect] resize:double", {
+        sessionId,
+        instanceId,
+        cols,
+        rows,
+      })
+      await invoke("resize_session", { sessionId, cols: shrinkCols, rows }).catch(() => {})
+      await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
+      return
+    }
+
+    console.warn("[terminal][connect] resize:single", {
+      sessionId,
+      instanceId,
+      cols,
+      rows,
+    })
+    await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
+  }
+
   async function fetchDaemonSnapshot(): Promise<RecoverySnapshotFetchResult> {
     try {
       console.warn("[terminal][recovery] fetch:start", {
@@ -831,31 +854,13 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           await waitForReconnectRedrawSettle()
           if (!getLiveTerminal()) return
           await waitForReconnectResizeDelay()
-          if (shouldForceDoubleResizeOnReconnect(options)) {
-            console.warn("[terminal][connect] resize:double", {
-              sessionId,
-              instanceId,
-              cols,
-              rows,
-            })
-            await invoke("resize_session", { sessionId, cols: cols - 1, rows }).catch(() => {})
-            await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
-          } else {
-            console.warn("[terminal][connect] resize:single", {
-              sessionId,
-              instanceId,
-              cols,
-              rows,
-            })
-            await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
-          }
+          await resizeLiveSession(cols, rows, shouldForceDoubleResizeOnReconnect(options))
         } else {
-          console.warn("[terminal][connect] resize:single", {
-            sessionId,
+          await resizeLiveSession(
             cols,
             rows,
-          })
-          await invoke("resize_session", { sessionId, cols, rows }).catch(() => {})
+            attachSnapshot != null && shouldForceDoubleResizeOnReconnect(options),
+          )
         }
       }
       if (attachSnapshot) {

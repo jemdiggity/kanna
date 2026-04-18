@@ -220,7 +220,7 @@ describe("useTerminal", () => {
     vi.clearAllMocks();
   });
 
-  it("attaches the live session before issuing an initial resize", async () => {
+  it("forces a Claude redraw after restoring the initial live snapshot", async () => {
     const callOrder: string[] = [];
     const { useTerminal } = await import("./useTerminal");
     invokeMock.mockImplementation(async (cmd: string) => {
@@ -292,6 +292,7 @@ describe("useTerminal", () => {
 
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
+      "resize_session",
       "resize_session",
       "resume_session_stream",
     ]);
@@ -369,6 +370,7 @@ describe("useTerminal", () => {
 
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
+      "resize_session",
       "resize_session",
       "resume_session_stream",
       "detach_session",
