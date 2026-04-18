@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { MOBILE_E2E_IDS } from "../e2eTestIds";
 import type { TaskSummary } from "../lib/api/types";
 import type { TaskTerminalStatus } from "../state/sessionStore";
 import { TerminalWebView } from "./TerminalWebView";
@@ -27,7 +28,7 @@ export function TaskScreen({
   const sendDisabled = model.isComposerDisabled || !draftInput.trim();
 
   return (
-    <View style={styles.screen}>
+    <View style={styles.screen} testID={MOBILE_E2E_IDS.taskDetailScreen}>
       <View style={styles.terminalCanvas}>
         {model.isTerminalHealthy ? (
           <TerminalWebView
@@ -43,7 +44,7 @@ export function TaskScreen({
             <View style={styles.skeletonLineMid} />
             <View style={styles.skeletonLineShort} />
             {model.overlayLabel ? (
-              <View style={styles.terminalOverlay}>
+              <View style={styles.terminalOverlay} testID={MOBILE_E2E_IDS.terminalOverlay}>
                 <Text style={styles.terminalOverlayLabel}>{model.overlayLabel}</Text>
               </View>
             ) : null}
@@ -52,7 +53,11 @@ export function TaskScreen({
       </View>
 
       <View style={styles.topChrome}>
-        <Pressable style={styles.backButton} onPress={onBack}>
+        <Pressable
+          style={styles.backButton}
+          testID={MOBILE_E2E_IDS.taskBackButton}
+          onPress={onBack}
+        >
           <Text style={styles.backLabel}>{"<"}</Text>
         </Pressable>
         <View style={styles.titleChip}>
@@ -65,7 +70,11 @@ export function TaskScreen({
 
       <View style={styles.bottomChrome}>
         <View style={styles.composerActions}>
-          <Pressable style={styles.plusButton} onPress={onOpenMore}>
+          <Pressable
+            style={styles.plusButton}
+            testID={MOBILE_E2E_IDS.taskMoreButton}
+            onPress={onOpenMore}
+          >
             <Text style={styles.plusButtonLabel}>+</Text>
           </Pressable>
         </View>
@@ -77,11 +86,13 @@ export function TaskScreen({
             placeholder="Reply…"
             placeholderTextColor="#6F89AE"
             style={[styles.inputField, model.isComposerDisabled ? styles.inputFieldDisabled : null]}
+            testID={MOBILE_E2E_IDS.taskInput}
             value={draftInput}
           />
           <Pressable
             disabled={sendDisabled}
             style={[styles.sendButton, sendDisabled ? styles.sendButtonDisabled : null]}
+            testID={MOBILE_E2E_IDS.taskSendButton}
             onPress={() => {
               const nextInput = draftInput.trim();
               if (!nextInput) {

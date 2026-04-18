@@ -1,5 +1,6 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { MOBILE_E2E_IDS } from "../e2eTestIds";
 import type { TaskSummary } from "../lib/api/types";
 import { buildTaskListItemModel } from "../screens/taskPresentation";
 
@@ -14,7 +15,11 @@ export function TaskCard({ isRecentView, repoName, task, onPress }: TaskCardProp
   const model = buildTaskListItemModel(task, repoName, isRecentView);
 
   return (
-    <Pressable style={styles.card} onPress={onPress}>
+    <Pressable
+      style={styles.card}
+      testID={MOBILE_E2E_IDS.taskListItem(task.id)}
+      onPress={onPress}
+    >
       <View style={styles.topRow}>
         <Text style={styles.scopeLabel}>{model.scopeLabel}</Text>
         <Text style={styles.repoLabel}>{model.repoLabel}</Text>

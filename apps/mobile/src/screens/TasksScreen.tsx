@@ -1,5 +1,6 @@
 import React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { MOBILE_E2E_IDS } from "../e2eTestIds";
 import type { RepoSummary, TaskSummary } from "../lib/api/types";
 import { TaskList } from "../components/TaskList";
 
@@ -64,6 +65,7 @@ export function TasksScreen({
         isRecentView={isRecentView}
         repoNameById={repoNameById}
         tasks={filteredTasks}
+        testID={MOBILE_E2E_IDS.tasksScreen}
         onOpenTask={onOpenTask}
       />
     </View>

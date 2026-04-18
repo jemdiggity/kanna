@@ -24,11 +24,13 @@
   "include": [
     "App.tsx",
     "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.tsx",
+    "e2e/**/*.ts"
   ],
   "exclude": [
     "src/**/*.test.ts",
-    "src/**/*.test.tsx"
+    "src/**/*.test.tsx",
+    "e2e/**/*.test.ts"
   ],
   "references": [],
   "extends": "expo/tsconfig.base"
