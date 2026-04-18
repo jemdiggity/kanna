@@ -19,9 +19,6 @@ describe("createKannaClient", () => {
       listRepos: vi.fn().mockResolvedValue([
         { id: "repo-1", name: "Repo One" }
       ]),
-      listRepos: vi.fn().mockResolvedValue([
-        { id: "repo-1", name: "Repo One" }
-      ]),
       listRepoTasks: vi.fn().mockResolvedValue([
         {
           id: "task-repo-1",
@@ -72,9 +69,6 @@ describe("createKannaClient", () => {
     const client = createKannaClient(transport);
 
     expect(await client.listDesktops()).toHaveLength(1);
-    expect(await client.listRepos()).toEqual([
-      { id: "repo-1", name: "Repo One" }
-    ]);
     expect(await client.listRepos()).toEqual([
       { id: "repo-1", name: "Repo One" }
     ]);

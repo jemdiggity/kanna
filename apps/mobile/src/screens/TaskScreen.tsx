@@ -30,7 +30,13 @@ export function TaskScreen({
     <View style={styles.screen}>
       <View style={styles.terminalCanvas}>
         {model.isTerminalHealthy ? (
-          <TerminalWebView fullscreen output={terminalOutput} status={terminalStatus} />
+          <TerminalWebView
+            fullscreen
+            key={task.id}
+            output={terminalOutput}
+            status={terminalStatus}
+            taskId={task.id}
+          />
         ) : (
           <View style={styles.terminalSkeleton}>
             <View style={styles.skeletonLineWide} />

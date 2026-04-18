@@ -4,6 +4,8 @@ import type {
   TaskTerminalSubscription
 } from "../api/client";
 import type {
+  CreateTaskRequest,
+  CreateTaskResponse,
   DesktopDescriptor,
   DesktopSummary,
   MobileServerStatus,
@@ -23,6 +25,8 @@ export type FetchLike = (
   input: string,
   init?: {
     method?: string;
+    headers?: Record<string, string>;
+    body?: string;
   }
 ) => Promise<FetchResponseLike>;
 
@@ -41,7 +45,14 @@ export function createLanTransport(
   fetchImpl: FetchLike,
   createSocket: WebSocketFactory = (url) => new WebSocket(url) as unknown as WebSocketLike
 ): KannaTransport {
-  const request = async <T>(path: string, init?: { method?: string }): Promise<T> => {
+  const request = async <T>(
+    path: string,
+    init?: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+    }
+  ): Promise<T> => {
     const response = await fetchImpl(`${baseUrl}${path}`, init);
     if (!response.ok) {
       throw new Error(`LAN request failed (${response.status}) for ${path}`);
@@ -60,7 +71,6 @@ export function createLanTransport(
       const desktops = await request<DesktopDescriptor[]>("/v1/desktops");
       return desktops.map(mapDesktopSummary);
     },
-    listRepos: () => request<RepoSummary[]>("/v1/repos"),
     listRepos: () => request<RepoSummary[]>("/v1/repos"),
     listRepoTasks: (repoId: string) =>
       request<TaskSummary[]>(`/v1/repos/${encodeURIComponent(repoId)}/tasks`),
