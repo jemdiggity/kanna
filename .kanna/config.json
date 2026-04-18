@@ -9,7 +9,8 @@
   "ports": {
     "KANNA_DEV_PORT": 1420,
     "KANNA_RELAY_PORT": 9080,
-    "KANNA_MOBILE_PORT": 8081
+    "KANNA_MOBILE_PORT": 8081,
+    "KANNA_APPIUM_PORT": 4723
   },
   "stage_order": ["merge", "pr", "in progress"]
 }

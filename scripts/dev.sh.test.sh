@@ -363,6 +363,12 @@ if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
 fi
 
 reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_APPIUM_PORT=4780)"
+expect_success "dev.sh with KANNA_APPIUM_PORT" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "KANNA_APPIUM_PORT=4780"
+
+reset_logs
 RESULT="$(run_dev_sh "$ROOT_CHECKOUT" "$ROOT_CHECKOUT/.git" start env KANNA_DB_NAME=dev-root.db)"
 expect_success "dev.sh root checkout start" "$RESULT" >/dev/null
 

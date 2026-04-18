@@ -57,6 +57,7 @@ tmux_env_args() {
     KANNA_DB_PATH \
     KANNA_DAEMON_DIR \
     KANNA_DEV_PORT \
+    KANNA_APPIUM_PORT \
     TAURI_WEBDRIVER_PORT \
     CARGO_TARGET_DIR; do
     if [ -n "${!key:-}" ]; then
@@ -159,6 +160,7 @@ RESOLVED_DAEMON_DIR="$(resolve_daemon_dir)"
 export KANNA_DB_NAME="$RESOLVED_DB_NAME"
 export KANNA_DB_PATH="$RESOLVED_DB_PATH"
 export KANNA_DAEMON_DIR="$RESOLVED_DAEMON_DIR"
+export KANNA_APPIUM_PORT="$(read_port KANNA_APPIUM_PORT 4723)"
 
 detect_mobile_server_host() {
   if [ -n "${KANNA_MOBILE_SERVER_HOST:-}" ]; then
