@@ -31,12 +31,16 @@ export function DesktopsScreen({
                 </View>
               </View>
               <Text style={styles.meta}>
-                {desktop.online ? "Available on this network" : "Remote desktop is offline"}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+              {desktop.online
+                ? desktop.reachableViaRelay
+                  ? "Available over internet"
+                  : "Available on this network"
+                : "Remote desktop is offline"}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
     </ScrollView>
   );
 }

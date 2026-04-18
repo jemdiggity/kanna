@@ -20,6 +20,9 @@ export interface DesktopSummary {
   name: string;
   online: boolean;
   mode: DesktopMode;
+  reachableViaRelay?: boolean;
+  connectionMode?: "lan" | "internet" | "both";
+  lastSeenAt?: string | null;
 }
 
 export interface RepoSummary {
