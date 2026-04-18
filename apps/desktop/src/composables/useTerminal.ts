@@ -71,16 +71,20 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     snapshot: Awaited<ReturnType<typeof loadSessionRecoveryState>>
     failed: boolean
   }
-  interface AttachSnapshotResult {
-    version: number
-    rows: number
-    cols: number
-    cursor_row: number
-    cursor_col: number
-    cursor_visible: boolean
-    vt: string
+  interface TerminalSnapshotEventPayload {
+    session_id: string
+    snapshot: {
+      version: number
+      rows: number
+      cols: number
+      cursor_row: number
+      cursor_col: number
+      cursor_visible: boolean
+      vt: string
+    }
   }
   let unlistenOutput: (() => void) | null = null
+  let unlistenSnapshot: (() => void) | null = null
   let unlistenExit: (() => void) | null = null
   let unlistenDaemonReady: (() => void) | null = null
   let unlistenStreamLost: (() => void) | null = null
@@ -815,12 +819,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       const shouldHydrateFromSnapshot =
         recoveryMode === "attach-only" &&
         !hasAttachedOnce
-      const attachSnapshot =
-        shouldHydrateFromSnapshot
-          ? await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
-              sessionId,
-            })
-          : null
+      if (shouldHydrateFromSnapshot) {
+        await invoke("attach_session_with_snapshot", { sessionId })
+      }
       if (!shouldHydrateFromSnapshot) {
         await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
       }
@@ -831,14 +832,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       })
       // Attach succeeded — session was alive in daemon.
       const liveTerminal = getLiveTerminal()
-      if (liveTerminal) {
-        if (attachSnapshot) {
-          liveTerminal.reset()
-          restoreTerminalModesFromSnapshot(attachSnapshot.vt)
-          await new Promise<void>((resolve) => {
-            liveTerminal.write(attachSnapshot.vt, resolve)
-          })
-        }
+        if (liveTerminal) {
         const reconnectKeyboardPush = getReconnectKeyboardPush({
           ...options,
           kittyKeyboard: options?.kittyKeyboard,
@@ -859,12 +853,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           await resizeLiveSession(
             cols,
             rows,
-            attachSnapshot != null && shouldForceDoubleResizeOnReconnect(options),
+            shouldHydrateFromSnapshot && shouldForceDoubleResizeOnReconnect(options),
           )
         }
-      }
-      if (attachSnapshot) {
-        await invoke("resume_session_stream", { sessionId, agentProvider: options?.agentProvider })
       }
       attached = true
       hasAttachedOnce = true
@@ -951,22 +942,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           spawnTerminal.write(`\r\n\x1b[31mFailed to start agent: ${msg}\x1b[0m\r\n`)
           return
         }
-        // Now attach to the newly spawned session.
-        // Only hydrate from a daemon snapshot before the terminal has ever been attached.
-        // After that, preserve local xterm scrollback and let the live PTY redraw itself.
-        if (recoveryMode === "attach-only" && !hasAttachedOnce) {
-          const attachSnapshot = await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
-            sessionId,
-          })
-          spawnTerminal.reset()
-          restoreTerminalModesFromSnapshot(attachSnapshot.vt)
-          await new Promise<void>((resolve) => {
-            spawnTerminal.write(attachSnapshot.vt, resolve)
-          })
-          await invoke("resume_session_stream", { sessionId, agentProvider: options?.agentProvider })
-        } else {
-          await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
-        }
+        // A freshly spawned PTY should attach live immediately. The atomic
+        // snapshot attach path is reserved for already-running task sessions.
+        await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
         attached = true
         hasAttachedOnce = true
         const attachedTerminal = getLiveTerminal()
@@ -1052,6 +1030,24 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         sessionId,
         instanceId,
         event: "terminal_output",
+      })
+    }
+
+    if (!unlistenSnapshot) {
+      unlistenSnapshot = await listen("terminal_snapshot", (event) => {
+        const payload = event.payload as TerminalSnapshotEventPayload | undefined
+        const sid = payload?.session_id
+        if (!payload?.snapshot) return
+        if ((sid === sessionId || sid === teardownId) && terminal.value) {
+          terminal.value.reset()
+          restoreTerminalModesFromSnapshot(payload.snapshot.vt)
+          terminal.value.write(payload.snapshot.vt)
+        }
+      })
+      console.warn("[terminal][instance] listener:add", {
+        sessionId,
+        instanceId,
+        event: "terminal_snapshot",
       })
     }
 
@@ -1150,6 +1146,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       connecting,
       hasAttachedOnce,
       hasOutputListener: unlistenOutput != null,
+      hasSnapshotListener: unlistenSnapshot != null,
       hasExitListener: unlistenExit != null,
       hasDaemonReadyListener: unlistenDaemonReady != null,
       hasStreamLostListener: unlistenStreamLost != null,
@@ -1182,6 +1179,14 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         event: "terminal_output",
       })
     }
+    if (unlistenSnapshot) {
+      unlistenSnapshot()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "terminal_snapshot",
+      })
+    }
     if (unlistenExit) {
       unlistenExit()
       console.warn("[terminal][instance] listener:remove", {
@@ -1209,6 +1214,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     terminal.value?.dispose()
     terminal.value = null
     unlistenOutput = null
+    unlistenSnapshot = null
     unlistenExit = null
     unlistenDaemonReady = null
     unlistenStreamLost = null

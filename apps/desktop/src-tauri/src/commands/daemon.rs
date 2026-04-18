@@ -10,7 +10,6 @@ use crate::daemon_client::DaemonClient;
 
 pub type DaemonState = Arc<Mutex<Option<DaemonClient>>>;
 pub type AttachedSessions = Arc<Mutex<HashSet<String>>>;
-pub type PendingAttachedStreams = Arc<Mutex<HashMap<String, DaemonClient>>>;
 pub type ActiveAttachedStreams = Arc<Mutex<HashMap<String, ActiveAttachedStream>>>;
 
 pub struct ActiveAttachedStream {
@@ -189,6 +188,7 @@ async fn spawn_attached_stream_task(
     session_id: String,
     attached: AttachedSessions,
     active_streams: ActiveAttachedStreams,
+    initial_snapshot: Option<TerminalSnapshotPayload>,
 ) {
     attached.lock().await.insert(session_id.clone());
     let attach_id = NEXT_ATTACH_ID.fetch_add(1, Ordering::Relaxed);
@@ -212,6 +212,14 @@ async fn spawn_attached_stream_task(
         let mut detached_intentionally = false;
         let mut output_event_count: usize = 0;
         let mut stream_client = stream_client;
+
+        if let Some(snapshot) = initial_snapshot {
+            let payload = serde_json::json!({
+                "session_id": &sid,
+                "snapshot": snapshot,
+            });
+            let _ = app.emit("terminal_snapshot", &payload);
+        }
 
         loop {
             let line = tokio::select! {
@@ -540,6 +548,7 @@ pub async fn attach_session_inner(
         session_id,
         attached.clone(),
         active_streams.clone(),
+        None,
     )
     .await;
 
@@ -548,9 +557,11 @@ pub async fn attach_session_inner(
 
 #[tauri::command]
 pub async fn attach_session_with_snapshot(
-    pending_streams: tauri::State<'_, PendingAttachedStreams>,
+    app: tauri::AppHandle,
+    attached: tauri::State<'_, AttachedSessions>,
+    active_streams: tauri::State<'_, ActiveAttachedStreams>,
     session_id: String,
-) -> Result<TerminalSnapshotPayload, DaemonCommandError> {
+) -> Result<(), DaemonCommandError> {
     let socket_path = daemon_socket_path();
     let mut stream_client = DaemonClient::connect(&socket_path).await?;
     let cmd = serde_json::json!({
@@ -564,36 +575,13 @@ pub async fn attach_session_with_snapshot(
 
     let response = stream_client.read_event().await?;
     let snapshot = parse_snapshot_response(&response)?;
-    pending_streams
-        .lock()
-        .await
-        .insert(session_id.clone(), stream_client);
-    Ok(snapshot)
-}
-
-#[tauri::command]
-pub async fn resume_session_stream(
-    app: tauri::AppHandle,
-    pending_streams: tauri::State<'_, PendingAttachedStreams>,
-    attached: tauri::State<'_, AttachedSessions>,
-    active_streams: tauri::State<'_, ActiveAttachedStreams>,
-    session_id: String,
-    _agent_provider: Option<String>,
-) -> Result<(), DaemonCommandError> {
-    let stream_client = pending_streams
-        .lock()
-        .await
-        .remove(&session_id)
-        .ok_or_else(|| DaemonCommandError {
-            message: format!("pending stream not found for {}", session_id),
-            code: None,
-        })?;
     spawn_attached_stream_task(
         app,
         stream_client,
         session_id,
         attached.inner().clone(),
         active_streams.inner().clone(),
+        Some(snapshot),
     )
     .await;
     Ok(())
@@ -613,24 +601,10 @@ pub async fn attach_session(
 #[tauri::command]
 pub async fn detach_session(
     attached: tauri::State<'_, AttachedSessions>,
-    pending_streams: tauri::State<'_, PendingAttachedStreams>,
     active_streams: tauri::State<'_, ActiveAttachedStreams>,
     session_id: String,
 ) -> Result<(), DaemonCommandError> {
     attached.lock().await.remove(&session_id);
-    if let Some(mut pending_stream) = pending_streams.lock().await.remove(&session_id) {
-        let cmd = serde_json::to_string(&serde_json::json!({
-            "type": "Detach",
-            "session_id": session_id,
-        }))
-        .map_err(|e| DaemonCommandError {
-            message: format!("failed to serialize detach command: {e}"),
-            code: None,
-        })?;
-        pending_stream.send_command(&cmd).await?;
-        let response = pending_stream.read_event().await?;
-        parse_ack(&response)?;
-    }
     if let Some(active_stream) = active_streams.lock().await.remove(&session_id) {
         let _ = active_stream.shutdown.send(());
     }

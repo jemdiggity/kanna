@@ -5,7 +5,6 @@ mod subprocess_env;
 use commands::agent::AgentState;
 use commands::daemon::{
     ActiveAttachedStream, ActiveAttachedStreams, AttachedSessions, DaemonState,
-    PendingAttachedStreams,
 };
 use daemon_client::DaemonClient;
 use dashmap::DashMap;
@@ -520,9 +519,6 @@ pub fn run() {
             String,
             ActiveAttachedStream,
         >::new())) as ActiveAttachedStreams)
-        .manage(Arc::new(Mutex::new(
-            std::collections::HashMap::<String, DaemonClient>::new(),
-        )) as PendingAttachedStreams)
         .manage(Arc::new(Mutex::new(None)) as PipelineSocketState)
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -624,7 +620,6 @@ pub fn run() {
             commands::daemon::get_session_recovery_state,
             commands::daemon::attach_session,
             commands::daemon::attach_session_with_snapshot,
-            commands::daemon::resume_session_stream,
             commands::daemon::detach_session,
             // Git commands
             commands::git::git_diff,

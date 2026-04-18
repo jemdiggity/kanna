@@ -14,6 +14,29 @@ let nativeWebviewDragDropHandler: ((event: any) => void) | null = null;
 let nativeWindowDragDropHandler: ((event: any) => void) | null = null;
 let isTauriMock = false;
 
+function emitTerminalSnapshot(
+  sessionId: string,
+  vt = "restored scrollback",
+) {
+  const listeners = eventListeners.get("terminal_snapshot") ?? [];
+  for (const listener of listeners) {
+    listener({
+      payload: {
+        session_id: sessionId,
+        snapshot: {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt,
+        },
+      },
+    });
+  }
+}
+
 interface PendingWrite {
   data: string | Uint8Array;
   callback?: () => void;
@@ -187,15 +210,8 @@ describe("useTerminal", () => {
     });
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored scrollback",
-        };
+        emitTerminalSnapshot("session-1");
+        return null;
       }
       if (cmd === "get_session_recovery_state") {
         return {
@@ -220,21 +236,13 @@ describe("useTerminal", () => {
     vi.clearAllMocks();
   });
 
-  it("forces a Claude redraw after restoring the initial live snapshot", async () => {
+  it("applies the initial task snapshot from the ordered stream without a resume step", async () => {
     const callOrder: string[] = [];
     const { useTerminal } = await import("./useTerminal");
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored scrollback",
-        };
+        return null;
       }
       return null;
     });
@@ -290,11 +298,37 @@ describe("useTerminal", () => {
     }
     await startPromise;
 
+    const snapshotListeners = eventListeners.get("terminal_snapshot") ?? [];
+    expect(snapshotListeners).toHaveLength(1);
+
+    snapshotListeners[0]({
+      payload: {
+        session_id: "session-1",
+        snapshot: {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored scrollback",
+        },
+      },
+    });
+
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
       "resize_session",
-      "resume_session_stream",
     ]);
     expect(terminal.reset).toHaveBeenCalledTimes(1);
   });
@@ -305,15 +339,8 @@ describe("useTerminal", () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored scrollback",
-        };
+        emitTerminalSnapshot("session-1");
+        return null;
       }
       return null;
     });
@@ -372,7 +399,6 @@ describe("useTerminal", () => {
       "attach_session_with_snapshot",
       "resize_session",
       "resize_session",
-      "resume_session_stream",
       "detach_session",
     ]);
   });
@@ -395,15 +421,8 @@ describe("useTerminal", () => {
         if (spawnFn.mock.calls.length === 0) {
           throw new AppError("session not found: session-1", "session_not_found");
         }
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored scrollback",
-        };
+        emitTerminalSnapshot("session-1");
+        return null;
       }
       return null;
     });
@@ -465,7 +484,8 @@ describe("useTerminal", () => {
     expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
     expect(errorToastMock).not.toHaveBeenCalled();
     expect(spawnFn).toHaveBeenCalledTimes(1);
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
     expect(terminal.write).toHaveBeenCalledWith("restored scrollback", expect.any(Function));
     expect(
       terminal.write.mock.calls.some(
@@ -551,15 +571,11 @@ describe("useTerminal", () => {
         if (spawnFn.mock.calls.length === 0) {
           throw new AppError("session not found: session-1", "session_not_found");
         }
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "fresh session output",
-        };
+        emitTerminalSnapshot("session-1", "fresh session output");
+        return null;
+      }
+      if (cmd === "attach_session") {
+        return null;
       }
       if (cmd === "get_session_recovery_state") {
         return null;
@@ -628,8 +644,9 @@ describe("useTerminal", () => {
     expect(spawnFn).toHaveBeenCalledTimes(1);
     expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawned");
     expect(errorToastMock).not.toHaveBeenCalled();
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
-    expect(terminal.write).toHaveBeenCalledWith("fresh session output", expect.any(Function));
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
+    expect(terminal.write).not.toHaveBeenCalledWith("fresh session output", expect.any(Function));
     expect(
       terminal.write.mock.calls.some(
         ([data]) =>
@@ -637,6 +654,65 @@ describe("useTerminal", () => {
           data.includes("Knock, knock, Neo."),
       ),
     ).toBe(false);
+  });
+
+  it("attaches freshly spawned task sessions live instead of replaying a snapshot", async () => {
+    const spawnFn = vi.fn(async () => {});
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "attach_session_with_snapshot") {
+        throw new AppError("session not found: session-1", "session_not_found");
+      }
+      if (cmd === "attach_session") {
+        return null;
+      }
+      if (cmd === "file_exists") {
+        return true;
+      }
+      if (cmd === "get_session_recovery_state") {
+        return null;
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "hello",
+            spawnFn,
+          },
+          {
+            agentProvider: "claude",
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    await wrapper.vm.startListening();
+
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "resume_session_stream")).toHaveLength(0);
+    expect(terminals[0]?.reset).not.toHaveBeenCalled();
   });
 
   it("spawns a shell terminal when no pre-warmed session exists", async () => {
@@ -716,15 +792,8 @@ describe("useTerminal", () => {
       if (cmd === "attach_session_with_snapshot") {
         attachCount += 1;
         if (attachCount === 1) {
-          return {
-            version: 1,
-            rows: 24,
-            cols: 80,
-            cursor_row: 0,
-            cursor_col: 0,
-            cursor_visible: true,
-            vt: "restored scrollback",
-          };
+          emitTerminalSnapshot("session-1");
+          return null;
         }
       }
       if (cmd === "attach_session") {
@@ -833,15 +902,8 @@ describe("useTerminal", () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored copilot scrollback",
-        };
+        emitTerminalSnapshot("session-1", "restored copilot scrollback");
+        return null;
       }
       return null;
     });
@@ -892,7 +954,6 @@ describe("useTerminal", () => {
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
-      "resume_session_stream",
     ]);
     expect(terminal.reset).toHaveBeenCalledTimes(1);
   });
@@ -904,15 +965,8 @@ describe("useTerminal", () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored copilot scrollback",
-        };
+        emitTerminalSnapshot("session-1", "restored copilot scrollback");
+        return null;
       }
       if (cmd === "get_session_recovery_state") {
         return {
@@ -974,7 +1028,6 @@ describe("useTerminal", () => {
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
-      "resume_session_stream",
     ]);
 
     const streamLostListeners = eventListeners.get("session_stream_lost") ?? [];
@@ -990,7 +1043,7 @@ describe("useTerminal", () => {
     }
     terminal.flushNextStringWrite();
 
-    for (let attempt = 0; attempt < 10 && callOrder.length < 6; attempt += 1) {
+    for (let attempt = 0; attempt < 10 && callOrder.length < 5; attempt += 1) {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
@@ -998,7 +1051,6 @@ describe("useTerminal", () => {
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
-      "resume_session_stream",
       "attach_session",
       "resize_session",
     ]);
@@ -1013,15 +1065,8 @@ describe("useTerminal", () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored scrollback",
-        };
+        emitTerminalSnapshot("session-1");
+        return null;
       }
       if (cmd === "get_session_recovery_state") {
         return {
@@ -1099,7 +1144,7 @@ describe("useTerminal", () => {
         terminal.flushNextStringWrite();
         await Promise.resolve();
       }
-      if (callOrder.length >= 6) break;
+      if (callOrder.length >= 5) break;
     }
 
     await ensurePromise;
@@ -1107,7 +1152,6 @@ describe("useTerminal", () => {
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
-      "resume_session_stream",
       "attach_session",
       "resize_session",
     ]);
@@ -1119,15 +1163,8 @@ describe("useTerminal", () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       callOrder.push(cmd);
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored copilot scrollback",
-        };
+        emitTerminalSnapshot("session-1", "restored copilot scrollback");
+        return null;
       }
       return null;
     });
@@ -1192,7 +1229,6 @@ describe("useTerminal", () => {
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
-      "resume_session_stream",
       "attach_session",
       "resize_session",
     ]);
