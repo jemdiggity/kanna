@@ -112,6 +112,28 @@ function buildIncomingTransferPayload() {
   };
 }
 
+function mockIncomingTransferApprovalInvoke(
+  finalizedPayload: ReturnType<typeof buildIncomingTransferPayload>,
+  handler: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>,
+) {
+  invokeMock.mockImplementation(async (cmd, args) => {
+    if (cmd === "finalize_outgoing_transfer") {
+      return {
+        transferId: "transfer-1",
+        payload: finalizedPayload,
+        finalizedCleanly: true,
+      };
+    }
+    return handler(cmd, args);
+  });
+}
+
+async function flushBackgroundSetup(): Promise<void> {
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+}
+
 function createTransferDb(initial: {
   repos?: Repo[];
   items?: PipelineItem[];
@@ -726,6 +748,239 @@ describe("pushTaskToPeer", () => {
     });
   });
 
+  it("stages the local codex rollout file and includes it in the outgoing payload", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const fakeDb = createTransferDb({});
+
+    await store.init(fakeDb);
+    store.repos = [buildRepo()];
+    store.items = [buildItem()];
+    store.items[0]!.agent_provider = "codex";
+    store.items[0]!.agent_session_id = "019d9a8c-9f39-7240-818f-88367a7c31df";
+
+    loadSessionRecoveryStateMock.mockResolvedValue(null);
+
+    invokeMock.mockImplementation(async (cmd, args) => {
+      if (cmd === "prepare_outgoing_transfer") {
+        const payload = args?.payload as Record<string, unknown> | undefined;
+        if (payload?.phase === "preflight") {
+          return {
+            transferId: "transfer-123",
+            sourcePeerId: "peer-real-source",
+            targetHasRepo: true,
+          };
+        }
+        return { ok: true };
+      }
+      if (cmd === "read_env_var") {
+        return "/Users/tester";
+      }
+      if (cmd === "file_exists") {
+        return true;
+      }
+      if (cmd === "list_dir") {
+        const path = args?.path;
+        if (path === "/Users/tester/.codex/sessions") return ["2026"];
+        if (path === "/Users/tester/.codex/sessions/2026") return ["04"];
+        if (path === "/Users/tester/.codex/sessions/2026/04") return ["18"];
+        if (path === "/Users/tester/.codex/sessions/2026/04/18") {
+          return ["rollout-2026-04-18T06-27-04-019d9a8c-9f39-7240-818f-88367a7c31df.jsonl"];
+        }
+        return [];
+      }
+      if (cmd === "stage_transfer_artifact") {
+        return {
+          transferId: "transfer-123",
+          artifactId: "transfer-123-codex-rollout",
+        };
+      }
+      return null;
+    });
+
+    await expect(store.pushTaskToPeer("task-source", "peer-target")).resolves.toBeUndefined();
+
+    expect(invokeMock).toHaveBeenCalledWith("stage_transfer_artifact", {
+      transferId: "transfer-123",
+      artifactId: "transfer-123-codex-rollout",
+      path: "/Users/tester/.codex/sessions/2026/04/18/rollout-2026-04-18T06-27-04-019d9a8c-9f39-7240-818f-88367a7c31df.jsonl",
+    });
+
+    const prepareCalls = invokeMock.mock.calls.filter(([cmd]) => cmd === "prepare_outgoing_transfer");
+    expect(prepareCalls[1]?.[1]).toMatchObject({
+      payload: {
+        phase: "commit",
+        transferId: "transfer-123",
+        payload: {
+          task: {
+            resume_session_id: "019d9a8c-9f39-7240-818f-88367a7c31df",
+          },
+          artifacts: [{
+            artifact_id: "transfer-123-codex-rollout",
+            provider: "codex",
+            kind: "session-rollout",
+            home_rel_path: ".codex/sessions/2026/04/18/rollout-2026-04-18T06-27-04-019d9a8c-9f39-7240-818f-88367a7c31df.jsonl",
+          }],
+        },
+      },
+    });
+  });
+
+  it("stages the local claude task directory and includes it in the outgoing payload", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const fakeDb = createTransferDb({});
+
+    await store.init(fakeDb);
+    store.repos = [buildRepo()];
+    store.items = [buildItem()];
+    store.items[0]!.agent_provider = "claude";
+    store.items[0]!.agent_session_id = "364643cc-5e6d-48fc-86ca-ca7764380900";
+
+    loadSessionRecoveryStateMock.mockResolvedValue(null);
+
+    invokeMock.mockImplementation(async (cmd, args) => {
+      if (cmd === "prepare_outgoing_transfer") {
+        const payload = args?.payload as Record<string, unknown> | undefined;
+        if (payload?.phase === "preflight") {
+          return {
+            transferId: "transfer-123",
+            sourcePeerId: "peer-real-source",
+            targetHasRepo: true,
+          };
+        }
+        return { ok: true };
+      }
+      if (cmd === "read_env_var") {
+        return "/Users/tester";
+      }
+      if (cmd === "file_exists") {
+        return true;
+      }
+      if (cmd === "run_script") {
+        return "";
+      }
+      if (cmd === "stage_transfer_artifact") {
+        return {
+          transferId: "transfer-123",
+          artifactId: "transfer-123-claude-session",
+        };
+      }
+      return null;
+    });
+
+    await expect(store.pushTaskToPeer("task-source", "peer-target")).resolves.toBeUndefined();
+
+    expect(invokeMock).toHaveBeenCalledWith("run_script", {
+      script: expect.stringContaining("tar -C '/Users/tester/.claude/tasks' -czf '/tmp/kanna-transfer-transfer-123-claude-session.tar.gz' '364643cc-5e6d-48fc-86ca-ca7764380900'"),
+      cwd: "/tmp/repo-1",
+      env: expect.objectContaining({
+        KANNA_WORKTREE: "1",
+      }),
+    });
+    expect(invokeMock).toHaveBeenCalledWith("stage_transfer_artifact", {
+      transferId: "transfer-123",
+      artifactId: "transfer-123-claude-session",
+      path: "/tmp/kanna-transfer-transfer-123-claude-session.tar.gz",
+    });
+
+    const prepareCalls = invokeMock.mock.calls.filter(([cmd]) => cmd === "prepare_outgoing_transfer");
+    expect(prepareCalls[1]?.[1]).toMatchObject({
+      payload: {
+        phase: "commit",
+        transferId: "transfer-123",
+        payload: {
+          artifacts: [{
+            artifact_id: "transfer-123-claude-session",
+            provider: "claude",
+            kind: "session-archive",
+            materialization: "extract-tar-gz",
+            home_rel_path: ".claude/tasks/364643cc-5e6d-48fc-86ca-ca7764380900",
+          }],
+        },
+      },
+    });
+  });
+
+  it("stages the local copilot session-state directory and includes it in the outgoing payload", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const fakeDb = createTransferDb({});
+
+    await store.init(fakeDb);
+    store.repos = [buildRepo()];
+    store.items = [buildItem()];
+    store.items[0]!.agent_provider = "copilot";
+    store.items[0]!.agent_session_id = "5fc2bd17-1d1b-4ae9-bed8-011fa4011100";
+
+    loadSessionRecoveryStateMock.mockResolvedValue(null);
+
+    invokeMock.mockImplementation(async (cmd, args) => {
+      if (cmd === "prepare_outgoing_transfer") {
+        const payload = args?.payload as Record<string, unknown> | undefined;
+        if (payload?.phase === "preflight") {
+          return {
+            transferId: "transfer-123",
+            sourcePeerId: "peer-real-source",
+            targetHasRepo: true,
+          };
+        }
+        return { ok: true };
+      }
+      if (cmd === "read_env_var") {
+        return "/Users/tester";
+      }
+      if (cmd === "file_exists") {
+        return true;
+      }
+      if (cmd === "run_script") {
+        return "";
+      }
+      if (cmd === "stage_transfer_artifact") {
+        return {
+          transferId: "transfer-123",
+          artifactId: "transfer-123-copilot-session",
+        };
+      }
+      return null;
+    });
+
+    await expect(store.pushTaskToPeer("task-source", "peer-target")).resolves.toBeUndefined();
+
+    expect(invokeMock).toHaveBeenCalledWith("run_script", {
+      script: expect.stringContaining("tar -C '/Users/tester/.copilot/session-state' -czf '/tmp/kanna-transfer-transfer-123-copilot-session.tar.gz' '5fc2bd17-1d1b-4ae9-bed8-011fa4011100'"),
+      cwd: "/tmp/repo-1",
+      env: expect.objectContaining({
+        KANNA_WORKTREE: "1",
+      }),
+    });
+    expect(invokeMock).toHaveBeenCalledWith("stage_transfer_artifact", {
+      transferId: "transfer-123",
+      artifactId: "transfer-123-copilot-session",
+      path: "/tmp/kanna-transfer-transfer-123-copilot-session.tar.gz",
+    });
+
+    const prepareCalls = invokeMock.mock.calls.filter(([cmd]) => cmd === "prepare_outgoing_transfer");
+    expect(prepareCalls[1]?.[1]).toMatchObject({
+      payload: {
+        phase: "commit",
+        transferId: "transfer-123",
+        payload: {
+          artifacts: [{
+            artifact_id: "transfer-123-copilot-session",
+            provider: "copilot",
+            kind: "session-archive",
+            materialization: "extract-tar-gz",
+            home_rel_path: ".copilot/session-state/5fc2bd17-1d1b-4ae9-bed8-011fa4011100",
+          }],
+        },
+      },
+    });
+  });
+
   it("stages a git bundle before committing bundle-repo transfers", async () => {
     setActivePinia(createPinia());
     const { useKannaStore } = await import("./kanna");
@@ -943,6 +1198,68 @@ describe("incoming transfer approval", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     loadSessionRecoveryStateMock.mockReset();
+    vi.useRealTimers();
+  });
+
+  it("requests source finalization before importing an approved transfer", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const payload = buildIncomingTransferPayload();
+    const finalizedPayload = {
+      ...payload,
+      task: {
+        ...payload.task,
+        resume_session_id: "019d-final",
+      },
+    };
+    const fakeDb = createTransferDb({
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(payload),
+      }],
+    });
+
+    await store.init(fakeDb);
+
+    invokeMock.mockImplementation(async (cmd, args) => {
+      if (cmd === "finalize_outgoing_transfer") {
+        return {
+          transferId: "transfer-1",
+          payload: finalizedPayload,
+          finalizedCleanly: true,
+        };
+      }
+      if (cmd === "file_exists") {
+        return (args?.path as string) === "/tmp/repo-1";
+      }
+      if (cmd === "which_binary") {
+        return args?.name === "claude" ? "/usr/bin/claude" : null;
+      }
+      if (cmd === "git_worktree_add" || cmd === "create_agent_session") {
+        return null;
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    await store.approveIncomingTransfer("transfer-1");
+
+    expect(invokeMock).toHaveBeenCalledWith("finalize_outgoing_transfer", {
+      transferId: "transfer-1",
+    });
+    expect(fakeDb.tables.pipeline_item[0]).toMatchObject({
+      prompt: "Fix handoff",
+      display_name: "Transferred task",
+    });
   });
 
   it("approves a pending incoming transfer into a new local task and provenance row", async () => {
@@ -968,7 +1285,7 @@ describe("incoming transfer approval", () => {
 
     await store.init(fakeDb);
 
-    invokeMock.mockImplementation(async (cmd, args) => {
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
       if (cmd === "file_exists") {
         return (args?.path as string) === "/tmp/repo-1";
       }
@@ -982,6 +1299,7 @@ describe("incoming transfer approval", () => {
     });
 
     const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
 
     expect(typeof localTaskId).toBe("string");
     expect(fakeDb.tables.repo).toHaveLength(1);
@@ -1039,7 +1357,7 @@ describe("incoming transfer approval", () => {
 
     await store.init(fakeDb);
 
-    invokeMock.mockImplementation(async (cmd) => {
+    mockIncomingTransferApprovalInvoke(payload, async (cmd) => {
       if (cmd === "get_app_data_dir") return "/tmp/kanna-mock-data";
       if (cmd === "file_exists") return false;
       if (
@@ -1057,6 +1375,7 @@ describe("incoming transfer approval", () => {
     });
 
     const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
 
     expect(invokeMock).toHaveBeenCalledWith("git_clone", {
       url: "git@github.com:jemdiggity/kanna.git",
@@ -1100,7 +1419,7 @@ describe("incoming transfer approval", () => {
 
     await store.init(fakeDb);
 
-    invokeMock.mockImplementation(async (cmd) => {
+    mockIncomingTransferApprovalInvoke(payload, async (cmd) => {
       if (cmd === "get_app_data_dir") return "/tmp/kanna-mock-data";
       if (cmd === "file_exists") return false;
       if (cmd === "fetch_transfer_artifact") {
@@ -1124,6 +1443,7 @@ describe("incoming transfer approval", () => {
     });
 
     const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
 
     expect(invokeMock).toHaveBeenCalledWith("fetch_transfer_artifact", {
       transferId: "transfer-1",
@@ -1150,6 +1470,15 @@ describe("incoming transfer approval", () => {
     payload.task.agent_provider = "codex";
     payload.task.agent_type = "pty";
     payload.task.resume_session_id = "019d9a8c-9f39-7240-818f-88367a7c31df";
+    Object.assign(payload, {
+      artifacts: [{
+        artifact_id: "artifact-codex-rollout",
+        filename: "rollout-2026-04-18T06-27-04-019d9a8c-9f39-7240-818f-88367a7c31df.jsonl",
+        provider: "codex",
+        kind: "session-rollout",
+        home_rel_path: ".codex/sessions/2026/04/18/rollout-2026-04-18T06-27-04-019d9a8c-9f39-7240-818f-88367a7c31df.jsonl",
+      }],
+    });
     payload.recovery = {
       serialized: "prompt> ",
       cols: 80,
@@ -1178,7 +1507,7 @@ describe("incoming transfer approval", () => {
 
     await store.init(fakeDb);
 
-    invokeMock.mockImplementation(async (cmd, args) => {
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
       if (cmd === "file_exists") {
         return (args?.path as string) === "/tmp/repo-1";
       }
@@ -1200,7 +1529,19 @@ describe("incoming transfer approval", () => {
       if (cmd === "get_pipeline_socket_path") {
         return "/tmp/kanna.sock";
       }
+      if (cmd === "fetch_transfer_artifact") {
+        return {
+          transferId: "transfer-1",
+          artifactId: "artifact-codex-rollout",
+          path: "/tmp/fetched-rollout.jsonl",
+        };
+      }
+      if (cmd === "read_env_var") {
+        return "/Users/tester";
+      }
       if (
+        cmd === "ensure_directory" ||
+        cmd === "copy_file" ||
         cmd === "git_worktree_add" ||
         cmd === "seed_session_recovery_state" ||
         cmd === "acknowledge_incoming_transfer_commit"
@@ -1214,6 +1555,7 @@ describe("incoming transfer approval", () => {
     });
 
     const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
 
     expect(fakeDb.tables.pipeline_item[0]).toMatchObject({
       id: localTaskId,
@@ -1238,6 +1580,657 @@ describe("incoming transfer approval", () => {
         ]),
       }),
     );
+  });
+
+  it("imports a transferred codex rollout artifact before resuming", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const payload = buildIncomingTransferPayload() as ReturnType<typeof buildIncomingTransferPayload> & {
+      artifacts?: Array<Record<string, unknown>>;
+    };
+    payload.task.agent_provider = "codex";
+    payload.task.agent_type = "pty";
+    payload.task.resume_session_id = "019d9a8c-9f39-7240-818f-88367a7c31df";
+    payload.artifacts = [{
+      artifact_id: "artifact-codex-rollout",
+      filename: "rollout-2026-04-18T06-27-04-019d9a8c-9f39-7240-818f-88367a7c31df.jsonl",
+      provider: "codex",
+      kind: "session-rollout",
+      home_rel_path: ".codex/sessions/2026/04/18/rollout-2026-04-18T06-27-04-019d9a8c-9f39-7240-818f-88367a7c31df.jsonl",
+    }];
+    const fakeDb = createTransferDb({
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(payload),
+      }],
+    });
+
+    await store.init(fakeDb);
+
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "file_exists") {
+        return (args?.path as string) === "/tmp/repo-1";
+      }
+      if (cmd === "read_text_file") {
+        return "";
+      }
+      if (cmd === "read_builtin_resource") {
+        throw new Error("missing builtin resource");
+      }
+      if (cmd === "git_default_branch") {
+        return "main";
+      }
+      if (cmd === "which_binary") {
+        return args?.name === "codex" ? "/usr/bin/codex" : null;
+      }
+      if (cmd === "get_app_data_dir") {
+        return "/tmp/kanna-mock-data";
+      }
+      if (cmd === "get_pipeline_socket_path") {
+        return "/tmp/kanna.sock";
+      }
+      if (cmd === "fetch_transfer_artifact") {
+        return {
+          transferId: "transfer-1",
+          artifactId: "artifact-codex-rollout",
+          path: "/tmp/fetched-rollout.jsonl",
+        };
+      }
+      if (cmd === "read_env_var") {
+        return "/Users/tester";
+      }
+      if (
+        cmd === "ensure_directory" ||
+        cmd === "copy_file" ||
+        cmd === "seed_session_recovery_state" ||
+        cmd === "acknowledge_incoming_transfer_commit"
+      ) {
+        return null;
+      }
+      if (cmd === "git_worktree_add") {
+        return null;
+      }
+      if (cmd === "spawn_session") {
+        return null;
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
+
+    expect(localTaskId).toEqual(expect.any(String));
+    expect(invokeMock).toHaveBeenCalledWith("fetch_transfer_artifact", {
+      transferId: "transfer-1",
+      artifactId: "artifact-codex-rollout",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("ensure_directory", {
+      path: "/Users/tester/.codex/sessions/2026/04/18",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("copy_file", {
+      src: "/tmp/fetched-rollout.jsonl",
+      dst: "/Users/tester/.codex/sessions/2026/04/18/rollout-2026-04-18T06-27-04-019d9a8c-9f39-7240-818f-88367a7c31df.jsonl",
+    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({
+        sessionId: localTaskId,
+        agentProvider: "codex",
+        args: expect.arrayContaining([
+          expect.stringContaining("codex resume '019d9a8c-9f39-7240-818f-88367a7c31df'"),
+        ]),
+      }),
+    );
+  });
+
+  it("falls back to a fresh codex launch when no rollout artifact is available", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const payload = buildIncomingTransferPayload();
+    payload.task.agent_provider = "codex";
+    payload.task.agent_type = "pty";
+    payload.task.resume_session_id = "019d9a8c-9f39-7240-818f-88367a7c31df";
+    const fakeDb = createTransferDb({
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(payload),
+      }],
+    });
+
+    await store.init(fakeDb);
+
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "file_exists") {
+        return (args?.path as string) === "/tmp/repo-1";
+      }
+      if (cmd === "read_text_file") {
+        return "";
+      }
+      if (cmd === "read_builtin_resource") {
+        throw new Error("missing builtin resource");
+      }
+      if (cmd === "git_default_branch") {
+        return "main";
+      }
+      if (cmd === "which_binary") {
+        return args?.name === "codex" ? "/usr/bin/codex" : null;
+      }
+      if (cmd === "get_app_data_dir") {
+        return "/tmp/kanna-mock-data";
+      }
+      if (cmd === "get_pipeline_socket_path") {
+        return "/tmp/kanna.sock";
+      }
+      if (
+        cmd === "git_worktree_add" ||
+        cmd === "acknowledge_incoming_transfer_commit"
+      ) {
+        return null;
+      }
+      if (cmd === "spawn_session") {
+        return null;
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
+
+    expect(fakeDb.tables.pipeline_item[0]).toMatchObject({
+      id: localTaskId,
+      agent_session_id: null,
+    });
+    const spawnCall = invokeMock.mock.calls.find(([cmd]) => cmd === "spawn_session");
+    expect(spawnCall).toBeTruthy();
+    expect(JSON.stringify(spawnCall?.[1])).not.toContain("codex resume");
+  });
+
+  it.each([
+    {
+      provider: "claude" as const,
+      resumeSessionId: "364643cc-5e6d-48fc-86ca-ca7764380900",
+      forbiddenText: "--resume 364643cc-5e6d-48fc-86ca-ca7764380900",
+      binary: "claude",
+    },
+    {
+      provider: "copilot" as const,
+      resumeSessionId: "5fc2bd17-1d1b-4ae9-bed8-011fa4011100",
+      forbiddenText: "--resume=5fc2bd17-1d1b-4ae9-bed8-011fa4011100",
+      binary: "copilot",
+    },
+  ])("falls back to a fresh $provider launch when no session artifact is available", async ({
+    provider,
+    resumeSessionId,
+    forbiddenText,
+    binary,
+  }) => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const payload = buildIncomingTransferPayload();
+    payload.task.agent_provider = provider;
+    payload.task.agent_type = "pty";
+    payload.task.resume_session_id = resumeSessionId;
+    const fakeDb = createTransferDb({
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(payload),
+      }],
+    });
+
+    await store.init(fakeDb);
+
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "file_exists") {
+        return (args?.path as string) === "/tmp/repo-1";
+      }
+      if (cmd === "read_text_file") {
+        return "";
+      }
+      if (cmd === "read_builtin_resource") {
+        throw new Error("missing builtin resource");
+      }
+      if (cmd === "git_default_branch") {
+        return "main";
+      }
+      if (cmd === "which_binary") {
+        return args?.name === binary ? `/usr/bin/${binary}` : null;
+      }
+      if (cmd === "get_app_data_dir") {
+        return "/tmp/kanna-mock-data";
+      }
+      if (cmd === "get_pipeline_socket_path") {
+        return "/tmp/kanna.sock";
+      }
+      if (
+        cmd === "git_worktree_add" ||
+        cmd === "acknowledge_incoming_transfer_commit"
+      ) {
+        return null;
+      }
+      if (cmd === "spawn_session") {
+        return null;
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
+
+    expect(fakeDb.tables.pipeline_item[0]).toMatchObject({
+      id: localTaskId,
+    });
+    expect(fakeDb.tables.pipeline_item[0]?.agent_session_id).not.toBe(resumeSessionId);
+    const spawnCall = invokeMock.mock.calls.find(([cmd]) => cmd === "spawn_session");
+    expect(spawnCall).toBeTruthy();
+    expect(JSON.stringify(spawnCall?.[1])).not.toContain(forbiddenText);
+  });
+
+  it("imports a transferred claude session archive before resuming", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const payload = buildIncomingTransferPayload() as ReturnType<typeof buildIncomingTransferPayload> & {
+      artifacts?: Array<Record<string, unknown>>;
+    };
+    payload.task.agent_provider = "claude";
+    payload.task.agent_type = "pty";
+    payload.task.resume_session_id = "364643cc-5e6d-48fc-86ca-ca7764380900";
+    payload.artifacts = [{
+      artifact_id: "artifact-claude-session",
+      filename: "claude-session.tar.gz",
+      provider: "claude",
+      kind: "session-archive",
+      materialization: "extract-tar-gz",
+      home_rel_path: ".claude/tasks/364643cc-5e6d-48fc-86ca-ca7764380900",
+    }];
+    const fakeDb = createTransferDb({
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(payload),
+      }],
+    });
+
+    await store.init(fakeDb);
+
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "file_exists") {
+        return (args?.path as string) === "/tmp/repo-1";
+      }
+      if (cmd === "read_text_file") {
+        return "";
+      }
+      if (cmd === "read_builtin_resource") {
+        throw new Error("missing builtin resource");
+      }
+      if (cmd === "git_default_branch") {
+        return "main";
+      }
+      if (cmd === "which_binary") {
+        if (args?.name === "claude") return "/usr/bin/claude";
+        if (args?.name === "codex") return "/usr/bin/codex";
+        return null;
+      }
+      if (cmd === "get_app_data_dir") {
+        return "/tmp/kanna-mock-data";
+      }
+      if (cmd === "get_pipeline_socket_path") {
+        return "/tmp/kanna.sock";
+      }
+      if (cmd === "fetch_transfer_artifact") {
+        return {
+          transferId: "transfer-1",
+          artifactId: "artifact-claude-session",
+          path: "/tmp/fetched-claude-session.tar.gz",
+        };
+      }
+      if (cmd === "read_env_var") {
+        return "/Users/tester";
+      }
+      if (
+        cmd === "ensure_directory" ||
+        cmd === "git_worktree_add" ||
+        cmd === "seed_session_recovery_state" ||
+        cmd === "acknowledge_incoming_transfer_commit"
+      ) {
+        return null;
+      }
+      if (cmd === "run_script") {
+        return "";
+      }
+      if (cmd === "spawn_session") {
+        return null;
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
+
+    expect(localTaskId).toEqual(expect.any(String));
+    expect(invokeMock).toHaveBeenCalledWith("ensure_directory", {
+      path: "/Users/tester/.claude/tasks",
+    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "run_script",
+      expect.objectContaining({
+        script: expect.stringContaining("mktemp -d"),
+        cwd: "/tmp/repo-1",
+        env: expect.objectContaining({
+          KANNA_WORKTREE: "1",
+        }),
+      }),
+    );
+    const claudeImportCall = invokeMock.mock.calls.find(([cmd, args]) =>
+      cmd === "run_script" &&
+      typeof args === "object" &&
+      args !== null &&
+      "script" in args &&
+      typeof args.script === "string" &&
+      args.script.includes("/tmp/fetched-claude-session.tar.gz"),
+    );
+    expect(claudeImportCall?.[1]).toMatchObject({
+      script: expect.stringContaining("mv "),
+    });
+    expect(JSON.stringify(claudeImportCall?.[1])).not.toContain(
+      "tar -xzf '/tmp/fetched-claude-session.tar.gz' -C '/Users/tester/.claude/tasks'",
+    );
+    expect(invokeMock).toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({
+        sessionId: localTaskId,
+        agentProvider: "claude",
+        args: expect.arrayContaining([
+          expect.stringContaining("--resume 364643cc-5e6d-48fc-86ca-ca7764380900"),
+        ]),
+      }),
+    );
+  });
+
+  it("imports a transferred copilot session archive before resuming", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const payload = buildIncomingTransferPayload() as ReturnType<typeof buildIncomingTransferPayload> & {
+      artifacts?: Array<Record<string, unknown>>;
+    };
+    payload.task.agent_provider = "copilot";
+    payload.task.agent_type = "pty";
+    payload.task.resume_session_id = "5fc2bd17-1d1b-4ae9-bed8-011fa4011100";
+    payload.artifacts = [{
+      artifact_id: "artifact-copilot-session",
+      filename: "copilot-session.tar.gz",
+      provider: "copilot",
+      kind: "session-archive",
+      materialization: "extract-tar-gz",
+      home_rel_path: ".copilot/session-state/5fc2bd17-1d1b-4ae9-bed8-011fa4011100",
+    }];
+    const fakeDb = createTransferDb({
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(payload),
+      }],
+    });
+
+    await store.init(fakeDb);
+
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "file_exists") {
+        return (args?.path as string) === "/tmp/repo-1";
+      }
+      if (cmd === "read_text_file") {
+        return "";
+      }
+      if (cmd === "read_builtin_resource") {
+        throw new Error("missing builtin resource");
+      }
+      if (cmd === "git_default_branch") {
+        return "main";
+      }
+      if (cmd === "which_binary") {
+        return args?.name === "copilot" ? "/usr/bin/copilot" : null;
+      }
+      if (cmd === "get_app_data_dir") {
+        return "/tmp/kanna-mock-data";
+      }
+      if (cmd === "get_pipeline_socket_path") {
+        return "/tmp/kanna.sock";
+      }
+      if (cmd === "fetch_transfer_artifact") {
+        return {
+          transferId: "transfer-1",
+          artifactId: "artifact-copilot-session",
+          path: "/tmp/fetched-copilot-session.tar.gz",
+        };
+      }
+      if (cmd === "read_env_var") {
+        return "/Users/tester";
+      }
+      if (
+        cmd === "ensure_directory" ||
+        cmd === "git_worktree_add" ||
+        cmd === "seed_session_recovery_state" ||
+        cmd === "acknowledge_incoming_transfer_commit"
+      ) {
+        return null;
+      }
+      if (cmd === "run_script") {
+        return "";
+      }
+      if (cmd === "spawn_session") {
+        return null;
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
+
+    expect(localTaskId).toEqual(expect.any(String));
+    expect(invokeMock).toHaveBeenCalledWith("ensure_directory", {
+      path: "/Users/tester/.copilot/session-state",
+    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "run_script",
+      expect.objectContaining({
+        script: expect.stringContaining("mktemp -d"),
+        cwd: "/tmp/repo-1",
+        env: expect.objectContaining({
+          KANNA_WORKTREE: "1",
+        }),
+      }),
+    );
+    const copilotImportCall = invokeMock.mock.calls.find(([cmd, args]) =>
+      cmd === "run_script" &&
+      typeof args === "object" &&
+      args !== null &&
+      "script" in args &&
+      typeof args.script === "string" &&
+      args.script.includes("/tmp/fetched-copilot-session.tar.gz"),
+    );
+    expect(copilotImportCall?.[1]).toMatchObject({
+      script: expect.stringContaining("mv "),
+    });
+    expect(JSON.stringify(copilotImportCall?.[1])).not.toContain(
+      "tar -xzf '/tmp/fetched-copilot-session.tar.gz' -C '/Users/tester/.copilot/session-state'",
+    );
+    expect(invokeMock).toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({
+        sessionId: localTaskId,
+        agentProvider: "copilot",
+        args: expect.arrayContaining([
+          expect.stringContaining("--resume=5fc2bd17-1d1b-4ae9-bed8-011fa4011100"),
+        ]),
+      }),
+    );
+  });
+
+  it.each([
+    {
+      provider: "claude" as const,
+      binary: "claude",
+      resumeSessionId: "364643cc-5e6d-48fc-86ca-ca7764380900",
+      artifactId: "artifact-claude-session",
+      artifactPath: "/tmp/fetched-claude-session.tar.gz",
+      homeRelPath: ".claude/tasks/364643cc-5e6d-48fc-86ca-ca7764380900",
+      forbiddenText: "--resume 364643cc-5e6d-48fc-86ca-ca7764380900",
+    },
+    {
+      provider: "copilot" as const,
+      binary: "copilot",
+      resumeSessionId: "5fc2bd17-1d1b-4ae9-bed8-011fa4011100",
+      artifactId: "artifact-copilot-session",
+      artifactPath: "/tmp/fetched-copilot-session.tar.gz",
+      homeRelPath: ".copilot/session-state/5fc2bd17-1d1b-4ae9-bed8-011fa4011100",
+      forbiddenText: "--resume=5fc2bd17-1d1b-4ae9-bed8-011fa4011100",
+    },
+  ])("falls back to a fresh $provider launch when the destination session already exists", async ({
+    provider,
+    binary,
+    resumeSessionId,
+    artifactId,
+    artifactPath,
+    homeRelPath,
+    forbiddenText,
+  }) => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const payload = buildIncomingTransferPayload() as ReturnType<typeof buildIncomingTransferPayload> & {
+      artifacts?: Array<Record<string, unknown>>;
+    };
+    payload.task.agent_provider = provider;
+    payload.task.agent_type = "pty";
+    payload.task.resume_session_id = resumeSessionId;
+    payload.artifacts = [{
+      artifact_id: artifactId,
+      filename: `${provider}-session.tar.gz`,
+      provider,
+      kind: "session-archive",
+      materialization: "extract-tar-gz",
+      home_rel_path: homeRelPath,
+    }];
+    const fakeDb = createTransferDb({
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(payload),
+      }],
+    });
+
+    await store.init(fakeDb);
+
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "file_exists") {
+        return (args?.path as string) === "/tmp/repo-1" ||
+          (args?.path as string) === `/Users/tester/${homeRelPath}`;
+      }
+      if (cmd === "read_text_file") {
+        return "";
+      }
+      if (cmd === "read_builtin_resource") {
+        throw new Error("missing builtin resource");
+      }
+      if (cmd === "git_default_branch") {
+        return "main";
+      }
+      if (cmd === "which_binary") {
+        return args?.name === binary ? `/usr/bin/${binary}` : null;
+      }
+      if (cmd === "get_app_data_dir") {
+        return "/tmp/kanna-mock-data";
+      }
+      if (cmd === "get_pipeline_socket_path") {
+        return "/tmp/kanna.sock";
+      }
+      if (cmd === "fetch_transfer_artifact") {
+        return {
+          transferId: "transfer-1",
+          artifactId,
+          path: artifactPath,
+        };
+      }
+      if (cmd === "read_env_var") {
+        return "/Users/tester";
+      }
+      if (
+        cmd === "git_worktree_add" ||
+        cmd === "seed_session_recovery_state" ||
+        cmd === "acknowledge_incoming_transfer_commit"
+      ) {
+        return null;
+      }
+      if (cmd === "spawn_session") {
+        return null;
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
+
+    expect(localTaskId).toEqual(expect.any(String));
+    expect(invokeMock).not.toHaveBeenCalledWith("fetch_transfer_artifact", expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith("run_script", expect.anything());
+    const spawnCall = invokeMock.mock.calls.find(([cmd]) => cmd === "spawn_session");
+    expect(spawnCall).toBeTruthy();
+    expect(JSON.stringify(spawnCall?.[1])).not.toContain(forbiddenText);
   });
 
   it("rejects a pending incoming transfer locally", async () => {
@@ -1268,6 +2261,107 @@ describe("incoming transfer approval", () => {
       status: "rejected",
       error: "Rejected locally",
     });
+  });
+
+  it("does not finalize the source when an incoming transfer is rejected", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const fakeDb = createTransferDb({
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(buildIncomingTransferPayload()),
+      }],
+    });
+
+    await store.init(fakeDb);
+    await store.rejectIncomingTransfer("transfer-1");
+
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "finalize_outgoing_transfer",
+      expect.anything(),
+    );
+  });
+});
+
+describe("source transfer finalization", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    loadSessionRecoveryStateMock.mockReset();
+    vi.useRealTimers();
+  });
+
+  it("best-effort finalizes a codex source transfer after signaling the session", async () => {
+    vi.useFakeTimers();
+
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const sourceItem = buildItem();
+    sourceItem.agent_provider = "codex";
+    sourceItem.agent_session_id = "019d-initial";
+    const outgoingPayload = buildOutgoingTransferPayload({
+      sourcePeerId: "peer-source",
+      sourceTaskId: "task-source",
+      targetPeerId: "peer-target",
+      item: sourceItem,
+      repoPath: "/tmp/repo-1",
+      repoName: "repo-1",
+      repoDefaultBranch: "main",
+      repoRemoteUrl: null,
+      recovery: null,
+      artifacts: [],
+      targetHasRepo: true,
+      bundle: null,
+    });
+    const fakeDb = createTransferDb({
+      repos: [buildRepo()],
+      items: [sourceItem],
+      transfers: [{
+        id: "transfer-123",
+        direction: "outgoing",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: "peer-target",
+        source_task_id: "task-source",
+        local_task_id: "task-source",
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(outgoingPayload),
+      }],
+    });
+
+    await store.init(fakeDb);
+    store.repos = [buildRepo()];
+    store.items = [sourceItem];
+    loadSessionRecoveryStateMock.mockResolvedValue(null);
+
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === "signal_session") return null;
+      return null;
+    });
+
+    const finalizePromise = store.finalizeOutgoingTransfer("transfer-123");
+    await vi.advanceTimersByTimeAsync(1500);
+    const result = await finalizePromise;
+
+    expect(invokeMock).toHaveBeenCalledWith("signal_session", {
+      sessionId: "task-source",
+      signal: "SIGINT",
+    });
+    expect(result.transferId).toBe("transfer-123");
+    expect(result.finalizedCleanly).toBe(false);
+    expect(result.payload.task.source_task_id).toBe("task-source");
   });
 });
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{oneshot, Mutex};
@@ -21,15 +21,18 @@ pub struct TransferSidecarClient {
 impl TransferSidecarClient {
     pub fn spawn(app: AppHandle) -> Result<Self, String> {
         let sidecar_path = resolve_sidecar_binary()?;
+        let app_data_dir = app.path().app_data_dir().map_err(|error| {
+            format!(
+                "failed to resolve app data dir for transfer sidecar: {}",
+                error
+            )
+        })?;
+        let sidecar_env = build_transfer_sidecar_env(
+            &app_data_dir,
+            crate::transfer_identity::current_machine_name().as_deref(),
+        )?;
         let mut child = Command::new(&sidecar_path)
-            .env(
-                "KANNA_TRANSFER_PORT",
-                std::env::var("KANNA_TRANSFER_PORT").unwrap_or_else(|_| "4455".to_string()),
-            )
-            .env(
-                "KANNA_TRANSFER_REGISTRY_DIR",
-                std::env::var("KANNA_TRANSFER_REGISTRY_DIR").unwrap_or_default(),
-            )
+            .envs(sidecar_env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
@@ -197,6 +200,52 @@ impl TransferSidecarClient {
         }))
     }
 
+    pub async fn finalize_outgoing_transfer(
+        &mut self,
+        transfer_id: String,
+    ) -> Result<Value, String> {
+        let request_id = self.next_request_id("finalize");
+        let response = self
+            .send_request(
+                json!({
+                    "type": "finalize_outgoing_transfer",
+                    "request_id": request_id,
+                    "transfer_id": transfer_id,
+                }),
+                &request_id,
+            )
+            .await?;
+
+        parse_finalize_outgoing_transfer_response(&response)
+    }
+
+    pub async fn complete_outgoing_transfer_finalization(
+        &mut self,
+        transfer_id: String,
+        payload: Option<Value>,
+        finalized_cleanly: bool,
+        error: Option<String>,
+    ) -> Result<Value, String> {
+        let request_id = self.next_request_id("complete-finalize");
+        let response = self
+            .send_request(
+                json!({
+                    "type": "complete_outgoing_transfer_finalization",
+                    "request_id": request_id,
+                    "transfer_id": transfer_id,
+                    "payload": payload,
+                    "finalized_cleanly": finalized_cleanly,
+                    "error": error,
+                }),
+                &request_id,
+            )
+            .await?;
+
+        Ok(json!({
+            "transferId": required_string(&response, &["transfer_id", "transferId"])?,
+        }))
+    }
+
     async fn prepare_transfer_preflight(&mut self, payload: Value) -> Result<Value, String> {
         let source_task_id = required_string(&payload, &["sourceTaskId", "source_task_id"])?;
         let target_peer_id = required_string(&payload, &["targetPeerId", "target_peer_id"])?;
@@ -347,18 +396,8 @@ fn spawn_reader(
                 continue;
             }
 
-            if value.get("type").and_then(Value::as_str) == Some("incoming_transfer_request") {
-                let _ = app.emit("transfer-request", &value);
-                continue;
-            }
-
-            if value.get("type").and_then(Value::as_str) == Some("pairing_completed") {
-                let _ = app.emit("pairing-completed", &value);
-                continue;
-            }
-
-            if value.get("type").and_then(Value::as_str) == Some("outgoing_transfer_committed") {
-                let _ = app.emit("outgoing-transfer-committed", &value);
+            if let Some(event_name) = forwarded_event_name(&value) {
+                let _ = app.emit(event_name, &value);
                 continue;
             }
 
@@ -382,6 +421,51 @@ fn required_string(value: &Value, keys: &[&str]) -> Result<String, String> {
         "missing required string field {}",
         keys.join(" or ")
     ))
+}
+
+fn parse_finalize_outgoing_transfer_response(response: &Value) -> Result<Value, String> {
+    Ok(json!({
+        "transferId": required_string(response, &["transfer_id", "transferId"])?,
+        "payload": response
+            .get("payload")
+            .cloned()
+            .ok_or_else(|| "finalize_outgoing_transfer response missing payload".to_string())?,
+        "finalizedCleanly": required_bool(response, &["finalized_cleanly", "finalizedCleanly"])?,
+    }))
+}
+
+fn forwarded_event_name(value: &Value) -> Option<&'static str> {
+    match value.get("type").and_then(Value::as_str) {
+        Some("incoming_transfer_request") => Some("transfer-request"),
+        Some("pairing_completed") => Some("pairing-completed"),
+        Some("outgoing_transfer_committed") => Some("outgoing-transfer-committed"),
+        Some("outgoing_transfer_finalization_requested") => {
+            Some("outgoing-transfer-finalization-requested")
+        }
+        _ => None,
+    }
+}
+
+fn build_transfer_sidecar_env(
+    app_data_dir: &std::path::Path,
+    machine_name: Option<&str>,
+) -> Result<HashMap<String, String>, String> {
+    let resolved = crate::transfer_identity::resolve_transfer_identity(app_data_dir, machine_name)?;
+    let mut env = HashMap::new();
+    env.insert(
+        "KANNA_TRANSFER_PORT".to_string(),
+        std::env::var("KANNA_TRANSFER_PORT").unwrap_or_else(|_| "4455".to_string()),
+    );
+    env.insert(
+        "KANNA_TRANSFER_REGISTRY_DIR".to_string(),
+        std::env::var("KANNA_TRANSFER_REGISTRY_DIR").unwrap_or_default(),
+    );
+    env.insert("KANNA_TRANSFER_PEER_ID".to_string(), resolved.peer_id);
+    env.insert(
+        "KANNA_TRANSFER_DISPLAY_NAME".to_string(),
+        resolved.display_name,
+    );
+    Ok(env)
 }
 
 fn required_bool(value: &Value, keys: &[&str]) -> Result<bool, String> {
@@ -421,4 +505,80 @@ fn resolve_sidecar_binary() -> Result<PathBuf, String> {
     }
 
     Err("kanna-task-transfer sidecar binary not found".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestTempDir {
+        path: PathBuf,
+    }
+
+    impl TestTempDir {
+        fn new() -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            let path = std::env::temp_dir().join(format!(
+                "kanna-transfer-sidecar-test-{}-{}",
+                std::process::id(),
+                nanos
+            ));
+            std::fs::create_dir_all(&path).expect("temp dir should be created");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestTempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn transfer_sidecar_env_includes_stable_peer_id_and_display_name() {
+        let temp = TestTempDir::new();
+
+        let env = build_transfer_sidecar_env(temp.path(), Some("Jeremy's MacBook Pro"))
+            .expect("sidecar env should be built");
+
+        assert!(env.contains_key("KANNA_TRANSFER_PEER_ID"));
+        assert_eq!(
+            env.get("KANNA_TRANSFER_DISPLAY_NAME").map(String::as_str),
+            Some("Jeremy's MacBook Pro")
+        );
+    }
+
+    #[test]
+    fn finalize_outgoing_transfer_response_requires_payload() {
+        let response = json!({
+            "transferId": "transfer-1",
+            "finalizedCleanly": true,
+        });
+
+        let error =
+            parse_finalize_outgoing_transfer_response(&response).expect_err("payload is required");
+        assert!(error.contains("payload"));
+    }
+
+    #[test]
+    fn finalization_request_events_emit_expected_tauri_topic() {
+        let value = json!({
+            "type": "outgoing_transfer_finalization_requested",
+            "transfer_id": "transfer-1",
+        });
+
+        assert_eq!(
+            forwarded_event_name(&value),
+            Some("outgoing-transfer-finalization-requested")
+        );
+    }
 }

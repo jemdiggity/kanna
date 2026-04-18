@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +135,12 @@ pub struct PreflightResult {
     pub target_has_repo: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct FinalizedOutgoingTransfer {
+    pub payload: Value,
+    pub finalized_cleanly: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncomingTransferEvent {
     pub transfer_id: String,
@@ -149,6 +155,11 @@ pub struct OutgoingTransferCommittedEvent {
     pub transfer_id: String,
     pub source_task_id: String,
     pub destination_local_task_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutgoingTransferFinalizationRequestedEvent {
+    pub transfer_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +180,7 @@ pub enum RuntimeEvent {
     PairingCompleted(PairingCompletedEvent),
     IncomingTransferRequest(IncomingTransferEvent),
     OutgoingTransferCommitted(OutgoingTransferCommittedEvent),
+    OutgoingTransferFinalizationRequested(OutgoingTransferFinalizationRequestedEvent),
 }
 
 #[derive(Debug, Error)]
@@ -219,6 +231,9 @@ struct TransferArtifactRecord {
     created_at: Instant,
 }
 
+type PendingOutgoingTransferFinalizations =
+    Arc<Mutex<HashMap<String, oneshot::Sender<Result<FinalizedOutgoingTransfer, RuntimeError>>>>>;
+
 #[derive(Clone)]
 struct ListenerContext {
     self_peer_id: String,
@@ -228,6 +243,7 @@ struct ListenerContext {
     discovery: PeerDiscovery,
     pending_transfer_ttl: Duration,
     outgoing_transfers: Arc<Mutex<HashMap<String, OutgoingTransferReservation>>>,
+    pending_outgoing_transfer_finalizations: PendingOutgoingTransferFinalizations,
     incoming_reservations: Arc<Mutex<HashMap<String, IncomingTransferReservation>>>,
     transfer_artifacts: Arc<Mutex<HashMap<String, HashMap<String, TransferArtifactRecord>>>>,
     request_counter: Arc<AtomicU64>,
@@ -239,6 +255,7 @@ pub struct TransferRuntime {
     discovery: PeerDiscovery,
     identity: TransferIdentity,
     outgoing_transfers: Arc<Mutex<HashMap<String, OutgoingTransferReservation>>>,
+    pending_outgoing_transfer_finalizations: PendingOutgoingTransferFinalizations,
     incoming_reservations: Arc<Mutex<HashMap<String, IncomingTransferReservation>>>,
     transfer_artifacts: Arc<Mutex<HashMap<String, HashMap<String, TransferArtifactRecord>>>>,
     incoming_events: Mutex<mpsc::UnboundedReceiver<RuntimeEvent>>,
@@ -398,6 +415,7 @@ impl TransferRuntime {
         };
         let (incoming_sender, incoming_receiver) = mpsc::unbounded_channel();
         let outgoing_transfers = Arc::new(Mutex::new(HashMap::new()));
+        let pending_outgoing_transfer_finalizations = Arc::new(Mutex::new(HashMap::new()));
         let incoming_reservations = Arc::new(Mutex::new(HashMap::new()));
         let transfer_artifacts = Arc::new(Mutex::new(HashMap::new()));
         let request_counter = Arc::new(AtomicU64::new(1));
@@ -409,6 +427,9 @@ impl TransferRuntime {
             discovery: discovery.clone(),
             pending_transfer_ttl: config.pending_transfer_ttl,
             outgoing_transfers: Arc::clone(&outgoing_transfers),
+            pending_outgoing_transfer_finalizations: Arc::clone(
+                &pending_outgoing_transfer_finalizations,
+            ),
             incoming_reservations: Arc::clone(&incoming_reservations),
             transfer_artifacts: Arc::clone(&transfer_artifacts),
             request_counter: Arc::clone(&request_counter),
@@ -421,6 +442,7 @@ impl TransferRuntime {
             discovery,
             identity,
             outgoing_transfers,
+            pending_outgoing_transfer_finalizations,
             incoming_reservations,
             transfer_artifacts,
             incoming_events: Mutex::new(incoming_receiver),
@@ -439,10 +461,7 @@ impl TransferRuntime {
             .collect()
     }
 
-    pub async fn start_pairing(
-        &self,
-        target_peer_id: &str,
-    ) -> Result<PairingResult, RuntimeError> {
+    pub async fn start_pairing(&self, target_peer_id: &str) -> Result<PairingResult, RuntimeError> {
         let target_peer = self.find_peer(target_peer_id).await?;
         let request_id = self.next_request_id("pair");
         let response = self
@@ -570,6 +589,9 @@ impl TransferRuntime {
             PeerResponse::ImportCommitted { .. } => Err(RuntimeError::Protocol(
                 "unexpected import-committed response during preflight".into(),
             )),
+            PeerResponse::FinalizeTransfer { .. } => Err(RuntimeError::Protocol(
+                "unexpected finalize response during preflight".into(),
+            )),
             PeerResponse::Error {
                 request_id: _,
                 message,
@@ -645,11 +667,118 @@ impl TransferRuntime {
             PeerResponse::ImportCommitted { .. } => Err(RuntimeError::Protocol(
                 "unexpected import-committed response during transfer commit".into(),
             )),
+            PeerResponse::FinalizeTransfer { .. } => Err(RuntimeError::Protocol(
+                "unexpected finalize response during transfer commit".into(),
+            )),
             PeerResponse::Error {
                 request_id: _,
                 message,
             } => Err(RuntimeError::Protocol(message)),
         }
+    }
+
+    pub async fn finalize_outgoing_transfer(
+        &self,
+        transfer_id: &str,
+    ) -> Result<FinalizedOutgoingTransfer, RuntimeError> {
+        let source_peer_id = {
+            let mut reservations = self.incoming_reservations.lock().await;
+            prune_incoming_reservations(&mut reservations, self.config.pending_transfer_ttl);
+            reservations
+                .get(transfer_id)
+                .map(|reservation| reservation.source_peer_id.clone())
+        }
+        .ok_or_else(|| {
+            RuntimeError::Protocol(format!(
+                "missing source peer for outgoing transfer finalization {}",
+                transfer_id
+            ))
+        })?;
+
+        let source_peer = self.find_peer(&source_peer_id).await?;
+        self.ensure_peer_is_trusted(&source_peer.peer_id, &source_peer.public_key)?;
+        let source_public_key = parse_public_key(&source_peer.public_key)?;
+        let request_id = self.next_request_id("finalize");
+        let response = self
+            .send_peer_request(
+                &source_peer,
+                PeerRequest::FinalizeTransfer {
+                    request_id: request_id.clone(),
+                    transfer_id: transfer_id.to_owned(),
+                    requester_peer_id: self.config.peer_id.clone(),
+                },
+            )
+            .await?;
+
+        match response {
+            PeerResponse::FinalizeTransfer {
+                request_id: response_request_id,
+                transfer_id: response_transfer_id,
+                sealed_payload,
+            } => {
+                if response_request_id != request_id {
+                    return Err(RuntimeError::Protocol(format!(
+                        "mismatched request id in finalize response: expected {}, got {}",
+                        request_id, response_request_id
+                    )));
+                }
+                if response_transfer_id != transfer_id {
+                    return Err(RuntimeError::Protocol(format!(
+                        "mismatched transfer id in finalize response: expected {}, got {}",
+                        transfer_id, response_transfer_id
+                    )));
+                }
+                let payload = open_json(&self.identity, &source_public_key, &sealed_payload)?;
+                let finalized_payload = payload.get("payload").cloned().ok_or_else(|| {
+                    RuntimeError::Protocol("finalize response missing payload".into())
+                })?;
+                let finalized_cleanly = payload
+                    .get("finalized_cleanly")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| {
+                    RuntimeError::Protocol("finalize response missing finalized_cleanly".into())
+                })?;
+                Ok(FinalizedOutgoingTransfer {
+                    payload: finalized_payload,
+                    finalized_cleanly,
+                })
+            }
+            PeerResponse::StartPairing { .. }
+            | PeerResponse::PrepareTransfer { .. }
+            | PeerResponse::SubmitTransferPayload { .. }
+            | PeerResponse::FetchTransferArtifact { .. }
+            | PeerResponse::ImportCommitted { .. } => Err(RuntimeError::Protocol(
+                "unexpected response while finalizing outgoing transfer".into(),
+            )),
+            PeerResponse::Error {
+                request_id: _,
+                message,
+            } => Err(RuntimeError::Protocol(message)),
+        }
+    }
+
+    pub async fn complete_outgoing_transfer_finalization(
+        &self,
+        transfer_id: &str,
+        result: Result<FinalizedOutgoingTransfer, RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        let sender = self
+            .pending_outgoing_transfer_finalizations
+            .lock()
+            .await
+            .remove(transfer_id)
+            .ok_or_else(|| {
+                RuntimeError::Protocol(format!(
+                    "missing pending outgoing transfer finalization {}",
+                    transfer_id
+                ))
+            })?;
+        sender.send(result).map_err(|_| {
+            RuntimeError::Protocol(format!(
+                "finalization receiver dropped for transfer {}",
+                transfer_id
+            ))
+        })
     }
 
     pub async fn next_event(&self) -> Result<RuntimeEvent, RuntimeError> {
@@ -785,7 +914,8 @@ impl TransferRuntime {
             PeerResponse::StartPairing { .. }
             | PeerResponse::PrepareTransfer { .. }
             | PeerResponse::SubmitTransferPayload { .. }
-            | PeerResponse::ImportCommitted { .. } => Err(RuntimeError::Protocol(
+            | PeerResponse::ImportCommitted { .. }
+            | PeerResponse::FinalizeTransfer { .. } => Err(RuntimeError::Protocol(
                 "unexpected response while fetching transfer artifact".into(),
             )),
             PeerResponse::Error {
@@ -864,7 +994,8 @@ impl TransferRuntime {
             PeerResponse::StartPairing { .. }
             | PeerResponse::PrepareTransfer { .. }
             | PeerResponse::SubmitTransferPayload { .. }
-            | PeerResponse::FetchTransferArtifact { .. } => Err(RuntimeError::Protocol(
+            | PeerResponse::FetchTransferArtifact { .. }
+            | PeerResponse::FinalizeTransfer { .. } => Err(RuntimeError::Protocol(
                 "unexpected response while acknowledging import commit".into(),
             )),
             PeerResponse::Error {
@@ -1015,6 +1146,9 @@ impl Drop for TransferRuntime {
         }
         if let Ok(mut reservations) = self.incoming_reservations.try_lock() {
             reservations.clear();
+        }
+        if let Ok(mut pending) = self.pending_outgoing_transfer_finalizations.try_lock() {
+            pending.clear();
         }
         if let Ok(mut transfer_artifacts) = self.transfer_artifacts.try_lock() {
             transfer_artifacts.clear();
@@ -1216,6 +1350,113 @@ async fn handle_connection(
                     request_id,
                     message: error.to_string(),
                 },
+            }
+        }
+        Ok(PeerRequest::FinalizeTransfer {
+            request_id,
+            transfer_id,
+            requester_peer_id,
+        }) => {
+            let transfer_id_for_cleanup = transfer_id.clone();
+            match async {
+                let expected_target_peer_id = {
+                    let mut transfers = context.outgoing_transfers.lock().await;
+                    prune_outgoing_transfers(&mut transfers, context.pending_transfer_ttl);
+                    transfers
+                        .get(&transfer_id)
+                        .map(|reservation| reservation.target_peer_id.clone())
+                }
+                .ok_or_else(|| {
+                    RuntimeError::Protocol(format!(
+                        "missing target peer for outgoing transfer finalization {}",
+                        transfer_id
+                    ))
+                })?;
+
+                if requester_peer_id != expected_target_peer_id {
+                    return Err(RuntimeError::Protocol(format!(
+                        "unexpected outgoing transfer finalization requester {} for transfer {}",
+                        requester_peer_id, transfer_id
+                    )));
+                }
+
+                let requester_peer = context
+                    .discovery
+                    .list_peers(&context.self_peer_id)
+                    .await?
+                    .into_iter()
+                    .find(|peer| peer.peer_id == requester_peer_id)
+                    .ok_or_else(|| {
+                        RuntimeError::Protocol(format!(
+                            "requester peer {} is not currently discovered",
+                            requester_peer_id
+                        ))
+                    })?;
+                ensure_peer_is_trusted_for(
+                    &context.registry_root,
+                    &context.self_peer_id,
+                    &requester_peer_id,
+                    &requester_peer.public_key,
+                )?;
+
+                let (tx, rx) = oneshot::channel();
+                context
+                    .pending_outgoing_transfer_finalizations
+                    .lock()
+                    .await
+                    .insert(transfer_id.clone(), tx);
+                context
+                    .incoming_sender
+                    .send(RuntimeEvent::OutgoingTransferFinalizationRequested(
+                        OutgoingTransferFinalizationRequestedEvent {
+                            transfer_id: transfer_id.clone(),
+                        },
+                    ))
+                    .map_err(|_| RuntimeError::IncomingEventChannelClosed)?;
+
+                let result = match rx.await {
+                    Ok(result) => result,
+                    Err(_) => Err(RuntimeError::Protocol(format!(
+                        "desktop finalization receiver dropped for transfer {}",
+                        transfer_id
+                    ))),
+                };
+                let identity =
+                    load_or_create_identity(&context.registry_root, &context.self_peer_id)?;
+                let requester_public_key = parse_public_key(&requester_peer.public_key)?;
+                match result {
+                    Ok(finalized) => {
+                        let sealed_payload = seal_json(
+                            &identity,
+                            &requester_public_key,
+                            &serde_json::json!({
+                                "payload": finalized.payload,
+                                "finalized_cleanly": finalized.finalized_cleanly,
+                            }),
+                        )?;
+                        Ok::<PeerResponse, RuntimeError>(PeerResponse::FinalizeTransfer {
+                            request_id: request_id.clone(),
+                            transfer_id,
+                            sealed_payload,
+                        })
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    context
+                        .pending_outgoing_transfer_finalizations
+                        .lock()
+                        .await
+                        .remove(&transfer_id_for_cleanup);
+                    PeerResponse::Error {
+                        request_id,
+                        message: error.to_string(),
+                    }
+                }
             }
         }
         Ok(PeerRequest::FetchTransferArtifact {

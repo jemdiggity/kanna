@@ -143,6 +143,55 @@ fn transfer_artifact_control_messages_roundtrip() {
         transfer_id: "transfer-1".into(),
         sealed_payload: "sealed-response".into(),
     });
+
+    assert_roundtrip(ControlRequest::FinalizeOutgoingTransfer {
+        request_id: "req-finalize".into(),
+        transfer_id: "transfer-1".into(),
+    });
+
+    assert_roundtrip(ControlRequest::CompleteOutgoingTransferFinalization {
+        request_id: "req-complete-finalize".into(),
+        transfer_id: "transfer-1".into(),
+        payload: Some(json!({
+            "task": {
+                "source_task_id": "task-source",
+            },
+        })),
+        finalized_cleanly: true,
+        error: None,
+    });
+
+    assert_roundtrip(ControlResponse::FinalizeOutgoingTransfer {
+        request_id: "req-finalize".into(),
+        transfer_id: "transfer-1".into(),
+        payload: json!({
+            "task": {
+                "source_task_id": "task-source",
+            },
+        }),
+        finalized_cleanly: false,
+    });
+
+    assert_roundtrip(ControlResponse::CompleteOutgoingTransferFinalization {
+        request_id: "req-complete-finalize".into(),
+        transfer_id: "transfer-1".into(),
+    });
+
+    assert_roundtrip(PeerRequest::FinalizeTransfer {
+        request_id: "req-peer-finalize".into(),
+        transfer_id: "transfer-1".into(),
+        requester_peer_id: "peer-destination".into(),
+    });
+
+    assert_roundtrip(PeerResponse::FinalizeTransfer {
+        request_id: "req-peer-finalize".into(),
+        transfer_id: "transfer-1".into(),
+        sealed_payload: "sealed-finalize".into(),
+    });
+
+    assert_roundtrip(SidecarEvent::OutgoingTransferFinalizationRequested {
+        transfer_id: "transfer-1".into(),
+    });
 }
 
 #[test]

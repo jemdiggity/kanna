@@ -11,7 +11,6 @@ import { getSetting, setSetting, type AgentProvider, type DbHandle } from "@kann
 import i18n from "./i18n";
 import Sidebar from "./components/Sidebar.vue";
 import MainPanel from "./components/MainPanel.vue";
-import ActionBar from "./components/ActionBar.vue";
 import NewTaskModal from "./components/NewTaskModal.vue";
 import AddRepoModal from "./components/AddRepoModal.vue";
 import KeyboardShortcutsModal from "./components/KeyboardShortcutsModal.vue";
@@ -46,6 +45,7 @@ import {
   parsePairingResult,
   parsePersistedOutgoingTransferPayload,
   parseOutgoingTransferCommittedEvent,
+  parseOutgoingTransferFinalizationRequestEvent,
   parseTransferPeers,
   type TransferPeerOption,
 } from "./utils/taskTransfer";
@@ -457,6 +457,13 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
       execute: () => sidebarRef.value?.renameSelectedItem(),
     });
   }
+  if (store.currentItem && store.currentItem.stage !== "done") {
+    cmds.push({
+      id: "push-to-machine",
+      label: t('taskTransfer.pushToMachine'),
+      execute: () => openPeerPicker(store.currentItem!.id),
+    });
+  }
   // Factory commands
   cmds.push({
     id: "create-agent",
@@ -656,17 +663,6 @@ async function syncIncomingTransferModalFromDb() {
   showIncomingTransfer.value = true;
 }
 
-function handleActionBarAdvanceStage() {
-  const item = store.currentItem;
-  if (!item) return;
-  void store.advanceStage(item.id);
-}
-
-function handleActionBarPushToMachine() {
-  const item = store.currentItem;
-  if (!item) return;
-  openPeerPicker(item.id);
-}
 // Keyboard shortcuts
 const keyboardActions = {
   newTask: () => { openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e)); },
@@ -1107,6 +1103,35 @@ onMounted(async () => {
     console.error("[App] outgoing-transfer-committed listener registration failed:", e);
   }
 
+  try {
+    const unlistenOutgoingTransferFinalizationRequested = await listen("outgoing-transfer-finalization-requested", async (event: unknown) => {
+      const payload = (event as { payload?: unknown })?.payload ?? event;
+      const request = parseOutgoingTransferFinalizationRequestEvent(payload);
+      try {
+        const finalized = await store.finalizeOutgoingTransfer(request.transferId);
+        await invoke("complete_outgoing_transfer_finalization", {
+          transferId: request.transferId,
+          payload: finalized.payload,
+          finalizedCleanly: finalized.finalizedCleanly,
+          error: null,
+        });
+      } catch (error: unknown) {
+        console.error("[App] failed to finalize outgoing transfer:", error);
+        await invoke("complete_outgoing_transfer_finalization", {
+          transferId: request.transferId,
+          payload: null,
+          finalizedCleanly: false,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch((invokeError: unknown) => {
+          console.error("[App] failed to report outgoing transfer finalization error:", invokeError);
+        });
+      }
+    });
+    appUnlisteners.push(unlistenOutgoingTransferFinalizationRequested);
+  } catch (e: unknown) {
+    console.error("[App] outgoing-transfer-finalization-requested listener registration failed:", e);
+  }
+
   await warmTransferSidecar();
 
   // Cache $HOME for shell-at-home (no repo selected)
@@ -1202,12 +1227,6 @@ onBeforeUnmount(() => {
         @close-task="store.closeTask"
         @agent-completed="store.bump"
         @back="store.selectedItemId = null"
-      />
-      <ActionBar
-        v-if="store.currentItem"
-        :item="store.currentItem"
-        @advance-stage="handleActionBarAdvanceStage"
-        @push-to-machine="handleActionBarPushToMachine"
       />
     </div>
 

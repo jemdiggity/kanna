@@ -442,6 +442,93 @@ async fn destination_can_acknowledge_import_commit_back_to_source() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn destination_can_finalize_outgoing_transfer_after_approval() {
+    let temp = tempfile::tempdir().unwrap();
+
+    let secondary = std::sync::Arc::new(
+        TransferRuntime::spawn(RuntimeConfig::for_tests(
+            "peer-secondary",
+            "Secondary",
+            temp.path(),
+            0,
+        ))
+        .await
+        .unwrap(),
+    );
+
+    let primary = std::sync::Arc::new(
+        TransferRuntime::spawn(RuntimeConfig::for_tests(
+            "peer-primary",
+            "Primary",
+            temp.path(),
+            0,
+        ))
+        .await
+        .unwrap(),
+    );
+
+    primary.start_pairing("peer-secondary").await.unwrap();
+
+    let preflight = primary
+        .prepare_transfer_preflight("peer-secondary", "task-source")
+        .await
+        .unwrap();
+
+    primary
+        .prepare_transfer_commit(
+            &preflight.transfer_id,
+            json!({
+                "target_peer_id": "peer-secondary",
+                "task": {
+                    "source_task_id": "task-source"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    let _incoming = next_incoming_transfer_request(&secondary).await;
+
+    let primary_for_completion = std::sync::Arc::clone(&primary);
+    let transfer_id = preflight.transfer_id.clone();
+    let completion = tokio::spawn(async move {
+        let event = primary_for_completion.next_event().await.unwrap();
+        let RuntimeEvent::OutgoingTransferFinalizationRequested(event) = event else {
+            panic!("expected outgoing transfer finalization request");
+        };
+        assert_eq!(event.transfer_id, transfer_id);
+
+        primary_for_completion
+            .complete_outgoing_transfer_finalization(
+                &event.transfer_id,
+                Ok(kanna_task_transfer::runtime::FinalizedOutgoingTransfer {
+                    payload: json!({
+                        "task": {
+                            "source_task_id": "task-source",
+                            "resume_session_id": "019d-final",
+                        }
+                    }),
+                    finalized_cleanly: true,
+                }),
+            )
+            .await
+            .unwrap();
+    });
+
+    let finalized = secondary
+        .finalize_outgoing_transfer(&preflight.transfer_id)
+        .await
+        .unwrap();
+
+    completion.await.unwrap();
+    assert_eq!(
+        finalized.payload["task"]["resume_session_id"],
+        json!("019d-final")
+    );
+    assert!(finalized.finalized_cleanly);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn staged_transfer_artifacts_can_be_fetched_by_transfer_and_artifact_id() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = TransferRuntime::spawn(RuntimeConfig::for_tests(
@@ -978,6 +1065,9 @@ async fn next_incoming_transfer_request(
         match runtime.next_event().await.unwrap() {
             RuntimeEvent::IncomingTransferRequest(event) => return event,
             RuntimeEvent::PairingCompleted(_) => {}
+            RuntimeEvent::OutgoingTransferFinalizationRequested(_) => {
+                panic!("expected incoming transfer event");
+            }
             RuntimeEvent::OutgoingTransferCommitted(_) => {
                 panic!("expected incoming transfer event");
             }
@@ -992,6 +1082,9 @@ async fn next_outgoing_transfer_committed(
         match runtime.next_event().await.unwrap() {
             RuntimeEvent::OutgoingTransferCommitted(event) => return event,
             RuntimeEvent::PairingCompleted(_) => {}
+            RuntimeEvent::OutgoingTransferFinalizationRequested(_) => {
+                panic!("expected outgoing transfer committed event");
+            }
             RuntimeEvent::IncomingTransferRequest(_) => {
                 panic!("expected outgoing transfer committed event");
             }
@@ -1005,5 +1098,8 @@ async fn consume_pairing_completed(runtime: &TransferRuntime) {
         RuntimeEvent::PairingCompleted(_) => {}
         RuntimeEvent::IncomingTransferRequest(_) => panic!("expected pairing completed event"),
         RuntimeEvent::OutgoingTransferCommitted(_) => panic!("expected pairing completed event"),
+        RuntimeEvent::OutgoingTransferFinalizationRequested(_) => {
+            panic!("expected pairing completed event");
+        }
     }
 }

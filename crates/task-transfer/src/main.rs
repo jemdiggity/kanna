@@ -48,6 +48,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         destination_local_task_id: event.destination_local_task_id,
                     }
                 }
+                RuntimeEvent::OutgoingTransferFinalizationRequested(event) => {
+                    SidecarEvent::OutgoingTransferFinalizationRequested {
+                        transfer_id: event.transfer_id,
+                    }
+                }
             };
 
             if write_json_line(&event_stdout, &payload).is_err() {
@@ -149,6 +154,50 @@ async fn handle_request(runtime: &TransferRuntime, request: ControlRequest) -> C
             payload,
         } => match runtime.prepare_transfer_commit(&transfer_id, payload).await {
             Ok(()) => ControlResponse::PrepareTransferCommit {
+                request_id,
+                transfer_id,
+            },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::FinalizeOutgoingTransfer {
+            request_id,
+            transfer_id,
+        } => match runtime.finalize_outgoing_transfer(&transfer_id).await {
+            Ok(result) => ControlResponse::FinalizeOutgoingTransfer {
+                request_id,
+                transfer_id,
+                payload: result.payload,
+                finalized_cleanly: result.finalized_cleanly,
+            },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::CompleteOutgoingTransferFinalization {
+            request_id,
+            transfer_id,
+            payload,
+            finalized_cleanly,
+            error,
+        } => match runtime
+            .complete_outgoing_transfer_finalization(
+                &transfer_id,
+                match error {
+                    Some(message) => Err(RuntimeError::Protocol(message)),
+                    None => match payload {
+                        Some(payload) => {
+                            Ok(kanna_task_transfer::runtime::FinalizedOutgoingTransfer {
+                                payload,
+                                finalized_cleanly,
+                            })
+                        }
+                        None => Err(RuntimeError::Protocol(
+                            "complete outgoing transfer finalization missing payload".into(),
+                        )),
+                    },
+                },
+            )
+            .await
+        {
+            Ok(()) => ControlResponse::CompleteOutgoingTransferFinalization {
                 request_id,
                 transfer_id,
             },

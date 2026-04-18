@@ -31,6 +31,17 @@ pub enum ControlRequest {
         transfer_id: String,
         payload: serde_json::Value,
     },
+    FinalizeOutgoingTransfer {
+        request_id: String,
+        transfer_id: String,
+    },
+    CompleteOutgoingTransferFinalization {
+        request_id: String,
+        transfer_id: String,
+        payload: Option<serde_json::Value>,
+        finalized_cleanly: bool,
+        error: Option<String>,
+    },
     AcknowledgeImportCommitted {
         request_id: String,
         transfer_id: String,
@@ -72,6 +83,16 @@ pub enum ControlResponse {
         request_id: String,
         transfer_id: String,
     },
+    FinalizeOutgoingTransfer {
+        request_id: String,
+        transfer_id: String,
+        payload: serde_json::Value,
+        finalized_cleanly: bool,
+    },
+    CompleteOutgoingTransferFinalization {
+        request_id: String,
+        transfer_id: String,
+    },
     AcknowledgeImportCommitted {
         request_id: String,
         transfer_id: String,
@@ -101,6 +122,11 @@ pub enum PeerRequest {
         request_id: String,
         transfer_id: String,
         sealed_payload: String,
+    },
+    FinalizeTransfer {
+        request_id: String,
+        transfer_id: String,
+        requester_peer_id: String,
     },
     FetchTransferArtifact {
         request_id: String,
@@ -133,6 +159,11 @@ pub enum PeerResponse {
     SubmitTransferPayload {
         request_id: String,
         transfer_id: String,
+    },
+    FinalizeTransfer {
+        request_id: String,
+        transfer_id: String,
+        sealed_payload: String,
     },
     FetchTransferArtifact {
         request_id: String,
@@ -199,6 +230,9 @@ pub enum SidecarEvent {
         transfer_id: String,
         source_task_id: String,
         destination_local_task_id: String,
+    },
+    OutgoingTransferFinalizationRequested {
+        transfer_id: String,
     },
 }
 

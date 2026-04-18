@@ -1,6 +1,7 @@
 mod commands;
 mod daemon_client;
 mod subprocess_env;
+mod transfer_identity;
 mod transfer_sidecar;
 
 use commands::agent::AgentState;
@@ -678,6 +679,8 @@ pub fn run() {
             commands::transfer::prepare_outgoing_transfer,
             commands::transfer::stage_transfer_artifact,
             commands::transfer::fetch_transfer_artifact,
+            commands::transfer::finalize_outgoing_transfer,
+            commands::transfer::complete_outgoing_transfer_finalization,
             commands::transfer::acknowledge_incoming_transfer_commit,
         ])
         .run(tauri::generate_context!())

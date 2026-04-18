@@ -32,11 +32,14 @@ import { buildTaskBootstrapCommand } from "../utils/taskBootstrap";
 import { isReadableDirectory, resolveShellSpawnCwd } from "../utils/shellCwd";
 import {
   buildOutgoingTransferPayload,
+  parseFinalizedOutgoingTransferResult,
   parseOutgoingTransferPreflightResult,
   parsePersistedOutgoingTransferPayload,
   resolveIncomingTransferBaseBranch,
+  type FinalizedOutgoingTransferResult,
   type IncomingTransferRequest,
   type OutgoingTransferCommittedEvent,
+  type TransferArtifactPayload,
   type OutgoingTransferPayload,
 } from "../utils/taskTransfer";
 import {
@@ -153,6 +156,7 @@ let _db: DbHandle;
 let portAllocationChain: Promise<void> = Promise.resolve();
 const sessionExitWaiters = new Map<string, Array<() => void>>();
 const RUNTIME_STATUS_SYNC_DELAY_MS = 250;
+const TRANSFER_SOURCE_FINALIZATION_WAIT_MS = 1500;
 
 async function withPortAllocationLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = portAllocationChain.then(fn, fn);
@@ -332,6 +336,22 @@ function buildTransferBundleArtifactId(transferId: string): string {
   return `${transferId}-repo-bundle`;
 }
 
+function buildCodexRolloutArtifactId(transferId: string): string {
+  return `${transferId}-codex-rollout`;
+}
+
+function buildClaudeSessionArtifactId(transferId: string): string {
+  return `${transferId}-claude-session`;
+}
+
+function buildCopilotSessionArtifactId(transferId: string): string {
+  return `${transferId}-copilot-session`;
+}
+
+function buildTransferArchivePath(transferId: string, suffix: string): string {
+  return `/tmp/kanna-transfer-${transferId}-${suffix}.tar.gz`;
+}
+
 function normalizeTransferRefName(ref: string | null | undefined): string | null {
   if (!ref) return null;
   if (ref.startsWith("refs/")) return ref;
@@ -348,10 +368,266 @@ function buildTransferBundleRefs(item: PipelineItem): string[] {
   return baseRef ? [baseRef] : [];
 }
 
+function parentDirectory(path: string): string {
+  const index = path.lastIndexOf("/");
+  if (index <= 0) return "/";
+  return path.slice(0, index);
+}
+
+function baseName(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index >= 0 ? path.slice(index + 1) : path;
+}
+
+function joinHomeRelativePath(home: string, relativePath: string): string {
+  return `${home.replace(/\/+$/, "")}/${relativePath.replace(/^\/+/, "")}`;
+}
+
+async function listDirectoryNames(path: string): Promise<string[]> {
+  return invoke<string[]>("list_dir", { path }).catch(() => []);
+}
+
+function resolveTransferArtifactMaterialization(
+  artifact: Pick<TransferArtifactPayload, "kind" | "materialization">,
+): TransferArtifactPayload["materialization"] {
+  if (artifact.materialization === "copy-file" || artifact.materialization === "extract-tar-gz") {
+    return artifact.materialization;
+  }
+  return artifact.kind === "session-archive" ? "extract-tar-gz" : "copy-file";
+}
+
+interface LocatedTransferArtifact {
+  absolutePath: string;
+  homeRelPath: string;
+  filename: string;
+}
+
+async function findCodexRolloutArtifact(sessionId: string): Promise<LocatedTransferArtifact | null> {
+  try {
+    const home = await invoke<string>("read_env_var", { name: "HOME" });
+    const sessionsRoot = `${home}/.codex/sessions`;
+    const rootExists = await invoke<boolean>("file_exists", { path: sessionsRoot }).catch(() => false);
+    if (!rootExists) {
+      return null;
+    }
+
+    const years = await listDirectoryNames(sessionsRoot);
+    for (const year of years) {
+      const yearPath = `${sessionsRoot}/${year}`;
+      const months = await listDirectoryNames(yearPath);
+      for (const month of months) {
+        const monthPath = `${yearPath}/${month}`;
+        const days = await listDirectoryNames(monthPath);
+        for (const day of days) {
+          const dayPath = `${monthPath}/${day}`;
+          const entries = await listDirectoryNames(dayPath);
+          const fileName = entries.find((entry) => entry.endsWith(`${sessionId}.jsonl`));
+          if (!fileName) {
+            continue;
+          }
+          const homeRelPath = `.codex/sessions/${year}/${month}/${day}/${fileName}`;
+          return {
+            absolutePath: `${dayPath}/${fileName}`,
+            homeRelPath,
+            filename: fileName,
+          };
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[store] failed to locate codex rollout artifact:", error);
+  }
+
+  return null;
+}
+
+async function stageTransferredSessionArtifacts(
+  transferId: string,
+  item: PipelineItem,
+  repoPath: string,
+): Promise<TransferArtifactPayload[]> {
+  if (!item.agent_session_id || !item.agent_provider) {
+    return [];
+  }
+
+  try {
+    if (item.agent_provider === "codex") {
+      const rollout = await findCodexRolloutArtifact(item.agent_session_id);
+      if (!rollout) {
+        return [];
+      }
+      const artifactId = buildCodexRolloutArtifactId(transferId);
+      await invoke("stage_transfer_artifact", {
+        transferId,
+        artifactId,
+        path: rollout.absolutePath,
+      });
+      return [{
+        artifact_id: artifactId,
+        filename: rollout.filename,
+        provider: "codex",
+        kind: "session-rollout",
+        materialization: "copy-file",
+        home_rel_path: rollout.homeRelPath,
+      }];
+    }
+
+    const home = await invoke<string>("read_env_var", { name: "HOME" });
+    if (item.agent_provider === "claude") {
+      const sourceDir = `${home}/.claude/tasks/${item.agent_session_id}`;
+      const exists = await invoke<boolean>("file_exists", { path: sourceDir }).catch(() => false);
+      if (!exists) {
+        return [];
+      }
+      const archivePath = buildTransferArchivePath(transferId, "claude-session");
+      await invoke("run_script", {
+        script: `tar -C ${shellQuote(`${home}/.claude/tasks`)} -czf ${shellQuote(archivePath)} ${shellQuote(item.agent_session_id)}`,
+        cwd: repoPath,
+        env: applyWorktreeProcessIsolation({ KANNA_WORKTREE: "1" }),
+      });
+      const artifactId = buildClaudeSessionArtifactId(transferId);
+      await invoke("stage_transfer_artifact", {
+        transferId,
+        artifactId,
+        path: archivePath,
+      });
+      return [{
+        artifact_id: artifactId,
+        filename: "claude-session.tar.gz",
+        provider: "claude",
+        kind: "session-archive",
+        materialization: "extract-tar-gz",
+        home_rel_path: `.claude/tasks/${item.agent_session_id}`,
+      }];
+    }
+
+    if (item.agent_provider === "copilot") {
+      const sourceDir = `${home}/.copilot/session-state/${item.agent_session_id}`;
+      const exists = await invoke<boolean>("file_exists", { path: sourceDir }).catch(() => false);
+      if (!exists) {
+        return [];
+      }
+      const archivePath = buildTransferArchivePath(transferId, "copilot-session");
+      await invoke("run_script", {
+        script: `tar -C ${shellQuote(`${home}/.copilot/session-state`)} -czf ${shellQuote(archivePath)} ${shellQuote(item.agent_session_id)}`,
+        cwd: repoPath,
+        env: applyWorktreeProcessIsolation({ KANNA_WORKTREE: "1" }),
+      });
+      const artifactId = buildCopilotSessionArtifactId(transferId);
+      await invoke("stage_transfer_artifact", {
+        transferId,
+        artifactId,
+        path: archivePath,
+      });
+      return [{
+        artifact_id: artifactId,
+        filename: "copilot-session.tar.gz",
+        provider: "copilot",
+        kind: "session-archive",
+        materialization: "extract-tar-gz",
+        home_rel_path: `.copilot/session-state/${item.agent_session_id}`,
+      }];
+    }
+  } catch (error) {
+    console.error("[store] failed to stage provider session artifacts:", error);
+  }
+
+  return [];
+}
+
+async function importTransferredResumeState(
+  transferId: string,
+  payload: OutgoingTransferPayload,
+  repoPath: string,
+): Promise<string | null> {
+  const resumeSessionId = payload.task.resume_session_id ?? null;
+  const provider = payload.task.agent_provider;
+  if (!provider || !resumeSessionId) {
+    return resumeSessionId;
+  }
+
+  const artifact = payload.artifacts?.find((candidate) => candidate.provider === provider) ?? null;
+  if (!artifact) {
+    return null;
+  }
+
+  try {
+    const home = await invoke<string>("read_env_var", { name: "HOME" });
+    const destinationPath = joinHomeRelativePath(home, artifact.home_rel_path);
+    const destinationParent = parentDirectory(destinationPath);
+    const materialization = resolveTransferArtifactMaterialization(artifact);
+    const destinationExists = await invoke<boolean>("file_exists", { path: destinationPath }).catch(() => false);
+    if (destinationExists) {
+      console.warn("[store] skipping transferred session import because destination already exists:", destinationPath);
+      return null;
+    }
+    const fetched = await invoke<{ path: string }>("fetch_transfer_artifact", {
+      transferId,
+      artifactId: artifact.artifact_id,
+    });
+    await invoke("ensure_directory", { path: destinationParent });
+    if (materialization === "copy-file") {
+      await invoke("copy_file", {
+        src: fetched.path,
+        dst: destinationPath,
+      });
+      return resumeSessionId;
+    }
+    if (materialization === "extract-tar-gz") {
+      const extractedName = baseName(destinationPath);
+      const tempPattern = `${destinationParent}/.kanna-transfer-${transferId}-${extractedName}-XXXXXX`;
+      await invoke("run_script", {
+        script: [
+          `tmp_dir="$(mktemp -d ${shellQuote(tempPattern)})"`,
+          'cleanup() { rm -rf "$tmp_dir"; }',
+          'trap cleanup EXIT',
+          `tar -xzf ${shellQuote(fetched.path)} -C "$tmp_dir"`,
+          `test -e "$tmp_dir/${extractedName}"`,
+          `mv "$tmp_dir/${extractedName}" ${shellQuote(destinationPath)}`,
+        ].join("\n"),
+        cwd: repoPath,
+        env: applyWorktreeProcessIsolation({ KANNA_WORKTREE: "1" }),
+      });
+      return resumeSessionId;
+    }
+    return resumeSessionId;
+  } catch (error) {
+    console.error("[store] failed to import transferred session artifact:", error);
+    return null;
+  }
+}
+
 async function waitForSessionExit(sessionId: string): Promise<void> {
   return new Promise((resolve) => {
     const existing = sessionExitWaiters.get(sessionId) ?? [];
     existing.push(resolve);
+    sessionExitWaiters.set(sessionId, existing);
+  });
+}
+
+function removeSessionExitWaiter(sessionId: string, waiter: () => void): void {
+  const existing = sessionExitWaiters.get(sessionId);
+  if (!existing) return;
+  const remaining = existing.filter((candidate) => candidate !== waiter);
+  if (remaining.length === 0) {
+    sessionExitWaiters.delete(sessionId);
+    return;
+  }
+  sessionExitWaiters.set(sessionId, remaining);
+}
+
+async function waitForSessionExitWithin(sessionId: string, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const waiter = () => {
+      clearTimeout(timeout);
+      resolve(true);
+    };
+    const timeout = setTimeout(() => {
+      removeSessionExitWaiter(sessionId, waiter);
+      resolve(false);
+    }, timeoutMs);
+    const existing = sessionExitWaiters.get(sessionId) ?? [];
+    existing.push(waiter);
     sessionExitWaiters.set(sessionId, existing);
   });
 }
@@ -2055,6 +2331,7 @@ export const useKannaStore = defineStore("kanna", () => {
         refName,
       };
     }
+    const artifacts = await stageTransferredSessionArtifacts(preflight.transferId, item, repo.path);
     const payload = buildOutgoingTransferPayload({
       sourcePeerId: preflight.sourcePeerId,
       sourceTaskId: taskId,
@@ -2065,6 +2342,7 @@ export const useKannaStore = defineStore("kanna", () => {
       repoDefaultBranch: repo.default_branch,
       repoRemoteUrl,
       recovery,
+      artifacts,
       targetHasRepo: preflight.targetHasRepo,
       bundle,
     });
@@ -2111,6 +2389,92 @@ export const useKannaStore = defineStore("kanna", () => {
     bump();
   }
 
+  async function finalizeOutgoingTransfer(
+    transferId: string,
+  ): Promise<FinalizedOutgoingTransferResult> {
+    const transfer = await getTaskTransfer(_db, transferId);
+    if (!transfer) {
+      throw new Error(`outgoing transfer not found: ${transferId}`);
+    }
+    if (transfer.direction !== "outgoing") {
+      throw new Error(`transfer is not outgoing: ${transferId}`);
+    }
+
+    const existingPayload = parsePersistedOutgoingTransferPayload(transfer.payload_json);
+    const localTaskId = transfer.local_task_id;
+    if (!localTaskId) {
+      throw new Error(`outgoing transfer has no local task: ${transferId}`);
+    }
+
+    const item = items.value.find((candidate) => candidate.id === localTaskId);
+    if (!item) {
+      throw new Error(`source task not found for outgoing transfer: ${transferId}`);
+    }
+
+    const repo = repos.value.find((candidate) => candidate.id === item.repo_id);
+    if (!repo) {
+      throw new Error(`repo not found for outgoing transfer: ${transferId}`);
+    }
+
+    let finalizedCleanly = item.agent_type !== "pty";
+    if (item.agent_type === "pty") {
+      await invoke("signal_session", { sessionId: item.id, signal: "SIGINT" }).catch((error: unknown) => {
+        console.error("[store] transfer finalization signal failed:", error);
+      });
+      finalizedCleanly = await waitForSessionExitWithin(
+        item.id,
+        TRANSFER_SOURCE_FINALIZATION_WAIT_MS,
+      );
+    }
+
+    const refreshedItems = await _db.select<PipelineItem>(
+      "SELECT * FROM pipeline_item",
+    );
+    const refreshedItem = refreshedItems.find((candidate) => candidate.id === item.id) ?? item;
+
+    const repoRemoteUrl = existingPayload.repo.mode === "reuse-local"
+      ? null
+      : await invoke<string | null>("git_remote_url", {
+          repoPath: repo.path,
+        }).catch(() => existingPayload.repo.remote_url);
+    const bundle = existingPayload.repo.bundle
+      ? {
+          artifactId: existingPayload.repo.bundle.artifact_id,
+          filename: existingPayload.repo.bundle.filename,
+          refName: existingPayload.repo.bundle.ref_name,
+        }
+      : null;
+    const sourcePeerId = transfer.source_peer_id ?? existingPayload.task.source_peer_id;
+    const sourceTaskId = transfer.source_task_id ?? existingPayload.task.source_task_id;
+    const artifacts = await stageTransferredSessionArtifacts(transferId, refreshedItem, repo.path);
+    const payload = buildOutgoingTransferPayload({
+      sourcePeerId,
+      sourceTaskId,
+      targetPeerId: transfer.target_peer_id ?? existingPayload.target_peer_id,
+      item: refreshedItem,
+      repoPath: repo.path,
+      repoName: repo.name,
+      repoDefaultBranch: repo.default_branch,
+      repoRemoteUrl: repoRemoteUrl ?? null,
+      recovery: await loadSessionRecoveryState(item.id),
+      artifacts,
+      targetHasRepo: existingPayload.repo.mode === "reuse-local",
+      bundle,
+    });
+
+    await _db.execute(
+      "UPDATE task_transfer SET payload_json = ?, error = NULL WHERE id = ?",
+      [JSON.stringify(payload), transferId],
+    );
+    bump();
+
+    return {
+      transferId,
+      payload,
+      finalizedCleanly,
+    };
+  }
+
   async function approveIncomingTransfer(transferId: string): Promise<string> {
     const transfer = await getTaskTransfer(_db, transferId);
     if (!transfer) {
@@ -2123,8 +2487,12 @@ export const useKannaStore = defineStore("kanna", () => {
       throw new Error(`incoming transfer is not pending: ${transferId}`);
     }
 
-    const payload = parsePersistedOutgoingTransferPayload(transfer.payload_json);
+    const finalized = parseFinalizedOutgoingTransferResult(await invoke("finalize_outgoing_transfer", {
+      transferId,
+    }));
+    const payload = finalized.payload;
     const { repoId, repoPath } = await ensureIncomingTransferRepo(transferId, payload);
+    const resumeSessionId = await importTransferredResumeState(transferId, payload, repoPath);
     const localTaskId = await createItem(
       repoId,
       repoPath,
@@ -2136,7 +2504,7 @@ export const useKannaStore = defineStore("kanna", () => {
         pipelineName: payload.task.pipeline,
         stage: payload.task.stage,
         displayName: payload.task.display_name,
-        resumeSessionId: payload.task.resume_session_id ?? null,
+        resumeSessionId,
         recoverySnapshot: payload.recovery,
       },
     );
@@ -2781,7 +3149,7 @@ export const useKannaStore = defineStore("kanna", () => {
     loadPipeline, loadAgent,
     makePR, mergeQueue,
     pushTaskToPeer, recordIncomingTransfer, approveIncomingTransfer, rejectIncomingTransfer,
-    handleOutgoingTransferCommitted,
+    finalizeOutgoingTransfer, handleOutgoingTransferCommitted,
     blockTask, editBlockedTask,
     listBlockersForItem: (itemId: string) => listBlockersForItem(_db, itemId),
     listBlockedByItem: (itemId: string) => listBlockedByItem(_db, itemId),

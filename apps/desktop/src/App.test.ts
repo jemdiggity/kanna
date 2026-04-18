@@ -37,6 +37,36 @@ const store = {
   recordIncomingTransfer: vi.fn(async () => {}),
   approveIncomingTransfer: vi.fn(async () => "task-imported"),
   rejectIncomingTransfer: vi.fn(async () => {}),
+  finalizeOutgoingTransfer: vi.fn(async () => ({
+    transferId: "transfer-1",
+    payload: {
+      target_peer_id: "peer-target",
+      task: {
+        source_peer_id: "peer-source",
+        source_task_id: "task-source",
+        resume_session_id: null,
+        prompt: "Fix handoff",
+        stage: "in progress",
+        branch: "task-source",
+        pipeline: "default",
+        display_name: "Transferred task",
+        base_ref: "main",
+        agent_type: "pty",
+        agent_provider: "claude",
+      },
+      repo: {
+        mode: "reuse-local",
+        remote_url: null,
+        path: "/tmp/repo",
+        name: "repo",
+        default_branch: "main",
+        bundle: null,
+      },
+      recovery: null,
+      artifacts: [],
+    },
+    finalizedCleanly: true,
+  })),
   handleOutgoingTransferCommitted: vi.fn(async () => {}),
   listBlockedByItem: vi.fn(async () => []),
   listBlockersForItem: vi.fn(async () => []),
@@ -61,13 +91,14 @@ const toastInfoMock = vi.fn();
 
 let capturedKeyboardActions: KeyboardActions | null = null;
 
-const invokeMock = vi.fn(async (command: string, args?: { name?: string; repoPath?: string }) => {
+const invokeMock = vi.fn(async (command: string, args?: Record<string, unknown>) => {
   if (command === "list_dir") return ["default.json"];
   if (command === "read_text_file") return "";
   if (command === "git_default_branch") return "main";
   if (command === "git_list_base_branches") return ["feature/x", "main", "origin/main"];
   if (command === "read_env_var") return "/Users/test";
   if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+  if (command === "complete_outgoing_transfer_finalization") return { transferId: args?.transferId ?? "transfer-1" };
   throw new Error(`unexpected invoke: ${command}`);
 });
 
@@ -130,7 +161,7 @@ vi.mock("./composables/useKeyboardShortcuts", () => ({
 
 vi.mock("./composables/useCustomTasks", () => ({
   useCustomTasks: () => ({
-    tasks: [],
+    tasks: ref([]),
     scan: vi.fn(async () => []),
   }),
 }));
@@ -271,6 +302,15 @@ function buildOutgoingTransferCommittedEvent() {
     },
   };
 }
+
+function buildOutgoingTransferFinalizationRequestedEvent() {
+  return {
+    payload: {
+      type: "outgoing_transfer_finalization_requested",
+      transfer_id: "transfer-1",
+    },
+  };
+}
 async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof SidebarWithoutRepoStub) {
   vi.stubGlobal("__KANNA_MOBILE__", false);
   const { default: App } = await import("./App.vue");
@@ -300,6 +340,44 @@ async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof Sidebar
         PreferencesPanel: true,
         ToastContainer: true,
         KeepAlive: false,
+      },
+    },
+  });
+}
+
+async function mountAppWithOverrides(
+  sidebarStub: typeof SidebarWithRepoStub | typeof SidebarWithoutRepoStub,
+  stubs: Record<string, unknown>,
+) {
+  vi.stubGlobal("__KANNA_MOBILE__", false);
+  const { default: App } = await import("./App.vue");
+  return mount(App, {
+    global: {
+      provide: {
+        db: dbMock,
+        dbName: "test.db",
+      },
+      mocks: {
+        $t: (key: string) => key,
+      },
+      stubs: {
+        Sidebar: sidebarStub,
+        MainPanel: true,
+        AddRepoModal: true,
+        KeyboardShortcutsModal: true,
+        FilePickerModal: true,
+        FilePreviewModal: true,
+        TreeExplorerModal: true,
+        DiffModal: true,
+        CommitGraphModal: true,
+        ShellModal: true,
+        CommandPaletteModal: true,
+        AnalyticsModal: true,
+        BlockerSelectModal: true,
+        PreferencesPanel: true,
+        ToastContainer: true,
+        KeepAlive: false,
+        ...stubs,
       },
     },
   });
@@ -666,6 +744,26 @@ describe("App", () => {
     });
   });
 
+  it("forwards outgoing transfer finalization requests to the store and completes them", async () => {
+    await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+    await flushPromises();
+
+    const handler = listenHandlers.get("outgoing-transfer-finalization-requested");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.(buildOutgoingTransferFinalizationRequestedEvent());
+    await flushPromises();
+
+    expect(store.finalizeOutgoingTransfer).toHaveBeenCalledWith("transfer-1");
+    expect(invokeMock).toHaveBeenCalledWith("complete_outgoing_transfer_finalization", {
+      transferId: "transfer-1",
+      payload: expect.any(Object),
+      finalizedCleanly: true,
+      error: null,
+    });
+  });
+
   it("shows the pairing verification code when another machine pairs with this one", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
     await flushPromises();
@@ -683,6 +781,64 @@ describe("App", () => {
 
     expect(toastInfoMock).toHaveBeenCalledWith(expect.stringContaining("654321"));
     wrapper.unmount();
+  });
+
+  it("adds Push to Machine to command palette commands for active tasks", async () => {
+    store.currentItem = {
+      id: "task-1",
+      stage: "in progress",
+      branch: "task-1",
+      prompt: "Fix handoff",
+      tags: "[]",
+    };
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      setup(props) {
+        const labels = computed(() =>
+          (props.dynamicCommands as Array<{ label: string }>).map((command) => command.label).join("|"),
+        );
+        return { labels };
+      },
+      template: `
+        <div data-testid="command-palette">
+          {{ labels }}
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="command-palette"]').text()).toContain("taskTransfer.pushToMachine");
+  });
+
+  it("does not render the footer action bar for the current task view", async () => {
+    store.currentItem = {
+      id: "task-1",
+      stage: "in progress",
+      branch: "task-1",
+      prompt: "Fix handoff",
+      tags: "[]",
+    };
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    expect(wrapper.find(".action-bar").exists()).toBe(false);
   });
 
   it("dismiss closes the entire file flow after preview-local dismiss is exhausted", async () => {

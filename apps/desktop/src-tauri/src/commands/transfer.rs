@@ -151,3 +151,50 @@ pub async fn acknowledge_incoming_transfer_commit(
     }
     result
 }
+
+#[tauri::command]
+pub async fn finalize_outgoing_transfer(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::TransferServiceState>,
+    transfer_id: String,
+) -> Result<Value, String> {
+    let mut guard = state.lock().await;
+    ensure_client(&app, &mut guard).await?;
+    let (result, dead) = {
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| "transfer sidecar client unavailable".to_string())?;
+        let result = client.finalize_outgoing_transfer(transfer_id).await;
+        (result, client.is_dead())
+    };
+    if dead {
+        *guard = None;
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn complete_outgoing_transfer_finalization(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::TransferServiceState>,
+    transfer_id: String,
+    payload: Option<Value>,
+    finalized_cleanly: bool,
+    error: Option<String>,
+) -> Result<Value, String> {
+    let mut guard = state.lock().await;
+    ensure_client(&app, &mut guard).await?;
+    let (result, dead) = {
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| "transfer sidecar client unavailable".to_string())?;
+        let result = client
+            .complete_outgoing_transfer_finalization(transfer_id, payload, finalized_cleanly, error)
+            .await;
+        (result, client.is_dead())
+    };
+    if dead {
+        *guard = None;
+    }
+    result
+}

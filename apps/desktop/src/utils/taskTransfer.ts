@@ -2,6 +2,17 @@ import type { PipelineItem } from "@kanna/db";
 import type { SessionRecoveryState } from "../composables/sessionRecoveryState";
 
 export type RepoAcquisitionMode = "reuse-local" | "clone-remote" | "bundle-repo";
+export type TransferArtifactKind = "session-rollout" | "session-archive";
+export type TransferArtifactMaterialization = "copy-file" | "extract-tar-gz";
+
+export interface TransferArtifactPayload {
+  artifact_id: string;
+  filename: string;
+  provider: PipelineItem["agent_provider"];
+  kind: TransferArtifactKind;
+  home_rel_path: string;
+  materialization: TransferArtifactMaterialization;
+}
 
 export interface OutgoingTransferPayload {
   target_peer_id: string;
@@ -32,6 +43,7 @@ export interface OutgoingTransferPayload {
     } | null;
   };
   recovery: SessionRecoveryState | null;
+  artifacts?: TransferArtifactPayload[];
 }
 
 export interface BuildOutgoingTransferPayloadInput {
@@ -47,6 +59,7 @@ export interface BuildOutgoingTransferPayloadInput {
   repoDefaultBranch?: string | null;
   repoRemoteUrl: string | null;
   recovery: SessionRecoveryState | null;
+  artifacts?: TransferArtifactPayload[];
   targetHasRepo: boolean;
   bundle: {
     artifactId: string;
@@ -73,6 +86,16 @@ export interface OutgoingTransferCommittedEvent {
   transferId: string;
   sourceTaskId: string;
   destinationLocalTaskId: string;
+}
+
+export interface OutgoingTransferFinalizationRequestEvent {
+  transferId: string;
+}
+
+export interface FinalizedOutgoingTransferResult {
+  transferId: string;
+  payload: OutgoingTransferPayload;
+  finalizedCleanly: boolean;
 }
 
 export interface TransferPeerOption {
@@ -233,6 +256,7 @@ export function buildOutgoingTransferPayload(
         : null,
     },
     recovery: input.recovery,
+    artifacts: input.artifacts ?? [],
   };
 }
 
@@ -374,6 +398,52 @@ export function parseOutgoingTransferCommittedEvent(value: unknown): OutgoingTra
       record,
       ["destinationLocalTaskId", "destination_local_task_id"],
       "outgoing-transfer-committed payload missing destinationLocalTaskId",
+    ),
+  };
+}
+
+export function parseOutgoingTransferFinalizationRequestEvent(
+  value: unknown,
+): OutgoingTransferFinalizationRequestEvent {
+  const record = asRecord(value);
+  if (!record) {
+    throw new Error("outgoing-transfer-finalization-requested event returned an invalid payload");
+  }
+
+  return {
+    transferId: readRequiredString(
+      record,
+      ["transferId", "transfer_id"],
+      "outgoing-transfer-finalization-requested payload missing transferId",
+    ),
+  };
+}
+
+export function parseFinalizedOutgoingTransferResult(
+  value: unknown,
+): FinalizedOutgoingTransferResult {
+  const record = asRecord(value);
+  if (!record) {
+    throw new Error("finalize_outgoing_transfer returned an invalid payload");
+  }
+
+  const payloadValue = record.payload;
+  const payloadRecord = asRecord(payloadValue);
+  if (!payloadRecord) {
+    throw new Error("finalize_outgoing_transfer response missing payload");
+  }
+
+  return {
+    transferId: readRequiredString(
+      record,
+      ["transferId", "transfer_id"],
+      "finalize_outgoing_transfer response missing transferId",
+    ),
+    payload: payloadRecord as unknown as OutgoingTransferPayload,
+    finalizedCleanly: readRequiredBoolean(
+      record,
+      ["finalizedCleanly", "finalized_cleanly"],
+      "finalize_outgoing_transfer response missing finalizedCleanly",
     ),
   };
 }
