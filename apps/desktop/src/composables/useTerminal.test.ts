@@ -8,6 +8,11 @@ const listenMock = vi.fn();
 const warningToastMock = vi.fn();
 const errorToastMock = vi.fn();
 const eventListeners = new Map<string, ((event: any) => void)[]>();
+const onWebviewDragDropEventMock = vi.fn();
+const onWindowDragDropEventMock = vi.fn();
+let nativeWebviewDragDropHandler: ((event: any) => void) | null = null;
+let nativeWindowDragDropHandler: ((event: any) => void) | null = null;
+let isTauriMock = false;
 
 interface PendingWrite {
   data: string | Uint8Array;
@@ -86,8 +91,30 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: listenMock,
+}));
+
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: onWebviewDragDropEventMock,
+  }),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    onDragDropEvent: onWindowDragDropEventMock,
+  }),
+}));
+
 vi.mock("../tauri-mock", () => ({
-  isTauri: false,
+  get isTauri() {
+    return isTauriMock;
+  },
   mockInvoke: invokeMock,
   mockListen: listenMock,
 }));
@@ -124,6 +151,27 @@ describe("useTerminal", () => {
     warningToastMock.mockReset();
     errorToastMock.mockReset();
     eventListeners.clear();
+    nativeWebviewDragDropHandler = null;
+    nativeWindowDragDropHandler = null;
+    isTauriMock = false;
+    onWebviewDragDropEventMock.mockReset();
+    onWindowDragDropEventMock.mockReset();
+    onWebviewDragDropEventMock.mockImplementation(async (handler: (event: any) => void) => {
+      nativeWebviewDragDropHandler = handler;
+      return () => {
+        if (nativeWebviewDragDropHandler === handler) {
+          nativeWebviewDragDropHandler = null;
+        }
+      };
+    });
+    onWindowDragDropEventMock.mockImplementation(async (handler: (event: any) => void) => {
+      nativeWindowDragDropHandler = handler;
+      return () => {
+        if (nativeWindowDragDropHandler === handler) {
+          nativeWindowDragDropHandler = null;
+        }
+      };
+    });
     terminals.length = 0;
     listenMock.mockImplementation(async (eventName: string, handler: (event: any) => void) => {
       const listeners = eventListeners.get(eventName) ?? [];
@@ -1200,6 +1248,474 @@ describe("useTerminal", () => {
     expect(invokeMock).toHaveBeenCalledWith("send_input", {
       sessionId: "session-1",
       data: Array.from(new TextEncoder().encode("'/tmp/task/screenshot one.png'")),
+    });
+  });
+
+  it("wraps dropped file paths in bracketed paste markers after attach snapshots enable bracketed paste", async () => {
+    const { useTerminal } = await import("./useTerminal");
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "\u001b[?2004hrestored scrollback",
+        };
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "claude",
+            agentTerminal: true,
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+    await startPromise;
+
+    invokeMock.mockClear();
+
+    const dropEvent = new Event("drop") as Event & {
+      dataTransfer: { files: Array<{ path: string; type: string }> };
+      preventDefault: ReturnType<typeof vi.fn>;
+      stopPropagation: ReturnType<typeof vi.fn>;
+    };
+    dropEvent.dataTransfer = {
+      files: [{ path: "/tmp/task/screenshot one.png", type: "image/png" }],
+    };
+    dropEvent.preventDefault = vi.fn();
+    dropEvent.stopPropagation = vi.fn();
+
+    terminalElement.dispatchEvent(dropEvent);
+
+    expect(invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "session-1",
+      data: Array.from(new TextEncoder().encode("\u001b[200~'/tmp/task/screenshot one.png'\u001b[201~")),
+    });
+  });
+
+  it("pastes native Tauri window drop paths for agent terminals when browser files do not expose path", async () => {
+    isTauriMock = true;
+    vi.resetModules();
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "\u001b[?2004hrestored scrollback",
+        };
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "claude",
+            agentTerminal: true,
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 2 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    terminalElement.getBoundingClientRect = vi.fn(() => ({
+      x: 240,
+      y: 180,
+      left: 240,
+      top: 180,
+      right: 1040,
+      bottom: 780,
+      width: 800,
+      height: 600,
+      toJSON: () => ({}),
+    })) as typeof terminalElement.getBoundingClientRect;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+    await startPromise;
+
+    invokeMock.mockClear();
+    expect(nativeWindowDragDropHandler).not.toBeNull();
+
+    nativeWindowDragDropHandler?.({
+      payload: {
+        type: "drop",
+        paths: ["/tmp/task/screenshot one.png"],
+        position: {
+          x: 320,
+          y: 260,
+        },
+      },
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "session-1",
+      data: Array.from(new TextEncoder().encode("\u001b[200~'/tmp/task/screenshot one.png'\u001b[201~")),
+    });
+  });
+
+  it("pastes native Tauri webview drop paths when the runtime exposes logical conversion", async () => {
+    isTauriMock = true;
+    vi.resetModules();
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "\u001b[?2004hrestored scrollback",
+        };
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "claude",
+            agentTerminal: true,
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 2 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    terminalElement.getBoundingClientRect = vi.fn(() => ({
+      x: 240,
+      y: 180,
+      left: 240,
+      top: 180,
+      right: 1040,
+      bottom: 780,
+      width: 800,
+      height: 600,
+      toJSON: () => ({}),
+    })) as typeof terminalElement.getBoundingClientRect;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+    await startPromise;
+
+    invokeMock.mockClear();
+    expect(nativeWebviewDragDropHandler).not.toBeNull();
+
+    nativeWebviewDragDropHandler?.({
+      payload: {
+        type: "drop",
+        paths: ["/tmp/task/screenshot one.png"],
+        position: {
+          x: 640,
+          y: 520,
+          toLogical: () => ({ x: 320, y: 260 }),
+        },
+      },
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "session-1",
+      data: Array.from(new TextEncoder().encode("\u001b[200~'/tmp/task/screenshot one.png'\u001b[201~")),
+    });
+  });
+
+  it("deduplicates native Tauri drop events when window and webview listeners both fire", async () => {
+    isTauriMock = true;
+    vi.resetModules();
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "\u001b[?2004hrestored scrollback",
+        };
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "codex",
+            agentTerminal: true,
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    terminalElement.getBoundingClientRect = vi.fn(() => ({
+      x: 240,
+      y: 180,
+      left: 240,
+      top: 180,
+      right: 1040,
+      bottom: 780,
+      width: 800,
+      height: 600,
+      toJSON: () => ({}),
+    })) as typeof terminalElement.getBoundingClientRect;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+    await startPromise;
+
+    invokeMock.mockClear();
+
+    const dropEvent = {
+      payload: {
+        type: "drop",
+        paths: ["/tmp/task/screenshot one.png"],
+        position: {
+          x: 320,
+          y: 260,
+          toLogical: () => ({ x: 320, y: 260 }),
+        },
+      },
+    };
+
+    nativeWindowDragDropHandler?.(dropEvent);
+    nativeWebviewDragDropHandler?.(dropEvent);
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "session-1",
+      data: Array.from(new TextEncoder().encode("\u001b[200~'/tmp/task/screenshot one.png'\u001b[201~")),
+    });
+  });
+
+  it("treats Copilot drops as bracketed paste even when the restored stream does not advertise bracketed mode", async () => {
+    isTauriMock = true;
+    vi.resetModules();
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "attach_session_with_snapshot") {
+        return {
+          version: 1,
+          rows: 24,
+          cols: 80,
+          cursor_row: 0,
+          cursor_col: 0,
+          cursor_visible: true,
+          vt: "restored copilot scrollback",
+        };
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "copilot",
+            agentTerminal: true,
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    terminalElement.getBoundingClientRect = vi.fn(() => ({
+      x: 240,
+      y: 180,
+      left: 240,
+      top: 180,
+      right: 1040,
+      bottom: 780,
+      width: 800,
+      height: 600,
+      toJSON: () => ({}),
+    })) as typeof terminalElement.getBoundingClientRect;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
+    await startPromise;
+
+    invokeMock.mockClear();
+
+    nativeWindowDragDropHandler?.({
+      payload: {
+        type: "drop",
+        paths: ["/tmp/task/ChatGPT Image Feb 21, 2026, 12_59_00 AM.png"],
+        position: {
+          x: 320,
+          y: 260,
+        },
+      },
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "session-1",
+      data: Array.from(new TextEncoder().encode("\u001b[200~'/tmp/task/ChatGPT Image Feb 21, 2026, 12_59_00 AM.png'\u001b[201~")),
     });
   });
 

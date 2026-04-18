@@ -58,6 +58,8 @@ export interface TerminalOptions {
 }
 
 const CLIPBOARD_IMAGE_TTL_MS = 30_000
+const NATIVE_DROP_DEDUPE_WINDOW_MS = 100
+const BRACKETED_PASTE_CONTROL_SEQUENCE = /\u001b\[\?2004[hl]/
 
 export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, options?: TerminalOptions) {
   const toast = useToast()
@@ -84,16 +86,20 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let unlistenStreamLost: (() => void) | null = null
   let container: HTMLElement | null = null
   let cleanupContainerEvents: (() => void) | null = null
+  let cleanupNativeDropEvents: (() => void) | null = null
   let fitRafId = 0
   let attached = false
   let connecting = false
   let disposed = false
   let hasAttachedOnce = false
   let bracketedPasteMode = false
+  let hasObservedBracketedPasteMode = false
   let kittyClipboardBuffer = ""
   let pendingClipboardImage: ClipboardImagePayload | null = null
   let pendingClipboardImageExpiresAt = 0
   let pendingClipboardImageLoad: Promise<ClipboardImagePayload | null> | null = null
+  let lastNativeDropSignature: string | null = null
+  let lastNativeDropAt = 0
 
   // Scroll-lock: when the user scrolls up, hold their viewport position
   // instead of letting TUI redraws yank them to the top of the buffer.
@@ -236,6 +242,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
   function handleTerminalOutputControlSequences(bytes: Uint8Array) {
     const chunkText = outputDecoder.decode(bytes, { stream: true })
+    if (BRACKETED_PASTE_CONTROL_SEQUENCE.test(chunkText)) {
+      hasObservedBracketedPasteMode = true
+    }
     bracketedPasteMode = updateBracketedPasteMode(bracketedPasteMode, chunkText)
     kittyClipboardBuffer += chunkText
 
@@ -247,6 +256,78 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         instanceId,
         error: getAppErrorMessage(error),
       })
+    })
+  }
+
+  function restoreTerminalModesFromSnapshot(serializedTerminalState: string) {
+    // Attach/recovery snapshots redraw the terminal from a serialized VT stream.
+    // Replay the mode toggles embedded in that stream so local paste behavior
+    // matches the restored terminal state.
+    if (BRACKETED_PASTE_CONTROL_SEQUENCE.test(serializedTerminalState)) {
+      hasObservedBracketedPasteMode = true
+    }
+    bracketedPasteMode = updateBracketedPasteMode(false, serializedTerminalState)
+  }
+
+  function shouldUseBracketedPasteForDrop() {
+    if (options?.agentProvider === "copilot" && !hasObservedBracketedPasteMode) {
+      return true
+    }
+    return bracketedPasteMode
+  }
+
+  function sendDroppedPaths(paths: string[]) {
+    if (paths.length === 0) return
+    const text = formatDroppedPathsForPaste(paths)
+    const bytes = encodeTerminalPasteBytes(text, shouldUseBracketedPasteForDrop())
+    void sendInputBytes(bytes)
+  }
+
+  function shouldHandleNativeDrop(paths: string[]) {
+    const signature = paths.join("\u0000")
+    const now = Date.now()
+    if (
+      lastNativeDropSignature === signature &&
+      now - lastNativeDropAt <= NATIVE_DROP_DEDUPE_WINDOW_MS
+    ) {
+      return false
+    }
+    lastNativeDropSignature = signature
+    lastNativeDropAt = now
+    return true
+  }
+
+  function isDropWithinContainer(dropPosition: {
+    x?: number
+    y?: number
+    toLogical?: (scaleFactor: number) => { x: number; y: number }
+  }) {
+    if (!container) return false
+    const rect = container.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return false
+
+    const candidates = [
+      typeof dropPosition.x === "number" && typeof dropPosition.y === "number"
+        ? { x: dropPosition.x, y: dropPosition.y }
+        : null,
+      typeof dropPosition.toLogical === "function"
+        ? dropPosition.toLogical(window.devicePixelRatio || 1)
+        : null,
+      typeof dropPosition.x === "number" && typeof dropPosition.y === "number"
+        ? {
+            x: dropPosition.x / (window.devicePixelRatio || 1),
+            y: dropPosition.y / (window.devicePixelRatio || 1),
+          }
+        : null,
+    ].filter((position): position is { x: number; y: number } => position !== null)
+
+    return candidates.some((position) => {
+      return (
+        position.x >= rect.left &&
+        position.x <= rect.right &&
+        position.y >= rect.top &&
+        position.y <= rect.bottom
+      )
     })
   }
 
@@ -387,19 +468,19 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       }
 
       const handleDrop = (event: DragEvent) => {
+        event.preventDefault()
+        event.stopPropagation()
+
+        if (isTauri) {
+          return
+        }
+
         const files = Array.from(event.dataTransfer?.files ?? [])
         const paths = files
           .map((file) => (file as File & { path?: string }).path ?? "")
           .filter((path): path is string => path.length > 0)
 
-        if (paths.length === 0) return
-
-        event.preventDefault()
-        event.stopPropagation()
-
-        const text = formatDroppedPathsForPaste(paths)
-        const bytes = encodeTerminalPasteBytes(text, bracketedPasteMode)
-        void sendInputBytes(bytes)
+        sendDroppedPaths(paths)
       }
 
       container.addEventListener("dragenter", suppressDragNavigation)
@@ -409,6 +490,45 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         container?.removeEventListener("dragenter", suppressDragNavigation)
         container?.removeEventListener("dragover", suppressDragNavigation)
         container?.removeEventListener("drop", handleDrop)
+      }
+
+      if (isTauri) {
+        void Promise.all([
+          import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
+            return getCurrentWindow().onDragDropEvent((event) => {
+              if (event.payload.type !== "drop") return
+              if (!isDropWithinContainer(event.payload.position)) return
+              if (!shouldHandleNativeDrop(event.payload.paths)) return
+              sendDroppedPaths(event.payload.paths)
+            })
+          }),
+          import("@tauri-apps/api/webview").then(({ getCurrentWebview }) => {
+            return getCurrentWebview().onDragDropEvent((event) => {
+              if (event.payload.type !== "drop") return
+              if (!isDropWithinContainer(event.payload.position)) return
+              if (!shouldHandleNativeDrop(event.payload.paths)) return
+              sendDroppedPaths(event.payload.paths)
+            })
+          }),
+        ]).then((unlisteners) => {
+          const cleanup = () => {
+            for (const unlisten of unlisteners) {
+              unlisten()
+            }
+          }
+
+          if (disposed) {
+            cleanup()
+            return
+          }
+          cleanupNativeDropEvents = cleanup
+        }).catch((error) => {
+          console.warn("[terminal][drop] failed to register native drag-drop listener", {
+            sessionId,
+            instanceId,
+            error: getAppErrorMessage(error),
+          })
+        })
       }
     }
 
@@ -637,6 +757,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       serializedLength: recoveryState.serialized.length,
     })
     terminal.value.reset()
+    restoreTerminalModesFromSnapshot(recoveryState.serialized)
     await new Promise<void>((resolve) => {
       terminal.value?.write(recoveryState.serialized, resolve)
     })
@@ -687,6 +808,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       if (liveTerminal) {
         if (attachSnapshot) {
           liveTerminal.reset()
+          restoreTerminalModesFromSnapshot(attachSnapshot.vt)
           await new Promise<void>((resolve) => {
             liveTerminal.write(attachSnapshot.vt, resolve)
           })
@@ -828,6 +950,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
             sessionId,
           })
           spawnTerminal.reset()
+          restoreTerminalModesFromSnapshot(attachSnapshot.vt)
           await new Promise<void>((resolve) => {
             spawnTerminal.write(attachSnapshot.vt, resolve)
           })
@@ -1033,10 +1156,15 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     if (fitRafId) cancelAnimationFrame(fitRafId)
     cleanupContainerEvents?.()
     cleanupContainerEvents = null
+    cleanupNativeDropEvents?.()
+    cleanupNativeDropEvents = null
     clearPendingClipboardImage()
     pendingClipboardImageLoad = null
     kittyClipboardBuffer = ""
     bracketedPasteMode = false
+    hasObservedBracketedPasteMode = false
+    lastNativeDropSignature = null
+    lastNativeDropAt = 0
     if (unlistenOutput) {
       unlistenOutput()
       console.warn("[terminal][instance] listener:remove", {

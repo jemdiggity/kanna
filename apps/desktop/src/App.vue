@@ -710,6 +710,27 @@ function focusAgentTerminal() {
   });
 }
 
+function isFileTransfer(event: DragEvent): boolean {
+  const transfer = event.dataTransfer;
+  if (!transfer) return false;
+  if (transfer.files.length > 0) return true;
+  return Array.from(transfer.types).includes("Files");
+}
+
+function suppressFileDropNavigation(event: DragEvent) {
+  if (!isFileTransfer(event)) return;
+  event.preventDefault();
+}
+
+function handleFileLinkActivate(event: Event) {
+  const detail = (event as CustomEvent).detail as { path: string; line?: number };
+  previewFilePath.value = detail.path;
+  previewInitialLine.value = detail.line;
+  showFilePreviewModal.value = true;
+  previewFromPicker.value = false;
+  previewHidden.value = false;
+}
+
 // Auto-restore focus to whatever had it before the modal opened
 const anyModalOpen = computed(() =>
   showNewTaskModal.value || showAddRepoModal.value || showShortcutsModal.value ||
@@ -911,17 +932,17 @@ onMounted(async () => {
     catch (e) { console.error("[App] corrupt commandPaletteUsage setting:", e); }
   }
 
-  document.addEventListener("file-link-activate", (e: Event) => {
-    const detail = (e as CustomEvent).detail as { path: string; line?: number };
-    previewFilePath.value = detail.path;
-    previewInitialLine.value = detail.line;
-    showFilePreviewModal.value = true;
-    previewFromPicker.value = false;
-    previewHidden.value = false;
-  });
+  window.addEventListener("dragenter", suppressFileDropNavigation);
+  window.addEventListener("dragover", suppressFileDropNavigation);
+  window.addEventListener("drop", suppressFileDropNavigation);
+  document.addEventListener("file-link-activate", handleFileLinkActivate);
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("dragenter", suppressFileDropNavigation);
+  window.removeEventListener("dragover", suppressFileDropNavigation);
+  window.removeEventListener("drop", suppressFileDropNavigation);
+  document.removeEventListener("file-link-activate", handleFileLinkActivate);
   appUpdate.dispose();
 });
 </script>

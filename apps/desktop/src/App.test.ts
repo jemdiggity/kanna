@@ -257,6 +257,63 @@ describe("App", () => {
     });
   });
 
+  it("prevents browser navigation when files are dragged over or dropped on the app shell", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    const dragOverEvent = new Event("dragover", { cancelable: true }) as Event & {
+      dataTransfer: {
+        files: Array<{ path: string; type: string }>;
+        types: string[];
+      };
+    };
+    dragOverEvent.dataTransfer = {
+      files: [{ path: "/tmp/image.png", type: "image/png" }],
+      types: ["Files"],
+    };
+
+    const dropEvent = new Event("drop", { cancelable: true }) as Event & {
+      dataTransfer: {
+        files: Array<{ path: string; type: string }>;
+        types: string[];
+      };
+    };
+    dropEvent.dataTransfer = {
+      files: [{ path: "/tmp/image.png", type: "image/png" }],
+      types: ["Files"],
+    };
+
+    window.dispatchEvent(dragOverEvent);
+    window.dispatchEvent(dropEvent);
+
+    expect(dragOverEvent.defaultPrevented).toBe(true);
+    expect(dropEvent.defaultPrevented).toBe(true);
+
+    wrapper.unmount();
+  });
+
+  it("does not suppress non-file drags on the app shell", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    const dragOverEvent = new Event("dragover", { cancelable: true }) as Event & {
+      dataTransfer: {
+        files: Array<{ path: string; type: string }>;
+        types: string[];
+      };
+    };
+    dragOverEvent.dataTransfer = {
+      files: [],
+      types: ["text/plain"],
+    };
+
+    window.dispatchEvent(dragOverEvent);
+
+    expect(dragOverEvent.defaultPrevented).toBe(false);
+
+    wrapper.unmount();
+  });
+
   it("renders the modal with the preferred existing base branch selected", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
 
