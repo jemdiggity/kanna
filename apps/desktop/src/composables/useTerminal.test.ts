@@ -724,18 +724,11 @@ describe("useTerminal", () => {
             vt: "restored scrollback",
           };
         }
+      }
+      if (cmd === "attach_session") {
         if (!spawnCompleted) {
           throw new AppError("session not found: session-1", "session_not_found");
         }
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored scrollback",
-        };
       }
       return null;
     });
@@ -818,7 +811,12 @@ describe("useTerminal", () => {
 
     resolveSpawn?.();
 
-    for (let attempt = 0; attempt < 10 && invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot").length < 3; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 10 &&
+      (spawnFn.mock.calls.length === 0 || invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session").length < 2);
+      attempt += 1
+    ) {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
@@ -999,10 +997,10 @@ describe("useTerminal", () => {
       "attach_session_with_snapshot",
       "resize_session",
       "resume_session_stream",
-      "attach_session_with_snapshot",
+      "attach_session",
       "resize_session",
-      "resume_session_stream",
     ]);
+    expect(terminal.reset).toHaveBeenCalledTimes(1);
   });
 
   it("marks the terminal detached after session_exit so ensureConnected rechecks the daemon", async () => {
@@ -1108,9 +1106,8 @@ describe("useTerminal", () => {
       "attach_session_with_snapshot",
       "resize_session",
       "resume_session_stream",
-      "attach_session_with_snapshot",
+      "attach_session",
       "resize_session",
-      "resume_session_stream",
     ]);
   });
 
@@ -1194,11 +1191,10 @@ describe("useTerminal", () => {
       "attach_session_with_snapshot",
       "resize_session",
       "resume_session_stream",
-      "attach_session_with_snapshot",
+      "attach_session",
       "resize_session",
-      "resume_session_stream",
     ]);
-    expect(terminal.reset).toHaveBeenCalledTimes(2);
+    expect(terminal.reset).toHaveBeenCalledTimes(1);
   });
 
   it("suppresses browser navigation and pastes dropped file paths into agent terminals", async () => {

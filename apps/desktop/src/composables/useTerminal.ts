@@ -789,13 +789,16 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     let shouldSpawnRecoverySession = false
 
     try {
+      const shouldHydrateFromSnapshot =
+        recoveryMode === "attach-only" &&
+        !hasAttachedOnce
       const attachSnapshot =
-        recoveryMode === "attach-only"
+        shouldHydrateFromSnapshot
           ? await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
               sessionId,
             })
           : null
-      if (recoveryMode !== "attach-only") {
+      if (!shouldHydrateFromSnapshot) {
         await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
       }
       console.warn("[terminal][connect] attach:ok", {
@@ -944,8 +947,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           return
         }
         // Now attach to the newly spawned session.
-        // Task terminals need the snapshot attach flow; shell terminals still use plain attach.
-        if (recoveryMode === "attach-only") {
+        // Only hydrate from a daemon snapshot before the terminal has ever been attached.
+        // After that, preserve local xterm scrollback and let the live PTY redraw itself.
+        if (recoveryMode === "attach-only" && !hasAttachedOnce) {
           const attachSnapshot = await invoke<AttachSnapshotResult>("attach_session_with_snapshot", {
             sessionId,
           })
