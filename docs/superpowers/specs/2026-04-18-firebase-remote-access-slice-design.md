@@ -78,6 +78,19 @@ Users should not yet expect:
 - **Cloud Firestore** for durable user, desktop, pairing, revocation, and last-known presence state
 - **Cloud Functions for Firebase** for pairing-code creation, pairing-code claim, desktop registration finalization, revocation, and short-lived remote session token minting
 
+### Development Environment
+
+This slice should be developed against the **Firebase Local Emulator Suite** by default.
+
+That means local development and automated testing should target:
+
+- the Auth emulator
+- the Firestore emulator
+- the Functions emulator
+
+Production Firebase projects should not be required for routine development of pairing, registry, revocation, or presence flows.
+The emulator-first requirement keeps the cloud slice cheap to iterate on, deterministic in worktrees, and safe to test without touching shared remote state.
+
 ### Non-Firebase Component
 
 Firebase should not be forced to serve as the real-time desktop transport.
@@ -104,6 +117,15 @@ It is not the right primary transport for remote control because:
 - command acknowledgement and backpressure become unclear
 
 If a Firestore-backed command queue ever exists, it should be a fallback or deferred command path, not the primary transport.
+
+### Local Development Shape
+
+The intended local development shape is:
+
+`mobile / local cli / desktop kanna-server -> Firebase emulators + local broker`
+
+The broker should also run locally in development.
+The important boundary is that Firebase-backed flows should be exercised against emulated Auth, Firestore, and Functions services rather than mocked away inside each client.
 
 ## Authentication Model
 
@@ -509,6 +531,8 @@ Do not let clients directly create or mutate:
 
 Those writes should go through privileged Functions / endpoints so ownership checks, token validation, and secret issuance happen atomically.
 
+Firestore rules must be exercised in emulator-backed tests, not treated as documentation-only intent.
+
 ### Broker Access Control
 
 Mobile must present:
@@ -558,6 +582,7 @@ They should not create a parallel remote-control subsystem with different produc
 Deliver:
 
 - Firebase Auth in mobile
+- Firebase emulator wiring for local development and tests
 - pairing-code issuance and claim
 - desktop registration finalization
 - user-scoped desktop registry
@@ -575,6 +600,7 @@ Do not deliver:
 Deliver:
 
 - thin broker
+- local broker wiring that works alongside the Firebase emulator suite
 - desktop outbound authenticated connection
 - mobile short-lived connect token
 - remote `GET /v1/status`
@@ -612,6 +638,7 @@ Deliver later:
 - Firebase is a strong fit for identity and durable state, but not for the live desktop transport by itself.
 - Desktop credential storage and rotation must be done carefully on the local machine.
 - Firestore presence writes may need tuning if heartbeat frequency becomes high.
+- Emulator parity is good enough for this slice, but auth-provider edge cases such as Sign in with Apple token exchange may still need a small amount of production-project verification before release.
 - The current relay prototype assumes one server connection per user; that model must be replaced with one user, many desktops.
 - Remote session-token minting and broker authorization need careful expiry and replay protection.
 - LAN and internet discovery will not be identical internally even if the product-level desktop model remains aligned.
