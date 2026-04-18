@@ -557,6 +557,33 @@ async fn stream_task_terminal(socket: WebSocket, state: Arc<AppState>, task_id: 
             {
                 return;
             }
+
+            match read_initial_task_terminal_event(&mut daemon, &task_id).await {
+                Ok(Some(initial_event)) => {
+                    let should_stop = matches!(
+                        initial_event,
+                        TaskTerminalStreamEvent::Exit { .. } | TaskTerminalStreamEvent::Error { .. }
+                    );
+                    if send_task_terminal_event(&mut socket, initial_event)
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    if should_stop {
+                        return;
+                    }
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    let _ = send_task_terminal_event(
+                        &mut socket,
+                        TaskTerminalStreamEvent::Error { task_id, message },
+                    )
+                    .await;
+                    return;
+                }
+            }
         }
         Ok(DaemonEvent::Error { message, .. }) => {
             let _ = send_task_terminal_event(
@@ -607,26 +634,9 @@ async fn stream_task_terminal(socket: WebSocket, state: Arc<AppState>, task_id: 
             }
         };
 
-        let next_event = match event {
-            DaemonEvent::Output { session_id, data } => {
-                let text = strip_ansi_for_mobile(&String::from_utf8_lossy(&data));
-                if text.is_empty() {
-                    continue;
-                }
-                TaskTerminalStreamEvent::Output {
-                    task_id: session_id,
-                    text,
-                }
-            }
-            DaemonEvent::Exit { session_id, code } => TaskTerminalStreamEvent::Exit {
-                task_id: session_id,
-                code,
-            },
-            DaemonEvent::Error { message, .. } => TaskTerminalStreamEvent::Error {
-                task_id: task_id.clone(),
-                message,
-            },
-            _ => continue,
+        let next_event = match daemon_event_to_task_terminal_event(&task_id, event) {
+            Some(next_event) => next_event,
+            None => continue,
         };
 
         let should_stop = matches!(
@@ -643,6 +653,97 @@ async fn stream_task_terminal(socket: WebSocket, state: Arc<AppState>, task_id: 
             break;
         }
     }
+}
+
+async fn read_initial_task_terminal_event(
+    daemon: &mut crate::daemon_client::DaemonClient,
+    task_id: &str,
+) -> Result<Option<TaskTerminalStreamEvent>, String> {
+    let mut event = daemon
+        .send_command(&DaemonCommand::Snapshot {
+            session_id: task_id.to_string(),
+        })
+        .await
+        .map_err(|error| format!("daemon snapshot error: {error}"))?;
+
+    loop {
+        match event {
+            DaemonEvent::Snapshot { snapshot, .. } => {
+                return Ok(snapshot_output_event(task_id, snapshot));
+            }
+            DaemonEvent::Exit { session_id, code } => {
+                return Ok(Some(TaskTerminalStreamEvent::Exit {
+                    task_id: session_id,
+                    code,
+                }));
+            }
+            DaemonEvent::Error {
+                code: Some(kanna_daemon::protocol::ErrorCode::SessionNotFound),
+                ..
+            } => return Ok(None),
+            DaemonEvent::Error { message, .. } => {
+                return Ok(Some(TaskTerminalStreamEvent::Error {
+                    task_id: task_id.to_string(),
+                    message,
+                }));
+            }
+            DaemonEvent::Output { .. } | DaemonEvent::StatusChanged { .. } => {
+                event = daemon
+                    .read_event()
+                    .await
+                    .map_err(|error| format!("daemon snapshot error: {error}"))?;
+            }
+            _ => {
+                event = daemon
+                    .read_event()
+                    .await
+                    .map_err(|error| format!("daemon snapshot error: {error}"))?;
+            }
+        }
+    }
+}
+
+fn daemon_event_to_task_terminal_event(
+    task_id: &str,
+    event: DaemonEvent,
+) -> Option<TaskTerminalStreamEvent> {
+    match event {
+        DaemonEvent::Output { session_id, data } => {
+            let text = strip_ansi_for_mobile(&String::from_utf8_lossy(&data));
+            if text.is_empty() {
+                return None;
+            }
+
+            Some(TaskTerminalStreamEvent::Output {
+                task_id: session_id,
+                text,
+            })
+        }
+        DaemonEvent::Exit { session_id, code } => Some(TaskTerminalStreamEvent::Exit {
+            task_id: session_id,
+            code,
+        }),
+        DaemonEvent::Error { message, .. } => Some(TaskTerminalStreamEvent::Error {
+            task_id: task_id.to_string(),
+            message,
+        }),
+        _ => None,
+    }
+}
+
+fn snapshot_output_event(
+    task_id: &str,
+    snapshot: kanna_daemon::protocol::TerminalSnapshot,
+) -> Option<TaskTerminalStreamEvent> {
+    let text = strip_ansi_for_mobile(&snapshot.vt);
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(TaskTerminalStreamEvent::Output {
+        task_id: task_id.to_string(),
+        text,
+    })
 }
 
 #[cfg(test)]
@@ -1401,6 +1502,174 @@ mod tests {
         assert_eq!(parse(ready)["type"], "ready");
         assert_eq!(parse(output)["text"], "hello from daemon");
         assert_eq!(parse(exit)["type"], "exit");
+    }
+
+    #[tokio::test]
+    async fn task_terminal_route_replays_snapshot_when_output_arrives_before_snapshot_response() {
+        use futures_util::StreamExt;
+        use kanna_daemon::protocol::{Command as DaemonCommand, Event as DaemonEvent, TerminalSnapshot};
+        use serde_json::Value;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        use std::path::PathBuf;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::{TcpListener, UnixListener};
+        use tokio_tungstenite::connect_async;
+        use tokio_tungstenite::tungstenite::Message;
+
+        static NEXT_TEST_DB_ID: AtomicUsize = AtomicUsize::new(31_000);
+
+        fn test_socket_path_for_dir(daemon_dir: &str) -> PathBuf {
+            let dir = PathBuf::from(daemon_dir);
+            let mut hasher = DefaultHasher::new();
+            dir.hash(&mut hasher);
+            let hash = hasher.finish() as u32;
+            PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
+        }
+
+        let test_id = NEXT_TEST_DB_ID.fetch_add(1, Ordering::Relaxed);
+        let daemon_dir = std::env::temp_dir().join(format!(
+            "kanna-http-api-daemon-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&daemon_dir).unwrap();
+        let socket_path = test_socket_path_for_dir(&daemon_dir.to_string_lossy());
+        let _ = std::fs::remove_file(&socket_path);
+        let daemon_listener = UnixListener::bind(&socket_path).unwrap();
+        let daemon_server = tokio::spawn(async move {
+            let (stream, _) = daemon_listener.accept().await.unwrap();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let observe: DaemonCommand = serde_json::from_str(line.trim()).unwrap();
+            match observe {
+                DaemonCommand::Observe { session_id } => assert_eq!(session_id, "task-1"),
+                other => panic!("expected observe command, got {:?}", other),
+            }
+            write_half
+                .write_all(
+                    format!("{}\n", serde_json::to_string(&DaemonEvent::Ok).unwrap()).as_bytes(),
+                )
+                .await
+                .unwrap();
+
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let snapshot: DaemonCommand = serde_json::from_str(line.trim()).unwrap();
+            match snapshot {
+                DaemonCommand::Snapshot { session_id } => assert_eq!(session_id, "task-1"),
+                other => panic!("expected snapshot command, got {:?}", other),
+            }
+
+            let out_of_order_output = DaemonEvent::Output {
+                session_id: "task-1".to_string(),
+                data: b"ignored live delta".to_vec(),
+            };
+            let snapshot_response = DaemonEvent::Snapshot {
+                session_id: "task-1".to_string(),
+                snapshot: TerminalSnapshot {
+                    version: 1,
+                    rows: 24,
+                    cols: 80,
+                    cursor_row: 1,
+                    cursor_col: 0,
+                    cursor_visible: true,
+                    vt: "hello from snapshot".to_string(),
+                },
+            };
+            let exit = DaemonEvent::Exit {
+                session_id: "task-1".to_string(),
+                code: 0,
+            };
+
+            for event in [out_of_order_output, snapshot_response, exit] {
+                write_half
+                    .write_all(
+                        format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let config = crate::config::Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            daemon_dir: daemon_dir.to_string_lossy().to_string(),
+            db_path: crate::db::Db::test_db_path(&format!("http-api-snapshot-race-{test_id}")),
+            desktop_id: "desktop-1".to_string(),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "127.0.0.1".to_string(),
+            lan_port: 48120,
+            pairing_store_path: format!("/tmp/kanna-pairings-snapshot-race-{test_id}.json"),
+        };
+        let _ = crate::db::Db::open_for_tests(&config.db_path).unwrap();
+        let app = super::router(Arc::new(super::AppState::new(config)));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        let (mut socket, _) = connect_async(format!("ws://{addr}/v1/tasks/task-1/terminal"))
+            .await
+            .unwrap();
+
+        let ready = socket.next().await.unwrap().unwrap();
+        let output = socket.next().await.unwrap().unwrap();
+
+        server.abort();
+        daemon_server.abort();
+        let _ = std::fs::remove_file(&socket_path);
+
+        let parse = |message: Message| -> Value {
+            match message {
+                Message::Text(text) => serde_json::from_str(&text).unwrap(),
+                other => panic!("expected text websocket frame, got {:?}", other),
+            }
+        };
+
+        let ready = parse(ready);
+        let output = parse(output);
+
+        assert_eq!(ready["type"], "ready");
+        assert_eq!(output["type"], "output");
+        assert_eq!(output["text"], "hello from snapshot");
+    }
+
+    #[test]
+    fn snapshot_output_event_uses_snapshot_text_for_mobile_terminal() {
+        let snapshot = kanna_daemon::protocol::TerminalSnapshot {
+            version: 1,
+            rows: 24,
+            cols: 80,
+            cursor_row: 1,
+            cursor_col: 0,
+            cursor_visible: true,
+            vt: "hello from snapshot".to_string(),
+        };
+
+        let event = super::snapshot_output_event("task-1", snapshot)
+            .expect("expected snapshot to produce an output event");
+
+        match event {
+            super::TaskTerminalStreamEvent::Output { task_id, text } => {
+                assert_eq!(task_id, "task-1");
+                assert_eq!(text, "hello from snapshot");
+            }
+            other => panic!("expected output event, got {:?}", other),
+        }
     }
 
     #[tokio::test]

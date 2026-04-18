@@ -13,6 +13,8 @@ target/
 .playwright-mcp/
 tauri.conf.local.json
 apps/desktop/src-tauri/binaries/
+apps/mobile/.expo/
+apps/mobile/ios/
 .claude/settings.local.json
 .superpowers/
 bazel-*
