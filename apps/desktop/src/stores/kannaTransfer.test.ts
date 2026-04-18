@@ -2497,6 +2497,7 @@ describe("outgoing transfer commit acknowledgment", () => {
         KANNA_DB_NAME: "",
         KANNA_DB_PATH: "",
         KANNA_DAEMON_DIR: "",
+        KANNA_TRANSFER_ROOT: "",
         KANNA_WEBDRIVER_PORT: "",
         KANNA_E2E_TARGET_WEBDRIVER_PORT: "",
       }),

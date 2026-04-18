@@ -258,6 +258,12 @@ if grep -Fq "CARGO_TARGET_DIR=" "$TMUX_LOG"; then
   exit 1
 fi
 
+if ! grep -Fq "KANNA_TRANSFER_ROOT=$TEST_ROOT/.kanna-transfer" "$TMUX_LOG"; then
+  printf 'expected default worktree transfer root in tmux command, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
 for leaked in KANNA_TASK_ID= KANNA_CLI_DB_PATH= KANNA_SOCKET_PATH= KANNA_CLI_PATH=; do
   if grep -Fq "$leaked" "$TMUX_LOG"; then
     printf 'expected tmux launch env to omit leaked task-local var %s, got:\n' "$leaked" >&2
@@ -307,6 +313,27 @@ expect_success "dev.sh with KANNA_DAEMON_DIR" "$RESULT" >/dev/null
 
 if ! grep -Fq "KANNA_DAEMON_DIR=$WORKTREE_ONE/.kanna-daemon" "$TMUX_LOG"; then
   printf 'expected inherited KANNA_DAEMON_DIR to be ignored, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+rm -f "$TMUX_STATE" "$TMUX_LOG"
+: > "$TMUX_STATE"
+: > "$TMUX_LOG"
+
+RESULT="$(run_dev_sh start env KANNA_TRANSFER_ROOT=/tmp/shared-transfer-root)"
+OUTPUT="${RESULT%===STATUS:*===}"
+STATUS="${RESULT##*===STATUS:}"
+STATUS="${STATUS%===}"
+
+if [ "$STATUS" -ne 0 ]; then
+  printf 'dev.sh with KANNA_TRANSFER_ROOT exited with status %s\n' "$STATUS" >&2
+  printf '%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_TRANSFER_ROOT=$TEST_ROOT/.kanna-transfer" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_TRANSFER_ROOT to be ignored, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi

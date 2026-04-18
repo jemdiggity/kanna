@@ -450,6 +450,7 @@ fn build_transfer_sidecar_env(
     app_data_dir: &std::path::Path,
     machine_name: Option<&str>,
 ) -> Result<HashMap<String, String>, String> {
+    let transfer_root = crate::transfer_identity::resolve_transfer_root(app_data_dir);
     let resolved = crate::transfer_identity::resolve_transfer_identity(app_data_dir, machine_name)?;
     let mut env = HashMap::new();
     env.insert(
@@ -457,8 +458,20 @@ fn build_transfer_sidecar_env(
         std::env::var("KANNA_TRANSFER_PORT").unwrap_or_else(|_| "4455".to_string()),
     );
     env.insert(
+        "KANNA_TRANSFER_ROOT".to_string(),
+        transfer_root.to_string_lossy().into_owned(),
+    );
+    env.insert(
         "KANNA_TRANSFER_REGISTRY_DIR".to_string(),
-        std::env::var("KANNA_TRANSFER_REGISTRY_DIR").unwrap_or_default(),
+        std::env::var("KANNA_TRANSFER_REGISTRY_DIR")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| {
+                transfer_root
+                    .join("registry")
+                    .to_string_lossy()
+                    .into_owned()
+            }),
     );
     env.insert("KANNA_TRANSFER_PEER_ID".to_string(), resolved.peer_id);
     env.insert(
@@ -510,7 +523,9 @@ fn resolve_sidecar_binary() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CString;
     use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TestTempDir {
@@ -543,6 +558,22 @@ mod tests {
         }
     }
 
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    unsafe fn set_env_var(key: &str, value: &str) {
+        let key = CString::new(key).expect("env key should be valid");
+        let value = CString::new(value).expect("env value should be valid");
+        assert_eq!(libc::setenv(key.as_ptr(), value.as_ptr(), 1), 0);
+    }
+
+    unsafe fn unset_env_var(key: &str) {
+        let key = CString::new(key).expect("env key should be valid");
+        assert_eq!(libc::unsetenv(key.as_ptr()), 0);
+    }
+
     #[test]
     fn transfer_sidecar_env_includes_stable_peer_id_and_display_name() {
         let temp = TestTempDir::new();
@@ -555,6 +586,41 @@ mod tests {
             env.get("KANNA_TRANSFER_DISPLAY_NAME").map(String::as_str),
             Some("Jeremy's MacBook Pro")
         );
+    }
+
+    #[test]
+    fn transfer_sidecar_env_uses_instance_scoped_transfer_root_when_present() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        let temp = TestTempDir::new();
+        let transfer_root = temp.path().join("worktree-transfer-root");
+
+        unsafe {
+            set_env_var(
+                "KANNA_TRANSFER_ROOT",
+                transfer_root
+                    .to_str()
+                    .expect("transfer root should be utf-8"),
+            );
+        }
+
+        let env = build_transfer_sidecar_env(temp.path(), Some("Jeremy's MacBook Pro"))
+            .expect("sidecar env should be built");
+
+        unsafe {
+            unset_env_var("KANNA_TRANSFER_ROOT");
+        }
+
+        assert_eq!(
+            env.get("KANNA_TRANSFER_REGISTRY_DIR").map(String::as_str),
+            Some(
+                transfer_root
+                    .join("registry")
+                    .to_str()
+                    .expect("registry path should be utf-8"),
+            )
+        );
+        assert!(transfer_root.join("identity.json").exists());
+        assert!(!temp.path().join("transfer").join("identity.json").exists());
     }
 
     #[test]

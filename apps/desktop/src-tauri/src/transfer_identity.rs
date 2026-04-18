@@ -56,8 +56,16 @@ pub(crate) fn load_or_create_transfer_identity(
     }
 }
 
+pub(crate) fn resolve_transfer_root(app_data_dir: &Path) -> PathBuf {
+    std::env::var("KANNA_TRANSFER_ROOT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| app_data_dir.join("transfer"))
+}
+
 pub(crate) fn transfer_identity_path(app_data_dir: &Path) -> PathBuf {
-    app_data_dir.join("transfer").join("identity.json")
+    resolve_transfer_root(app_data_dir).join("identity.json")
 }
 
 pub(crate) fn resolve_transfer_display_name(
