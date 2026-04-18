@@ -1289,15 +1289,7 @@ describe("useTerminal", () => {
     const { useTerminal } = await import("./useTerminal");
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "\u001b[?2004hrestored scrollback",
-        };
+        return null;
       }
       return null;
     });
@@ -1345,6 +1337,15 @@ describe("useTerminal", () => {
       await Promise.resolve();
     }
     await startPromise;
+    emitTerminalSnapshot("session-1", "\u001b[?2004hrestored scrollback");
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
 
     invokeMock.mockClear();
 
@@ -1374,15 +1375,7 @@ describe("useTerminal", () => {
 
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "\u001b[?2004hrestored scrollback",
-        };
+        return null;
       }
       return null;
     });
@@ -1442,6 +1435,15 @@ describe("useTerminal", () => {
       await Promise.resolve();
     }
     await startPromise;
+    emitTerminalSnapshot("session-1", "\u001b[?2004hrestored scrollback");
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
 
     invokeMock.mockClear();
     expect(nativeWindowDragDropHandler).not.toBeNull();
@@ -1470,15 +1472,7 @@ describe("useTerminal", () => {
 
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "\u001b[?2004hrestored scrollback",
-        };
+        return null;
       }
       return null;
     });
@@ -1538,6 +1532,15 @@ describe("useTerminal", () => {
       await Promise.resolve();
     }
     await startPromise;
+    emitTerminalSnapshot("session-1", "\u001b[?2004hrestored scrollback");
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
 
     invokeMock.mockClear();
     expect(nativeWebviewDragDropHandler).not.toBeNull();
@@ -1567,15 +1570,7 @@ describe("useTerminal", () => {
 
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "\u001b[?2004hrestored scrollback",
-        };
+        return null;
       }
       return null;
     });
@@ -1634,6 +1629,15 @@ describe("useTerminal", () => {
       await Promise.resolve();
     }
     await startPromise;
+    emitTerminalSnapshot("session-1", "\u001b[?2004hrestored scrollback");
+    for (let attempt = 0; attempt < 10 && terminal.pendingStringWrites.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    while (terminal.pendingStringWrites.length > 0) {
+      terminal.flushNextStringWrite();
+      await Promise.resolve();
+    }
 
     invokeMock.mockClear();
 
@@ -1666,15 +1670,8 @@ describe("useTerminal", () => {
 
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "attach_session_with_snapshot") {
-        return {
-          version: 1,
-          rows: 24,
-          cols: 80,
-          cursor_row: 0,
-          cursor_col: 0,
-          cursor_visible: true,
-          vt: "restored copilot scrollback",
-        };
+        emitTerminalSnapshot("session-1", "restored copilot scrollback");
+        return null;
       }
       return null;
     });
