@@ -1,6 +1,14 @@
 import React, { useEffect, useRef, useSyncExternalStore } from "react";
-import { SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  AppState,
+  type AppStateStatus,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View
+} from "react-native";
 import { isTaskDetailVisible, shouldShowFloatingToolbar } from "./appShell";
+import { shouldRefreshOnAppStateTransition } from "./appLifecycle";
 import { createAppModel, type AppModel } from "./appModel";
 import { FloatingToolbar } from "./components/FloatingToolbar";
 import { CreateTaskComposer } from "./components/CreateTaskComposer";
@@ -30,6 +38,24 @@ export default function App() {
   useEffect(() => {
     void model.initialize();
   }, [model]);
+
+  useEffect(() => {
+    let previousState: AppStateStatus = AppState.currentState;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (
+        shouldRefreshOnAppStateTransition(previousState, nextState) &&
+        model.sessionStore.getState().connectionState === "connected"
+      ) {
+        void controller.refresh();
+      }
+
+      previousState = nextState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [controller, model]);
 
   const selectedTask =
     state.repoTasks.find((task) => task.id === state.selectedTaskId) ??
@@ -71,7 +97,6 @@ export default function App() {
         return (
           <TasksScreen
             heading="Recent"
-            subheading="Most recently updated tasks across the paired desktop."
             repos={state.repos}
             selectedRepoId={state.selectedRepoId}
             tasks={state.recentTasks}
@@ -129,7 +154,6 @@ export default function App() {
         return (
           <TasksScreen
             heading="Tasks"
-            subheading="Repo-scoped work from the paired desktop, like the main desktop sidebar."
             repos={state.repos}
             selectedRepoId={state.selectedRepoId}
             tasks={state.repoTasks}
@@ -167,19 +191,7 @@ export default function App() {
           </View>
         ) : null}
 
-        {taskDetailVisible ? (
-          mainContent
-        ) : (
-          <ScrollView
-            contentContainerStyle={[
-              styles.scrollContent,
-              state.connectionState === "connected" ? styles.scrollContentPadded : null
-            ]}
-            showsVerticalScrollIndicator={false}
-          >
-            {mainContent}
-          </ScrollView>
-        )}
+        {mainContent}
 
         {shouldShowFloatingToolbar(
           state.connectionState,
@@ -267,12 +279,5 @@ const styles = StyleSheet.create({
     color: "#FFC7CE",
     fontSize: 14,
     lineHeight: 20
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingBottom: 32
-  },
-  scrollContentPadded: {
-    paddingBottom: 140
   }
 });

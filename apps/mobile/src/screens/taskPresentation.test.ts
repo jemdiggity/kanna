@@ -21,7 +21,7 @@ describe("buildTaskListItemModel", () => {
     expect(model.repoLabel).toBe("kanna-tauri");
     expect(model.stageLabel).toBe("in progress");
     expect(model.preview).toBe("Recent output line");
-    expect(model.scopeLabel).toBe("Repo Task");
+    expect(model.scopeLabel).toBe("Task");
   });
 
   it("falls back cleanly for recent tasks without snippets", () => {
@@ -37,8 +37,23 @@ describe("buildTaskListItemModel", () => {
     );
 
     expect(model.repoLabel).toBe("repo-2");
-    expect(model.scopeLabel).toBe("Recent Task");
-    expect(model.preview).toContain("review");
+    expect(model.scopeLabel).toBe("Recent");
+    expect(model.preview).toBe("Ready for review.");
+  });
+
+  it("uses shorter generic preview copy for active work", () => {
+    const model = buildTaskListItemModel(
+      {
+        id: "task-3",
+        repoId: "repo-3",
+        title: "Wire up task refresh",
+        stage: "in progress"
+      },
+      "repo-three",
+      false
+    );
+
+    expect(model.preview).toBe("Open the task for the latest output.");
   });
 });
 

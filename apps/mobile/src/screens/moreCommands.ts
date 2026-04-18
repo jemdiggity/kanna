@@ -32,12 +32,7 @@ export function buildMoreCommandSections({
     {
       title: "Workspace",
       headline: pairingCode ?? "No pairing session",
-      detail: "Global mobile commands for refresh, pairing, desktop switching, and task creation."
-    },
-    {
-      title: "Commands",
-      headline: "Global actions",
-      detail: "Use these to move around the paired desktop from mobile.",
+      detail: "Global commands for the paired desktop.",
       actions: [
         {
           id: "refresh",
@@ -69,16 +64,9 @@ export function buildMoreCommandSections({
 
   if (selectedTask) {
     sections.push({
-      title: "Selected Task",
+      title: "Task",
       headline: selectedTask.title,
-      detail:
-        selectedTask.snippet?.trim() ||
-        `Stage ${selectedTask.stage ?? "unknown"} is the current mobile checkpoint.`
-    });
-    sections.push({
-      title: "Task Actions",
-      headline: selectedTask.stage ?? "unknown",
-      detail: "Contextual actions for the currently selected task.",
+      detail: selectedTask.stage ?? "unknown",
       actions: [
         {
           id: "advance-stage",

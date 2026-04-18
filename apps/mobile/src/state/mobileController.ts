@@ -59,6 +59,30 @@ export function createMobileController(
     activeTaskTerminal = null;
   };
 
+  const reconcileSelectedTask = () => {
+    const selectedTaskId = store.getState().selectedTaskId;
+    if (!selectedTaskId || findTask(selectedTaskId)) {
+      return;
+    }
+
+    stopTaskTerminal();
+    store.reconcileSelectedTask();
+  };
+
+  const refreshSearchResults = async () => {
+    const query = store.getState().searchQuery.trim();
+    if (!query) {
+      return;
+    }
+
+    const results = await client.searchTasks(query);
+    if (store.getState().searchQuery.trim() !== query) {
+      return;
+    }
+
+    store.setSearchResults(query, results);
+  };
+
   const loadRepoTasks = async (repoId: string | null) => {
     if (!repoId) {
       store.setRepoTasks([]);
@@ -115,6 +139,8 @@ export function createMobileController(
     store.setRepos(repos);
     store.setRecentTasks(recentTasks);
     await loadRepoTasks(store.getState().selectedRepoId);
+    await refreshSearchResults();
+    reconcileSelectedTask();
   };
 
   const refreshTaskCollections = async () => {
@@ -125,6 +151,8 @@ export function createMobileController(
     ]);
     store.setRecentTasks(recentTasks);
     store.setRepoTasks(repoTasks);
+    await refreshSearchResults();
+    reconcileSelectedTask();
   };
 
   const startBackgroundRefresh = () => {
@@ -191,6 +219,9 @@ export function createMobileController(
     },
 
     async refresh() {
+      if (store.getState().selectedTaskId) {
+        stopTaskTerminal();
+      }
       await this.bootstrap();
     },
 

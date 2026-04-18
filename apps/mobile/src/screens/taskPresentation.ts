@@ -22,7 +22,7 @@ export function buildTaskListItemModel(
   return {
     preview: resolveTaskPreview(task),
     repoLabel: repoName ?? task.repoId,
-    scopeLabel: isRecentView ? "Recent Task" : "Repo Task",
+    scopeLabel: isRecentView ? "Recent" : "Task",
     stageLabel: task.stage ?? "unknown"
   };
 }
@@ -50,12 +50,12 @@ function resolveTaskPreview(task: TaskSummary): string {
   }
 
   if (task.stage === "pr") {
-    return "Ready for review from mobile.";
+    return "Ready for review.";
   }
 
   if (task.stage === "merge") {
-    return "Merge follow-up is active from the paired desktop.";
+    return "Merge follow-up active.";
   }
 
-  return "Latest desktop activity is available in the task detail view.";
+  return "Open the task for the latest output.";
 }

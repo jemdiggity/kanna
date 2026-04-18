@@ -1,9 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
 import {
   buildMoreCommandPalette,
-  buildMoreCommandSections,
   type MoreCommandAction
 } from "./moreCommands";
 
@@ -31,7 +30,6 @@ export function MoreScreen({
   onCloseTask
 }: MoreScreenProps) {
   const [query, setQuery] = useState("");
-  const sections = buildMoreCommandSections({ pairingCode, selectedTask });
   const paletteEntries = useMemo(
     () => buildMoreCommandPalette({ pairingCode, selectedTask }, query),
     [pairingCode, query, selectedTask]
@@ -70,77 +68,67 @@ export function MoreScreen({
   };
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.heading}>More</Text>
-      <Text style={styles.subheading}>
-        Search commands for desktop selection, refresh, pairing, and task management.
-      </Text>
+    <ScrollView
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.wrap}>
+        <Text style={styles.heading}>More</Text>
 
-      {selectedTask ? (
-        <View style={styles.activeTaskCard}>
-          <View style={styles.activeTaskHeader}>
-            <Text style={styles.commandLabel}>Selected Task</Text>
-            <View style={styles.taskStagePill}>
-              <Text style={styles.taskStageLabel}>{selectedTask.stage ?? "unknown"}</Text>
-            </View>
-          </View>
-          <Text style={styles.commandValue}>{selectedTask.title}</Text>
-          <Text style={styles.commandHint}>
-            {selectedTask.snippet?.trim() ||
-              "Use this surface for task-level actions while keeping the current task selected."}
-          </Text>
-        </View>
-      ) : null}
-
-      <View style={styles.paletteCard}>
-        <TextInput
-          autoCapitalize="none"
-          onChangeText={setQuery}
-          placeholder="Search commands"
-          placeholderTextColor="#6A7E9D"
-          style={styles.searchInput}
-          value={query}
-        />
-
-        <View style={styles.paletteList}>
-          {paletteEntries.length ? (
-            paletteEntries.map((action) => (
-              <Pressable
-                key={action.id}
-                style={styles.action}
-                onPress={() => handleAction(action)}
-              >
-                <Text style={styles.commandLabel}>{action.sectionTitle}</Text>
-                <Text style={styles.actionTitle}>{action.title}</Text>
-                <Text style={styles.actionSectionHeadline}>{action.sectionHeadline}</Text>
-                <Text style={styles.actionCopy}>{action.copy}</Text>
-              </Pressable>
-            ))
-          ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>No commands matched</Text>
-              <Text style={styles.emptyCopy}>
-                Try searching for merge, stage, pair, desktop, or task.
+        <View style={styles.paletteCard}>
+          {selectedTask ? (
+            <View style={styles.activeTaskRow}>
+              <Text numberOfLines={1} style={styles.activeTaskTitle}>
+                {selectedTask.title}
               </Text>
+              <View style={styles.taskStagePill}>
+                <Text style={styles.taskStageLabel}>{selectedTask.stage ?? "unknown"}</Text>
+              </View>
             </View>
-          )}
+          ) : null}
+
+          <TextInput
+            autoCapitalize="none"
+            onChangeText={setQuery}
+            placeholder="Search or run a command"
+            placeholderTextColor="#6A7E9D"
+            style={styles.searchInput}
+            value={query}
+          />
+
+          <View style={styles.paletteList}>
+            {paletteEntries.length ? (
+              paletteEntries.map((action) => (
+                <Pressable
+                  key={action.id}
+                  style={styles.action}
+                  onPress={() => handleAction(action)}
+                >
+                  <Text style={styles.commandLabel}>{action.sectionTitle}</Text>
+                  <Text style={styles.actionTitle}>{action.title}</Text>
+                  <Text style={styles.actionCopy}>{action.copy}</Text>
+                </Pressable>
+              ))
+            ) : (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>No commands matched</Text>
+                <Text style={styles.emptyCopy}>
+                  Try merge, stage, pair, or task.
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
       </View>
-
-      {sections
-        .filter((section) => !section.actions?.length && section.title !== "Selected Task")
-        .map((section) => (
-        <View key={section.title} style={styles.commandCard}>
-          <Text style={styles.commandLabel}>{section.title}</Text>
-          <Text style={styles.commandValue}>{section.headline}</Text>
-          <Text style={styles.commandHint}>{section.detail}</Text>
-        </View>
-        ))}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  content: {
+    paddingBottom: 140
+  },
   wrap: {
     gap: 14
   },
@@ -148,11 +136,6 @@ const styles = StyleSheet.create({
     color: "#F5F7FB",
     fontSize: 24,
     fontWeight: "700"
-  },
-  subheading: {
-    color: "#A9B8D1",
-    fontSize: 14,
-    lineHeight: 20
   },
   paletteCard: {
     backgroundColor: "#0D1727",
@@ -175,26 +158,11 @@ const styles = StyleSheet.create({
   paletteList: {
     gap: 10
   },
-  activeTaskCard: {
-    backgroundColor: "#10192A",
-    borderColor: "#22304D",
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 10,
-    padding: 16
-  },
-  activeTaskHeader: {
+  activeTaskRow: {
     alignItems: "center",
     flexDirection: "row",
-    justifyContent: "space-between"
-  },
-  commandCard: {
-    backgroundColor: "#10192A",
-    borderColor: "#22304D",
-    borderRadius: 18,
-    borderWidth: 1,
     gap: 10,
-    padding: 16
+    justifyContent: "space-between"
   },
   commandLabel: {
     color: "#7FA7D9",
@@ -202,9 +170,10 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textTransform: "uppercase"
   },
-  commandValue: {
+  activeTaskTitle: {
     color: "#F5F7FB",
-    fontSize: 18,
+    flex: 1,
+    fontSize: 15,
     fontWeight: "700"
   },
   taskStagePill: {
@@ -218,11 +187,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     textTransform: "uppercase"
-  },
-  commandHint: {
-    color: "#93A7C8",
-    fontSize: 13,
-    lineHeight: 19
   },
   emptyState: {
     alignItems: "center",
@@ -256,11 +220,6 @@ const styles = StyleSheet.create({
     color: "#F5F7FB",
     fontSize: 16,
     fontWeight: "700"
-  },
-  actionSectionHeadline: {
-    color: "#7E93B4",
-    fontSize: 12,
-    fontWeight: "600"
   },
   actionCopy: {
     color: "#B4C2D8",

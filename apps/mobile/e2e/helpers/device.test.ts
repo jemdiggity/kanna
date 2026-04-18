@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildPhysicalDeviceInstallCommand,
   filterAppiumVisibleDevices,
   parseXcdeviceList,
   selectPhysicalDevice,
@@ -15,6 +16,12 @@ function device(name: string, udid: string): AvailablePhysicalDevice {
 }
 
 describe("selectPhysicalDevice", () => {
+  it("builds the install command with the selected Metro port", () => {
+    expect(buildPhysicalDeviceInstallCommand("00008130-001015CA1091401C", 1430)).toBe(
+      "pnpm --dir apps/mobile ios --device 00008130-001015CA1091401C --port 1430 --no-bundler"
+    );
+  });
+
   it("parses attached physical devices from xcdevice output", () => {
     expect(
       parseXcdeviceList(`[
@@ -57,6 +64,19 @@ describe("selectPhysicalDevice", () => {
       selectPhysicalDevice(
         [device("Jeremy's iPhone", "udid-1"), device("Test Phone", "udid-2")],
         "udid-2"
+      )
+    ).toMatchObject({
+      udid: "udid-2"
+    });
+  });
+
+  it("selects the requested device by name when provided", () => {
+    expect(
+      selectPhysicalDevice(
+        [device("Jeremy's iPhone", "udid-1"), device("Jerome's iPhone 15", "udid-2")],
+        undefined,
+        undefined,
+        "Jerome's iPhone 15"
       )
     ).toMatchObject({
       udid: "udid-2"

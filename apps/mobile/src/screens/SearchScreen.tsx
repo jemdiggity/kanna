@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { TaskSummary } from "../lib/api/types";
 import { TaskList } from "../components/TaskList";
 
@@ -17,33 +17,42 @@ export function SearchScreen({
   onOpenTask
 }: SearchScreenProps) {
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.heading}>Search</Text>
-      <Text style={styles.subheading}>
-        Search tasks by title or prompt content across the paired desktop.
-      </Text>
-      <TextInput
-        autoCapitalize="none"
-        onChangeText={onChangeQuery}
-        placeholder="Search tasks"
-        placeholderTextColor="#6A7E9D"
-        style={styles.input}
-        value={query}
-      />
-      <TaskList
-        emptyLabel={
-          query
-            ? "No tasks matched that search yet."
-            : "Start typing to search tasks across your desktop."
-        }
-        tasks={results}
-        onOpenTask={onOpenTask}
-      />
-    </View>
+    <ScrollView
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.wrap}>
+        <Text style={styles.heading}>Search</Text>
+        <Text style={styles.subheading}>
+          Search tasks by title or prompt content across the paired desktop.
+        </Text>
+        <TextInput
+          autoCapitalize="none"
+          onChangeText={onChangeQuery}
+          placeholder="Search tasks"
+          placeholderTextColor="#6A7E9D"
+          style={styles.input}
+          value={query}
+        />
+        <TaskList
+          emptyLabel={
+            query
+              ? "No tasks matched that search yet."
+              : "Start typing to search tasks across your desktop."
+          }
+          tasks={results}
+          onOpenTask={onOpenTask}
+        />
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  content: {
+    paddingBottom: 140
+  },
   wrap: {
     gap: 14
   },

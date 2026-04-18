@@ -8,7 +8,7 @@
       "android"
     ],
     "ios": {
-      "bundleIdentifier": "com.anonymous.kanna-mobile",
+      "bundleIdentifier": "build.kanna.mobile",
       "appleTeamId": "GY3LFAA59P"
     }
   }

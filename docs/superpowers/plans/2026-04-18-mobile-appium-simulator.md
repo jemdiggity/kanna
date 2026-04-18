@@ -171,13 +171,13 @@ describe("mobile Appium config", () => {
       createSimulatorCapabilities({
         appiumPort: 4723,
         deviceName: "iPhone 15",
-        bundleId: "com.anonymous.kanna-mobile"
+        bundleId: "build.kanna.mobile"
       })
     ).toMatchObject({
       platformName: "iOS",
       "appium:automationName": "XCUITest",
       "appium:deviceName": "iPhone 15",
-      "appium:bundleId": "com.anonymous.kanna-mobile",
+      "appium:bundleId": "build.kanna.mobile",
       "appium:wdaLocalPort": 4724
     });
   });
@@ -592,7 +592,7 @@ const driver = await createMobileSession({
   port: env.appiumPort,
   capabilities: createSimulatorCapabilities({
     appiumPort: env.appiumPort,
-    bundleId: "com.anonymous.kanna-mobile",
+    bundleId: "build.kanna.mobile",
     deviceName: env.deviceName
   })
 });

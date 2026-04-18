@@ -12,6 +12,7 @@ interface SmokeElement {
 
 interface SmokeUi {
   getBackButton(): Promise<SmokeElement>;
+  getTerminalOverlay(): Promise<SmokeElement>;
   getTaskRows(): Promise<SmokeElement[]>;
   pause(ms: number): Promise<unknown>;
   waitUntil(
@@ -29,6 +30,9 @@ function createSmokeUi(driver: Browser): SmokeUi {
     async getBackButton() {
       return driver.$(selectors.taskBackButton);
     },
+    async getTerminalOverlay() {
+      return driver.$(selectors.terminalOverlay);
+    },
     async getTaskRows() {
       const taskRows = await driver.$$(selectors.taskRowsXPath);
       return Array.from(taskRows);
@@ -40,6 +44,20 @@ function createSmokeUi(driver: Browser): SmokeUi {
       return driver.waitUntil(condition, options);
     }
   };
+}
+
+export async function waitForTaskTerminalLive(ui: SmokeUi): Promise<void> {
+  await ui.waitUntil(
+    async () => {
+      const overlay = await ui.getTerminalOverlay();
+      return !(await overlay.isExisting());
+    },
+    {
+      interval: POLL_INTERVAL_MS,
+      timeout: SCREEN_TIMEOUT_MS,
+      timeoutMsg: "Expected the mobile task terminal to become live after opening a task"
+    }
+  );
 }
 
 async function waitForTaskRows(ui: SmokeUi): Promise<void> {
@@ -89,6 +107,8 @@ export async function runListDetailBackSmoke(driver: Browser): Promise<void> {
       timeoutMsg: "Expected the task detail back button after opening a task"
     }
   );
+
+  await waitForTaskTerminalLive(ui);
 
   const backButton = await driver.$(selectors.taskBackButton);
   await backButton.click();

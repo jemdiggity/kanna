@@ -49,6 +49,8 @@ export function createPhysicalDeviceCapabilities(
     "appium:wdaLocalPort": deriveWdaLocalPort(input.appiumPort),
     "appium:newCommandTimeout": 120,
     "appium:noReset": true,
+    "appium:forceAppLaunch": true,
+    "appium:shouldTerminateApp": true,
     ...(input.xcodeOrgId ? { "appium:xcodeOrgId": input.xcodeOrgId } : {}),
     ...(xcodeSigningId ? { "appium:xcodeSigningId": xcodeSigningId } : {}),
     ...(input.updatedWdaBundleId

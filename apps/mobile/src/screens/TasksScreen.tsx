@@ -6,7 +6,6 @@ import { TaskList } from "../components/TaskList";
 
 interface TasksScreenProps {
   heading: string;
-  subheading: string;
   repos: RepoSummary[];
   selectedRepoId: string | null;
   tasks: TaskSummary[];
@@ -16,7 +15,6 @@ interface TasksScreenProps {
 
 export function TasksScreen({
   heading,
-  subheading,
   repos,
   selectedRepoId,
   tasks,
@@ -30,49 +28,59 @@ export function TasksScreen({
   const isRecentView = heading === "Recent";
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.heading}>{heading}</Text>
-      <Text style={styles.subheading}>{subheading}</Text>
+    <ScrollView
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.wrap}>
+        <Text style={styles.heading}>{heading}</Text>
 
-      <ScrollView
-        contentContainerStyle={styles.repoRow}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-      >
-        {repos.map((repo) => {
-          const selected = repo.id === selectedRepoId;
-          return (
-            <Pressable
-              key={repo.id}
-              style={[styles.repoChip, selected ? styles.repoChipSelected : null]}
-              onPress={() => onSelectRepo(repo.id)}
-            >
-              <Text
-                style={[
-                  styles.repoLabel,
-                  selected ? styles.repoLabelSelected : null
-                ]}
-              >
-                {repo.name}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+        {repos.length > 1 ? (
+          <ScrollView
+            contentContainerStyle={styles.repoRow}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+          >
+            {repos.map((repo) => {
+              const selected = repo.id === selectedRepoId;
+              return (
+                <Pressable
+                  key={repo.id}
+                  style={[styles.repoChip, selected ? styles.repoChipSelected : null]}
+                  onPress={() => onSelectRepo(repo.id)}
+                >
+                  <Text
+                    style={[
+                      styles.repoLabel,
+                      selected ? styles.repoLabelSelected : null
+                    ]}
+                  >
+                    {repo.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
 
-      <TaskList
-        emptyLabel="No tasks for the selected repo yet."
-        isRecentView={isRecentView}
-        repoNameById={repoNameById}
-        tasks={filteredTasks}
-        testID={MOBILE_E2E_IDS.tasksScreen}
-        onOpenTask={onOpenTask}
-      />
-    </View>
+        <TaskList
+          emptyLabel="No tasks yet."
+          isRecentView={isRecentView}
+          repoNameById={repoNameById}
+          tasks={filteredTasks}
+          testID={MOBILE_E2E_IDS.tasksScreen}
+          onOpenTask={onOpenTask}
+        />
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  content: {
+    paddingBottom: 140
+  },
   wrap: {
     gap: 14
   },
@@ -80,11 +88,6 @@ const styles = StyleSheet.create({
     color: "#F5F7FB",
     fontSize: 24,
     fontWeight: "700"
-  },
-  subheading: {
-    color: "#A9B8D1",
-    fontSize: 14,
-    lineHeight: 20
   },
   repoRow: {
     gap: 10,

@@ -195,14 +195,14 @@ describe("createLanTransport", () => {
     socket.onmessage?.({
       data: JSON.stringify({
         type: "output",
-        taskId: "task-1",
+        task_id: "task-1",
         text: "hello from daemon"
       })
     });
     socket.onmessage?.({
       data: JSON.stringify({
         type: "exit",
-        taskId: "task-1",
+        task_id: "task-1",
         code: 0
       })
     });

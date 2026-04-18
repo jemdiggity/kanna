@@ -193,10 +193,16 @@ cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignore
 # Physical device: pnpm --dir apps/mobile run test:e2e:device:preflight
 # Physical device: pnpm --dir apps/mobile run test:e2e:device:smoke
 # Physical-device runs assume local Xcode signing already works and the app is installed.
+# Device smoke now starts or reuses Metro on KANNA_MOBILE_PORT automatically and
+# force-relaunches the app so stale Expo bundles do not leak across runs.
+# If the app is missing on the device, install it with the same Metro port:
+# pnpm --dir apps/mobile ios --device <udid> --port "$KANNA_MOBILE_PORT" --no-bundler
 # If EXPO_PUBLIC_KANNA_SERVER_URL points at loopback (for example 127.0.0.1),
 # the physical-device Appium harness rewrites it to the host Mac's LAN IP before
 # preflight and smoke checks so the phone can reach the desktop-side mobile server.
-# Use KANNA_IOS_DEVICE_UDID when more than one iPhone is attached.
+# Use KANNA_IOS_DEVICE_UDID for an exact device, or KANNA_IOS_PHYSICAL_DEVICE_NAME
+# to target the visible phone name (for example "Jerome’s iPhone 15").
+# Set one of them when more than one iPhone is attached.
 ```
 
 ### First build in a worktree

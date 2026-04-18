@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { DesktopSummary } from "../lib/api/types";
 
 interface DesktopsScreenProps {
@@ -14,32 +14,37 @@ export function DesktopsScreen({
   onSelectDesktop
 }: DesktopsScreenProps) {
   return (
-    <View style={styles.list}>
-      {desktops.map((desktop) => {
-        const selected = desktop.id === selectedDesktopId;
-        return (
-          <Pressable
-            key={desktop.id}
-            style={[styles.card, selected ? styles.cardSelected : null]}
-            onPress={() => onSelectDesktop(desktop.id)}
-          >
-            <View style={styles.row}>
-              <Text style={styles.title}>{desktop.name}</Text>
-              <View style={styles.modePill}>
-                <Text style={styles.modeLabel}>{desktop.mode}</Text>
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.list}>
+        {desktops.map((desktop) => {
+          const selected = desktop.id === selectedDesktopId;
+          return (
+            <Pressable
+              key={desktop.id}
+              style={[styles.card, selected ? styles.cardSelected : null]}
+              onPress={() => onSelectDesktop(desktop.id)}
+            >
+              <View style={styles.row}>
+                <Text style={styles.title}>{desktop.name}</Text>
+                <View style={styles.modePill}>
+                  <Text style={styles.modeLabel}>{desktop.mode}</Text>
+                </View>
               </View>
-            </View>
-            <Text style={styles.meta}>
-              {desktop.online ? "Available on this network" : "Remote desktop is offline"}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
+              <Text style={styles.meta}>
+                {desktop.online ? "Available on this network" : "Remote desktop is offline"}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  content: {
+    paddingBottom: 140
+  },
   list: {
     gap: 12
   },

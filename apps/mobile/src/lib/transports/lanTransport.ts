@@ -40,6 +40,15 @@ export interface WebSocketLike {
 
 export type WebSocketFactory = (url: string) => WebSocketLike;
 
+interface RawTaskTerminalStreamEvent {
+  type?: string;
+  taskId?: string;
+  task_id?: string;
+  text?: string;
+  code?: number;
+  message?: string;
+}
+
 export function createLanTransport(
   baseUrl: string,
   fetchImpl: FetchLike,
@@ -109,7 +118,9 @@ export function createLanTransport(
         listener({ type: "ready", taskId });
       };
       socket.onmessage = (event) => {
-        const parsed = JSON.parse(event.data) as TaskTerminalStreamEvent;
+        const parsed = normalizeTaskTerminalStreamEvent(
+          JSON.parse(event.data) as RawTaskTerminalStreamEvent
+        );
         if (parsed.type === "exit" || parsed.type === "error") {
           streamEnded = true;
         }
@@ -139,6 +150,41 @@ export function createLanTransport(
     createPairingSession: () =>
       request<PairingSession>("/v1/pairing/sessions", { method: "POST" })
   };
+}
+
+function normalizeTaskTerminalStreamEvent(
+  event: RawTaskTerminalStreamEvent
+): TaskTerminalStreamEvent {
+  const taskId = event.taskId ?? event.task_id ?? "";
+
+  switch (event.type) {
+    case "ready":
+      return { type: "ready", taskId };
+    case "output":
+      return {
+        type: "output",
+        taskId,
+        text: event.text ?? ""
+      };
+    case "exit":
+      return {
+        type: "exit",
+        taskId,
+        code: event.code ?? 0
+      };
+    case "error":
+      return {
+        type: "error",
+        taskId,
+        message: event.message ?? "Task terminal stream failed"
+      };
+    default:
+      return {
+        type: "error",
+        taskId,
+        message: "Task terminal stream sent an unknown event"
+      };
+  }
 }
 
 function buildTaskTerminalWebSocketUrl(baseUrl: string, taskId: string): string {

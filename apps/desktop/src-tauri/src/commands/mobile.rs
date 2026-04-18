@@ -6,7 +6,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 
 const LOCAL_SERVER_HOST: &str = "127.0.0.1";
-const LOCAL_SERVER_PORT: u16 = 48_120;
+const DEFAULT_LOCAL_SERVER_PORT: u16 = 48_120;
 const STATUS_POLL_ATTEMPTS: usize = 20;
 const STATUS_POLL_DELAY_MS: u64 = 250;
 
@@ -50,7 +50,7 @@ impl MobileServerManager {
             inner: Arc::new(Mutex::new(MobileServerState {
                 status: "stopped".to_string(),
                 desktop_name: default_desktop_name(),
-                api_base_url: server_base_url(LOCAL_SERVER_PORT),
+                api_base_url: server_base_url(local_server_port()),
                 config_path,
                 started: false,
             })),
@@ -260,7 +260,7 @@ fn build_server_config(state: &MobileServerState) -> Result<String, String> {
         escape_toml_string(&db_path.to_string_lossy()),
         escape_toml_string(&desktop_id(&state.config_path)),
         escape_toml_string(&state.desktop_name),
-        LOCAL_SERVER_PORT,
+        local_server_port(),
         escape_toml_string(&pairing_store_path.to_string_lossy()),
     ))
 }
@@ -275,7 +275,18 @@ fn resolved_db_path(state: &MobileServerState) -> Result<PathBuf, String> {
         .parent()
         .ok_or_else(|| "mobile config path missing parent directory".to_string())?;
     let app_data_dir = config_dir.parent().unwrap_or(config_dir);
+    if let Ok(db_name) = std::env::var("KANNA_DB_NAME") {
+        return Ok(app_data_dir.join(db_name));
+    }
+
     Ok(app_data_dir.join("kanna-v2.db"))
+}
+
+fn local_server_port() -> u16 {
+    std::env::var("KANNA_MOBILE_SERVER_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_LOCAL_SERVER_PORT)
 }
 
 fn find_sidecar(name: &str) -> Result<PathBuf, String> {
@@ -287,9 +298,10 @@ fn find_sidecar(name: &str) -> Result<PathBuf, String> {
         std::env::current_exe()
             .ok()
             .and_then(|path| path.parent().map(|dir| dir.join(name))),
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|dir| dir.join("../Resources").join(&sidecar_name))),
+        std::env::current_exe().ok().and_then(|path| {
+            path.parent()
+                .map(|dir| dir.join("../Resources").join(&sidecar_name))
+        }),
         std::env::current_exe()
             .ok()
             .and_then(|path| path.parent().map(|dir| dir.join("../Resources").join(name))),
@@ -314,7 +326,7 @@ fn stopped_snapshot(state: &MobileServerState) -> MobileServerStatus {
         desktop_id: desktop_id(&state.config_path),
         desktop_name: state.desktop_name.clone(),
         lan_host: "0.0.0.0".to_string(),
-        lan_port: LOCAL_SERVER_PORT,
+        lan_port: local_server_port(),
         pairing_code: None,
     }
 }
@@ -351,10 +363,28 @@ fn escape_toml_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_server_config, desktop_id, escape_toml_string, resolved_db_path, server_base_url,
-        stopped_snapshot, MobileServerState,
+        MobileServerState, build_server_config, desktop_id, escape_toml_string, resolved_db_path,
+        server_base_url, stopped_snapshot,
     };
+    use std::ffi::CString;
     use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    unsafe fn set_env_var(key: &str, value: &str) {
+        let key = CString::new(key).expect("env key should be valid");
+        let value = CString::new(value).expect("env value should be valid");
+        assert_eq!(libc::setenv(key.as_ptr(), value.as_ptr(), 1), 0);
+    }
+
+    unsafe fn unset_env_var(key: &str) {
+        let key = CString::new(key).expect("env key should be valid");
+        assert_eq!(libc::unsetenv(key.as_ptr()), 0);
+    }
 
     #[test]
     fn escape_toml_string_escapes_quotes_and_backslashes() {
@@ -389,7 +419,41 @@ mod tests {
     }
 
     #[test]
+    fn resolved_db_path_uses_kanna_db_name_inside_app_data_dir() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        unsafe {
+            set_env_var("KANNA_DB_NAME", "kanna-wt-task-1234.db");
+        }
+
+        let state = MobileServerState {
+            status: "stopped".to_string(),
+            desktop_name: "Studio Mac".to_string(),
+            api_base_url: server_base_url(48120),
+            config_path: PathBuf::from("/tmp/build.kanna/Kanna/server.toml"),
+            started: false,
+        };
+
+        let resolved = resolved_db_path(&state).unwrap();
+
+        unsafe {
+            unset_env_var("KANNA_DB_NAME");
+        }
+
+        assert_eq!(
+            resolved,
+            PathBuf::from("/tmp/build.kanna/kanna-wt-task-1234.db")
+        );
+    }
+
+    #[test]
     fn build_server_config_includes_desktop_identity_and_db_path() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        unsafe {
+            unset_env_var("KANNA_MOBILE_SERVER_PORT");
+            unset_env_var("KANNA_DB_NAME");
+            unset_env_var("KANNA_DB_PATH");
+        }
+
         let state = MobileServerState {
             status: "stopped".to_string(),
             desktop_name: "Studio Mac".to_string(),
@@ -405,7 +469,36 @@ mod tests {
     }
 
     #[test]
+    fn build_server_config_uses_overridden_mobile_server_port() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        unsafe {
+            set_env_var("KANNA_MOBILE_SERVER_PORT", "48129");
+        }
+
+        let state = MobileServerState {
+            status: "stopped".to_string(),
+            desktop_name: "Studio Mac".to_string(),
+            api_base_url: server_base_url(48120),
+            config_path: PathBuf::from("/tmp/build.kanna/Kanna/server.toml"),
+            started: false,
+        };
+
+        let config = build_server_config(&state).unwrap();
+
+        unsafe {
+            unset_env_var("KANNA_MOBILE_SERVER_PORT");
+        }
+
+        assert!(config.contains("lan_port = 48129"));
+    }
+
+    #[test]
     fn stopped_snapshot_reflects_local_state() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        unsafe {
+            unset_env_var("KANNA_MOBILE_SERVER_PORT");
+        }
+
         let state = MobileServerState {
             status: "stopped".to_string(),
             desktop_name: "Studio Mac".to_string(),

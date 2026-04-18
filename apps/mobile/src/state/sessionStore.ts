@@ -57,6 +57,7 @@ export interface SessionStore {
   beginTaskTerminal(taskId: string, initialOutput: string): void;
   appendTaskTerminal(taskId: string, chunk: string): void;
   setTaskTerminalStatus(taskId: string, status: TaskTerminalStatus): void;
+  reconcileSelectedTask(): void;
   clearTaskTerminal(): void;
 }
 
@@ -90,6 +91,36 @@ export function createSessionStore(): SessionStore {
     for (const listener of listeners) {
       listener();
     }
+  };
+  const areTaskListsEqual = (
+    left: readonly TaskSummary[],
+    right: readonly TaskSummary[]
+  ) => {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    return left.every((task, index) => {
+      const other = right[index];
+      return (
+        task.id === other.id &&
+        task.repoId === other.repoId &&
+        task.title === other.title &&
+        task.stage === other.stage &&
+        (task.snippet ?? null) === (other.snippet ?? null)
+      );
+    });
+  };
+  const hasTaskInCollections = (taskId: string | null) => {
+    if (!taskId) {
+      return false;
+    }
+
+    return (
+      state.repoTasks.some((task) => task.id === taskId) ||
+      state.recentTasks.some((task) => task.id === taskId) ||
+      state.searchResults.some((task) => task.id === taskId)
+    );
   };
 
   return {
@@ -171,6 +202,10 @@ export function createSessionStore(): SessionStore {
       publish();
     },
     setRepoTasks(repoTasks) {
+      if (areTaskListsEqual(state.repoTasks, repoTasks)) {
+        return;
+      }
+
       state = {
         ...state,
         repoTasks
@@ -178,14 +213,13 @@ export function createSessionStore(): SessionStore {
       publish();
     },
     setRecentTasks(tasks) {
-      const hasSelectedTask = tasks.some((task) => task.id === state.selectedTaskId);
+      if (areTaskListsEqual(state.recentTasks, tasks)) {
+        return;
+      }
+
       state = {
         ...state,
-        recentTasks: tasks,
-        selectedTaskId: hasSelectedTask ? state.selectedTaskId : null,
-        taskTerminalTaskId: hasSelectedTask ? state.taskTerminalTaskId : null,
-        taskTerminalStatus: hasSelectedTask ? state.taskTerminalStatus : "idle",
-        taskTerminalOutput: hasSelectedTask ? state.taskTerminalOutput : ""
+        recentTasks: tasks
       };
       publish();
     },
@@ -252,6 +286,20 @@ export function createSessionStore(): SessionStore {
       state = {
         ...state,
         taskTerminalStatus
+      };
+      publish();
+    },
+    reconcileSelectedTask() {
+      if (hasTaskInCollections(state.selectedTaskId)) {
+        return;
+      }
+
+      state = {
+        ...state,
+        selectedTaskId: null,
+        taskTerminalTaskId: null,
+        taskTerminalStatus: "idle",
+        taskTerminalOutput: ""
       };
       publish();
     },

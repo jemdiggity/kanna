@@ -161,6 +161,7 @@ export KANNA_DB_NAME="$RESOLVED_DB_NAME"
 export KANNA_DB_PATH="$RESOLVED_DB_PATH"
 export KANNA_DAEMON_DIR="$RESOLVED_DAEMON_DIR"
 export KANNA_APPIUM_PORT="$(read_port KANNA_APPIUM_PORT 4723)"
+export KANNA_MOBILE_SERVER_PORT="$(read_port KANNA_MOBILE_SERVER_PORT 48120)"
 
 detect_mobile_server_host() {
   if [ -n "${KANNA_MOBILE_SERVER_HOST:-}" ]; then
@@ -184,7 +185,7 @@ start_mobile() {
   local MOBILE_PORT
   MOBILE_PORT="$(read_port KANNA_MOBILE_PORT 8081)"
   local MOBILE_CWD="$ROOT/apps/mobile"
-  local MOBILE_SERVER_URL="${KANNA_MOBILE_SERVER_URL:-http://$(detect_mobile_server_host):48120}"
+  local MOBILE_SERVER_URL="${KANNA_MOBILE_SERVER_URL:-http://$(detect_mobile_server_host):${KANNA_MOBILE_SERVER_PORT}}"
 
   if [ ! -d "$MOBILE_CWD" ]; then
     echo "Mobile app not found at $MOBILE_CWD"

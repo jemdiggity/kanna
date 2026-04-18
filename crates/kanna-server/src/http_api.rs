@@ -1200,6 +1200,7 @@ mod tests {
                 "2026-04-17 08:00:00",
             )
             .unwrap();
+            db.close_pipeline_item("task-done").unwrap();
             db.update_test_pipeline_item_preview("task-newer", Some("Latest agent output preview"))
                 .unwrap();
         });
@@ -1251,6 +1252,7 @@ mod tests {
                 "2026-04-17 08:00:00",
             )
             .unwrap();
+            db.close_pipeline_item("task-done").unwrap();
         });
 
         let response = app

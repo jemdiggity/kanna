@@ -57,7 +57,8 @@ export function filterAppiumVisibleDevices(
 export function selectPhysicalDevice(
   devices: readonly AvailablePhysicalDevice[],
   requestedUdid?: string,
-  appiumVisibleUdids?: readonly string[]
+  appiumVisibleUdids?: readonly string[],
+  requestedName?: string
 ): AvailablePhysicalDevice {
   if (!devices.length) {
     throw new Error(
@@ -93,6 +94,23 @@ export function selectPhysicalDevice(
     );
   }
 
+  if (requestedName) {
+    const matchingDevices = selectableDevices.filter((device) => device.name === requestedName);
+    if (matchingDevices.length === 1) {
+      return matchingDevices[0];
+    }
+
+    if (matchingDevices.length > 1) {
+      throw new Error(
+        `Multiple attached iPhone devices matched ${requestedName}. Set KANNA_IOS_DEVICE_UDID to choose one device explicitly.`
+      );
+    }
+
+    throw new Error(
+      `Requested iPhone name ${requestedName} was not found. Appium-visible devices: ${selectableDevices.length ? formatDeviceList(selectableDevices) : "none"}.`
+    );
+  }
+
   if (!selectableDevices.length) {
     throw new Error(
       `No attached iPhone devices are available to Appium/XCUITest right now. Attached devices: ${formatDeviceList(devices)}. Unlock the phone, confirm trust and Developer Mode, or reconnect it over USB.`
@@ -115,15 +133,24 @@ export async function listAttachedPhysicalDevices(): Promise<AvailablePhysicalDe
 
 export async function resolvePhysicalDevice(
   requestedUdid?: string,
-  appiumVisibleUdids?: readonly string[]
+  appiumVisibleUdids?: readonly string[],
+  requestedName?: string
 ): Promise<AvailablePhysicalDevice> {
   const devices = await listAttachedPhysicalDevices();
-  return selectPhysicalDevice(devices, requestedUdid, appiumVisibleUdids);
+  return selectPhysicalDevice(devices, requestedUdid, appiumVisibleUdids, requestedName);
+}
+
+export function buildPhysicalDeviceInstallCommand(
+  deviceUdid: string,
+  metroPort: number
+): string {
+  return `pnpm --dir apps/mobile ios --device ${deviceUdid} --port ${metroPort} --no-bundler`;
 }
 
 export async function assertPhysicalDeviceAppInstalled(
   device: AvailablePhysicalDevice,
-  bundleId: string
+  bundleId: string,
+  metroPort = 8081
 ): Promise<void> {
   let stdout = "";
 
@@ -144,7 +171,7 @@ export async function assertPhysicalDeviceAppInstalled(
 
   if (!stdout.includes(bundleId)) {
     throw new Error(
-      `Bundle ${bundleId} is not installed on ${device.name}. Install it with: pnpm --dir apps/mobile ios --device`
+      `Bundle ${bundleId} is not installed on ${device.name}. Install it with: ${buildPhysicalDeviceInstallCommand(device.udid, metroPort)}`
     );
   }
 }

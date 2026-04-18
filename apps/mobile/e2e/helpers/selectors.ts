@@ -5,5 +5,6 @@ export const selectors = {
   tasksScreen: `~${MOBILE_E2E_IDS.tasksScreen}`,
   taskDetailScreen: `~${MOBILE_E2E_IDS.taskDetailScreen}`,
   taskBackButton: `~${MOBILE_E2E_IDS.taskBackButton}`,
+  terminalOverlay: `~${MOBILE_E2E_IDS.terminalOverlay}`,
   taskRowsXPath: '//*[starts-with(@name, "mobile.task-row.")]'
 } as const;

@@ -35,14 +35,19 @@ async function main(): Promise<void> {
   ).json()) as Record<string, unknown>;
   if (env.target === "device") {
     const appiumVisibleUdids = await listXcuitestConnectedDeviceUdids(processEnv);
-    const device = await resolvePhysicalDevice(env.deviceUdid, appiumVisibleUdids);
-    await assertPhysicalDeviceAppInstalled(device, env.bundleId);
+    const device = await resolvePhysicalDevice(
+      env.deviceUdid,
+      appiumVisibleUdids,
+      env.physicalDeviceName
+    );
+    await assertPhysicalDeviceAppInstalled(device, env.bundleId, env.metroPort);
 
     process.stdout.write(
       `${JSON.stringify(
         {
           target: env.target,
           appiumPort: env.appiumPort,
+          metroPort: env.metroPort,
           bundleId: env.bundleId,
           desktopServerUrl,
           deviceName: device.name,
@@ -67,6 +72,7 @@ async function main(): Promise<void> {
       {
         target: env.target,
         appiumPort: env.appiumPort,
+        metroPort: env.metroPort,
         bundleId: env.bundleId,
         desktopServerUrl,
         deviceName: device.name,

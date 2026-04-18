@@ -348,6 +348,99 @@ describe("createMobileController", () => {
     vi.useRealTimers();
   });
 
+  it("refreshes active search results in the background", async () => {
+    vi.useFakeTimers();
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.searchTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-search",
+          repoId: "repo-1",
+          title: "Original search result",
+          stage: "pr"
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "task-search-updated",
+          repoId: "repo-1",
+          title: "Updated search result",
+          stage: "merge"
+        }
+      ]);
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    await controller.searchTasks("merge");
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(client.searchTasks).toHaveBeenLastCalledWith("merge");
+    expect(store.getState().searchResults.map((task) => task.id)).toEqual([
+      "task-search-updated"
+    ]);
+    vi.useRealTimers();
+  });
+
+  it("closes the task terminal when a background refresh removes the selected task", async () => {
+    vi.useFakeTimers();
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.listRecentTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ])
+      .mockResolvedValueOnce([]);
+    vi.mocked(client.listRepoTasks)
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          repoId: "repo-1",
+          title: "Refactor mobile shell",
+          stage: "in progress"
+        }
+      ])
+      .mockResolvedValueOnce([]);
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    controller.openTask("task-1");
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(client.__terminalStream.subscription.close).toHaveBeenCalledTimes(1);
+    expect(store.getState()).toMatchObject({
+      selectedTaskId: null,
+      taskTerminalTaskId: null,
+      taskTerminalStatus: "idle",
+      taskTerminalOutput: ""
+    });
+    vi.useRealTimers();
+  });
+
+  it("reconnects the selected task terminal during an explicit refresh", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    controller.openTask("task-1");
+    await controller.refresh();
+
+    expect(client.__terminalStream.subscription.close).toHaveBeenCalledTimes(1);
+    expect(client.observeTaskTerminal).toHaveBeenCalledTimes(2);
+    expect(client.observeTaskTerminal).toHaveBeenNthCalledWith(
+      2,
+      "task-1",
+      expect.any(Function)
+    );
+    expect(store.getState().taskTerminalTaskId).toBe("task-1");
+  });
+
   it("sends task input to the desktop daemon", async () => {
     const store = createSessionStore();
     const client = createClientMock();

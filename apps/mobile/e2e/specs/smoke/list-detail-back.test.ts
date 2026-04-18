@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { ensureTaskListVisible } from "./list-detail-back.e2e";
+import {
+  ensureTaskListVisible,
+  waitForTaskTerminalLive
+} from "./list-detail-back.e2e";
 
 interface FakeElement {
   click: ReturnType<typeof vi.fn>;
@@ -66,5 +69,30 @@ describe("ensureTaskListVisible", () => {
 
     expect(backButton.click).not.toHaveBeenCalled();
     expect(ui.pause).not.toHaveBeenCalled();
+  });
+});
+
+describe("waitForTaskTerminalLive", () => {
+  it("waits for the terminal overlay to disappear after opening a task", async () => {
+    let overlayVisible = true;
+    const overlay = createElement(() => overlayVisible);
+    const ui = {
+      getTerminalOverlay: vi.fn(async () => overlay),
+      waitUntil: vi.fn(async (condition: () => Promise<boolean>, options) => {
+        if (!(await condition())) {
+          overlayVisible = false;
+        }
+
+        if (await condition()) {
+          return;
+        }
+
+        throw new Error(options.timeoutMsg);
+      })
+    };
+
+    await waitForTaskTerminalLive(ui);
+
+    expect(ui.getTerminalOverlay).toHaveBeenCalled();
   });
 });
