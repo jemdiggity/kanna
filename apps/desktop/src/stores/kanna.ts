@@ -329,6 +329,12 @@ function sanitizeTransferRepoName(name: string): string {
   return sanitized.length > 0 ? sanitized : "repo";
 }
 
+function normalizeTransferRepoRemote(remoteUrl: string | null | undefined): string | null {
+  if (!remoteUrl) return null;
+  const trimmed = remoteUrl.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function buildTransferBundlePath(transferId: string): string {
   return `/tmp/kanna-transfer-${transferId}.bundle`;
 }
@@ -1152,12 +1158,47 @@ export const useKannaStore = defineStore("kanna", () => {
     return `${parentDir}/${baseName}-${Date.now()}`;
   }
 
+  async function findIncomingTransferRepoMatch(
+    payload: OutgoingTransferPayload,
+  ): Promise<Repo | null> {
+    const repos = await _db.select<Repo>("SELECT * FROM repo");
+    const normalizedRemoteUrl = normalizeTransferRepoRemote(payload.repo.remote_url);
+
+    if (normalizedRemoteUrl) {
+      for (const repo of repos) {
+        const remoteUrl = await invoke<string | null>("git_remote_url", {
+          repoPath: repo.path,
+        }).catch(() => null);
+        if (normalizeTransferRepoRemote(remoteUrl) === normalizedRemoteUrl) {
+          return repo;
+        }
+      }
+    }
+
+    const repoPath = payload.repo.path;
+    if (repoPath) {
+      return repos.find((repo) => repo.path === repoPath) ?? null;
+    }
+
+    return null;
+  }
+
   async function ensureIncomingTransferRepo(
     transferId: string,
     payload: OutgoingTransferPayload,
   ): Promise<{ repoId: string; repoPath: string }> {
     const repoName = payload.repo.name ?? "repo";
     const defaultBranch = payload.repo.default_branch ?? "main";
+    const existingRepo = await findIncomingTransferRepoMatch(payload);
+
+    if (existingRepo) {
+      const repoId = await importRepo(
+        existingRepo.path,
+        existingRepo.name,
+        existingRepo.default_branch,
+      );
+      return { repoId, repoPath: existingRepo.path };
+    }
 
     if (payload.repo.mode === "reuse-local") {
       const repoPath = payload.repo.path;

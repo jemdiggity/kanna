@@ -1384,6 +1384,68 @@ describe("incoming transfer approval", () => {
     expect(typeof localTaskId).toBe("string");
   });
 
+  it("reuses an existing imported repo with the same remote URL before cloning", async () => {
+    setActivePinia(createPinia());
+    const { useKannaStore } = await import("./kanna");
+    const store = useKannaStore();
+    const payload = buildIncomingTransferPayload();
+    payload.repo = {
+      mode: "clone-remote",
+      remote_url: "git@github.com:jemdiggity/kanna.git",
+      path: null,
+      name: "repo-1",
+      default_branch: "main",
+      bundle: null,
+    };
+    const existingRepo = {
+      ...buildRepo(),
+      id: "repo-existing",
+      path: "/tmp/repo-existing",
+    };
+    const fakeDb = createTransferDb({
+      repos: [existingRepo],
+      transfers: [{
+        id: "transfer-1",
+        direction: "incoming",
+        status: "pending",
+        source_peer_id: "peer-source",
+        target_peer_id: null,
+        source_task_id: "task-source",
+        local_task_id: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        error: null,
+        payload_json: JSON.stringify(payload),
+      }],
+    });
+
+    await store.init(fakeDb);
+
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "git_remote_url") {
+        if (args?.repoPath === "/tmp/repo-existing") {
+          return "git@github.com:jemdiggity/kanna.git";
+        }
+        return null;
+      }
+      if (cmd === "which_binary") {
+        return "/usr/bin/claude";
+      }
+      if (cmd === "git_worktree_add" || cmd === "create_agent_session") {
+        return null;
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const localTaskId = await store.approveIncomingTransfer("transfer-1");
+    await flushBackgroundSetup();
+
+    expect(typeof localTaskId).toBe("string");
+    expect(invokeMock).not.toHaveBeenCalledWith("git_clone", expect.anything());
+    expect(fakeDb.tables.repo).toHaveLength(1);
+    expect(fakeDb.tables.pipeline_item[0]?.repo_id).toBe("repo-existing");
+  });
+
   it("materializes the repo from a fetched bundle before importing a bundle-repo transfer", async () => {
     setActivePinia(createPinia());
     const { useKannaStore } = await import("./kanna");

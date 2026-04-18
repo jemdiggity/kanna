@@ -6,11 +6,13 @@ import type { TransferPeerOption } from "../utils/taskTransfer";
 const props = defineProps<{
   peers: TransferPeerOption[];
   loading?: boolean;
+  title?: string;
+  actionLabel?: string;
+  requireTrusted?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "select", peerId: string): void;
-  (e: "pair-peer", peerId: string): void;
   (e: "cancel"): void;
 }>();
 
@@ -31,20 +33,16 @@ watch(
 );
 
 function confirmSelect() {
-  if (!selectedPeerId.value || !selectedPeer.value?.trusted) return;
-  emit("select", selectedPeerId.value);
-}
-
-function pairSelectedPeer() {
   if (!selectedPeerId.value) return;
-  emit("pair-peer", selectedPeerId.value);
+  if ((props.requireTrusted ?? true) && !selectedPeer.value?.trusted) return;
+  emit("select", selectedPeerId.value);
 }
 </script>
 
 <template>
   <div class="modal-overlay" :style="{ zIndex }" @click.self="emit('cancel')">
     <div class="modal-card">
-      <h2 class="title">{{ $t("taskTransfer.pushToMachine") }}</h2>
+      <h2 class="title">{{ title ?? $t("taskTransfer.pushToMachine") }}</h2>
 
       <div v-if="loading" class="state-text">{{ $t("common.loading") }}</div>
 
@@ -69,15 +67,12 @@ function pairSelectedPeer() {
         <button class="btn btn-danger" @click="emit('cancel')">
           {{ $t("actions.cancel") }}
         </button>
-        <button class="btn" :disabled="!selectedPeerId || loading" @click="pairSelectedPeer">
-          {{ $t("taskTransfer.pairPeer") }}
-        </button>
         <button
           class="btn btn-primary"
-          :disabled="!selectedPeerId || loading || !selectedPeer?.trusted"
+          :disabled="!selectedPeerId || loading || ((requireTrusted ?? true) && !selectedPeer?.trusted)"
           @click="confirmSelect"
         >
-          {{ $t("taskTransfer.pushToMachine") }}
+          {{ actionLabel ?? $t("taskTransfer.pushToMachine") }}
         </button>
       </div>
     </div>

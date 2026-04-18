@@ -338,6 +338,27 @@ if ! grep -Fq "KANNA_TRANSFER_ROOT=$TEST_ROOT/.kanna-transfer" "$TMUX_LOG"; then
   exit 1
 fi
 
+rm -f "$TMUX_STATE" "$TMUX_LOG"
+: > "$TMUX_STATE"
+: > "$TMUX_LOG"
+
+RESULT="$(run_dev_sh start env KANNA_TRANSFER_PORT=4567)"
+OUTPUT="${RESULT%===STATUS:*===}"
+STATUS="${RESULT##*===STATUS:}"
+STATUS="${STATUS%===}"
+
+if [ "$STATUS" -ne 0 ]; then
+  printf 'dev.sh with KANNA_TRANSFER_PORT exited with status %s\n' "$STATUS" >&2
+  printf '%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_TRANSFER_PORT=4567" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_TRANSFER_PORT to be forwarded to tmux, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
 : > "$SQLITE_LOG"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed env KANNA_DB_NAME=shared.db)"
 expect_success "dev.sh seed with KANNA_DB_NAME" "$RESULT" >/dev/null

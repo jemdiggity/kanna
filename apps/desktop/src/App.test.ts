@@ -659,14 +659,13 @@ describe("App", () => {
 
     expect(appUpdateMock.dispose).toHaveBeenCalledTimes(1);
   });
-  it("approves an incoming transfer from the modal using the persisted transfer id", async () => {
+  it("auto-imports an incoming transfer as soon as it is received", async () => {
     dbSelectMock.mockResolvedValue([]);
     const wrapper = await mountApp(SidebarWithRepoStub);
 
     await flushPromises();
     const handler = listenHandlers.get("transfer-request");
     expect(handler).toBeTypeOf("function");
-    dbSelectMock.mockResolvedValue([buildPendingIncomingTransferRow()]);
 
     await handler?.(buildIncomingTransferEvent());
     await flushPromises();
@@ -677,17 +676,11 @@ describe("App", () => {
         sourcePeerId: "peer-source",
       }),
     );
-    expect(wrapper.text()).toContain("peer-source");
-
-    dbSelectMock.mockResolvedValue([]);
-    await wrapper.get(".btn-primary").trigger("click");
-    await flushPromises();
-
     expect(store.approveIncomingTransfer).toHaveBeenCalledWith("transfer-1");
     expect(wrapper.text()).not.toContain("peer-source");
   });
 
-  it("hydrates a pending incoming transfer from the database on mount", async () => {
+  it("auto-imports any pending incoming transfer on mount", async () => {
     dbSelectMock.mockResolvedValue([
       {
         ...buildPendingIncomingTransferRow(),
@@ -698,32 +691,8 @@ describe("App", () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
     await flushPromises();
 
-    expect(wrapper.text()).toContain("peer-source");
-
-    await wrapper.get(".btn-primary").trigger("click");
-    await flushPromises();
-
     expect(store.approveIncomingTransfer).toHaveBeenCalledWith("transfer-db-1");
-  });
-
-  it("rejects an incoming transfer from the modal using the persisted transfer id", async () => {
-    dbSelectMock.mockResolvedValue([]);
-    const wrapper = await mountApp(SidebarWithRepoStub);
-
-    await flushPromises();
-    const handler = listenHandlers.get("transfer-request");
-    expect(handler).toBeTypeOf("function");
-    dbSelectMock.mockResolvedValue([buildPendingIncomingTransferRow()]);
-
-    await handler?.(buildIncomingTransferEvent());
-    await flushPromises();
-
-    dbSelectMock.mockResolvedValue([]);
-    await wrapper.get(".btn-danger").trigger("click");
-    await flushPromises();
-
-    expect(store.rejectIncomingTransfer).toHaveBeenCalledWith("transfer-1");
-    expect(wrapper.text()).not.toContain("Primary");
+    expect(wrapper.text()).not.toContain("peer-source");
   });
 
   it("forwards outgoing transfer commit events to the store", async () => {
@@ -824,6 +793,43 @@ describe("App", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="command-palette"]').text()).toContain("taskTransfer.pushToMachine");
+  });
+
+  it("adds Pair Machine to command palette commands independently of task transfer", async () => {
+    store.currentItem = null;
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      setup(props) {
+        const labels = computed(() =>
+          (props.dynamicCommands as Array<{ label: string }>).map((command) => command.label).join("|"),
+        );
+        return { labels };
+      },
+      template: `
+        <div data-testid="command-palette">
+          {{ labels }}
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="command-palette"]').text()).toContain("taskTransfer.pairPeer");
   });
 
   it("does not render the footer action bar for the current task view", async () => {
