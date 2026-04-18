@@ -344,25 +344,13 @@ reset_logs
 RESULT="$(run_mobile_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" env KANNA_MOBILE_PORT=1555 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 expect_success "mobile-dev.sh" "$RESULT" >/dev/null
 
-reset_logs
-RESULT="$(run_dev_sh --mobile env KANNA_MOBILE_SERVER_HOST=127.0.0.1 KANNA_MOBILE_SERVER_PORT=48129)"
-OUTPUT="${RESULT%===STATUS:*===}"
-STATUS="${RESULT##*===STATUS:}"
-STATUS="${STATUS%===}"
-
-if [ "$STATUS" -ne 0 ]; then
-  printf 'expected dev.sh --mobile to honor the mobile server port override, got:\n' >&2
-  printf '%s\n' "$OUTPUT" >&2
-  exit 1
-fi
-
-if ! grep -Fq "new-window -t kanna-v0_0_30 -n mobile -c $TEST_ROOT/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48129 pnpm run dev -- --port 8081" "$TMUX_LOG"; then
-  printf 'expected dev.sh --mobile to inject the overridden mobile server port, got:\n' >&2
-  cat "$TMUX_LOG" >&2
-  exit 1
-fi
-
 assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1555"
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_HOST=127.0.0.1 KANNA_MOBILE_SERVER_PORT=48129)"
+expect_success "dev.sh --mobile server port override" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48129 pnpm run dev -- --port 8081"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_DB_PATH=/tmp/shared-kanna.db)"
