@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopIdentity {
     pub desktop_id: String,
     pub desktop_secret: String,
+}
+
+pub fn identity_path_for_daemon_dir(daemon_dir: &str) -> PathBuf {
+    Path::new(daemon_dir).join("desktop-identity.json")
 }
 
 pub fn save_identity(path: &Path, identity: &DesktopIdentity) -> Result<(), String> {

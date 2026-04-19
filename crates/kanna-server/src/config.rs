@@ -141,15 +141,15 @@ fn load_from_path(
     let legacy = legacy_db_path_for_root(data_root);
     let db_path = match raw.db_path {
         Some(path) => normalize_db_path_with_candidates(Path::new(&path), &canonical, &legacy),
-        None => preferred_db_path_for_root(data_root).to_string_lossy().to_string(),
+        None => preferred_db_path_for_root(data_root)
+            .to_string_lossy()
+            .to_string(),
     };
 
     Ok(Config {
         relay_url: raw.relay_url,
         device_token: raw.device_token,
-        cloud_base_url: raw
-            .cloud_base_url
-            .unwrap_or_else(default_cloud_base_url),
+        cloud_base_url: raw.cloud_base_url.unwrap_or_else(default_cloud_base_url),
         firebase_project_id: raw
             .firebase_project_id
             .unwrap_or_else(default_firebase_project_id),

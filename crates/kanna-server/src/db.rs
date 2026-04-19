@@ -737,7 +737,8 @@ mod tests {
     fn task_listing_queries_exclude_closed_items_even_when_stage_is_not_done() {
         let path = Db::test_db_path("closed-item-filtering");
         let db = Db::open_for_tests(&path).expect("open test db");
-        db.insert_test_repo("repo-1", "Repo One").expect("insert repo");
+        db.insert_test_repo("repo-1", "Repo One")
+            .expect("insert repo");
         db.insert_test_pipeline_item(
             "task-open",
             "repo-1",
