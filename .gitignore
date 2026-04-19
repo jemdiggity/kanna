@@ -4,6 +4,7 @@ target/
 .build/
 .kanna-daemon/
 .kanna-daemon-e2e/
+.kanna-transfer/
 *.sqlite
 *.sqlite-journal
 .DS_Store
