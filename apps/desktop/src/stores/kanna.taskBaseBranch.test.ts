@@ -65,6 +65,7 @@ const mockState = vi.hoisted(() => {
   };
   let baseBranchResponse: string[] | Error = ["origin/main", "main"];
   let repoConfig: RepoConfig = {};
+  let repoConfigResolver: ((path: string) => RepoConfig | undefined) | null = null;
   let taskPorts: TaskPort[] = [];
   let blockCleanupGate: Promise<void> | null = null;
   const listBlockersForItemMock = vi.fn(async () => [] as PipelineItem[]);
@@ -118,7 +119,7 @@ const mockState = vi.hoisted(() => {
         return "{}";
       case "read_text_file":
         if (typeof args?.path === "string" && args.path.endsWith("/.kanna/config.json")) {
-          return "{}";
+          return JSON.stringify({ __mockPath: args.path });
         }
         throw new Error("missing");
       default:
@@ -177,6 +178,7 @@ const mockState = vi.hoisted(() => {
     pipelineDefinition = { name: "default", stages: [] };
     baseBranchResponse = ["origin/main", "main"];
     repoConfig = {};
+    repoConfigResolver = null;
     taskPorts = [];
     blockCleanupGate = null;
     invokeMock.mockClear();
@@ -222,6 +224,12 @@ const mockState = vi.hoisted(() => {
     set repoConfig(value: RepoConfig) {
       repoConfig = value;
     },
+    get repoConfigResolver() {
+      return repoConfigResolver;
+    },
+    set repoConfigResolver(value: ((path: string) => RepoConfig | undefined) | null) {
+      repoConfigResolver = value;
+    },
     get taskPorts() {
       return taskPorts;
     },
@@ -262,7 +270,16 @@ vi.mock("../listen", () => ({
 }));
 
 vi.mock("@kanna/core", () => ({
-  parseRepoConfig: vi.fn(() => mockState.repoConfig),
+  parseRepoConfig: vi.fn((json: string) => {
+    const parsed = JSON.parse(json) as { __mockPath?: string };
+    if (parsed.__mockPath && mockState.repoConfigResolver) {
+      const resolved = mockState.repoConfigResolver(parsed.__mockPath);
+      if (resolved) {
+        return resolved;
+      }
+    }
+    return mockState.repoConfig;
+  }),
   parseAgentMd: vi.fn(() => null),
   DEFAULT_STAGE_ORDER: ["in progress", "pr", "merge", "done"],
 }));
@@ -619,16 +636,55 @@ describe("kanna store task base branch integration", () => {
       agentProvider: "claude",
     });
 
-    const createdItem = mockState.pipelineItems.at(-1);
-    expect(createdItem?.port_offset).toBe(1421);
-    expect(createdItem?.port_env).toBe(JSON.stringify({
-      KANNA_DEV_PORT: "1421",
-      API_PORT: "3001",
-    }));
-    expect(mockState.taskPorts.map((taskPort) => `${taskPort.env_name}:${taskPort.port}`)).toEqual([
-      "KANNA_DEV_PORT:1421",
-      "API_PORT:3001",
-    ]);
+    await vi.waitFor(() => {
+      const createdItem = mockState.pipelineItems.at(-1);
+      expect(createdItem?.port_offset).toBe(1421);
+      expect(createdItem?.port_env).toBe(JSON.stringify({
+        KANNA_DEV_PORT: "1421",
+        API_PORT: "3001",
+      }));
+      expect(mockState.taskPorts.map((taskPort) => `${taskPort.env_name}:${taskPort.port}`)).toEqual([
+        "KANNA_DEV_PORT:1421",
+        "API_PORT:3001",
+      ]);
+    });
+  });
+
+  it("claims task ports from the checked-out worktree config instead of the repo root config", async () => {
+    mockState.repoConfig = {
+      ports: {
+        KANNA_DEV_PORT: 1420,
+      },
+    };
+    mockState.repoConfigResolver = (path: string) => {
+      if (path.includes("/.kanna-worktrees/")) {
+        return {
+          ports: {
+            KANNA_DEV_PORT: 1420,
+            KANNA_TRANSFER_PORT: 4455,
+          },
+        };
+      }
+      return undefined;
+    };
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Ship worktree-scoped ports", "sdk", {
+      agentProvider: "claude",
+    });
+
+    await vi.waitFor(() => {
+      const createdItem = mockState.pipelineItems.at(-1);
+      expect(createdItem?.port_offset).toBe(1421);
+      expect(createdItem?.port_env).toBe(JSON.stringify({
+        KANNA_DEV_PORT: "1421",
+        KANNA_TRANSFER_PORT: "4456",
+      }));
+      expect(mockState.taskPorts.map((taskPort) => `${taskPort.env_name}:${taskPort.port}`)).toEqual([
+        "KANNA_DEV_PORT:1421",
+        "KANNA_TRANSFER_PORT:4456",
+      ]);
+    });
   });
 
   it("assigns later worktrees the next free offset above the reserved default-branch port", async () => {
@@ -647,12 +703,14 @@ describe("kanna store task base branch integration", () => {
       agentProvider: "claude",
     });
 
-    const secondItem = mockState.pipelineItems.at(-1);
-    expect(secondItem?.port_offset).toBe(1422);
-    expect(secondItem?.port_env).toBe(JSON.stringify({
-      KANNA_DEV_PORT: "1422",
-      API_PORT: "3002",
-    }));
+    await vi.waitFor(() => {
+      const secondItem = mockState.pipelineItems.at(-1);
+      expect(secondItem?.port_offset).toBe(1422);
+      expect(secondItem?.port_env).toBe(JSON.stringify({
+        KANNA_DEV_PORT: "1422",
+        API_PORT: "3002",
+      }));
+    });
   });
 
   it("passes task-scoped port and kanna-cli env to sdk agent sessions", async () => {
@@ -668,23 +726,25 @@ describe("kanna store task base branch integration", () => {
       agentProvider: "claude",
     });
 
-    const createdItem = mockState.pipelineItems.at(-1);
-    expect(createdItem).toBeTruthy();
-    expect(mockState.invokeMock).toHaveBeenCalledWith(
-      "create_agent_session",
-      expect.objectContaining({
-        sessionId: createdItem?.id,
-        env: expect.objectContaining({
-          KANNA_WORKTREE: "1",
-          KANNA_DEV_PORT: "1421",
-          API_PORT: "3001",
-          KANNA_CLI_PATH: "/usr/bin/kanna-cli",
-          KANNA_TASK_ID: createdItem?.id,
-          KANNA_CLI_DB_PATH: "/tmp/kanna/kanna-wt-task-existing.db",
-          KANNA_SOCKET_PATH: "/tmp/kanna.sock",
+    await vi.waitFor(() => {
+      const createdItem = mockState.pipelineItems.at(-1);
+      expect(createdItem).toBeTruthy();
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "create_agent_session",
+        expect.objectContaining({
+          sessionId: createdItem?.id,
+          env: expect.objectContaining({
+            KANNA_WORKTREE: "1",
+            KANNA_DEV_PORT: "1421",
+            API_PORT: "3001",
+            KANNA_CLI_PATH: "/usr/bin/kanna-cli",
+            KANNA_TASK_ID: createdItem?.id,
+            KANNA_CLI_DB_PATH: "/tmp/kanna/kanna-wt-task-existing.db",
+            KANNA_SOCKET_PATH: "/tmp/kanna.sock",
+          }),
         }),
-      }),
-    );
+      );
+    });
   });
 
   it("passes task-scoped port and kanna-cli env to rerun stage setup scripts", async () => {
@@ -768,6 +828,51 @@ describe("kanna store task base branch integration", () => {
     expect(mockState.taskPorts.map((taskPort) => `${taskPort.env_name}:${taskPort.port}`)).toEqual([
       "KANNA_DEV_PORT:1421",
       "API_PORT:3001",
+    ]);
+  });
+
+  it("reclaims ports on undo close from the task worktree config instead of the repo root config", async () => {
+    mockState.repoConfig = {
+      ports: {
+        KANNA_DEV_PORT: 1420,
+      },
+    };
+    mockState.repoConfigResolver = (path: string) => {
+      if (path === "/tmp/repo/.kanna-worktrees/task-closed/.kanna/config.json") {
+        return {
+          ports: {
+            KANNA_DEV_PORT: 1420,
+            KANNA_TRANSFER_PORT: 4455,
+          },
+        };
+      }
+      return undefined;
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-closed",
+        branch: "task-closed",
+        closed_at: "2026-04-14T12:00:00.000Z",
+        port_offset: 1422,
+        port_env: JSON.stringify({
+          KANNA_DEV_PORT: "1422",
+        }),
+      }),
+    ];
+    const store = await createStore();
+
+    await store.undoClose();
+
+    const reopenedItem = mockState.pipelineItems[0];
+    expect(reopenedItem.closed_at).toBeNull();
+    expect(reopenedItem.port_offset).toBe(1421);
+    expect(reopenedItem.port_env).toBe(JSON.stringify({
+      KANNA_DEV_PORT: "1421",
+      KANNA_TRANSFER_PORT: "4456",
+    }));
+    expect(mockState.taskPorts.map((taskPort) => `${taskPort.env_name}:${taskPort.port}`)).toEqual([
+      "KANNA_DEV_PORT:1421",
+      "KANNA_TRANSFER_PORT:4456",
     ]);
   });
 
