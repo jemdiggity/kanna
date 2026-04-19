@@ -26,6 +26,10 @@ pub async fn list_transfer_peers(
         let result = client.list_transfer_peers().await;
         (result, client.is_dead())
     };
+    match &result {
+        Ok(peers) => eprintln!("[transfer-debug] list_transfer_peers ok count={}", peers.len()),
+        Err(error) => eprintln!("[transfer-debug] list_transfer_peers err: {}", error),
+    }
     if dead {
         *guard = None;
     }

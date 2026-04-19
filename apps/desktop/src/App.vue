@@ -563,7 +563,10 @@ async function loadTransferPeers() {
       await new Promise((resolve) => setTimeout(resolve, TRANSFER_PEER_DISCOVERY_RETRY_MS));
     }
   } catch (e: unknown) {
-    console.error("[App] failed to list transfer peers:", e);
+    console.error(
+      "[App] failed to list transfer peers:",
+      e instanceof Error ? e.message : String(e),
+    );
     if (requestId === transferPeerLoadRequestId) {
       transferPeers.value = [];
     }
@@ -579,7 +582,10 @@ async function warmTransferSidecar() {
   try {
     await invoke("list_transfer_peers");
   } catch (e: unknown) {
-    console.error("[App] transfer sidecar warmup failed:", e);
+    console.error(
+      "[App] transfer sidecar warmup failed:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
 }
 

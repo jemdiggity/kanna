@@ -334,6 +334,9 @@ impl TransferSidecarClient {
                 request_id
             )
         })?;
+        if request_id.starts_with("list-") {
+            eprintln!("[transfer-debug] sidecar response {}: {}", request_id, response);
+        }
         if response.get("type").and_then(Value::as_str) == Some("error") {
             return Err(response
                 .get("message")
