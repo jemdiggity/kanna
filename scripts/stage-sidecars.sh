@@ -6,6 +6,7 @@
 # Usage:
 #   ./scripts/stage-sidecars.sh                           # debug build, host target
 #   ./scripts/stage-sidecars.sh --release --target aarch64-apple-darwin
+#   ./scripts/stage-sidecars.sh --build-dir .build
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,6 +20,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --release) PROFILE="release"; shift ;;
         --target) TARGET="$2"; shift 2 ;;
+        --build-dir) BUILD_DIR="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -28,11 +30,17 @@ if [[ -z "$TARGET" ]]; then
     TARGET=$(rustc -vV | grep '^host:' | awk '{print $2}')
 fi
 
-# Determine source directory
+# Determine source directory.
 if [[ "$PROFILE" = "release" ]]; then
     SRC_DIR="$BUILD_DIR/$TARGET/release"
+    LEGACY_SRC_DIR="$BUILD_DIR/release"
 else
-    SRC_DIR="$BUILD_DIR/debug"
+    SRC_DIR="$BUILD_DIR/$TARGET/debug"
+    LEGACY_SRC_DIR="$BUILD_DIR/debug"
+fi
+
+if [[ ! -d "$SRC_DIR" && -d "$LEGACY_SRC_DIR" ]]; then
+    SRC_DIR="$LEGACY_SRC_DIR"
 fi
 
 mkdir -p "$BINARIES_DIR"

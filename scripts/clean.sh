@@ -53,7 +53,8 @@ bazel_output_base() {
   printf '%s/Library/Caches/bazel/_bazel_%s/%s\n' "$HOME" "$user_name" "$hash"
 }
 
-# Rust build output (.cargo/config.toml sets target-dir = ".build")
+# Rust final build outputs (.cargo/config.toml sets target-dir = ".build").
+# Shared Cargo intermediates under ~/Library/Caches/kanna/rust-build are kept.
 remove "$ROOT/.build"
 # Tauri CLI runs cargo from apps/desktop/src-tauri/, which uses default target dir
 remove "$ROOT/apps/desktop/src-tauri/target"
