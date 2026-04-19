@@ -2,7 +2,7 @@
 
 import { computed, defineComponent, nextTick, ref } from "vue";
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeyboardActions } from "./composables/useKeyboardShortcuts";
 
 async function flushPromises() {
@@ -384,6 +384,10 @@ async function mountAppWithOverrides(
 }
 
 describe("App", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     store.init.mockClear();
     store.createItem.mockClear();
@@ -830,6 +834,102 @@ describe("App", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="command-palette"]').text()).toContain("taskTransfer.pairPeer");
+  });
+
+  it("keeps loading transfer peers until discovery has had time to warm up", async () => {
+    vi.useFakeTimers();
+    let listTransferPeersCalls = 0;
+    invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return ["feature/x", "main", "origin/main"];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      if (command === "list_transfer_peers") {
+        listTransferPeersCalls += 1;
+        if (listTransferPeersCalls < 9) return [];
+        return [{
+          peer_id: "peer-remote",
+          display_name: "Desk",
+          trusted: false,
+          accepting_transfers: true,
+        }];
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      template: `
+        <div data-testid="command-palette">
+          <button
+            v-for="command in dynamicCommands"
+            :key="command.id"
+            type="button"
+            @click="command.execute()"
+          >
+            {{ command.label }}
+          </button>
+        </div>
+      `,
+    });
+
+    const PeerPickerModalStub = defineComponent({
+      name: "PeerPickerModal",
+      props: {
+        peers: {
+          type: Array,
+          default: () => [],
+        },
+        loading: Boolean,
+      },
+      template: `
+        <div data-testid="peer-picker">
+          <span data-testid="peer-picker-loading">{{ loading }}</span>
+          <span data-testid="peer-picker-peers">{{ peers.map((peer) => peer.name).join("|") }}</span>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+      PeerPickerModal: PeerPickerModalStub,
+    });
+
+    await flushPromises();
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    const pairButton = wrapper.findAll('[data-testid="command-palette"] button')
+      .find((button) => button.text() === "taskTransfer.pairPeer");
+    expect(pairButton).toBeTruthy();
+
+    await pairButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-loading"]').text()).toBe("true");
+    expect(wrapper.get('[data-testid="peer-picker-peers"]').text()).toBe("");
+
+    await vi.advanceTimersByTimeAsync(1500);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-loading"]').text()).toBe("true");
+    expect(wrapper.get('[data-testid="peer-picker-peers"]').text()).toBe("");
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-loading"]').text()).toBe("false");
+    expect(wrapper.get('[data-testid="peer-picker-peers"]').text()).toContain("Desk");
+
+    vi.useRealTimers();
   });
 
   it("does not render the footer action bar for the current task view", async () => {

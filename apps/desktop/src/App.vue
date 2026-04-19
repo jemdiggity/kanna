@@ -121,6 +121,9 @@ const selectedTransferTaskId = ref<string | null>(null);
 const showPeerPicker = ref(false);
 const transferPeers = ref<TransferPeerOption[]>([]);
 const transferPeersLoading = ref(false);
+let transferPeerLoadRequestId = 0;
+const TRANSFER_PEER_DISCOVERY_RETRY_MS = 250;
+const TRANSFER_PEER_DISCOVERY_TIMEOUT_MS = 2500;
 const showPreferencesPanel = ref(false);
 const preferences = reactive({
   suspendAfterMinutes: 30,
@@ -542,15 +545,32 @@ function closeFilePreview(reopenPicker: boolean) {
 }
 
 async function loadTransferPeers() {
+  const requestId = ++transferPeerLoadRequestId;
   transferPeersLoading.value = true;
   try {
-    const raw = await invoke<unknown>("list_transfer_peers");
-    transferPeers.value = parseTransferPeers(raw);
+    const maxAttempts =
+      Math.floor(TRANSFER_PEER_DISCOVERY_TIMEOUT_MS / TRANSFER_PEER_DISCOVERY_RETRY_MS) + 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const raw = await invoke<unknown>("list_transfer_peers");
+      const peers = parseTransferPeers(raw);
+      if (requestId !== transferPeerLoadRequestId) {
+        return;
+      }
+      if (peers.length > 0 || attempt === maxAttempts - 1) {
+        transferPeers.value = peers;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, TRANSFER_PEER_DISCOVERY_RETRY_MS));
+    }
   } catch (e: unknown) {
     console.error("[App] failed to list transfer peers:", e);
-    transferPeers.value = [];
+    if (requestId === transferPeerLoadRequestId) {
+      transferPeers.value = [];
+    }
   } finally {
-    transferPeersLoading.value = false;
+    if (requestId === transferPeerLoadRequestId) {
+      transferPeersLoading.value = false;
+    }
   }
 }
 
