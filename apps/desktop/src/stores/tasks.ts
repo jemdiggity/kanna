@@ -288,7 +288,6 @@ export function createTasksApi(
     repoPath: string,
     worktreePath: string,
     branch: string,
-    portEnv: Record<string, string>,
     prompt: string,
     agentType: "pty" | "sdk",
     agentProvider: AgentProvider,
@@ -305,26 +304,34 @@ export function createTasksApi(
     try {
       let s1 = performance.now();
       let worktreeBootstrap: WorktreeBootstrapResult | null = null;
+      let repoConfig: RepoConfig = {};
+      let portEnv: Record<string, string> = {};
       let ptySetupCmds: string[] = [];
-      if (agentType === "pty") {
-        try {
-          worktreeBootstrap = await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
-          const repoConfig = await readRepoConfig(worktreePath);
-          ptySetupCmds = repoConfig.setup || [];
-        } catch (error) {
-          await markSetupFailed(error, "[store] failed to read repo config or create worktree:", context.tt("toasts.worktreeFailed"));
-          return;
-        }
-        console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
-      } else {
-        try {
-          await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
-        } catch (error) {
-          await markSetupFailed(error, "[store] git_worktree_add failed:", context.tt("toasts.worktreeFailed"));
-          return;
-        }
-        console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
+      try {
+        worktreeBootstrap = await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
+        repoConfig = await readRepoConfig(worktreePath);
+        ptySetupCmds = repoConfig.setup || [];
+      } catch (error) {
+        await markSetupFailed(error, "[store] failed to read repo config or create worktree:", context.tt("toasts.worktreeFailed"));
+        return;
       }
+      console.log(`[perf:setup] readConfig+createWorktree: ${(performance.now() - s1).toFixed(1)}ms`);
+
+      s1 = performance.now();
+      try {
+        const allocated = await ports.claimTaskPorts(id, repoConfig);
+        portEnv = allocated.portEnv;
+        const portOffset = allocated.firstPort;
+        await context.requireDb().execute(
+          "UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?",
+          [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
+        );
+        await reloadSnapshot();
+      } catch (error) {
+        await markSetupFailed(error, "[store] task port allocation failed:", `${context.tt("toasts.agentStartFailed")}: ${error instanceof Error ? error.message : error}`);
+        return;
+      }
+      console.log(`[perf:setup] portAllocation: ${(performance.now() - s1).toFixed(1)}ms`);
 
       s1 = performance.now();
       try {
@@ -528,8 +535,6 @@ export function createTasksApi(
       throw error;
     }
 
-    let portOffset: number | null = null;
-    let portEnv: Record<string, string> = {};
     let baseRef: string | null = null;
     let pipelineItemInserted = false;
 
@@ -577,22 +582,14 @@ export function createTasksApi(
               branch,
               agent_type: effectiveAgentType,
               agent_provider: effectiveAgentProvider,
-              port_offset: portOffset,
-              port_env: Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null,
+              port_offset: null,
+              port_env: null,
               activity: "working",
               display_name: displayName,
               base_ref: baseRef,
             });
 
             pipelineItemInserted = true;
-
-            const allocated = await ports.claimTaskPorts(id, repoConfig);
-            portOffset = allocated.firstPort;
-            portEnv = allocated.portEnv;
-            await context.requireDb().execute(
-              "UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?",
-              [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
-            );
             if (opts?.resumeSessionId) {
               await updateAgentSessionId(context.requireDb(), id, opts.resumeSessionId);
             }
@@ -616,7 +613,6 @@ export function createTasksApi(
             repoPath,
             worktreePath,
             branch,
-            portEnv,
             pipelinePrompt,
             effectiveAgentType,
             effectiveAgentProvider,
@@ -777,13 +773,14 @@ export function createTasksApi(
       if (!item) return;
       const repo = context.state.repos.value.find((candidate) => candidate.id === item.repo_id);
       if (!repo) return;
+      const worktreePath = item.branch ? `${repo.path}/.kanna-worktrees/${item.branch}` : repo.path;
 
       await reopenPipelineItem(context.requireDb(), item.id);
       let portEnv: Record<string, string> = {};
       let portOffset: number | null = null;
       let portAllocationFailed = false;
       try {
-        const repoConfig = await readRepoConfig(repo.path);
+        const repoConfig = await readRepoConfig(worktreePath);
         const allocated = await ports.claimTaskPorts(item.id, repoConfig);
         portEnv = allocated.portEnv;
         portOffset = allocated.firstPort;
@@ -802,7 +799,6 @@ export function createTasksApi(
       await reloadSnapshot();
 
       if (item.branch && !portAllocationFailed) {
-        const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
         try {
           const agentProvider = resolveAgentProvider(
             item.agent_provider,
