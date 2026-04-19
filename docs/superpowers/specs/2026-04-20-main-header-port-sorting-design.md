@@ -4,7 +4,7 @@
 
 The main window task header should render port badges in ascending numeric order, regardless of the key order in `pipeline_item.port_env`.
 
-Today [`apps/desktop/src/components/TaskHeader.vue`](/Users/jeremyhale/Documents/work/jemdiggity/kanna-tauri/.kanna-worktrees/task-2d0f81c3/apps/desktop/src/components/TaskHeader.vue) parses `item.port_env` and renders `Object.values(env)` directly. Because JSON object key iteration order is not tied to numeric port order, the UI can show badges in a confusing sequence such as `:1421 :3001` when the desired display is `:3001 :1421`.
+Today [`apps/desktop/src/components/TaskHeader.vue`](/Users/jeremyhale/Documents/work/jemdiggity/kanna-tauri/.kanna-worktrees/task-2d0f81c3/apps/desktop/src/components/TaskHeader.vue) parses `item.port_env` and renders `Object.values(env)` directly. Because JSON object key iteration order is not tied to ascending numeric port order, the UI can show badges in a confusing sequence such as `:3001 :1421` when the desired display is `:1421 :3001`.
 
 ## Goals
 
@@ -75,12 +75,12 @@ Add a focused component test for `TaskHeader.vue` that mounts the component with
 
 ```json
 {
-  "KANNA_DEV_PORT": 1421,
-  "API_PORT": 3001
+  "API_PORT": 3001,
+  "KANNA_DEV_PORT": 1421
 }
 ```
 
-The test should assert that the rendered port badges appear in numeric order: `:3001`, then `:1421`.
+The test should assert that the rendered port badges appear in ascending numeric order: `:1421`, then `:3001`.
 
 After the test is added and passing, run:
 
@@ -89,4 +89,4 @@ After the test is added and passing, run:
 
 ## Risks
 
-The primary risk is accidental lexicographic sorting, which would place `1421` before `3001` for the wrong reason in some cases and fail for others. The component test should assert the rendered order directly to guard against that mistake.
+The primary risk is accidental lexicographic sorting or accidentally preserving insertion order. The component test should assert the rendered order directly to guard against both mistakes.
