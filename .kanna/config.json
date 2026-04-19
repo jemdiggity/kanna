@@ -1,10 +1,10 @@
 {
   "setup": [
-    "./scripts/setup-worktree.sh",
+    "/bin/sh ./scripts/setup-worktree.sh",
     "pnpm install",
     "[ -f ../../.claude/settings.local.json ] && mkdir -p .claude && cp ../../.claude/settings.local.json .claude/"
   ],
-  "teardown": ["./scripts/dev.sh stop -k", "./scripts/clean.sh --all"],
+  "teardown": ["/bin/bash ./scripts/dev.sh stop -k", "/bin/bash ./scripts/clean.sh --all"],
   "test": ["pnpm test"],
   "ports": {
     "KANNA_DEV_PORT": 1420,
