@@ -56,6 +56,7 @@ case "$manifest" in
   *crates/daemon/Cargo.toml) bin="kanna-daemon" ;;
   *crates/kanna-cli/Cargo.toml) bin="kanna-cli" ;;
   *crates/kanna-server/Cargo.toml) bin="kanna-server" ;;
+  *crates/task-transfer/Cargo.toml) bin="kanna-task-transfer" ;;
   *packages/terminal-recovery/Cargo.toml) bin="kanna-terminal-recovery" ;;
   *)
     printf 'unexpected manifest: %s\n' "$manifest" >&2
@@ -103,6 +104,12 @@ fi
 
 if ! grep -Fq "build_dir=$EXPECTED_BUILD_DIR" "$CARGO_LOG"; then
   printf 'expected build-sidecars to share intermediates in %s, got:\n' "$EXPECTED_BUILD_DIR" >&2
+  cat "$CARGO_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "manifest=$FIXTURE_REPO/crates/task-transfer/Cargo.toml" "$CARGO_LOG"; then
+  printf 'expected build-sidecars to build kanna-task-transfer, got:\n' >&2
   cat "$CARGO_LOG" >&2
   exit 1
 fi

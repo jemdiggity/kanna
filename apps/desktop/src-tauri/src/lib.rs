@@ -1,6 +1,8 @@
 mod commands;
 mod daemon_client;
 mod subprocess_env;
+mod transfer_identity;
+mod transfer_sidecar;
 
 use commands::agent::AgentState;
 use commands::daemon::{
@@ -22,6 +24,7 @@ pub(crate) const KANNA_BUILD_BRANCH: &str = env!("KANNA_BUILD_BRANCH");
 pub(crate) const KANNA_BUILD_COMMIT: &str = env!("KANNA_BUILD_COMMIT");
 pub(crate) const KANNA_BUILD_WORKTREE: &str = env!("KANNA_BUILD_WORKTREE");
 pub(crate) const KANNA_BUILD_INFO: &str = env!("KANNA_BUILD_INFO");
+pub type TransferServiceState = Arc<Mutex<Option<transfer_sidecar::TransferSidecarClient>>>;
 
 /// Install a native macOS event monitor that intercepts fn+F (Globe+F) and
 /// toggles fullscreen.  The fn/Globe modifier sets NSEventModifierFlagFunction
@@ -162,24 +165,6 @@ fn short_socket_path(dir: &PathBuf) -> PathBuf {
     PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
 }
 
-#[cfg(debug_assertions)]
-fn webdriver_port() -> u16 {
-    if let Ok(port) = std::env::var(tauri_plugin_webdriver::PORT_ENV_VAR) {
-        if let Ok(parsed) = port.parse::<u16>() {
-            return parsed;
-        }
-    }
-
-    if let Ok(dev_port) = std::env::var("KANNA_DEV_PORT") {
-        if let Ok(parsed) = dev_port.parse::<u16>() {
-            return parsed
-                .saturating_add(tauri_plugin_webdriver::DEFAULT_PORT.saturating_sub(1420));
-        }
-    }
-
-    tauri_plugin_webdriver::DEFAULT_PORT
-}
-
 /// Directory where daemon stores PID file and logs.
 pub fn daemon_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("KANNA_DAEMON_DIR") {
@@ -202,6 +187,27 @@ pub fn daemon_socket_path() -> PathBuf {
         .join("Application Support")
         .join("Kanna");
     short_socket_path(&dir)
+}
+
+#[cfg(debug_assertions)]
+fn resolve_webdriver_port() -> Option<u16> {
+    if let Ok(explicit) = std::env::var("KANNA_WEBDRIVER_PORT") {
+        match explicit.parse::<u16>() {
+            Ok(port) => return Some(port),
+            Err(error) => {
+                eprintln!(
+                    "[webdriver] invalid KANNA_WEBDRIVER_PORT {:?}: {}",
+                    explicit, error
+                );
+            }
+        }
+    }
+
+    if std::env::var("KANNA_WORKTREE").is_ok() {
+        None
+    } else {
+        Some(4445)
+    }
 }
 
 /// Compute the kanna.sock path for the pipeline listener.
@@ -506,7 +512,9 @@ pub fn run() {
 
     #[cfg(debug_assertions)]
     {
-        builder = builder.plugin(tauri_plugin_webdriver::init_with_port(webdriver_port()));
+        if let Some(webdriver_port) = resolve_webdriver_port() {
+            builder = builder.plugin(tauri_plugin_webdriver::init_with_port(webdriver_port));
+        }
     }
 
     builder
@@ -520,6 +528,7 @@ pub fn run() {
             ActiveAttachedStream,
         >::new())) as ActiveAttachedStreams)
         .manage(Arc::new(Mutex::new(None)) as PipelineSocketState)
+        .manage(Arc::new(Mutex::new(None)) as TransferServiceState)
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -618,6 +627,7 @@ pub fn run() {
             commands::daemon::kill_session,
             commands::daemon::list_sessions,
             commands::daemon::get_session_recovery_state,
+            commands::daemon::seed_session_recovery_state,
             commands::daemon::attach_session,
             commands::daemon::attach_session_with_snapshot,
             commands::daemon::detach_session,
@@ -663,7 +673,46 @@ pub fn run() {
             // Shell commands
             commands::shell::run_script,
             commands::shell::ensure_term_init,
+            // Transfer commands
+            commands::transfer::list_transfer_peers,
+            commands::transfer::start_peer_pairing,
+            commands::transfer::prepare_outgoing_transfer,
+            commands::transfer::stage_transfer_artifact,
+            commands::transfer::fetch_transfer_artifact,
+            commands::transfer::finalize_outgoing_transfer,
+            commands::transfer::complete_outgoing_transfer_finalization,
+            commands::transfer::acknowledge_incoming_transfer_commit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(all(test, debug_assertions))]
+mod tests {
+    use super::resolve_webdriver_port;
+
+    #[test]
+    fn webdriver_disabled_for_worktrees_without_explicit_port() {
+        unsafe {
+            std::env::set_var("KANNA_WORKTREE", "1");
+            std::env::remove_var("KANNA_WEBDRIVER_PORT");
+        }
+        assert_eq!(resolve_webdriver_port(), None);
+        unsafe {
+            std::env::remove_var("KANNA_WORKTREE");
+        }
+    }
+
+    #[test]
+    fn webdriver_uses_explicit_port_even_in_worktrees() {
+        unsafe {
+            std::env::set_var("KANNA_WORKTREE", "1");
+            std::env::set_var("KANNA_WEBDRIVER_PORT", "4555");
+        }
+        assert_eq!(resolve_webdriver_port(), Some(4555));
+        unsafe {
+            std::env::remove_var("KANNA_WORKTREE");
+            std::env::remove_var("KANNA_WEBDRIVER_PORT");
+        }
+    }
 }

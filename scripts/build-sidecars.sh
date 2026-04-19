@@ -55,6 +55,7 @@ build_sidecar() {
 build_sidecar "$ROOT/crates/daemon/Cargo.toml"
 build_sidecar "$ROOT/crates/kanna-cli/Cargo.toml"
 build_sidecar "$ROOT/crates/kanna-server/Cargo.toml"
+build_sidecar "$ROOT/crates/task-transfer/Cargo.toml"
 build_sidecar "$ROOT/packages/terminal-recovery/Cargo.toml"
 
 stage_args=(--target "$TARGET")

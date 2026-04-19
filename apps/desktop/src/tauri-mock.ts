@@ -203,6 +203,8 @@ const invokeHandlers: Record<string, (...args: any[]) => any> = {
   git_default_branch: () => "main",
   git_list_base_branches: () => ["origin/main", "main"],
   git_remote_url: () => "https://github.com/example/repo.git",
+  git_clone: () => ({}),
+  git_init: () => ({}),
   git_worktree_add: () => ({}),
   git_worktree_remove: () => ({}),
   git_worktree_list: () => [],
@@ -216,12 +218,66 @@ const invokeHandlers: Record<string, (...args: any[]) => any> = {
     head_commit: "abc1234567890",
   }),
   git_push: () => ({}),
+  prepare_outgoing_transfer: (args: { payload?: { phase?: string } }) => {
+    if (args?.payload?.phase === "preflight") {
+      return {
+        transferId: "mock-transfer-1",
+        sourcePeerId: "mock-local-peer",
+        targetHasRepo: false,
+      };
+    }
+    return { ok: true };
+  },
+  stage_transfer_artifact: () => ({
+    transferId: "mock-transfer-1",
+    artifactId: "mock-artifact-1",
+  }),
+  fetch_transfer_artifact: () => ({
+    transferId: "mock-transfer-1",
+    artifactId: "mock-artifact-1",
+    path: "/tmp/mock-transfer-1.bundle",
+  }),
+  finalize_outgoing_transfer: (args: { transferId?: string }) => ({
+    transferId: args.transferId ?? "mock-transfer-1",
+    payload: {
+      target_peer_id: "mock-target-peer",
+      task: {
+        source_peer_id: "mock-source-peer",
+        source_task_id: "mock-task-source",
+        resume_session_id: null,
+        prompt: "Mock transfer",
+        stage: "in progress",
+        branch: "task-mock",
+        pipeline: "default",
+        display_name: null,
+        base_ref: "main",
+        agent_type: "pty",
+        agent_provider: "claude",
+      },
+      repo: {
+        mode: "reuse-local",
+        remote_url: null,
+        path: "/tmp/mock-repo",
+        name: "mock-repo",
+        default_branch: "main",
+        bundle: null,
+      },
+      recovery: null,
+      artifacts: [],
+    },
+    finalizedCleanly: true,
+  }),
+  complete_outgoing_transfer_finalization: (args: { transferId?: string }) => ({
+    transferId: args.transferId ?? "mock-transfer-1",
+  }),
+  acknowledge_incoming_transfer_commit: () => ({ ok: true }),
   file_exists: () => true,
   read_text_file: () => "",
   get_app_data_dir: () => "/tmp/kanna-mock-data",
   get_claude_usage: () => "",
   copy_file: () => ({}),
   remove_file: () => ({}),
+  ensure_directory: () => ({}),
   list_dir: () => [],
   read_dir_entries: () => [
     { name: "src", is_dir: true },

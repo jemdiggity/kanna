@@ -1,11 +1,11 @@
 /**
  * W3C WebDriver HTTP client for tauri-plugin-webdriver.
  */
-
 import { writeFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { getWebDriverPort } from "./config";
+import { dismissStartupShortcutsModal } from "./startupOverlays";
+import { getWebDriverPort } from "./webdriverPort";
 
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
 
@@ -17,12 +17,17 @@ export class WebDriverClient {
     this.baseUrl = `http://127.0.0.1:${port}`;
   }
 
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
   // ── Session lifecycle ─────────────────────────────────────────────
 
   async createSession(): Promise<string> {
     const res = await this.post("/session", { capabilities: {} });
     this.sessionId = res.value.sessionId;
     await this.waitForAppReady();
+    await dismissStartupShortcutsModal(this);
     return this.sessionId;
   }
 

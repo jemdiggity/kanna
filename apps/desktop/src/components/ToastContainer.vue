@@ -47,6 +47,11 @@ const { toasts, dismiss } = useToast()
   pointer-events: auto;
 }
 
+.toast.info {
+  background: #1a2430;
+  border-left-color: #58a6ff;
+}
+
 .toast.warning {
   background: #2a2a1a;
   border-left-color: #e3b341;

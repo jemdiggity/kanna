@@ -2,13 +2,20 @@
 
 import { computed, defineComponent, nextTick, ref } from "vue";
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeyboardActions } from "./composables/useKeyboardShortcuts";
 
 async function flushPromises() {
   await Promise.resolve();
   await nextTick();
 }
+
+const listenHandlers = new Map<string, (event: unknown) => void | Promise<void>>();
+const dbSelectMock = vi.fn(async () => []);
+const dbMock = {
+  select: dbSelectMock,
+  execute: vi.fn(async () => ({ rowsAffected: 0 })),
+};
 
 const store = {
   repos: [{ id: "repo-1", path: "/tmp/repo", name: "repo" }],
@@ -27,6 +34,40 @@ const store = {
   hideShortcutsOnStartup: true,
   init: vi.fn(async () => {}),
   createItem: vi.fn(async () => {}),
+  recordIncomingTransfer: vi.fn(async () => {}),
+  approveIncomingTransfer: vi.fn(async () => "task-imported"),
+  rejectIncomingTransfer: vi.fn(async () => {}),
+  finalizeOutgoingTransfer: vi.fn(async () => ({
+    transferId: "transfer-1",
+    payload: {
+      target_peer_id: "peer-target",
+      task: {
+        source_peer_id: "peer-source",
+        source_task_id: "task-source",
+        resume_session_id: null,
+        prompt: "Fix handoff",
+        stage: "in progress",
+        branch: "task-source",
+        pipeline: "default",
+        display_name: "Transferred task",
+        base_ref: "main",
+        agent_type: "pty",
+        agent_provider: "claude",
+      },
+      repo: {
+        mode: "reuse-local",
+        remote_url: null,
+        path: "/tmp/repo",
+        name: "repo",
+        default_branch: "main",
+        bundle: null,
+      },
+      recovery: null,
+      artifacts: [],
+    },
+    finalizedCleanly: true,
+  })),
+  handleOutgoingTransferCommitted: vi.fn(async () => {}),
   listBlockedByItem: vi.fn(async () => []),
   listBlockersForItem: vi.fn(async () => []),
   blockTask: vi.fn(async () => {}),
@@ -46,16 +87,18 @@ const store = {
   hideRepo: vi.fn(async () => {}),
   spawnPtySession: vi.fn(async () => {}),
 };
+const toastInfoMock = vi.fn();
 
 let capturedKeyboardActions: KeyboardActions | null = null;
 
-const invokeMock = vi.fn(async (command: string, args?: { name?: string; repoPath?: string }) => {
+const invokeMock = vi.fn(async (command: string, args?: Record<string, unknown>) => {
   if (command === "list_dir") return ["default.json"];
   if (command === "read_text_file") return "";
   if (command === "git_default_branch") return "main";
   if (command === "git_list_base_branches") return ["feature/x", "main", "origin/main"];
   if (command === "read_env_var") return "/Users/test";
   if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+  if (command === "complete_outgoing_transfer_finalization") return { transferId: args?.transferId ?? "transfer-1" };
   throw new Error(`unexpected invoke: ${command}`);
 });
 
@@ -65,6 +108,15 @@ vi.mock("./stores/kanna", () => ({
 
 vi.mock("./invoke", () => ({
   invoke: (command: string, args?: { name?: string; repoPath?: string }) => invokeMock(command, args),
+}));
+
+vi.mock("./listen", () => ({
+  listen: vi.fn(async (event: string, handler: (event: unknown) => void | Promise<void>) => {
+    listenHandlers.set(event, handler);
+    return () => {
+      listenHandlers.delete(event);
+    };
+  }),
 }));
 
 vi.mock("@kanna/core", () => ({
@@ -109,7 +161,7 @@ vi.mock("./composables/useKeyboardShortcuts", () => ({
 
 vi.mock("./composables/useCustomTasks", () => ({
   useCustomTasks: () => ({
-    tasks: [],
+    tasks: ref([]),
     scan: vi.fn(async () => []),
   }),
 }));
@@ -140,6 +192,7 @@ vi.mock("./composables/useAppUpdate", () => ({
 vi.mock("./composables/useToast", () => ({
   useToast: () => ({
     error: vi.fn(),
+    info: toastInfoMock,
     warning: vi.fn(),
   }),
 }));
@@ -196,13 +249,75 @@ const FilePreviewModalTestStub = defineComponent({
   `,
 });
 
+function buildIncomingTransferEvent() {
+  return {
+    payload: {
+      type: "incoming_transfer_request",
+      transfer_id: "transfer-1",
+      source_peer_id: "peer-source",
+      source_task_id: "task-source",
+      source_name: "Primary",
+      payload: {
+        target_peer_id: "peer-target",
+        task: {
+          source_peer_id: "peer-source",
+          source_task_id: "task-source",
+          prompt: "Fix handoff",
+          stage: "in progress",
+          branch: "task-source",
+          pipeline: "default",
+          display_name: "Transferred task",
+          base_ref: "main",
+          agent_type: "sdk",
+          agent_provider: "claude",
+        },
+        repo: {
+          mode: "reuse-local",
+          remote_url: "git@github.com:jemdiggity/kanna.git",
+          path: "/tmp/repo",
+          name: "repo",
+          default_branch: "main",
+        },
+        recovery: null,
+      },
+    },
+  };
+}
+
+function buildPendingIncomingTransferRow() {
+  return {
+    id: "transfer-1",
+    source_peer_id: "peer-source",
+    payload_json: JSON.stringify(buildIncomingTransferEvent().payload.payload),
+  };
+}
+
+function buildOutgoingTransferCommittedEvent() {
+  return {
+    payload: {
+      type: "outgoing_transfer_committed",
+      transfer_id: "transfer-1",
+      source_task_id: "task-source",
+      destination_local_task_id: "task-imported",
+    },
+  };
+}
+
+function buildOutgoingTransferFinalizationRequestedEvent() {
+  return {
+    payload: {
+      type: "outgoing_transfer_finalization_requested",
+      transfer_id: "transfer-1",
+    },
+  };
+}
 async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof SidebarWithoutRepoStub) {
   vi.stubGlobal("__KANNA_MOBILE__", false);
   const { default: App } = await import("./App.vue");
   return mount(App, {
     global: {
       provide: {
-        db: {},
+        db: dbMock,
         dbName: "test.db",
       },
       mocks: {
@@ -230,16 +345,66 @@ async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof Sidebar
   });
 }
 
+async function mountAppWithOverrides(
+  sidebarStub: typeof SidebarWithRepoStub | typeof SidebarWithoutRepoStub,
+  stubs: Record<string, unknown>,
+) {
+  vi.stubGlobal("__KANNA_MOBILE__", false);
+  const { default: App } = await import("./App.vue");
+  return mount(App, {
+    global: {
+      provide: {
+        db: dbMock,
+        dbName: "test.db",
+      },
+      mocks: {
+        $t: (key: string) => key,
+      },
+      stubs: {
+        Sidebar: sidebarStub,
+        MainPanel: true,
+        AddRepoModal: true,
+        KeyboardShortcutsModal: true,
+        FilePickerModal: true,
+        FilePreviewModal: true,
+        TreeExplorerModal: true,
+        DiffModal: true,
+        CommitGraphModal: true,
+        ShellModal: true,
+        CommandPaletteModal: true,
+        AnalyticsModal: true,
+        BlockerSelectModal: true,
+        PreferencesPanel: true,
+        ToastContainer: true,
+        KeepAlive: false,
+        ...stubs,
+      },
+    },
+  });
+}
+
 describe("App", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     store.init.mockClear();
     store.createItem.mockClear();
+    store.recordIncomingTransfer.mockClear();
+    store.approveIncomingTransfer.mockClear();
+    store.rejectIncomingTransfer.mockClear();
+    store.handleOutgoingTransferCommitted.mockClear();
     store.selectedRepoId = "repo-1";
     store.selectedRepo = { id: "repo-1", path: "/tmp/repo", name: "repo" };
     store.sortedItemsForCurrentRepo = [];
     store.sortedItemsAllRepos = [];
+    listenHandlers.clear();
     capturedKeyboardActions = null;
+    dbSelectMock.mockReset();
+    dbSelectMock.mockResolvedValue([]);
     invokeMock.mockClear();
+    toastInfoMock.mockClear();
     appUpdateStartMock.mockClear();
     appUpdateMock.dispose.mockClear();
     appUpdateMock.dismiss.mockClear();
@@ -260,28 +425,24 @@ describe("App", () => {
   it("prevents browser navigation when files are dragged over or dropped on the app shell", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
     await flushPromises();
+    await flushPromises();
+    await flushPromises();
 
-    const dragOverEvent = new Event("dragover", { cancelable: true }) as Event & {
-      dataTransfer: {
-        files: Array<{ path: string; type: string }>;
-        types: string[];
-      };
-    };
-    dragOverEvent.dataTransfer = {
-      files: [{ path: "/tmp/image.png", type: "image/png" }],
-      types: ["Files"],
-    };
+    const dragOverEvent = new DragEvent("dragover", { cancelable: true });
+    Object.defineProperty(dragOverEvent, "dataTransfer", {
+      value: {
+        files: [{ path: "/tmp/image.png", type: "image/png" }],
+        types: ["Files"],
+      },
+    });
 
-    const dropEvent = new Event("drop", { cancelable: true }) as Event & {
-      dataTransfer: {
-        files: Array<{ path: string; type: string }>;
-        types: string[];
-      };
-    };
-    dropEvent.dataTransfer = {
-      files: [{ path: "/tmp/image.png", type: "image/png" }],
-      types: ["Files"],
-    };
+    const dropEvent = new DragEvent("drop", { cancelable: true });
+    Object.defineProperty(dropEvent, "dataTransfer", {
+      value: {
+        files: [{ path: "/tmp/image.png", type: "image/png" }],
+        types: ["Files"],
+      },
+    });
 
     window.dispatchEvent(dragOverEvent);
     window.dispatchEvent(dropEvent);
@@ -295,17 +456,16 @@ describe("App", () => {
   it("does not suppress non-file drags on the app shell", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
     await flushPromises();
+    await flushPromises();
+    await flushPromises();
 
-    const dragOverEvent = new Event("dragover", { cancelable: true }) as Event & {
-      dataTransfer: {
-        files: Array<{ path: string; type: string }>;
-        types: string[];
-      };
-    };
-    dragOverEvent.dataTransfer = {
-      files: [],
-      types: ["text/plain"],
-    };
+    const dragOverEvent = new DragEvent("dragover", { cancelable: true });
+    Object.defineProperty(dragOverEvent, "dataTransfer", {
+      value: {
+        files: [],
+        types: ["text/plain"],
+      },
+    });
 
     window.dispatchEvent(dragOverEvent);
 
@@ -426,7 +586,7 @@ describe("App", () => {
     const wrapper = mount(App, {
       global: {
         provide: {
-          db: {},
+          db: dbMock,
           dbName: "test.db",
         },
         mocks: {
@@ -474,7 +634,6 @@ describe("App", () => {
     expect(wrapper.get('[data-testid="diff-scope"]').text()).toBe("branch");
     expect(wrapper.get('[data-testid="diff-working-scroll"]').text()).toBe("240");
   });
-
   it("starts the updater controller and renders the global update prompt", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
 
@@ -499,6 +658,289 @@ describe("App", () => {
 
     expect(appUpdateMock.dispose).toHaveBeenCalledTimes(1);
   });
+  it("auto-imports an incoming transfer as soon as it is received", async () => {
+    dbSelectMock.mockResolvedValue([]);
+    const wrapper = await mountApp(SidebarWithRepoStub);
+
+    await flushPromises();
+    const handler = listenHandlers.get("transfer-request");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.(buildIncomingTransferEvent());
+    await flushPromises();
+
+    expect(store.recordIncomingTransfer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transferId: "transfer-1",
+        sourcePeerId: "peer-source",
+      }),
+    );
+    expect(store.approveIncomingTransfer).toHaveBeenCalledWith("transfer-1");
+    expect(wrapper.text()).not.toContain("peer-source");
+  });
+
+  it("auto-imports any pending incoming transfer on mount", async () => {
+    dbSelectMock.mockResolvedValue([
+      {
+        ...buildPendingIncomingTransferRow(),
+        id: "transfer-db-1",
+      },
+    ]);
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    expect(store.approveIncomingTransfer).toHaveBeenCalledWith("transfer-db-1");
+    expect(wrapper.text()).not.toContain("peer-source");
+  });
+
+  it("forwards outgoing transfer commit events to the store", async () => {
+    await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+    await flushPromises();
+
+    const handler = listenHandlers.get("outgoing-transfer-committed");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.(buildOutgoingTransferCommittedEvent());
+    await flushPromises();
+
+    expect(store.handleOutgoingTransferCommitted).toHaveBeenCalledWith({
+      transferId: "transfer-1",
+      sourceTaskId: "task-source",
+      destinationLocalTaskId: "task-imported",
+    });
+  });
+
+  it("forwards outgoing transfer finalization requests to the store and completes them", async () => {
+    await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+    await flushPromises();
+
+    const handler = listenHandlers.get("outgoing-transfer-finalization-requested");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.(buildOutgoingTransferFinalizationRequestedEvent());
+    await flushPromises();
+
+    expect(store.finalizeOutgoingTransfer).toHaveBeenCalledWith("transfer-1");
+    expect(invokeMock).toHaveBeenCalledWith("complete_outgoing_transfer_finalization", {
+      transferId: "transfer-1",
+      payload: expect.any(Object),
+      finalizedCleanly: true,
+      error: null,
+    });
+  });
+
+  it("shows the pairing verification code when another machine pairs with this one", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    const handler = listenHandlers.get("pairing-completed");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({
+      type: "pairing_completed",
+      peer_id: "peer-1",
+      display_name: "Peer 1",
+      verification_code: "654321",
+    });
+    await flushPromises();
+
+    expect(toastInfoMock).toHaveBeenCalledWith(expect.stringContaining("654321"));
+    wrapper.unmount();
+  });
+
+  it("adds Push to Machine to command palette commands for active tasks", async () => {
+    store.currentItem = {
+      id: "task-1",
+      stage: "in progress",
+      branch: "task-1",
+      prompt: "Fix handoff",
+      tags: "[]",
+    };
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      setup(props) {
+        const labels = computed(() =>
+          (props.dynamicCommands as Array<{ label: string }>).map((command) => command.label).join("|"),
+        );
+        return { labels };
+      },
+      template: `
+        <div data-testid="command-palette">
+          {{ labels }}
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="command-palette"]').text()).toContain("taskTransfer.pushToMachine");
+  });
+
+  it("adds Pair Machine to command palette commands independently of task transfer", async () => {
+    store.currentItem = null;
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      setup(props) {
+        const labels = computed(() =>
+          (props.dynamicCommands as Array<{ label: string }>).map((command) => command.label).join("|"),
+        );
+        return { labels };
+      },
+      template: `
+        <div data-testid="command-palette">
+          {{ labels }}
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="command-palette"]').text()).toContain("taskTransfer.pairPeer");
+  });
+
+  it("keeps loading transfer peers until discovery has had time to warm up", async () => {
+    vi.useFakeTimers();
+    let listTransferPeersCalls = 0;
+    invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return ["feature/x", "main", "origin/main"];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      if (command === "list_transfer_peers") {
+        listTransferPeersCalls += 1;
+        if (listTransferPeersCalls < 9) return [];
+        return [{
+          peer_id: "peer-remote",
+          display_name: "Desk",
+          trusted: false,
+          accepting_transfers: true,
+        }];
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      template: `
+        <div data-testid="command-palette">
+          <button
+            v-for="command in dynamicCommands"
+            :key="command.id"
+            type="button"
+            @click="command.execute()"
+          >
+            {{ command.label }}
+          </button>
+        </div>
+      `,
+    });
+
+    const PeerPickerModalStub = defineComponent({
+      name: "PeerPickerModal",
+      props: {
+        peers: {
+          type: Array,
+          default: () => [],
+        },
+        loading: Boolean,
+      },
+      template: `
+        <div data-testid="peer-picker">
+          <span data-testid="peer-picker-loading">{{ loading }}</span>
+          <span data-testid="peer-picker-peers">{{ peers.map((peer) => peer.name).join("|") }}</span>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+      PeerPickerModal: PeerPickerModalStub,
+    });
+
+    await flushPromises();
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    const pairButton = wrapper.findAll('[data-testid="command-palette"] button')
+      .find((button) => button.text() === "taskTransfer.pairPeer");
+    expect(pairButton).toBeTruthy();
+
+    await pairButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-loading"]').text()).toBe("true");
+    expect(wrapper.get('[data-testid="peer-picker-peers"]').text()).toBe("");
+
+    await vi.advanceTimersByTimeAsync(1500);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-loading"]').text()).toBe("true");
+    expect(wrapper.get('[data-testid="peer-picker-peers"]').text()).toBe("");
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-loading"]').text()).toBe("false");
+    expect(wrapper.get('[data-testid="peer-picker-peers"]').text()).toContain("Desk");
+
+    vi.useRealTimers();
+  });
+
+  it("does not render the footer action bar for the current task view", async () => {
+    store.currentItem = {
+      id: "task-1",
+      stage: "in progress",
+      branch: "task-1",
+      prompt: "Fix handoff",
+      tags: "[]",
+    };
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    expect(wrapper.find(".action-bar").exists()).toBe(false);
+  });
 
   it("dismiss closes the entire file flow after preview-local dismiss is exhausted", async () => {
     vi.stubGlobal("__KANNA_MOBILE__", false);
@@ -506,7 +948,7 @@ describe("App", () => {
     const wrapper = mount(App, {
       global: {
         provide: {
-          db: {},
+          db: dbMock,
           dbName: "test.db",
         },
         mocks: {

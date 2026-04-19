@@ -16,6 +16,7 @@ import {
   reorderPinnedItems,
   unhideRepo as unhideRepoQuery,
   updatePipelineItemActivity,
+  updateAgentSessionId,
   updatePipelineItemDisplayName,
   updatePipelineItemStage,
   updatePipelineItemTags,
@@ -48,8 +49,29 @@ import { isTeardownStage, TEARDOWN_STAGE } from "./taskStages";
 import { resolveDbName } from "./db";
 import { readRepoConfig, requireService, type CreateItemOptions, type StoreContext, type WorktreeBootstrapResult } from "./state";
 
+const INSTANCE_SCOPED_WORKTREE_ENV_KEYS = [
+  "KANNA_TMUX_SESSION",
+  "KANNA_DB_NAME",
+  "KANNA_DB_PATH",
+  "KANNA_DAEMON_DIR",
+  "KANNA_TRANSFER_ROOT",
+  "KANNA_WEBDRIVER_PORT",
+  "KANNA_E2E_TARGET_WEBDRIVER_PORT",
+  "KANNA_TRANSFER_PORT",
+  "KANNA_TRANSFER_DISPLAY_NAME",
+  "KANNA_TRANSFER_PEER_ID",
+  "KANNA_TRANSFER_REGISTRY_DIR",
+] as const;
+
+function applyWorktreeProcessIsolation(env: Record<string, string>): Record<string, string> {
+  for (const key of INSTANCE_SCOPED_WORKTREE_ENV_KEYS) {
+    env[key] = "";
+  }
+  return env;
+}
+
 export interface TasksApi {
-  importRepo: (path: string, name: string, defaultBranch: string) => Promise<void>;
+  importRepo: (path: string, name: string, defaultBranch: string) => Promise<string>;
   createRepo: (name: string, path: string) => Promise<void>;
   cloneAndImportRepo: (url: string, destination: string) => Promise<void>;
   hideRepo: (repoId: string) => Promise<void>;
@@ -59,7 +81,7 @@ export interface TasksApi {
     prompt: string,
     agentType?: "pty" | "sdk",
     opts?: CreateItemOptions,
-  ) => Promise<void>;
+  ) => Promise<string>;
   closeTask: (targetItemId?: string, opts?: { selectNext?: boolean }) => Promise<void>;
   undoClose: () => Promise<void>;
   blockTask: (blockerIds: string[]) => Promise<void>;
@@ -132,7 +154,7 @@ export function createTasksApi(
   }
 
   function hasLiveTaskResources(item: PipelineItem): boolean {
-    return item.branch !== null || item.claude_session_id !== null || item.port_env !== null;
+    return item.branch !== null || item.agent_session_id !== null || item.port_env !== null;
   }
 
   function buildBlockedResumeMessage(blockers: PipelineItem[]): string {
@@ -151,7 +173,7 @@ export function createTasksApi(
     ].join("\n");
   }
 
-  async function importRepo(path: string, name: string, defaultBranch: string) {
+  async function importRepo(path: string, name: string, defaultBranch: string): Promise<string> {
     const existing = await findRepoByPath(context.requireDb(), path);
     if (existing) {
       if (existing.hidden) {
@@ -159,7 +181,7 @@ export function createTasksApi(
         await reloadSnapshot();
         context.state.selectedRepoId.value = existing.id;
       }
-      return;
+      return existing.id;
     }
     const id = crypto.randomUUID().slice(0, 8);
     await insertRepo(context.requireDb(), { id, path, name, default_branch: defaultBranch });
@@ -169,6 +191,7 @@ export function createTasksApi(
       requireService(context.services.spawnShellSession, "spawnShellSession")(`shell-repo-${id}`, path, null, false)
         .catch((error) => reportPrewarmSessionError("[store] repo shell pre-warm failed:", error));
     }
+    return id;
   }
 
   async function createRepo(name: string, path: string) {
@@ -351,6 +374,7 @@ export function createTasksApi(
               setupCmdsOverride: opts?.customTask?.setup,
               portEnv,
               setupCmds: ptySetupCmds,
+              resumeSessionId: opts?.resumeSessionId ?? undefined,
             },
           );
           const fullCmd = buildTaskBootstrapCommand({
@@ -369,6 +393,17 @@ export function createTasksApi(
             rows: 24,
             agentProvider,
           });
+          if (opts?.recoverySnapshot) {
+            await invoke("seed_session_recovery_state", {
+              sessionId: id,
+              serialized: opts.recoverySnapshot.serialized,
+              cols: opts.recoverySnapshot.cols,
+              rows: opts.recoverySnapshot.rows,
+              cursorRow: opts.recoverySnapshot.cursorRow,
+              cursorCol: opts.recoverySnapshot.cursorCol,
+              cursorVisible: opts.recoverySnapshot.cursorVisible,
+            });
+          }
           await requireService(context.services.syncTaskStatusesFromDaemon, "syncTaskStatusesFromDaemon")();
         }
       } catch (error) {
@@ -399,7 +434,7 @@ export function createTasksApi(
     prompt: string,
     agentType: "pty" | "sdk" = "pty",
     opts?: CreateItemOptions,
-  ) {
+  ): Promise<string> {
     const t0 = performance.now();
     const id = crypto.randomUUID().slice(0, 8);
     const branch = `task-${id}`;
@@ -407,7 +442,7 @@ export function createTasksApi(
     const effectivePrompt = opts?.customTask?.prompt ?? prompt;
     const effectiveAgentType = opts?.customTask?.executionMode ?? agentType;
     const requestedAgentProviders = opts?.customTask?.agentProvider ?? opts?.agentProvider;
-    const displayName = opts?.customTask?.name ?? null;
+    const displayName = opts?.customTask?.name ?? opts?.displayName ?? null;
 
     const pendingPlaceholder = buildPendingTaskPlaceholder({
       id,
@@ -558,6 +593,9 @@ export function createTasksApi(
               "UPDATE pipeline_item SET port_offset = ?, port_env = ?, updated_at = datetime('now') WHERE id = ?",
               [portOffset, Object.keys(portEnv).length > 0 ? JSON.stringify(portEnv) : null, id],
             );
+            if (opts?.resumeSessionId) {
+              await updateAgentSessionId(context.requireDb(), id, opts.resumeSessionId);
+            }
           } catch (error) {
             if (pipelineItemInserted) {
               await context.requireDb().execute("DELETE FROM pipeline_item WHERE id = ?", [id]).catch(() => undefined);
@@ -591,6 +629,7 @@ export function createTasksApi(
       removePendingPlaceholder();
       throw error;
     }
+    return id;
   }
 
   async function closeTask(targetItemId?: string, opts?: { selectNext?: boolean }) {
@@ -696,7 +735,7 @@ export function createTasksApi(
           cwd: worktreePath,
           executable: "/bin/zsh",
           args: ["--login", "-i", "-c", fullCmd],
-          env: { KANNA_WORKTREE: "1" },
+          env: applyWorktreeProcessIsolation({ KANNA_WORKTREE: "1" }),
           cols: 120,
           rows: 30,
         });
@@ -771,7 +810,7 @@ export function createTasksApi(
           );
           await requireService(context.services.spawnPtySession, "spawnPtySession")(item.id, worktreePath, item.prompt || "", 80, 24, {
             agentProvider,
-            ...(item.claude_session_id ? { resumeSessionId: item.claude_session_id } : {}),
+            ...(item.agent_session_id ? { resumeSessionId: item.agent_session_id } : {}),
           });
           await updatePipelineItemActivity(context.requireDb(), item.id, "working");
           await reloadSnapshot();

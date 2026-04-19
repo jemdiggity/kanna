@@ -112,6 +112,8 @@ fn recovery_snapshot_to_terminal_snapshot(
         cursor_row: snapshot.cursor_row,
         cursor_col: snapshot.cursor_col,
         cursor_visible: snapshot.cursor_visible,
+        saved_at: snapshot.saved_at,
+        sequence: snapshot.sequence,
         vt: snapshot.serialized,
     }
 }
@@ -218,6 +220,8 @@ fn blank_snapshot(rows: u16, cols: u16) -> protocol::TerminalSnapshot {
         cursor_row: 0,
         cursor_col: 0,
         cursor_visible: true,
+        saved_at: 0,
+        sequence: 0,
         vt: String::new(),
     }
 }
@@ -1467,6 +1471,30 @@ async fn handle_command(
             let _ = write_event(&mut *writer.lock().await, &evt).await;
         }
 
+        Command::SeedSnapshot {
+            session_id,
+            snapshot,
+        } => {
+            let evt = match recovery_manager.seed_snapshot(
+                &session_id,
+                &SeededRecoverySnapshot {
+                    serialized: snapshot.vt,
+                    cols: snapshot.cols,
+                    rows: snapshot.rows,
+                    cursor_row: snapshot.cursor_row,
+                    cursor_col: snapshot.cursor_col,
+                    cursor_visible: snapshot.cursor_visible,
+                },
+            ) {
+                Ok(()) => Event::Ok,
+                Err(message) => Event::Error {
+                    code: None,
+                    message,
+                },
+            };
+            let _ = write_event(&mut *writer.lock().await, &evt).await;
+        }
+
         Command::Handoff { .. } => {
             // Handled in handle_connection before dispatch
             let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
@@ -2016,13 +2044,31 @@ fn stream_output(
             Some(session) => session.pty.try_wait().unwrap_or(0),
             None => 0,
         };
-        mgr.remove(&session_id);
         code
     };
+    let resume_session_id = rt.block_on(async {
+        let mut mgr = sessions.lock().await;
+        match mgr.codex_resume_session_id(&session_id) {
+            Ok(value) => value,
+            Err(error) => {
+                log::warn!(
+                    "[stream] failed to read codex resume session id for {}: {}",
+                    session_id,
+                    error
+                );
+                None
+            }
+        }
+    });
+    rt.block_on(async {
+        let mut mgr = sessions.lock().await;
+        mgr.remove(&session_id);
+    });
 
     let evt = Event::Exit {
         session_id: session_id.clone(),
         code: exit_code,
+        resume_session_id: resume_session_id.clone(),
     };
     rt.block_on(async {
         recovery_manager.end_session(&session_id).await;
@@ -2045,6 +2091,7 @@ fn stream_output(
             let obs_evt = Event::Exit {
                 session_id: session_id.clone(),
                 code: exit_code,
+                resume_session_id,
             };
             futures::future::join_all(observer_list.iter().map(|obs| {
                 let evt = obs_evt.clone();
@@ -2167,6 +2214,8 @@ mod tests {
             cursor_row: 2,
             cursor_col: 3,
             cursor_visible: true,
+            saved_at: 0,
+            sequence: 0,
             vt: "hello".to_string(),
         }
     }

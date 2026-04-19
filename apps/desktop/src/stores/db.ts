@@ -134,7 +134,7 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     await addColumn("pipeline_item", "unread_at", "TEXT");
     await addColumn("repo", "hidden", "INTEGER NOT NULL DEFAULT 0");
     await addColumn("pipeline_item", "closed_at", "TEXT");
-    await addColumn("pipeline_item", "claude_session_id", "TEXT");
+    await addColumn("pipeline_item", "agent_session_id", "TEXT");
     await addColumn("pipeline_item", "tags", "TEXT NOT NULL DEFAULT '[]'");
     await addColumn("pipeline_item", "base_ref", "TEXT");
     await addColumn("pipeline_item", "agent_provider", "TEXT NOT NULL DEFAULT 'claude'");
@@ -235,12 +235,61 @@ export async function runMigrations(db: DbHandle): Promise<void> {
       }
     }
   });
-
   await runMigration("010_rename_torndown_stage", async () => {
     await db.execute(`UPDATE pipeline_item SET stage = 'teardown' WHERE stage = 'torndown'`);
   });
-
   await runMigration("011_pipeline_item_last_output_preview", async () => {
     await addColumn("pipeline_item", "last_output_preview", "TEXT");
+  });
+
+  await runMigration("012_task_transfer_tables", async () => {
+    await db.execute(`CREATE TABLE IF NOT EXISTS trusted_peer (
+      id TEXT PRIMARY KEY,
+      peer_id TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      public_key TEXT NOT NULL,
+      capabilities_json TEXT NOT NULL,
+      paired_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT,
+      revoked_at TEXT
+    )`);
+    await db.execute(`CREATE TABLE IF NOT EXISTS task_transfer (
+      id TEXT PRIMARY KEY,
+      direction TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_peer_id TEXT,
+      target_peer_id TEXT,
+      source_task_id TEXT,
+      local_task_id TEXT REFERENCES pipeline_item(id) ON DELETE CASCADE,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      completed_at TEXT,
+      error TEXT,
+      payload_json TEXT
+    )`);
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_task_transfer_local_task ON task_transfer(local_task_id, started_at DESC)`);
+    await db.execute(`CREATE TABLE IF NOT EXISTS task_transfer_provenance (
+      pipeline_item_id TEXT PRIMARY KEY REFERENCES pipeline_item(id) ON DELETE CASCADE,
+      source_peer_id TEXT NOT NULL,
+      source_task_id TEXT NOT NULL,
+      source_machine_task_label TEXT,
+      imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+  });
+  await runMigration("013_task_transfer_payload_json", async () => {
+    await addColumn("task_transfer", "payload_json", "TEXT");
+  });
+
+  await runMigration("014_agent_session_id_rename", async () => {
+    await addColumn("pipeline_item", "agent_session_id", "TEXT");
+    try {
+      await db.execute(
+        `UPDATE pipeline_item
+            SET agent_session_id = claude_session_id
+          WHERE agent_session_id IS NULL
+            AND claude_session_id IS NOT NULL`,
+      );
+    } catch (e) {
+      console.debug("[db] agent_session_id backfill:", e);
+    }
   });
 }

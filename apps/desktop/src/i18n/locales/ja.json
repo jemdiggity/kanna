@@ -86,7 +86,8 @@
     "shell": "シェルショートカット",
     "tree": "ツリーエクスプローラーショートカット",
     "newTask": "新規タスクショートカット",
-    "graph": "コミットグラフショートカット"
+    "graph": "コミットグラフショートカット",
+    "transfer": "タスク転送ショートカット"
   },
   "sidebar": {
     "searchPlaceholder": "タスクを検索…  ⌘F",
@@ -295,6 +296,14 @@
       "restartNow": "今すぐ再起動",
       "later": "あとで"
     }
+  },
+  "taskTransfer": {
+    "pushToMachine": "マシンへ送る",
+    "pairPeer": "マシンをペアリング",
+    "noPeersFound": "ネットワーク上で利用可能なマシンがまだ見つかっていません。",
+    "incomingTitle": "受信中のタスク転送",
+    "approve": "承認",
+    "reject": "拒否"
   },
   "common": {
     "loading": "読み込み中..."

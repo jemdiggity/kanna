@@ -1,0 +1,275 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ControlRequest {
+    ListPeers {
+        request_id: String,
+    },
+    StartPairing {
+        request_id: String,
+        target_peer_id: String,
+    },
+    StageTransferArtifact {
+        request_id: String,
+        transfer_id: String,
+        artifact_id: String,
+        path: String,
+    },
+    FetchTransferArtifact {
+        request_id: String,
+        transfer_id: String,
+        artifact_id: String,
+    },
+    PrepareTransferPreflight {
+        request_id: String,
+        source_task_id: String,
+        target_peer_id: String,
+    },
+    PrepareTransferCommit {
+        request_id: String,
+        transfer_id: String,
+        payload: serde_json::Value,
+    },
+    FinalizeOutgoingTransfer {
+        request_id: String,
+        transfer_id: String,
+    },
+    CompleteOutgoingTransferFinalization {
+        request_id: String,
+        transfer_id: String,
+        payload: Option<serde_json::Value>,
+        finalized_cleanly: bool,
+        error: Option<String>,
+    },
+    AcknowledgeImportCommitted {
+        request_id: String,
+        transfer_id: String,
+        source_task_id: String,
+        destination_local_task_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ControlResponse {
+    ListPeers {
+        request_id: String,
+        peers: Vec<DiscoveredPeer>,
+    },
+    StartPairing {
+        request_id: String,
+        peer: DiscoveredPeer,
+        verification_code: String,
+    },
+    StageTransferArtifact {
+        request_id: String,
+        transfer_id: String,
+        artifact_id: String,
+    },
+    FetchTransferArtifact {
+        request_id: String,
+        transfer_id: String,
+        artifact_id: String,
+        path: String,
+    },
+    PrepareTransferPreflight {
+        request_id: String,
+        transfer_id: String,
+        source_peer_id: String,
+        target_has_repo: bool,
+    },
+    PrepareTransferCommit {
+        request_id: String,
+        transfer_id: String,
+    },
+    FinalizeOutgoingTransfer {
+        request_id: String,
+        transfer_id: String,
+        payload: serde_json::Value,
+        finalized_cleanly: bool,
+    },
+    CompleteOutgoingTransferFinalization {
+        request_id: String,
+        transfer_id: String,
+    },
+    AcknowledgeImportCommitted {
+        request_id: String,
+        transfer_id: String,
+    },
+    Error {
+        request_id: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PeerRequest {
+    StartPairing {
+        request_id: String,
+        source_peer_id: String,
+        source_display_name: String,
+        source_public_key: String,
+        capabilities_json: String,
+    },
+    PrepareTransfer {
+        request_id: String,
+        source_peer_id: String,
+        sealed_payload: String,
+    },
+    SubmitTransferPayload {
+        request_id: String,
+        transfer_id: String,
+        sealed_payload: String,
+    },
+    FinalizeTransfer {
+        request_id: String,
+        transfer_id: String,
+        requester_peer_id: String,
+    },
+    FetchTransferArtifact {
+        request_id: String,
+        transfer_id: String,
+        requester_peer_id: String,
+        sealed_payload: String,
+    },
+    ImportCommitted {
+        request_id: String,
+        transfer_id: String,
+        requester_peer_id: String,
+        sealed_payload: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PeerResponse {
+    StartPairing {
+        request_id: String,
+        peer: PairingPeer,
+        verification_code: String,
+    },
+    PrepareTransfer {
+        request_id: String,
+        transfer_id: String,
+        source_peer_id: String,
+        target_has_repo: bool,
+    },
+    SubmitTransferPayload {
+        request_id: String,
+        transfer_id: String,
+    },
+    FinalizeTransfer {
+        request_id: String,
+        transfer_id: String,
+        sealed_payload: String,
+    },
+    FetchTransferArtifact {
+        request_id: String,
+        transfer_id: String,
+        sealed_payload: String,
+    },
+    ImportCommitted {
+        request_id: String,
+        transfer_id: String,
+    },
+    Error {
+        request_id: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerRegistryEntry {
+    pub peer_id: String,
+    pub display_name: String,
+    pub endpoint: String,
+    pub pid: u32,
+    pub public_key: String,
+    pub protocol_version: u32,
+    pub accepting_transfers: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscoveredPeer {
+    pub peer_id: String,
+    pub display_name: String,
+    pub endpoint: String,
+    pub pid: u32,
+    pub public_key: String,
+    pub protocol_version: u32,
+    pub accepting_transfers: bool,
+    pub trusted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairingPeer {
+    pub peer_id: String,
+    pub display_name: String,
+    pub public_key: String,
+    pub capabilities_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SidecarEvent {
+    PairingCompleted {
+        peer_id: String,
+        display_name: String,
+        verification_code: String,
+    },
+    IncomingTransferRequest {
+        transfer_id: String,
+        source_peer_id: String,
+        source_task_id: String,
+        source_name: Option<String>,
+        payload: serde_json::Value,
+    },
+    OutgoingTransferCommitted {
+        transfer_id: String,
+        source_task_id: String,
+        destination_local_task_id: String,
+    },
+    OutgoingTransferFinalizationRequested {
+        transfer_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WireMessage {
+    ListPeers,
+    PairingRequest {
+        peer_id: String,
+        display_name: String,
+    },
+    PairingAccept {
+        peer_id: String,
+        code: String,
+        public_key: String,
+    },
+    PrepareTransfer {
+        transfer_id: String,
+        task_id: String,
+        provider: String,
+    },
+    PrepareTransferOk {
+        transfer_id: String,
+        ready_token: String,
+    },
+    TransferChunk {
+        transfer_id: String,
+        seq: u64,
+        payload_b64: String,
+    },
+    TransferCommit {
+        transfer_id: String,
+    },
+    TransferAck {
+        transfer_id: String,
+    },
+    Error {
+        message: String,
+    },
+}

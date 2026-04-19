@@ -86,7 +86,8 @@
     "shell": "Shell Shortcuts",
     "tree": "Tree Explorer Shortcuts",
     "newTask": "New Task Shortcuts",
-    "graph": "Commit Graph Shortcuts"
+    "graph": "Commit Graph Shortcuts",
+    "transfer": "Task Transfer Shortcuts"
   },
   "sidebar": {
     "searchPlaceholder": "Search tasks…  ⌘F",
@@ -295,6 +296,14 @@
       "restartNow": "Restart now",
       "later": "Later"
     }
+  },
+  "taskTransfer": {
+    "pushToMachine": "Push to Machine",
+    "pairPeer": "Pair Machine",
+    "noPeersFound": "No machines found on your network yet.",
+    "incomingTitle": "Incoming Task Transfer",
+    "approve": "Approve",
+    "reject": "Reject"
   },
   "common": {
     "loading": "Loading..."

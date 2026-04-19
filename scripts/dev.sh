@@ -56,8 +56,11 @@ tmux_env_args() {
     KANNA_DB_NAME \
     KANNA_DB_PATH \
     KANNA_DAEMON_DIR \
+    KANNA_TRANSFER_ROOT \
+    KANNA_TRANSFER_PORT \
     KANNA_DEV_PORT \
     KANNA_APPIUM_PORT \
+    KANNA_WEBDRIVER_PORT \
     TAURI_WEBDRIVER_PORT \
     CARGO_BUILD_BUILD_DIR; do
     if [ -n "${!key:-}" ]; then
@@ -137,14 +140,27 @@ shared_rust_build_dir() {
   printf '%s/Library/Caches/kanna/rust-build\n' "$HOME"
 }
 
+resolve_transfer_root() {
+  if [ -z "${KANNA_WORKTREE:-}" ] && [ -n "${KANNA_TRANSFER_ROOT:-}" ]; then
+    printf '%s\n' "$KANNA_TRANSFER_ROOT"
+    return
+  fi
+  if [ -n "${KANNA_WORKTREE:-}" ]; then
+    printf '%s/.kanna-transfer\n' "$ROOT"
+  else
+    printf '%s/Library/Application Support/%s/transfer\n' "$HOME" "$DESKTOP_BUNDLE_IDENTIFIER"
+  fi
+}
 RESOLVED_DB_PATH="$(resolve_db_path)"
 RESOLVED_DB_NAME="$(basename "$RESOLVED_DB_PATH")"
 RESOLVED_DAEMON_DIR="$(resolve_daemon_dir)"
+RESOLVED_TRANSFER_ROOT="$(resolve_transfer_root)"
 export KANNA_DB_NAME="$RESOLVED_DB_NAME"
 export KANNA_DB_PATH="$RESOLVED_DB_PATH"
 export KANNA_DAEMON_DIR="$RESOLVED_DAEMON_DIR"
 export KANNA_APPIUM_PORT="$(read_port KANNA_APPIUM_PORT 4723)"
 export KANNA_MOBILE_SERVER_PORT="$(read_port KANNA_MOBILE_SERVER_PORT 48120)"
+export KANNA_TRANSFER_ROOT="$RESOLVED_TRANSFER_ROOT"
 
 detect_mobile_server_host() {
   if [ -n "${KANNA_MOBILE_SERVER_HOST:-}" ]; then

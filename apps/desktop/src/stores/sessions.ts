@@ -1,5 +1,5 @@
 import type { AgentProvider } from "@kanna/db";
-import { getRepo, updateClaudeSessionId, updatePipelineItemActivity } from "@kanna/db";
+import { getRepo, updateAgentSessionId, updatePipelineItemActivity } from "@kanna/db";
 import { invoke } from "../invoke";
 import { isTauri } from "../tauri-mock";
 import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
@@ -28,6 +28,7 @@ export interface SessionsApi {
   getAgentProviderAvailability: () => Promise<AgentProviderAvailability>;
   waitForSessionExit: (sessionId: string) => Promise<void>;
   resolveSessionExitWaiters: (sessionId: string) => void;
+  persistExitedSessionResumeId: (sessionId: string, resumeSessionId?: string | null) => Promise<void>;
   spawnShellSession: (
     sessionId: string,
     cwd: string,
@@ -147,6 +148,16 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     if (!waiters) return;
     sessionExitWaiters.delete(sessionId);
     for (const resolve of waiters) resolve();
+  }
+
+  async function persistExitedSessionResumeId(
+    sessionId: string,
+    resumeSessionId?: string | null,
+  ): Promise<void> {
+    if (!resumeSessionId) return;
+    const item = context.state.items.value.find((candidate) => candidate.id === sessionId);
+    if (!item || item.agent_provider !== "codex") return;
+    await updateAgentSessionId(context.requireDb(), sessionId, resumeSessionId);
   }
 
   async function spawnShellSession(
@@ -280,7 +291,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
 
       const copilotSessionId = options?.resumeSessionId || crypto.randomUUID();
       if (!options?.resumeSessionId) {
-        await updateClaudeSessionId(context.requireDb(), sessionId, copilotSessionId);
+        await updateAgentSessionId(context.requireDb(), sessionId, copilotSessionId);
       }
       copilotFlags.push(`--resume=${copilotSessionId}`);
 
@@ -288,12 +299,17 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
         ? `copilot ${copilotFlags.join(" ")}`
         : `copilot ${copilotFlags.join(" ")} -i '${escapedPrompt}'`;
     } else if (provider === "codex") {
-      const codexFlags: string[] = [...permissionFlags];
-      if (options?.model) codexFlags.push(`-m ${options.model}`);
+      if (options?.resumeSessionId) {
+        const escapedResumeSessionId = options.resumeSessionId.replace(/'/g, "'\\''");
+        agentCmd = `codex resume '${escapedResumeSessionId}'`;
+      } else {
+        const codexFlags: string[] = [...permissionFlags];
+        if (options?.model) codexFlags.push(`-m ${options.model}`);
 
-      agentCmd = escapedPrompt
-        ? `codex ${codexFlags.join(" ")} '${escapedPrompt}'`
-        : `codex ${codexFlags.join(" ")}`;
+        agentCmd = escapedPrompt
+          ? `codex ${codexFlags.join(" ")} '${escapedPrompt}'`
+          : `codex ${codexFlags.join(" ")}`;
+      }
     } else {
       const flags: string[] = [...permissionFlags];
       if (options?.model) flags.push(`--model ${options.model}`);
@@ -308,7 +324,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
 
       const claudeSessionId = options?.resumeSessionId || crypto.randomUUID();
       if (!options?.resumeSessionId) {
-        await updateClaudeSessionId(context.requireDb(), sessionId, claudeSessionId);
+        await updateAgentSessionId(context.requireDb(), sessionId, claudeSessionId);
       }
 
       if (options?.resumeSessionId) {
@@ -364,6 +380,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     getAgentProviderAvailability,
     waitForSessionExit,
     resolveSessionExitWaiters,
+    persistExitedSessionResumeId,
     spawnShellSession,
     prewarmWorktreeShellSession,
     preparePtySession,

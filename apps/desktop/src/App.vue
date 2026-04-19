@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, reactive, computed, inject, onMounted, onBeforeUnmount, nextTick, type Ref } from "vue";
+import { ref, reactive, computed, inject, onMounted, onBeforeUnmount, onUnmounted, nextTick, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
+import { listen } from "./listen";
 import { parseRepoConfig } from "@kanna/core";
 import { getSetting, setSetting, type AgentProvider, type DbHandle } from "@kanna/db";
 import i18n from "./i18n";
@@ -22,6 +23,7 @@ import ShellModal from "./components/ShellModal.vue";
 import CommandPaletteModal from "./components/CommandPaletteModal.vue";
 import AnalyticsModal from "./components/AnalyticsModal.vue";
 import BlockerSelectModal from "./components/BlockerSelectModal.vue";
+import PeerPickerModal from "./components/PeerPickerModal.vue";
 import PreferencesPanel from "./components/PreferencesPanel.vue";
 import AppUpdatePrompt from "./components/AppUpdatePrompt.vue";
 import ToastContainer from "./components/ToastContainer.vue";
@@ -36,6 +38,15 @@ import { useAppUpdate } from "./composables/useAppUpdate";
 import { isTopModal } from "./composables/useModalZIndex";
 import { selectTaskByActivity } from "./utils/selectTaskByActivity";
 import { getDefaultBaseBranch } from "./utils/baseBranchPicker";
+import {
+  parseIncomingTransferRequest,
+  parsePairingCompletedEvent,
+  parsePairingResult,
+  parseOutgoingTransferCommittedEvent,
+  parseOutgoingTransferFinalizationRequestEvent,
+  parseTransferPeers,
+  type TransferPeerOption,
+} from "./utils/taskTransfer";
 import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
@@ -55,6 +66,7 @@ const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
 const appUpdate = useAppUpdate();
+const appUnlisteners: Array<() => void> = [];
 useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 
 // UI state
@@ -104,6 +116,14 @@ const commandUsageCounts = ref<Record<string, number>>({});
 const showAnalyticsModal = ref(false);
 const showBlockerSelect = ref(false);
 const blockerSelectMode = ref<"block" | "edit">("block");
+const peerPickerMode = ref<"push" | "pair">("push");
+const selectedTransferTaskId = ref<string | null>(null);
+const showPeerPicker = ref(false);
+const transferPeers = ref<TransferPeerOption[]>([]);
+const transferPeersLoading = ref(false);
+let transferPeerLoadRequestId = 0;
+const TRANSFER_PEER_DISCOVERY_RETRY_MS = 250;
+const TRANSFER_PEER_DISCOVERY_TIMEOUT_MS = 2500;
 const showPreferencesPanel = ref(false);
 const preferences = reactive({
   suspendAfterMinutes: 30,
@@ -156,6 +176,10 @@ const commitGraphModalRef = ref<InstanceType<typeof CommitGraphModal> | null>(nu
 const treeExplorerRef = ref<InstanceType<typeof TreeExplorerModal> | null>(null);
 const filePreviewRef = ref<InstanceType<typeof FilePreviewModal> | null>(null);
 const preferencesRef = ref<InstanceType<typeof PreferencesPanel> | null>(null);
+
+interface PendingIncomingTransferRow {
+  id: string;
+}
 
 // Navigation
 function navigateItems(direction: -1 | 1) {
@@ -430,6 +454,18 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
       execute: () => sidebarRef.value?.renameSelectedItem(),
     });
   }
+  if (store.currentItem && store.currentItem.stage !== "done") {
+    cmds.push({
+      id: "push-to-machine",
+      label: t('taskTransfer.pushToMachine'),
+      execute: () => openPeerPicker(store.currentItem!.id),
+    });
+  }
+  cmds.push({
+    id: "pair-machine",
+    label: t('taskTransfer.pairPeer'),
+    execute: () => openPairPeerPicker(),
+  });
   // Factory commands
   cmds.push({
     id: "create-agent",
@@ -469,6 +505,7 @@ const currentShortcutContext = computed<ShortcutContext>(() => {
   // it is opened on top of a context like tree or shell that doesn't expose
   // the generic dismiss shortcut.
   if (showShortcutsModal.value) return "main";
+  if (showPeerPicker.value) return "transfer";
   if (showNewTaskModal.value) return "newTask";
   if (showFilePreviewModal.value) return "file";
   if (showTreeExplorer.value) return "tree";
@@ -504,6 +541,116 @@ function closeFilePreview(reopenPicker: boolean) {
 
   if (shouldReopenPicker) {
     showFilePickerModal.value = true;
+  }
+}
+
+async function loadTransferPeers() {
+  const requestId = ++transferPeerLoadRequestId;
+  transferPeersLoading.value = true;
+  try {
+    const maxAttempts =
+      Math.floor(TRANSFER_PEER_DISCOVERY_TIMEOUT_MS / TRANSFER_PEER_DISCOVERY_RETRY_MS) + 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const raw = await invoke<unknown>("list_transfer_peers");
+      const peers = parseTransferPeers(raw);
+      if (requestId !== transferPeerLoadRequestId) {
+        return;
+      }
+      if (peers.length > 0 || attempt === maxAttempts - 1) {
+        transferPeers.value = peers;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, TRANSFER_PEER_DISCOVERY_RETRY_MS));
+    }
+  } catch (e: unknown) {
+    console.error(
+      "[App] failed to list transfer peers:",
+      e instanceof Error ? e.message : String(e),
+    );
+    if (requestId === transferPeerLoadRequestId) {
+      transferPeers.value = [];
+    }
+  } finally {
+    if (requestId === transferPeerLoadRequestId) {
+      transferPeersLoading.value = false;
+    }
+  }
+}
+
+async function warmTransferSidecar() {
+  if (!isTauri) return;
+  try {
+    await invoke("list_transfer_peers");
+  } catch (e: unknown) {
+    console.error(
+      "[App] transfer sidecar warmup failed:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}
+
+function openPeerPicker(taskId: string) {
+  selectedTransferTaskId.value = taskId;
+  peerPickerMode.value = "push";
+  showPeerPicker.value = true;
+  void loadTransferPeers();
+}
+
+function openPairPeerPicker() {
+  selectedTransferTaskId.value = null;
+  peerPickerMode.value = "pair";
+  showPeerPicker.value = true;
+  void loadTransferPeers();
+}
+
+function closePeerPicker() {
+  showPeerPicker.value = false;
+  selectedTransferTaskId.value = null;
+  peerPickerMode.value = "push";
+}
+
+async function handlePeerSelected(peerId: string) {
+  const taskId = selectedTransferTaskId.value;
+  if (!taskId) return;
+  const selectedPeer = transferPeers.value.find((peer) => peer.id === peerId);
+  if (selectedPeer && !selectedPeer.trusted) {
+    toast.error("Pair this peer before transferring a task.");
+    return;
+  }
+  try {
+    await store.pushTaskToPeer(taskId, peerId);
+    closePeerPicker();
+  } catch (e: unknown) {
+    console.error("[App] task transfer push failed:", e);
+    toast.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function handlePairPeer(peerId: string) {
+  try {
+    const result = parsePairingResult(await invoke("start_peer_pairing", { peerId }));
+    toast.info(`Paired with ${result.peer.name}. Verify code ${result.verificationCode}.`);
+    closePeerPicker();
+    await loadTransferPeers();
+  } catch (e: unknown) {
+    console.error("[App] peer pairing failed:", e);
+    toast.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function importPendingIncomingTransfers() {
+  const rows = await db.select<PendingIncomingTransferRow>(
+    `SELECT id
+       FROM task_transfer
+      WHERE direction = 'incoming' AND status = 'pending'
+      ORDER BY started_at ASC`,
+  );
+  for (const row of rows) {
+    try {
+      await store.approveIncomingTransfer(row.id);
+    } catch (error: unknown) {
+      console.error("[App] failed to auto-import pending incoming transfer:", error);
+    }
   }
 }
 
@@ -575,6 +722,7 @@ const keyboardActions = {
   dismiss: () => {
     if (showCommandPalette.value) { showCommandPalette.value = false; return true; }
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return true; }
+    if (showPeerPicker.value) { closePeerPicker(); return true; }
     if (showFilePreviewModal.value) {
       const shouldCloseFileFlow = filePreviewRef.value?.dismiss() ?? true;
       if (shouldCloseFileFlow) closeFileFlow();
@@ -736,7 +884,8 @@ const anyModalOpen = computed(() =>
   showNewTaskModal.value || showAddRepoModal.value || showShortcutsModal.value ||
   showFilePickerModal.value || showFilePreviewModal.value || showDiffModal.value ||
   showTreeExplorer.value || showShellModal.value || showAnalyticsModal.value ||
-  showBlockerSelect.value || showPreferencesPanel.value || showCommitGraphModal.value
+  showBlockerSelect.value || showPreferencesPanel.value || showCommitGraphModal.value ||
+  showPeerPicker.value
 );
 useRestoreFocus(anyModalOpen);
 
@@ -895,7 +1044,91 @@ async function handlePreferenceUpdate(key: string, value: string) {
 // Init
 onMounted(async () => {
   appUpdate.start();
+  window.addEventListener("dragenter", suppressFileDropNavigation);
+  window.addEventListener("dragover", suppressFileDropNavigation);
+  window.addEventListener("drop", suppressFileDropNavigation);
+  document.addEventListener("file-link-activate", handleFileLinkActivate);
+
   await store.init(db);
+  await importPendingIncomingTransfers();
+
+  try {
+    const unlistenTransferRequest = await listen("transfer-request", async (event: unknown) => {
+      try {
+        const payload = (event as { payload?: unknown })?.payload ?? event;
+        const request = parseIncomingTransferRequest(payload);
+        await store.recordIncomingTransfer(request);
+        await store.approveIncomingTransfer(request.transferId);
+      } catch (e: unknown) {
+        console.error("[App] failed to import incoming transfer request:", e);
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    });
+    appUnlisteners.push(unlistenTransferRequest);
+  } catch (e: unknown) {
+    console.error("[App] transfer-request listener registration failed:", e);
+  }
+
+  try {
+    const unlistenPairingCompleted = await listen("pairing-completed", async (event: unknown) => {
+      try {
+        const payload = (event as { payload?: unknown })?.payload ?? event;
+        const pairing = parsePairingCompletedEvent(payload);
+        toast.info(`Paired with ${pairing.displayName}. Verify code ${pairing.verificationCode}.`);
+      } catch (e: unknown) {
+        console.error("[App] failed to handle pairing completion event:", e);
+      }
+    });
+    appUnlisteners.push(unlistenPairingCompleted);
+  } catch (e: unknown) {
+    console.error("[App] pairing-completed listener registration failed:", e);
+  }
+
+  try {
+    const unlistenOutgoingTransferCommitted = await listen("outgoing-transfer-committed", async (event: unknown) => {
+      try {
+        const payload = (event as { payload?: unknown })?.payload ?? event;
+        const committed = parseOutgoingTransferCommittedEvent(payload);
+        await store.handleOutgoingTransferCommitted(committed);
+      } catch (e: unknown) {
+        console.error("[App] failed to handle outgoing transfer commit acknowledgment:", e);
+      }
+    });
+    appUnlisteners.push(unlistenOutgoingTransferCommitted);
+  } catch (e: unknown) {
+    console.error("[App] outgoing-transfer-committed listener registration failed:", e);
+  }
+
+  try {
+    const unlistenOutgoingTransferFinalizationRequested = await listen("outgoing-transfer-finalization-requested", async (event: unknown) => {
+      const payload = (event as { payload?: unknown })?.payload ?? event;
+      const request = parseOutgoingTransferFinalizationRequestEvent(payload);
+      try {
+        const finalized = await store.finalizeOutgoingTransfer(request.transferId);
+        await invoke("complete_outgoing_transfer_finalization", {
+          transferId: request.transferId,
+          payload: finalized.payload,
+          finalizedCleanly: finalized.finalizedCleanly,
+          error: null,
+        });
+      } catch (error: unknown) {
+        console.error("[App] failed to finalize outgoing transfer:", error);
+        await invoke("complete_outgoing_transfer_finalization", {
+          transferId: request.transferId,
+          payload: null,
+          finalizedCleanly: false,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch((invokeError: unknown) => {
+          console.error("[App] failed to report outgoing transfer finalization error:", invokeError);
+        });
+      }
+    });
+    appUnlisteners.push(unlistenOutgoingTransferFinalizationRequested);
+  } catch (e: unknown) {
+    console.error("[App] outgoing-transfer-finalization-requested listener registration failed:", e);
+  }
+
+  await warmTransferSidecar();
 
   // Cache $HOME for shell-at-home (no repo selected)
   invoke("read_env_var", { name: "HOME" }).then((val) => {
@@ -932,10 +1165,17 @@ onMounted(async () => {
     catch (e) { console.error("[App] corrupt commandPaletteUsage setting:", e); }
   }
 
-  window.addEventListener("dragenter", suppressFileDropNavigation);
-  window.addEventListener("dragover", suppressFileDropNavigation);
-  window.addEventListener("drop", suppressFileDropNavigation);
-  document.addEventListener("file-link-activate", handleFileLinkActivate);
+});
+
+onUnmounted(() => {
+  while (appUnlisteners.length > 0) {
+    const unlisten = appUnlisteners.pop();
+    try {
+      unlisten?.();
+    } catch (e: unknown) {
+      console.error("[App] failed to unlisten app event:", e);
+    }
+  }
 });
 
 onBeforeUnmount(() => {
@@ -967,18 +1207,20 @@ onBeforeUnmount(() => {
       @rename-done="focusAgentTerminal"
       @hide-repo="store.hideRepo"
     />
-    <MainPanel
-      ref="mainPanelRef"
-      v-if="!isMobile || store.selectedItemId"
-      :item="store.currentItem"
-      :repo-path="store.selectedRepo?.path"
-      :spawn-pty-session="store.spawnPtySession"
-      :maximized="maximized"
-      :blockers="currentBlockers"
-      :has-repos="store.repos.length > 0"
-      @close-task="store.closeTask"
-      @back="store.selectedItemId = null"
-    />
+    <div v-if="!isMobile || store.selectedItemId" class="main-column">
+      <MainPanel
+        ref="mainPanelRef"
+        :item="store.currentItem"
+        :repo-path="store.selectedRepo?.path"
+        :spawn-pty-session="store.spawnPtySession"
+        :maximized="maximized"
+        :blockers="currentBlockers"
+        :has-repos="store.repos.length > 0"
+        @close-task="store.closeTask"
+        @agent-completed="store.bump"
+        @back="store.selectedItemId = null"
+      />
+    </div>
 
     <NewTaskModal
       v-if="showNewTaskModal"
@@ -1094,6 +1336,18 @@ onBeforeUnmount(() => {
       @confirm="onBlockerConfirm"
       @cancel="showBlockerSelect = false"
     />
+    <PeerPickerModal
+      v-if="showPeerPicker"
+      :peers="peerPickerMode === 'pair'
+        ? transferPeers.filter((peer) => !peer.trusted)
+        : transferPeers.filter((peer) => peer.trusted)"
+      :loading="transferPeersLoading"
+      :title="peerPickerMode === 'pair' ? $t('taskTransfer.pairPeer') : $t('taskTransfer.pushToMachine')"
+      :action-label="peerPickerMode === 'pair' ? $t('taskTransfer.pairPeer') : $t('taskTransfer.pushToMachine')"
+      :require-trusted="peerPickerMode !== 'pair'"
+      @cancel="closePeerPicker"
+      @select="peerPickerMode === 'pair' ? handlePairPeer : handlePeerSelected"
+    />
     <PreferencesPanel
       v-if="showPreferencesPanel"
       ref="preferencesRef"
@@ -1141,6 +1395,13 @@ html, body, #app {
   width: 100%;
 }
 
+.main-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 @media (max-width: 768px) {
   .app {
     flex-direction: column;
@@ -1163,6 +1424,11 @@ html, body, #app {
 }
 
 .app.mobile .main-panel {
+  width: 100%;
+  height: 100%;
+}
+
+.app.mobile .main-column {
   width: 100%;
   height: 100%;
 }

@@ -2,11 +2,11 @@ import { ref } from 'vue'
 
 export interface Toast {
   id: number
-  type: 'warning' | 'error'
+  type: 'info' | 'warning' | 'error'
   message: string
 }
 
-const DURATIONS = { warning: 5000, error: 8000 } as const
+const DURATIONS = { info: 5000, warning: 5000, error: 8000 } as const
 
 const toasts = ref<Toast[]>([])
 const timers = new Map<number, ReturnType<typeof setTimeout>>()
@@ -34,6 +34,7 @@ export function useToast() {
   return {
     toasts,
     dismiss,
+    info: (message: string) => add('info', message),
     warning: (message: string) => add('warning', message),
     error: (message: string) => add('error', message),
   }

@@ -1,4 +1,13 @@
-import type { Repo, PipelineItem, Setting, TaskBlocker, TaskPort } from "./schema.js";
+import type {
+  Repo,
+  PipelineItem,
+  Setting,
+  TaskBlocker,
+  TaskPort,
+  TrustedPeer,
+  TaskTransfer,
+  TaskTransferProvenance,
+} from "./schema.js";
 
 export type DbHandle = {
   execute(query: string, bindValues?: unknown[]): Promise<{ rowsAffected: number }>;
@@ -83,7 +92,7 @@ export async function deleteTaskPortsForItem(
 
 export async function insertPipelineItem(
   db: DbHandle,
-  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "claude_session_id" | "previous_stage" | "last_output_preview"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
+  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "agent_session_id" | "previous_stage" | "last_output_preview"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
 ): Promise<void> {
   if (!item.agent_provider) {
     throw new Error("No agent provider configured for pipeline item insertion.");
@@ -236,14 +245,14 @@ export async function updatePipelineItemLastOutputPreview(
   );
 }
 
-export async function updateClaudeSessionId(
+export async function updateAgentSessionId(
   db: DbHandle,
   id: string,
-  claudeSessionId: string
+  agentSessionId: string
 ): Promise<void> {
   await db.execute(
-    "UPDATE pipeline_item SET claude_session_id = ?, updated_at = datetime('now') WHERE id = ?",
-    [claudeSessionId, id]
+    "UPDATE pipeline_item SET agent_session_id = ?, updated_at = datetime('now') WHERE id = ?",
+    [agentSessionId, id]
   );
 }
 
@@ -403,6 +412,135 @@ export async function hasCircularDependency(
     if (await dfs(blockerId)) return true;
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// TrustedPeer
+// ---------------------------------------------------------------------------
+
+export async function insertTrustedPeer(
+  db: DbHandle,
+  peer: Omit<TrustedPeer, "paired_at" | "last_seen_at" | "revoked_at">,
+): Promise<void> {
+  await db.execute(
+    `INSERT INTO trusted_peer (id, peer_id, display_name, public_key, capabilities_json)
+     VALUES (?, ?, ?, ?, ?)`,
+    [peer.id, peer.peer_id, peer.display_name, peer.public_key, peer.capabilities_json],
+  );
+}
+
+export async function listTrustedPeers(db: DbHandle): Promise<TrustedPeer[]> {
+  return db.select<TrustedPeer>(
+    `SELECT * FROM trusted_peer ORDER BY COALESCE(last_seen_at, paired_at) DESC`,
+  );
+}
+
+export async function revokeTrustedPeer(db: DbHandle, peerId: string): Promise<void> {
+  await db.execute(
+    `UPDATE trusted_peer SET revoked_at = datetime('now') WHERE peer_id = ?`,
+    [peerId],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TaskTransfer
+// ---------------------------------------------------------------------------
+
+export async function insertTaskTransfer(
+  db: DbHandle,
+  transfer: Omit<TaskTransfer, "started_at" | "completed_at">,
+): Promise<void> {
+  await db.execute(
+    `INSERT INTO task_transfer
+       (id, direction, status, source_peer_id, target_peer_id, source_task_id, local_task_id, error, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      transfer.id,
+      transfer.direction,
+      transfer.status,
+      transfer.source_peer_id,
+      transfer.target_peer_id,
+      transfer.source_task_id,
+      transfer.local_task_id,
+      transfer.error,
+      transfer.payload_json,
+    ],
+  );
+}
+
+export async function listTaskTransfersForItem(
+  db: DbHandle,
+  itemId: string,
+): Promise<TaskTransfer[]> {
+  return db.select<TaskTransfer>(
+    `SELECT * FROM task_transfer WHERE local_task_id = ? ORDER BY started_at DESC`,
+    [itemId],
+  );
+}
+
+export async function getTaskTransfer(
+  db: DbHandle,
+  transferId: string,
+): Promise<TaskTransfer | null> {
+  const rows = await db.select<TaskTransfer>(
+    `SELECT * FROM task_transfer WHERE id = ?`,
+    [transferId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function markTaskTransferCompleted(
+  db: DbHandle,
+  transferId: string,
+  localTaskId: string,
+): Promise<void> {
+  await db.execute(
+    `UPDATE task_transfer SET status = 'completed', local_task_id = ?, completed_at = datetime('now'), error = NULL WHERE id = ?`,
+    [localTaskId, transferId],
+  );
+}
+
+export async function markTaskTransferRejected(
+  db: DbHandle,
+  transferId: string,
+  error: string,
+): Promise<void> {
+  await db.execute(
+    `UPDATE task_transfer SET status = 'rejected', completed_at = datetime('now'), error = ? WHERE id = ?`,
+    [error, transferId],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TaskTransferProvenance
+// ---------------------------------------------------------------------------
+
+export async function insertTaskTransferProvenance(
+  db: DbHandle,
+  provenance: Omit<TaskTransferProvenance, "imported_at">,
+): Promise<void> {
+  await db.execute(
+    `INSERT INTO task_transfer_provenance
+       (pipeline_item_id, source_peer_id, source_task_id, source_machine_task_label)
+     VALUES (?, ?, ?, ?)`,
+    [
+      provenance.pipeline_item_id,
+      provenance.source_peer_id,
+      provenance.source_task_id,
+      provenance.source_machine_task_label,
+    ],
+  );
+}
+
+export async function getTaskTransferProvenance(
+  db: DbHandle,
+  itemId: string,
+): Promise<TaskTransferProvenance | null> {
+  const rows = await db.select<TaskTransferProvenance>(
+    `SELECT * FROM task_transfer_provenance WHERE pipeline_item_id = ?`,
+    [itemId],
+  );
+  return rows[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------

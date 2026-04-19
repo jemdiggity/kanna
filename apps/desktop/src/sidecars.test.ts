@@ -37,6 +37,21 @@ describe("desktop sidecar packaging", () => {
     expect(stageSidecarsScript).toContain('BUILD_DIR="$ROOT/.build"');
   });
 
+  it("stages and bundles the task transfer sidecar", () => {
+    const buildSidecarsScript = readFileSync(
+      resolve(repoRoot, "scripts/build-sidecars.sh"),
+      "utf8",
+    );
+    const stageSidecarsScript = readFileSync(
+      resolve(repoRoot, "scripts/stage-sidecars.sh"),
+      "utf8",
+    );
+    expect(desktopPkg.scripts?.["build:sidecars"]).toBe("../../scripts/build-sidecars.sh");
+    expect(buildSidecarsScript).toContain("crates/task-transfer/Cargo.toml");
+    expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-task-transfer");
+    expect(stageSidecarsScript).toContain("kanna-task-transfer");
+  });
+
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {
     expect(desktopPkg.scripts?.dev).not.toContain("build:sidecars");
     expect(desktopPkg.scripts?.dev).toContain("vite");

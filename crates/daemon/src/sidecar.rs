@@ -124,6 +124,8 @@ impl TerminalSidecar {
             cursor_row: self.terminal.cursor_y()?,
             cursor_col: self.terminal.cursor_x()?,
             cursor_visible: self.terminal.is_cursor_visible()?,
+            saved_at: 0,
+            sequence: 0,
             vt,
         })
     }
@@ -240,6 +242,12 @@ impl TerminalSidecar {
         Ok(status)
     }
 
+    pub fn codex_resume_session_id(&mut self) -> SidecarResult<Option<String>> {
+        let footer_lines = self.visible_footer_lines(16)?;
+        let joined = footer_lines.join(" ");
+        Ok(extract_codex_resume_session_id(&joined))
+    }
+
     pub fn from_snapshot(snapshot: &TerminalSnapshot, scrollback: usize) -> SidecarResult<Self> {
         let mut sidecar = Self::new(snapshot.cols, snapshot.rows, scrollback)?;
         sidecar.write(Self::restore_vt(snapshot).as_bytes());
@@ -282,6 +290,55 @@ fn normalize_row_text(text: &str) -> String {
         }
     }
     normalized
+}
+
+fn extract_codex_resume_session_id(text: &str) -> Option<String> {
+    let tokens: Vec<String> = text
+        .split_whitespace()
+        .map(|token| {
+            token
+                .trim_matches(|ch: char| {
+                    matches!(ch, '"' | '\'' | '`' | ',' | '.' | ';' | ':' | '(' | ')')
+                })
+                .to_string()
+        })
+        .collect();
+
+    for window in tokens.windows(3) {
+        if !window[0].eq_ignore_ascii_case("codex") {
+            continue;
+        }
+        if !window[1].eq_ignore_ascii_case("resume") {
+            continue;
+        }
+        if is_uuid_like(&window[2]) {
+            return Some(window[2].clone());
+        }
+    }
+
+    None
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+
+    for (index, ch) in value.chars().enumerate() {
+        let expects_dash = matches!(index, 8 | 13 | 18 | 23);
+        if expects_dash {
+            if ch != '-' {
+                return false;
+            }
+            continue;
+        }
+
+        if !ch.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
@@ -421,6 +478,8 @@ mod tests {
             cursor_row: 1,
             cursor_col: 2,
             cursor_visible: true,
+            saved_at: 0,
+            sequence: 0,
             vt: "hello".to_string(),
         };
 
@@ -454,6 +513,8 @@ mod tests {
             cursor_row: 0,
             cursor_col: 0,
             cursor_visible: true,
+            saved_at: 0,
+            sequence: 0,
             vt: "ignored".to_string(),
         };
 
@@ -523,6 +584,26 @@ mod tests {
         assert_eq!(
             sidecar.visible_status(Some(AgentProvider::Codex)).unwrap(),
             Some(SessionStatus::Busy)
+        );
+    }
+
+    #[test]
+    fn codex_resume_session_id_comes_from_visible_footer_content() {
+        let mut sidecar = TerminalSidecar::new(48, 6, 10_000).unwrap();
+        sidecar.write(
+            concat!(
+                "Header\r\n",
+                "Done\r\n",
+                "To continue this session, run codex\r\n",
+                "resume 019d99a5-aa94-7c73-b786-644cc095c037\r\n",
+                "›\r\n"
+            )
+            .as_bytes(),
+        );
+
+        assert_eq!(
+            sidecar.codex_resume_session_id().unwrap(),
+            Some("019d99a5-aa94-7c73-b786-644cc095c037".to_string())
         );
     }
 

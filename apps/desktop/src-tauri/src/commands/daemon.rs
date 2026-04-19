@@ -42,6 +42,10 @@ pub struct TerminalSnapshotPayload {
     pub cursor_col: u16,
     #[serde(default = "default_cursor_visible")]
     pub cursor_visible: bool,
+    #[serde(default = "default_saved_at")]
+    pub saved_at: u64,
+    #[serde(default = "default_sequence")]
+    pub sequence: u64,
     pub vt: String,
 }
 
@@ -50,6 +54,12 @@ pub struct SessionRecoveryStatePayload {
     pub serialized: String,
     pub cols: u16,
     pub rows: u16,
+    #[serde(rename = "cursorRow")]
+    pub cursor_row: u16,
+    #[serde(rename = "cursorCol")]
+    pub cursor_col: u16,
+    #[serde(rename = "cursorVisible")]
+    pub cursor_visible: bool,
     #[serde(rename = "savedAt")]
     pub saved_at: u64,
     pub sequence: u64,
@@ -57,6 +67,14 @@ pub struct SessionRecoveryStatePayload {
 
 fn default_cursor_visible() -> bool {
     true
+}
+
+fn default_saved_at() -> u64 {
+    0
+}
+
+fn default_sequence() -> u64 {
+    0
 }
 
 static NEXT_ATTACH_ID: AtomicU64 = AtomicU64::new(1);
@@ -154,9 +172,34 @@ mod tests {
                 cursor_row: 10,
                 cursor_col: 5,
                 cursor_visible: true,
+                saved_at: 0,
+                sequence: 0,
                 vt: "hello".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn parse_snapshot_response_preserves_recovery_metadata_when_present() {
+        let response = r#"{
+            "type":"Snapshot",
+            "session_id":"sess-1",
+            "snapshot":{
+                "version":1,
+                "rows":24,
+                "cols":80,
+                "cursor_row":10,
+                "cursor_col":5,
+                "cursor_visible":false,
+                "saved_at":123,
+                "sequence":7,
+                "vt":"hello"
+            }
+        }"#;
+
+        let snapshot = parse_snapshot_response(response).expect("snapshot should parse");
+        assert_eq!(snapshot.saved_at, 123);
+        assert_eq!(snapshot.sequence, 7);
     }
 
     #[test]
@@ -383,12 +426,49 @@ pub async fn get_session_recovery_state(
             serialized: snapshot.vt,
             cols: snapshot.cols,
             rows: snapshot.rows,
-            saved_at: 0,
-            sequence: 0,
+            cursor_row: snapshot.cursor_row,
+            cursor_col: snapshot.cursor_col,
+            cursor_visible: snapshot.cursor_visible,
+            saved_at: snapshot.saved_at,
+            sequence: snapshot.sequence,
         })),
         Err(message) if message.code.as_deref() == Some("session_not_found") => Ok(None),
         Err(message) => Err(message),
     }
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn seed_session_recovery_state(
+    state: tauri::State<'_, DaemonState>,
+    session_id: String,
+    serialized: String,
+    cols: u16,
+    rows: u16,
+    cursor_row: u16,
+    cursor_col: u16,
+    cursor_visible: bool,
+) -> Result<(), DaemonCommandError> {
+    let cmd = serde_json::json!({
+        "type": "SeedSnapshot",
+        "session_id": session_id,
+        "snapshot": {
+            "version": 1,
+            "rows": rows,
+            "cols": cols,
+            "cursor_row": cursor_row,
+            "cursor_col": cursor_col,
+            "cursor_visible": cursor_visible,
+            "vt": serialized,
+        },
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    ensure_connected(&state).await?;
+    let mut guard = state.lock().await;
+    let client = require_option_mut(&mut guard, "daemon client")?;
+    client.send_command(&json).await?;
+    let response = client.read_event().await?;
+    parse_ack(&response)
 }
 
 #[tauri::command]

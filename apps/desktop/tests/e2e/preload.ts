@@ -2,8 +2,7 @@
  * Global preload — runs before any E2E test file.
  * Checks that the Tauri app is running with WebDriver available.
  */
-
-import { getWebDriverBaseUrl, getWebDriverPort } from "./helpers/config";
+import { getWebDriverBaseUrl, getWebDriverPort } from "./helpers/webdriverPort";
 
 const WD_URL = getWebDriverBaseUrl();
 const WD_PORT = getWebDriverPort();
