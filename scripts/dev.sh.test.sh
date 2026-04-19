@@ -224,9 +224,8 @@ expect_success() {
   printf '%s' "$output"
 }
 
-shared_target_for_repo() {
-  local repo_root="$1"
-  printf '%s/Library/Caches/kanna/rust-target/%s/dev' "$TMPDIR_ROOT/home" "$(printf %s "$repo_root" | md5)"
+shared_build_dir() {
+  printf '%s/Library/Caches/kanna/rust-build' "$TMPDIR_ROOT/home"
 }
 
 assert_tmux_log_contains() {
@@ -251,7 +250,13 @@ assert_tmux_log_contains "-s kanna-v0_0_30 -n desktop"
 assert_tmux_log_contains "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DB_NAME=kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DAEMON_DIR=$WORKTREE_ONE/.kanna-daemon"
-assert_tmux_log_contains "CARGO_TARGET_DIR=$(shared_target_for_repo "$REPO_ONE_ROOT")"
+assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
+
+if grep -Fq "CARGO_TARGET_DIR=" "$TMUX_LOG"; then
+  printf 'expected worktree start not to export shared CARGO_TARGET_DIR, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
 
 for leaked in KANNA_TASK_ID= KANNA_CLI_DB_PATH= KANNA_SOCKET_PATH= KANNA_CLI_PATH=; do
   if grep -Fq "$leaked" "$TMUX_LOG"; then
@@ -273,17 +278,12 @@ fi
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_TWO" "$REPO_ONE_ROOT/.git" start)"
 expect_success "dev.sh second worktree start" "$RESULT" >/dev/null
-assert_tmux_log_contains "CARGO_TARGET_DIR=$(shared_target_for_repo "$REPO_ONE_ROOT")"
+assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_THREE" "$REPO_TWO_ROOT/.git" start)"
 expect_success "dev.sh different repo start" "$RESULT" >/dev/null
-assert_tmux_log_contains "CARGO_TARGET_DIR=$(shared_target_for_repo "$REPO_TWO_ROOT")"
-
-if [ "$(shared_target_for_repo "$REPO_ONE_ROOT")" = "$(shared_target_for_repo "$REPO_TWO_ROOT")" ]; then
-  printf 'expected different repos to use different shared target dirs\n' >&2
-  exit 1
-fi
+assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_DB_NAME=shared.db)"
@@ -380,6 +380,12 @@ expect_success "dev.sh root checkout start" "$RESULT" >/dev/null
 
 if grep -Fq "CARGO_TARGET_DIR=" "$TMUX_LOG"; then
   printf 'expected non-worktree start not to export CARGO_TARGET_DIR, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if grep -Fq "CARGO_BUILD_BUILD_DIR=" "$TMUX_LOG"; then
+  printf 'expected non-worktree start not to export CARGO_BUILD_BUILD_DIR, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi

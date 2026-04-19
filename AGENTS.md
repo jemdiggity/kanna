@@ -157,6 +157,10 @@ This means the main Kanna app and a dev worktree can run simultaneously without 
 
 Always use `./scripts/dev.sh` to start the dev server — never run `pnpm run dev`, `pnpm exec tauri dev`, or `cargo tauri dev` directly. `pnpm run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon paths internally, and runs in a background tmux session.
 
+Prefer the most correct architecture over the shortest patch. If there is a tradeoff between a quick local fix and preserving the right long-term boundary or source of truth, choose the more correct design unless the user explicitly asks for a temporary stopgap. Treat tactical safety fallbacks as temporary, not as the desired end state.
+
+One concrete example: when changing the desktop sidecar build pipeline, preserve shared Rust intermediates when possible, but keep final sidecar binaries and staged `externalBin` inputs private to the current build. Do not let Tauri packaging, daemon launch, or staging read contested final binaries directly from a shared `CARGO_TARGET_DIR`. If a sidecar fix gives every worktree its own full target dir, treat that as a temporary safety fallback, not the preferred end state.
+
 For mobile development, the same rule applies at the app level: use `./scripts/dev.sh --mobile` or `./scripts/mobile-dev.sh` for end-to-end testing instead of launching Expo directly from `apps/mobile`. The desktop app startup path is what spawns the desktop-side `kanna-server` LAN API on port `48120`. Running `pnpm run dev -- --ios` or `expo start` inside `apps/mobile` is only appropriate for UI-only work when the desktop-side mobile server is already running elsewhere; by itself it will not start `kanna-server`, so the mobile app will boot but fail to connect to desktop data.
 
 ```bash
@@ -352,11 +356,12 @@ User makes PR → GitHub API → DB update → stage transition
 | Script | Purpose |
 |---|---|
 | `dev.sh` | Dev server in tmux, auto-detects worktree, manages daemon lifecycle, seed data |
+| `build-sidecars.sh` | Build desktop sidecars while keeping final outputs isolated from contested shared artifact paths |
 | `setup.sh` | Verify prerequisites (Xcode CLT, Rust, pnpm ≥10.8.1, tmux, etc.) |
 | `clean.sh` | Remove build artifacts (Rust targets, node_modules, dist, .turbo) |
 | `install.sh` | Download and install latest release from GitHub (DMG, arch auto-detect) |
 | `ship.sh` | Release automation: version bump, dual-arch build, sign, notarize, publish |
-| `stage-sidecars.sh` | Stage daemon binary to Tauri's externalBin with target triples |
+| `stage-sidecars.sh` | Stage desktop sidecar binaries to Tauri's `externalBin` from a private build/staging location, not contested shared outputs |
 
 ### Environment Variables
 
@@ -535,7 +540,9 @@ Single `VERSION` file is the source of truth for packaged app versioning. `ship.
 - Daemon must be detached from app process group (`setsid` via `pre_exec`) or Ctrl+C kills it.
 - End-to-end mobile runs must start from `./scripts/dev.sh --mobile` or `./scripts/mobile-dev.sh`. Launching Expo directly from `apps/mobile` does not start the desktop-side `kanna-server`, so `http://127.0.0.1:48120` will be down unless the desktop app is already running.
 - Frontend console logs are written to `/tmp/kanna-webview-*.log` via the log forwarding in [`apps/desktop/src/main.ts`](apps/desktop/src/main.ts) and the Tauri `append_log` command in [`apps/desktop/src-tauri/src/commands/fs.rs`](apps/desktop/src-tauri/src/commands/fs.rs). Each instance gets its own log file: worktrees use the directory name (for this worktree: `/tmp/kanna-webview-task-348cf000.log`), while main instances use a cwd path hash (for example `kanna-webview-1a2b3c4d.log`).
+- Prefer the most correct architecture over the shortest patch. Use temporary safety fallbacks only when necessary, and document them as fallbacks rather than as the intended steady state.
 - Rust build artifacts go to `.build/` (not `target/`) — configured in `.cargo/config.toml`.
+- Sidecar build changes should preserve shared Rust caches when possible, but final sidecar binaries used for staging, packaging, or daemon launch must come from a build-private `.build/` path rather than a contested shared final artifact path.
 - Terminal output must be ANSI-stripped before pattern matching — raw escape sequences (colors, cursor movement) interfere with hook detection.
 - The event bridge auto-reconnects to daemon with exponential backoff — don't add manual retry logic on top.
 - KeepAlive is used for ShellModal to preserve xterm buffer across task switches — use `v-show` not `v-if` for terminal-containing components.

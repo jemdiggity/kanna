@@ -59,7 +59,7 @@ tmux_env_args() {
     KANNA_DEV_PORT \
     KANNA_APPIUM_PORT \
     TAURI_WEBDRIVER_PORT \
-    CARGO_TARGET_DIR; do
+    CARGO_BUILD_BUILD_DIR; do
     if [ -n "${!key:-}" ]; then
       printf '%s\0%s\0' "-e" "${key}=${!key}"
     fi
@@ -133,25 +133,8 @@ resolve_daemon_dir() {
   fi
 }
 
-git_common_dir() {
-  git rev-parse --git-common-dir
-}
-
-main_repo_root() {
-  local common_dir
-  common_dir="$(git_common_dir)"
-  (
-    cd "${common_dir}/.." && pwd
-  )
-}
-
-shared_rust_target_dir() {
-  local repo_root
-  local repo_hash
-
-  repo_root="$(main_repo_root)"
-  repo_hash="$(printf %s "$repo_root" | md5)"
-  printf '%s/Library/Caches/kanna/rust-target/%s/dev\n' "$HOME" "$repo_hash"
+shared_rust_build_dir() {
+  printf '%s/Library/Caches/kanna/rust-build\n' "$HOME"
 }
 
 RESOLVED_DB_PATH="$(resolve_db_path)"
@@ -211,8 +194,8 @@ start() {
     exit 1
   fi
   if [ -n "${KANNA_WORKTREE:-}" ]; then
-    export CARGO_TARGET_DIR
-    CARGO_TARGET_DIR="$(shared_rust_target_dir)"
+    export CARGO_BUILD_BUILD_DIR
+    CARGO_BUILD_BUILD_DIR="$(shared_rust_build_dir)"
   fi
   local DESKTOP_CWD="$ROOT/apps/desktop"
   local TMUX_ENV=()

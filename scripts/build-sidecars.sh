@@ -1,5 +1,6 @@
 #!/bin/bash
-# Build desktop sidecars into a repo-local target dir, then stage them for Tauri.
+# Build desktop sidecars into the checkout-local target dir while sharing Cargo
+# intermediates through CARGO_BUILD_BUILD_DIR.
 #
 # Usage:
 #   ./scripts/build-sidecars.sh
@@ -7,9 +8,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SIDECAR_TARGET_DIR="$ROOT/.build/sidecar-target"
 TARGET=""
 PROFILE="debug"
+
+shared_rust_build_dir() {
+    printf '%s/Library/Caches/kanna/rust-build\n' "$HOME"
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -40,7 +44,10 @@ fi
 build_sidecar() {
     local manifest="$1"
 
-    CARGO_TARGET_DIR="$SIDECAR_TARGET_DIR" cargo build \
+    env \
+        -u CARGO_TARGET_DIR \
+        CARGO_BUILD_BUILD_DIR="$(shared_rust_build_dir)" \
+        cargo build \
         --manifest-path "$manifest" \
         "${build_args[@]}"
 }
@@ -50,11 +57,11 @@ build_sidecar "$ROOT/crates/kanna-cli/Cargo.toml"
 build_sidecar "$ROOT/crates/kanna-server/Cargo.toml"
 build_sidecar "$ROOT/packages/terminal-recovery/Cargo.toml"
 
-stage_args=(--build-dir "$SIDECAR_TARGET_DIR" --target "$TARGET")
+stage_args=(--target "$TARGET")
 if [[ "$PROFILE" = "release" ]]; then
     stage_args+=(--release)
 fi
 
 "$ROOT/scripts/stage-sidecars.sh" "${stage_args[@]}"
 
-echo "Built sidecars in $SIDECAR_TARGET_DIR for $TARGET ($PROFILE)"
+echo "Built sidecars in $ROOT/.build for $TARGET ($PROFILE)"

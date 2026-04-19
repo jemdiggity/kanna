@@ -18,9 +18,12 @@ printf 'artifact\n' > "$BAZEL_OUTPUT_BASE/execroot/_main/bazel-out/fake.txt"
 
 SHARED_DISK_CACHE="$HOME/Library/Caches/kanna-bazel/disk-cache"
 SHARED_REPO_CACHE="$HOME/Library/Caches/kanna-bazel/repository-cache"
+SHARED_RUST_BUILD_CACHE="$HOME/Library/Caches/kanna/rust-build"
 mkdir -p "$SHARED_DISK_CACHE" "$SHARED_REPO_CACHE"
+mkdir -p "$SHARED_RUST_BUILD_CACHE"
 printf 'keep\n' > "$SHARED_DISK_CACHE/keep.txt"
 printf 'keep\n' > "$SHARED_REPO_CACHE/keep.txt"
+printf 'keep\n' > "$SHARED_RUST_BUILD_CACHE/keep.txt"
 
 run_clean() {
   local cwd="$1"
@@ -66,5 +69,10 @@ fi
 
 if [ ! -f "$SHARED_REPO_CACHE/keep.txt" ]; then
   printf 'expected shared bazel repository cache to remain intact\n' >&2
+  exit 1
+fi
+
+if [ ! -f "$SHARED_RUST_BUILD_CACHE/keep.txt" ]; then
+  printf 'expected shared rust build cache to remain intact\n' >&2
   exit 1
 fi

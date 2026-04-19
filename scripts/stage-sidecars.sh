@@ -6,7 +6,7 @@
 # Usage:
 #   ./scripts/stage-sidecars.sh                           # debug build, host target
 #   ./scripts/stage-sidecars.sh --release --target aarch64-apple-darwin
-#   ./scripts/stage-sidecars.sh --build-dir .build/sidecar-target
+#   ./scripts/stage-sidecars.sh --build-dir .build
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

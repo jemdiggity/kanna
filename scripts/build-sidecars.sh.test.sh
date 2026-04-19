@@ -52,9 +52,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-printf 'manifest=%s target=%s profile=%s target_dir=%s\n' \
-  "$manifest" "$target" "$profile" "$CARGO_TARGET_DIR" >> "$CARGO_LOG"
-
 case "$manifest" in
   *crates/daemon/Cargo.toml) bin="kanna-daemon" ;;
   *crates/kanna-cli/Cargo.toml) bin="kanna-cli" ;;
@@ -66,8 +63,11 @@ case "$manifest" in
     ;;
 esac
 
-mkdir -p "$CARGO_TARGET_DIR/$target/$profile"
-printf '%s\n' "$bin" > "$CARGO_TARGET_DIR/$target/$profile/$bin"
+target_dir="${CARGO_TARGET_DIR:-$PWD/.build}"
+printf 'manifest=%s target=%s profile=%s target_dir=%s build_dir=%s\n' \
+  "$manifest" "$target" "$profile" "$target_dir" "${CARGO_BUILD_BUILD_DIR:-}" >> "$CARGO_LOG"
+mkdir -p "$target_dir/$target/$profile"
+printf '%s\n' "$bin" > "$target_dir/$target/$profile/$bin"
 EOF
 chmod +x "$FAKE_BIN/cargo"
 
@@ -86,14 +86,14 @@ if ! grep -Fq "Built sidecars in" <<<"$OUTPUT"; then
   exit 1
 fi
 
-EXPECTED_TARGET_DIR="$FIXTURE_REPO/.build/sidecar-target"
-for bin in kanna-daemon kanna-cli kanna-server kanna-terminal-recovery; do
-  if ! grep -Fq "target_dir=$EXPECTED_TARGET_DIR" "$CARGO_LOG"; then
-    printf 'expected cargo to build into %s, got:\n' "$EXPECTED_TARGET_DIR" >&2
-    cat "$CARGO_LOG" >&2
-    exit 1
-  fi
-done
+EXPECTED_TARGET_DIR="$FIXTURE_REPO/.build"
+EXPECTED_BUILD_DIR="$HOME/Library/Caches/kanna/rust-build"
+
+if ! grep -Fq "target_dir=$EXPECTED_TARGET_DIR" "$CARGO_LOG"; then
+  printf 'expected cargo to build final outputs into %s, got:\n' "$EXPECTED_TARGET_DIR" >&2
+  cat "$CARGO_LOG" >&2
+  exit 1
+fi
 
 if grep -Fq "$TMPDIR_ROOT/shared-target" "$CARGO_LOG"; then
   printf 'expected build-sidecars to ignore inherited shared CARGO_TARGET_DIR, got:\n' >&2
@@ -101,8 +101,14 @@ if grep -Fq "$TMPDIR_ROOT/shared-target" "$CARGO_LOG"; then
   exit 1
 fi
 
-if ! grep -Fq -- "--build-dir $EXPECTED_TARGET_DIR --target aarch64-apple-darwin --release" "$STAGE_LOG"; then
-  printf 'expected stage-sidecars to receive the isolated build dir, got:\n' >&2
+if ! grep -Fq "build_dir=$EXPECTED_BUILD_DIR" "$CARGO_LOG"; then
+  printf 'expected build-sidecars to share intermediates in %s, got:\n' "$EXPECTED_BUILD_DIR" >&2
+  cat "$CARGO_LOG" >&2
+  exit 1
+fi
+
+if grep -Fq -- "--build-dir" "$STAGE_LOG"; then
+  printf 'expected stage-sidecars to use the default local .build path, got:\n' >&2
   cat "$STAGE_LOG" >&2
   exit 1
 fi
