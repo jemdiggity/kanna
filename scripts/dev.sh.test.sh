@@ -258,7 +258,7 @@ if grep -Fq "CARGO_TARGET_DIR=" "$TMUX_LOG"; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_TRANSFER_ROOT=$TEST_ROOT/.kanna-transfer" "$TMUX_LOG"; then
+if ! grep -Fq "KANNA_TRANSFER_ROOT=$WORKTREE_ONE/.kanna-transfer" "$TMUX_LOG"; then
   printf 'expected default worktree transfer root in tmux command, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
@@ -321,7 +321,7 @@ rm -f "$TMUX_STATE" "$TMUX_LOG"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 
-RESULT="$(run_dev_sh start env KANNA_TRANSFER_ROOT=/tmp/shared-transfer-root)"
+RESULT="$(run_dev_sh "$ROOT_CHECKOUT" "$ROOT_CHECKOUT/.git" start env KANNA_DB_NAME=dev-root.db KANNA_TRANSFER_ROOT=/tmp/shared-transfer-root)"
 OUTPUT="${RESULT%===STATUS:*===}"
 STATUS="${RESULT##*===STATUS:}"
 STATUS="${STATUS%===}"
@@ -332,8 +332,8 @@ if [ "$STATUS" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fq "KANNA_TRANSFER_ROOT=$TEST_ROOT/.kanna-transfer" "$TMUX_LOG"; then
-  printf 'expected inherited KANNA_TRANSFER_ROOT to be ignored, got:\n' >&2
+if ! grep -Fq "KANNA_TRANSFER_ROOT=/tmp/shared-transfer-root" "$TMUX_LOG"; then
+  printf 'expected inherited KANNA_TRANSFER_ROOT to be forwarded for non-worktree runs, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
@@ -342,7 +342,7 @@ rm -f "$TMUX_STATE" "$TMUX_LOG"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 
-RESULT="$(run_dev_sh start env KANNA_TRANSFER_PORT=4567)"
+RESULT="$(run_dev_sh "$ROOT_CHECKOUT" "$ROOT_CHECKOUT/.git" start env KANNA_DB_NAME=dev-root.db KANNA_TRANSFER_PORT=4567)"
 OUTPUT="${RESULT%===STATUS:*===}"
 STATUS="${RESULT##*===STATUS:}"
 STATUS="${STATUS%===}"

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:sidecars": "../../scripts/build-sidecars.sh",
+    "build:sidecars": "pnpm -C ../.. run build:desktop-sidecars",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
