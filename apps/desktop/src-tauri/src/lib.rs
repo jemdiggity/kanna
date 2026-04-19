@@ -327,24 +327,9 @@ async fn try_connect_daemon() -> Option<DaemonClient> {
 async fn ensure_daemon_running() {
     eprintln!("[daemon] spawning daemon...");
 
-    // Look for the daemon binary in common locations
-    let sidecar_name = format!("kanna-daemon-{}", commands::fs::current_target_triple());
-    let daemon_candidates = [
-        // Tauri externalBin: triple-suffixed, same dir as exe
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join(&sidecar_name))),
-        // Dev builds: plain name, same dir as exe
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("kanna-daemon"))),
-        // macOS bundle Resources
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("../Resources/kanna-daemon"))),
-    ];
-
-    let daemon_bin = daemon_candidates.into_iter().flatten().find(|p| p.exists());
+    let daemon_bin = commands::fs::sidecar_candidates("kanna-daemon")
+        .into_iter()
+        .find(|path| path.exists());
 
     let Some(daemon_bin) = daemon_bin else {
         eprintln!("[daemon] daemon binary not found — PTY sessions will not work");

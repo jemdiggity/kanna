@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use tauri::AppHandle;
@@ -275,25 +276,7 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn which_binary(name: String) -> Result<String, String> {
-    // Tauri externalBin appends the target triple to the binary name
-    let sidecar_name = format!("{}-{}", name, current_target_triple());
-
-    // First try next to the app binary (covers .build/debug/ and macOS bundle)
-    let candidates = [
-        // Tauri externalBin: triple-suffixed, same dir as exe
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join(&sidecar_name))),
-        // Dev builds: plain name, same dir as exe
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join(&name))),
-        // macOS bundle Resources
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("../Resources").join(&name))),
-    ];
-    for candidate in candidates.into_iter().flatten() {
+    for candidate in sidecar_candidates(&name) {
         if candidate.exists() {
             return Ok(candidate.to_string_lossy().to_string());
         }
@@ -321,6 +304,36 @@ pub fn current_target_triple() -> &'static str {
     {
         "x86_64-apple-darwin"
     }
+}
+
+pub fn sidecar_candidates(name: &str) -> Vec<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .map(|exe| sidecar_candidates_for_exe(&exe, name))
+        .unwrap_or_default()
+}
+
+pub fn sidecar_candidates_for_exe(current_exe: &Path, name: &str) -> Vec<PathBuf> {
+    let Some(exe_dir) = current_exe.parent() else {
+        return Vec::new();
+    };
+
+    let sidecar_name = format!("{}-{}", name, current_target_triple());
+    let mut candidates = vec![exe_dir.join(&sidecar_name), exe_dir.join(name)];
+
+    if let (Some(build_root), Some(profile_dir)) = (exe_dir.parent(), exe_dir.file_name()) {
+        if build_root.file_name().is_some_and(|dir| dir == ".build")
+            && matches!(profile_dir.to_str(), Some("debug" | "release"))
+        {
+            let triple_dir = build_root.join(current_target_triple()).join(profile_dir);
+            candidates.push(triple_dir.join(name));
+            candidates.push(triple_dir.join(&sidecar_name));
+        }
+    }
+
+    candidates.push(exe_dir.join("../Resources").join(&sidecar_name));
+    candidates.push(exe_dir.join("../Resources").join(name));
+    candidates
 }
 
 #[tauri::command]
@@ -404,8 +417,9 @@ pub fn append_log(message: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::format_log_timestamp;
+    use super::{current_target_triple, format_log_timestamp, sidecar_candidates_for_exe};
     use chrono::{Duration, FixedOffset, TimeZone};
+    use std::path::Path;
 
     #[test]
     fn format_log_timestamp_includes_local_date_and_time() {
@@ -417,6 +431,43 @@ mod tests {
             + Duration::milliseconds(123);
 
         assert_eq!(format_log_timestamp(timestamp), "2026-04-19 06:55:05.123");
+    }
+
+    #[test]
+    fn sidecar_candidates_cover_dev_runtime_layout() {
+        let current_exe = Path::new("/repo/.build/debug/kanna-desktop");
+        let candidates = sidecar_candidates_for_exe(current_exe, "kanna-daemon");
+
+        assert_eq!(candidates[0], Path::new(&format!(
+            "/repo/.build/debug/kanna-daemon-{}",
+            current_target_triple()
+        )));
+        assert_eq!(candidates[1], Path::new("/repo/.build/debug/kanna-daemon"));
+        assert!(candidates.contains(
+            &Path::new(&format!(
+                "/repo/.build/{}/debug/kanna-daemon",
+                current_target_triple()
+            ))
+            .to_path_buf()
+        ));
+    }
+
+    #[test]
+    fn sidecar_candidates_cover_bundled_resource_layout() {
+        let current_exe = Path::new("/Applications/Kanna.app/Contents/MacOS/kanna-desktop");
+        let candidates = sidecar_candidates_for_exe(current_exe, "kanna-server");
+
+        assert!(candidates.contains(
+            &Path::new(&format!(
+                "/Applications/Kanna.app/Contents/MacOS/../Resources/kanna-server-{}",
+                current_target_triple()
+            ))
+            .to_path_buf()
+        ));
+        assert!(candidates.contains(
+            &Path::new("/Applications/Kanna.app/Contents/MacOS/../Resources/kanna-server")
+                .to_path_buf()
+        ));
     }
 }
 
