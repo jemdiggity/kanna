@@ -265,7 +265,8 @@ if ! grep -Fq "Attach with: tmux -L kanna-v0_0_30 attach -t kanna-v0_0_30" <<<"$
   exit 1
 fi
 
-assert_tmux_log_contains "server=default cmd=new-session"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=new-session"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=set-option"
 assert_tmux_log_contains "-s kanna-v0_0_30 -n desktop"
 assert_tmux_log_contains "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DB_NAME=kanna-wt-v0.0.30.db"
@@ -304,13 +305,13 @@ fi
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_TWO" "$REPO_ONE_ROOT/.git" start)"
 expect_success "dev.sh second worktree start" "$RESULT" >/dev/null
-assert_tmux_log_contains "server=default cmd=new-session"
+assert_tmux_log_contains "server=kanna-v0_0_31 cmd=new-session"
 assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_THREE" "$REPO_TWO_ROOT/.git" start)"
 expect_success "dev.sh different repo start" "$RESULT" >/dev/null
-assert_tmux_log_contains "server=default cmd=new-session"
+assert_tmux_log_contains "server=kanna-v0_0_32 cmd=new-session"
 assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 reset_logs
@@ -395,14 +396,14 @@ reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_PORT=1437 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 expect_success "dev.sh --mobile" "$RESULT" >/dev/null
 
-assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1437"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=new-window args=-t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1437"
 assert_tmux_log_contains "EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 expect_success "dev.sh --mobile default port" "$RESULT" >/dev/null
 
-assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 8081"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=new-window args=-t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 8081"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_URL=http://desktop.lan:48120)"
@@ -414,13 +415,13 @@ reset_logs
 RESULT="$(run_mobile_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" env KANNA_MOBILE_PORT=1555 KANNA_MOBILE_SERVER_HOST=127.0.0.1)"
 expect_success "mobile-dev.sh" "$RESULT" >/dev/null
 
-assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1555"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=new-window args=-t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48120 pnpm run dev -- --port 1555"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --mobile env KANNA_MOBILE_SERVER_HOST=127.0.0.1 KANNA_MOBILE_SERVER_PORT=48129)"
 expect_success "dev.sh --mobile server port override" "$RESULT" >/dev/null
 
-assert_tmux_log_contains "new-window -t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48129 pnpm run dev -- --port 8081"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=new-window args=-t kanna-v0_0_30 -n mobile -c $WORKTREE_ONE/apps/mobile EXPO_PUBLIC_KANNA_SERVER_URL=http://127.0.0.1:48129 pnpm run dev -- --port 8081"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_DB_PATH=/tmp/shared-kanna.db)"
@@ -448,30 +449,31 @@ reset_logs
 printf '%s\n' 'kanna-v0_0_30|kanna-v0_0_30' > "$TMUX_STATE"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" log)"
 expect_success "dev.sh log" "$RESULT" >/dev/null
-assert_tmux_log_contains "server=default cmd=capture-pane"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=capture-pane"
 
 reset_logs
 printf '%s\n' 'kanna-v0_0_30|kanna-v0_0_30' > "$TMUX_STATE"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" stop)"
 expect_success "dev.sh stop" "$RESULT" >/dev/null
-assert_tmux_log_contains "server=default cmd=list-windows"
-assert_tmux_log_contains "server=default cmd=send-keys"
-assert_tmux_log_contains "server=default cmd=kill-session"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=list-windows"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=send-keys"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=kill-session"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --attach)"
 expect_success "dev.sh --attach" "$RESULT" >/dev/null
-assert_tmux_log_contains "server=default cmd=attach"
+assert_tmux_log_contains "server=kanna-v0_0_30 cmd=attach"
 
 reset_logs
-printf '%s\n' 'alpha|kanna' > "$TMUX_STATE"
+printf '%s\n' 'alpha|alpha' > "$TMUX_STATE"
 RESULT="$(run_dev_sh "$ROOT_CHECKOUT" "$ROOT_CHECKOUT/.git" start env KANNA_DB_NAME=dev-root.db KANNA_TMUX_SESSION=beta)"
 expect_success "dev.sh explicit tmux session override" "$RESULT" >/dev/null
-assert_tmux_log_contains "server=default cmd=new-session args=-d -e KANNA_BUILD_BRANCH=HEAD"
+assert_tmux_log_contains "server=beta cmd=new-session"
 
 reset_logs
 RESULT="$(run_dev_sh "$ROOT_CHECKOUT" "$ROOT_CHECKOUT/.git" start env KANNA_DB_NAME=dev-root.db)"
 expect_success "dev.sh root checkout start" "$RESULT" >/dev/null
+assert_tmux_log_contains "server=kanna cmd=new-session"
 
 if grep -Fq "CARGO_TARGET_DIR=" "$TMUX_LOG"; then
   printf 'expected non-worktree start not to export CARGO_TARGET_DIR, got:\n' >&2

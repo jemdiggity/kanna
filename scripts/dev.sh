@@ -86,6 +86,12 @@ else
   SESSION="$(canonical_tmux_session_name "kanna")"
 fi
 
+TMUX_SERVER="$SESSION"
+
+tmux_cmd() {
+  tmux -L "$TMUX_SERVER" "$@"
+}
+
 # Read ports from .kanna/config.json
 read_port() {
   local key="$1"
@@ -191,7 +197,7 @@ start_mobile() {
     exit 1
   fi
 
-  tmux new-window -t "$SESSION" -n mobile -c "$MOBILE_CWD" \
+  tmux_cmd new-window -t "$SESSION" -n mobile -c "$MOBILE_CWD" \
     "EXPO_PUBLIC_KANNA_SERVER_URL=${MOBILE_SERVER_URL} pnpm run dev -- --port ${MOBILE_PORT}"
   echo "Started Expo mobile app on port ${MOBILE_PORT} in tmux window '$SESSION:mobile'."
   echo "Expo mobile app will target ${MOBILE_SERVER_URL}."
@@ -205,7 +211,7 @@ start() {
     exit 1
   fi
 
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
+  if tmux_cmd has-session -t "$SESSION" 2>/dev/null; then
     echo "Session '$SESSION' already running. Use 'restart' or 'stop'."
     exit 1
   fi
@@ -234,14 +240,14 @@ LOCALEOF
     DEV_CMD="pnpm run build:sidecars && pnpm exec tauri dev --config $LOCAL_CONF"
   fi
 
-  tmux new-session -d "${TMUX_ENV[@]}" -s "$SESSION" -n desktop -c "$DESKTOP_CWD" "$DEV_CMD"
-  tmux set-option -t "$SESSION" remain-on-exit on >/dev/null
+  tmux_cmd new-session -d "${TMUX_ENV[@]}" -s "$SESSION" -n desktop -c "$DESKTOP_CWD" "$DEV_CMD"
+  tmux_cmd set-option -t "$SESSION" remain-on-exit on >/dev/null
 
   if $MOBILE; then
     start_mobile
   fi
 
-  echo "Started tmux session '$SESSION'. Attach with: tmux attach -t $SESSION"
+  echo "Started tmux session '$SESSION'. Attach with: tmux -L $TMUX_SERVER attach -t $SESSION"
 }
 
 kill_daemon() {
@@ -262,13 +268,13 @@ kill_daemon() {
 }
 
 stop() {
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
+  if tmux_cmd has-session -t "$SESSION" 2>/dev/null; then
     # Send Ctrl-C to all windows
-    for win in $(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null); do
-      tmux send-keys -t "$SESSION:$win" C-c 2>/dev/null || true
+    for win in $(tmux_cmd list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null); do
+      tmux_cmd send-keys -t "$SESSION:$win" C-c 2>/dev/null || true
     done
     sleep 1
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    tmux_cmd kill-session -t "$SESSION" 2>/dev/null || true
     echo "Stopped."
   else
     echo "No session running."
@@ -280,8 +286,8 @@ stop() {
 
 log() {
   local window="${1:-desktop}"
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux capture-pane -t "$SESSION:$window" -p -S -50
+  if tmux_cmd has-session -t "$SESSION" 2>/dev/null; then
+    tmux_cmd capture-pane -t "$SESSION:$window" -p -S -50
   else
     echo "No session running."
   fi
@@ -333,7 +339,7 @@ case "$CMD" in
       seed
     fi
     if $ATTACH; then
-      tmux attach -t "$SESSION"
+      tmux_cmd attach -t "$SESSION"
     fi
     ;;
   stop)    stop ;;
@@ -345,7 +351,7 @@ case "$CMD" in
       seed
     fi
     if $ATTACH; then
-      tmux attach -t "$SESSION"
+      tmux_cmd attach -t "$SESSION"
     fi
     ;;
   kill-daemon) kill_daemon ;;
