@@ -1,6 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
-import { verifyPhoneToken, verifyDeviceToken, registerDevice } from "./auth.js";
+import {
+  verifyPhoneToken,
+  verifyDeviceToken,
+  verifyDesktopCredentials,
+  registerDevice,
+} from "./auth.js";
 import {
   setPhoneConnection,
   setServerConnection,
@@ -99,6 +104,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
   let authenticated = false;
   let userId: string | null = null;
   let role: "phone" | "server" | null = null;
+  let desktopId: string | null = null;
 
   // 10-second auth timeout
   const authTimer = setTimeout(() => {
@@ -117,6 +123,8 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
         type?: string;
         id_token?: string;
         device_token?: string;
+        desktop_id?: string;
+        desktop_secret?: string;
       };
 
       try {
@@ -137,12 +145,21 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
         // Phone client auth
         userId = await verifyPhoneToken(msg.id_token);
         role = "phone";
+      } else if (msg.desktop_id && msg.desktop_secret) {
+        const principal = await verifyDesktopCredentials(
+          msg.desktop_id,
+          msg.desktop_secret
+        );
+        userId = principal?.userId ?? null;
+        desktopId = principal?.desktopId ?? null;
+        role = "server";
       } else if (msg.device_token) {
         // Server (kanna-server) auth
         userId = await verifyDeviceToken(msg.device_token);
+        desktopId = msg.device_token;
         role = "server";
       } else {
-        ws.close(4004, "Missing id_token or device_token");
+        ws.close(4004, "Missing id_token, device_token, or desktop credentials");
         clearTimeout(authTimer);
         return;
       }
@@ -160,7 +177,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
       if (role === "phone") {
         setPhoneConnection(userId, ws);
       } else {
-        setServerConnection(userId, ws);
+        setServerConnection(userId, desktopId ?? "default", ws);
       }
 
       // Send auth success

@@ -1,7 +1,9 @@
+mod cloud_client;
 mod commands;
 mod config;
 mod daemon_client;
 mod db;
+mod desktop_identity;
 mod http_api;
 mod mobile_api;
 mod pairing;
@@ -45,6 +47,14 @@ async fn main() {
 
     log::info!("kanna-server starting, relay: {}", config.relay_url);
 
+    let heartbeat_config = config.clone();
+    tokio::spawn(async move {
+        loop {
+            log::info!("desktop heartbeat tick for {}", heartbeat_config.desktop_id);
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        }
+    });
+
     let db = match db::Db::open(&config.db_path) {
         Ok(d) => d,
         Err(e) => {
@@ -78,16 +88,15 @@ async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
     loop {
         log::info!("Connecting to relay at {}...", config.relay_url);
 
-        let (sink, mut stream) =
-            match relay_client::connect_to_relay(&config.relay_url, &config.device_token).await {
-                Ok(pair) => pair,
-                Err(e) => {
-                    log::error!("Failed to connect to relay: {}", e);
-                    log::info!("Retrying in 5 seconds...");
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    continue;
-                }
-            };
+        let (sink, mut stream) = match relay_client::connect_to_relay(&config).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                log::error!("Failed to connect to relay: {}", e);
+                log::info!("Retrying in 5 seconds...");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
+            }
+        };
 
         log::info!("Connected to relay");
 

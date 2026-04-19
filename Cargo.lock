@@ -3034,6 +3034,7 @@ dependencies = [
  "futures-util",
  "kanna-daemon",
  "log",
+ "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",

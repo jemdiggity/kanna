@@ -6,9 +6,12 @@
     "build": "turbo build",
     "dev": "./scripts/dev.sh",
     "test": "turbo test",
-    "lint": "turbo lint"
+    "lint": "turbo lint",
+    "firebase:emulators": "pnpm exec firebase emulators:start --project kanna-local",
+    "firebase:emulators:test": "pnpm exec firebase emulators:exec --project kanna-local --only auth,firestore,functions \"pnpm test\""
   },
   "devDependencies": {
+    "firebase-tools": "^14.25.0",
     "happy-dom": "^20.8.4",
     "turbo": "^2",
     "typescript": "^5.7"

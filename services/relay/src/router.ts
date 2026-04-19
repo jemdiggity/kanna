@@ -2,7 +2,7 @@ import type { WebSocket } from "ws";
 
 interface ConnectionPair {
   phone?: WebSocket;
-  server?: WebSocket;
+  desktops: Map<string, WebSocket>;
 }
 
 /** In-memory map of userId → {phone, server} WebSocket connections. */
@@ -16,7 +16,7 @@ const connections = new Map<string, ConnectionPair>();
 export function setPhoneConnection(userId: string, ws: WebSocket): void {
   let pair = connections.get(userId);
   if (!pair) {
-    pair = {};
+    pair = { desktops: new Map() };
     connections.set(userId, pair);
   }
 
@@ -35,7 +35,7 @@ export function setPhoneConnection(userId: string, ws: WebSocket): void {
     if (current?.phone === ws) {
       current.phone = undefined;
       // Clean up map entry if both sides are gone
-      if (!current.server) {
+      if (current.desktops.size === 0) {
         connections.delete(userId);
       }
     }
@@ -47,27 +47,33 @@ export function setPhoneConnection(userId: string, ws: WebSocket): void {
  * Closes any existing server connection for this user.
  * Cleans up the map entry when the socket closes.
  */
-export function setServerConnection(userId: string, ws: WebSocket): void {
+export function setServerConnection(
+  userId: string,
+  desktopId: string,
+  ws: WebSocket
+): void {
   let pair = connections.get(userId);
   if (!pair) {
-    pair = {};
+    pair = { desktops: new Map() };
     connections.set(userId, pair);
   }
 
-  // Close existing server connection if any
-  if (pair.server && pair.server !== ws && pair.server.readyState <= 1) {
-    console.log(`[router] Closing existing server connection for ${userId}`);
-    pair.server.close(1000, "Replaced by new connection");
+  const existing = pair.desktops.get(desktopId);
+  if (existing && existing !== ws && existing.readyState <= 1) {
+    console.log(
+      `[router] Closing existing server connection for ${userId}/${desktopId}`
+    );
+    existing.close(1000, "Replaced by new connection");
   }
 
-  pair.server = ws;
-  console.log(`[router] Server connected for ${userId}`);
+  pair.desktops.set(desktopId, ws);
+  console.log(`[router] Server connected for ${userId}/${desktopId}`);
 
   ws.on("close", () => {
-    console.log(`[router] Server disconnected for ${userId}`);
+    console.log(`[router] Server disconnected for ${userId}/${desktopId}`);
     const current = connections.get(userId);
-    if (current?.server === ws) {
-      current.server = undefined;
+    if (current?.desktops.get(desktopId) === ws) {
+      current.desktops.delete(desktopId);
       // Clean up map entry if both sides are gone
       if (!current.phone) {
         connections.delete(userId);
@@ -90,7 +96,19 @@ export function routeMessage(
   const pair = connections.get(userId);
 
   if (from === "phone") {
-    const target = pair?.server;
+    let target: WebSocket | undefined;
+
+    try {
+      const parsed = JSON.parse(data) as { desktopId?: string; id?: unknown };
+      if (parsed.desktopId) {
+        target = pair?.desktops.get(parsed.desktopId);
+      } else if ((pair?.desktops.size ?? 0) === 1) {
+        target = Array.from(pair!.desktops.values())[0];
+      }
+    } catch {
+      target = undefined;
+    }
+
     if (target && target.readyState === 1) {
       target.send(data);
     } else {

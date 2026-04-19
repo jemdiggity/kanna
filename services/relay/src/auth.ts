@@ -1,29 +1,4 @@
-import { initializeApp, cert, type App } from "firebase-admin/app";
-import { getAuth, type Auth } from "firebase-admin/auth";
-import { getFirestore, type Firestore } from "firebase-admin/firestore";
-
-const SKIP_AUTH = process.env.SKIP_AUTH === "true";
-
-let app: App | undefined;
-let auth: Auth | undefined;
-let db: Firestore | undefined;
-
-function ensureInitialized(): void {
-  if (app) return;
-
-  if (SKIP_AUTH) {
-    console.log("[auth] SKIP_AUTH=true — all verifications return 'test-user'");
-    return;
-  }
-
-  app = initializeApp({
-    credential: cert(
-      JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}")
-    ),
-  });
-  auth = getAuth(app);
-  db = getFirestore(app);
-}
+import { getFirebaseServices, isAuthBypassed } from "./firebase.js";
 
 /**
  * Verify a Firebase Auth ID token (sent by the phone client).
@@ -32,14 +7,13 @@ function ensureInitialized(): void {
 export async function verifyPhoneToken(
   idToken: string
 ): Promise<string | null> {
-  ensureInitialized();
-
-  if (SKIP_AUTH) {
+  if (isAuthBypassed()) {
     return "test-user";
   }
 
   try {
-    const decoded = await auth!.verifyIdToken(idToken);
+    const { auth } = getFirebaseServices();
+    const decoded = await auth.verifyIdToken(idToken);
     return decoded.uid;
   } catch (err) {
     console.error("[auth] Failed to verify phone token:", err);
@@ -55,14 +29,13 @@ export async function verifyPhoneToken(
 export async function verifyDeviceToken(
   deviceToken: string
 ): Promise<string | null> {
-  ensureInitialized();
-
-  if (SKIP_AUTH) {
+  if (isAuthBypassed()) {
     return "test-user";
   }
 
   try {
-    const doc = await db!.collection("devices").doc(deviceToken).get();
+    const { db } = getFirebaseServices();
+    const doc = await db.collection("devices").doc(deviceToken).get();
     if (!doc.exists) {
       console.warn("[auth] Device token not found:", deviceToken);
       return null;
@@ -75,6 +48,64 @@ export async function verifyDeviceToken(
   }
 }
 
+export interface DesktopPrincipal {
+  userId: string;
+  desktopId: string;
+}
+
+export async function verifyDesktopCredentials(
+  desktopId: string,
+  desktopSecret: string
+): Promise<DesktopPrincipal | null> {
+  if (isAuthBypassed()) {
+    return {
+      userId: "test-user",
+      desktopId,
+    };
+  }
+
+  try {
+    const { db } = getFirebaseServices();
+    const snapshot = await db
+      .collectionGroup("desktops")
+      .where("desktopId", "==", desktopId)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      console.warn("[auth] Desktop not found:", desktopId);
+      return null;
+    }
+
+    const doc = snapshot.docs[0]!;
+    const data = doc.data();
+    if (data.revokedAt) {
+      console.warn("[auth] Desktop revoked:", desktopId);
+      return null;
+    }
+
+    if (data.desktopSecret !== desktopSecret) {
+      console.warn("[auth] Desktop secret mismatch:", desktopId);
+      return null;
+    }
+
+    const desktopDoc = doc.ref;
+    const userDoc = desktopDoc.parent.parent;
+    if (!userDoc) {
+      console.warn("[auth] Desktop missing parent user:", desktopId);
+      return null;
+    }
+
+    return {
+      userId: userDoc.id,
+      desktopId,
+    };
+  } catch (err) {
+    console.error("[auth] Failed to verify desktop credentials:", err);
+    return null;
+  }
+}
+
 /**
  * Register a device token for a user.
  * Called from POST /register after phone auth verification.
@@ -83,9 +114,7 @@ export async function registerDevice(
   userId: string,
   deviceToken: string
 ): Promise<void> {
-  ensureInitialized();
-
-  if (SKIP_AUTH) {
+  if (isAuthBypassed()) {
     console.log(
       `[auth] SKIP_AUTH — would register device ${deviceToken} for user ${userId}`
     );
@@ -93,7 +122,8 @@ export async function registerDevice(
   }
 
   try {
-    await db!.collection("devices").doc(deviceToken).set({
+    const { db } = getFirebaseServices();
+    await db.collection("devices").doc(deviceToken).set({
       userId,
       createdAt: new Date().toISOString(),
     });

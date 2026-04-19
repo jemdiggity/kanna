@@ -249,6 +249,54 @@ describe("Relay integration", () => {
     await closeAndWait(server);
   });
 
+  it("keeps two desktop connections for the same user isolated by desktop id", async () => {
+    const { ws: desktopOne } = await connectAndAuth({
+      desktop_id: "desktop-one",
+      desktop_secret: "secret-one",
+    });
+    const { ws: desktopTwo } = await connectAndAuth({
+      desktop_id: "desktop-two",
+      desktop_secret: "secret-two",
+    });
+    const { ws: phone } = await connectAndAuth({
+      id_token: "user-two-desktops",
+    });
+
+    const desktopOneUnexpectedInvoke = waitForMessage(
+      desktopOne,
+      (msg) => msg.type === "invoke",
+      250
+    ).then(
+      () => "invoke",
+      () => "timeout"
+    );
+    const desktopTwoInvoke = waitForMessage(
+      desktopTwo,
+      (msg) =>
+        msg.type === "invoke" &&
+        msg.desktopId === "desktop-two" &&
+        msg.command === "list_sessions"
+    );
+
+    phone.send(
+      JSON.stringify({
+        type: "invoke",
+        id: 91,
+        desktopId: "desktop-two",
+        command: "list_sessions",
+        args: {},
+      })
+    );
+
+    const invoke = await desktopTwoInvoke;
+    expect(invoke.desktopId).toBe("desktop-two");
+    await expect(desktopOneUnexpectedInvoke).resolves.toBe("timeout");
+
+    await closeAndWait(phone);
+    await closeAndWait(desktopOne);
+    await closeAndWait(desktopTwo);
+  });
+
   it("should reject connections that do not send auth within timeout", async () => {
     // Connect without sending auth — the relay should close after AUTH_TIMEOUT_MS (10s)
     // We won't wait the full 10s, just verify the connection opens fine
