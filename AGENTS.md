@@ -149,13 +149,13 @@ Worktrees are fully isolated from the main branch instance:
 - **Separate Vite port** — main uses `localhost:1420`, worktrees get a unique port automatically. The app reads base ports from `.kanna/config.json` `ports` field (e.g., `"KANNA_DEV_PORT": 1420`), picks the next unused offset (1, 2, 3…), and stores the computed port (e.g., `1421`) as `port_env` in the DB. When the worktree's agent session spawns, `KANNA_DEV_PORT` is passed as an env var — no manual editing of `config.json` is needed. `dev.sh` then writes `tauri.conf.local.json` with the port override and passes `--config` to Tauri — the committed `tauri.conf.json` is never modified. Vite also reads `KANNA_DEV_PORT` to set its server port.
 - **Separate daemon** — worktrees use `{worktree}/.kanna-daemon/` instead of `~/Library/Application Support/Kanna/`
 - **Separate database** — each instance uses its own SQLite DB
-- **Separate tmux session** — `dev.sh` names the session `kanna-{worktree-dir}` instead of `kanna`
+- **Separate tmux server** — `dev.sh` uses a tmux server named `kanna-{worktree-dir}` instead of the default `kanna`, and creates the desktop/mobile windows inside a same-named session on that server
 
 This means the main Kanna app and a dev worktree can run simultaneously without port or data conflicts.
 
 ### Launching the dev server
 
-Always use `./scripts/dev.sh` to start the dev server — never run `pnpm run dev`, `pnpm exec tauri dev`, or `cargo tauri dev` directly. `pnpm run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon paths internally, and runs in a background tmux session.
+Always use `./scripts/dev.sh` to start the dev server — never run `pnpm run dev`, `pnpm exec tauri dev`, or `cargo tauri dev` directly. `pnpm run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon/tmux server internally, and runs in a background tmux session.
 
 Prefer the most correct architecture over the shortest patch. If there is a tradeoff between a quick local fix and preserving the right long-term boundary or source of truth, choose the more correct design unless the user explicitly asks for a temporary stopgap. Treat tactical safety fallbacks as temporary, not as the desired end state.
 
