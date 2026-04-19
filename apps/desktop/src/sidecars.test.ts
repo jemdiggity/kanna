@@ -16,17 +16,24 @@ describe("desktop sidecar packaging", () => {
   });
 
   it("stages and builds all desktop sidecars, including kanna-server", () => {
+    const buildSidecarsScript = readFileSync(
+      resolve(repoRoot, "scripts/build-sidecars.sh"),
+      "utf8",
+    );
     const stageSidecarsScript = readFileSync(
       resolve(repoRoot, "scripts/stage-sidecars.sh"),
       "utf8",
     );
-    expect(desktopPkg.scripts?.["build:sidecars"]).toContain("packages/terminal-recovery/Cargo.toml");
-    expect(desktopPkg.scripts?.["build:sidecars"]).toContain("crates/kanna-server/Cargo.toml");
+    expect(desktopPkg.scripts?.["build:sidecars"]).toBe("../../scripts/build-sidecars.sh");
+    expect(buildSidecarsScript).toContain("packages/terminal-recovery/Cargo.toml");
+    expect(buildSidecarsScript).toContain("crates/kanna-server/Cargo.toml");
+    expect(buildSidecarsScript).toContain(".build/sidecar-target");
     expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-terminal-recovery");
     expect(stageSidecarsScript).toContain("kanna-terminal-recovery");
     expect(stageSidecarsScript).toContain("kanna-daemon");
     expect(stageSidecarsScript).toContain("kanna-cli");
     expect(stageSidecarsScript).toContain("kanna-server");
+    expect(stageSidecarsScript).toContain("--build-dir");
   });
 
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {
