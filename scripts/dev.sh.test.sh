@@ -74,12 +74,25 @@ normalize() {
   printf '%s' "\$1" | tr '.' '_'
 }
 
-session_exists() {
-  grep -Fxq "\$1" "\$state_file"
+session_key() {
+  printf '%s|%s' "\$1" "\$2"
 }
 
-cmd="\$1"
+session_exists() {
+  local server="\$1"
+  local session="\$2"
+  grep -Fxq "\$(session_key "\$server" "\$session")" "\$state_file"
+}
+
+server="default"
+if [ "\${1:-}" = "-L" ]; then
+  server="\$(normalize "\${2:-}")"
+  shift 2
+fi
+
+cmd="\${1:-}"
 shift || true
+printf 'server=%s cmd=%s args=%s\n' "\$server" "\$cmd" "\$*" >> "\$log_file"
 
 case "\$cmd" in
   has-session)
@@ -95,13 +108,13 @@ case "\$cmd" in
           ;;
       esac
     done
-    if session_exists "\$target"; then
+    normalized_target="\$(normalize "\$target")"
+    if session_exists "\$server" "\$normalized_target"; then
       exit 0
     fi
     exit 1
     ;;
   new-session)
-    printf '%s %s\n' "\$cmd" "\$*" >> "\$log_file"
     session=""
     while [ \$# -gt 0 ]; do
       case "\$1" in
@@ -115,14 +128,13 @@ case "\$cmd" in
       esac
     done
     normalized_session="\$(normalize "\$session")"
-    if session_exists "\$normalized_session"; then
-      printf 'duplicate session: %s\n' "\$normalized_session" >&2
+    if session_exists "\$server" "\$normalized_session"; then
+      printf 'duplicate session: %s on server %s\n' "\$normalized_session" "\$server" >&2
       exit 1
     fi
-    printf '%s\n' "\$normalized_session" >> "\$state_file"
+    printf '%s\n' "\$(session_key "\$server" "\$normalized_session")" >> "\$state_file"
     ;;
   send-keys|capture-pane|new-window|kill-session|list-windows|attach|set-option)
-    printf '%s %s\n' "\$cmd" "\$*" >> "\$log_file"
     target=""
     while [ \$# -gt 0 ]; do
       case "\$1" in
@@ -136,11 +148,14 @@ case "\$cmd" in
       esac
     done
     if [ -n "\$target" ]; then
-      target_session="\${target%%:*}"
-      if ! session_exists "\$target_session"; then
-        printf "can't find session: %s\n" "\$target_session" >&2
+      target_session="\$(normalize "\${target%%:*}")"
+      if ! session_exists "\$server" "\$target_session"; then
+        printf "can't find session: %s on server %s\n" "\$target_session" "\$server" >&2
         exit 1
       fi
+    fi
+    if [ "\$cmd" = "list-windows" ]; then
+      printf 'desktop\n'
     fi
     ;;
   *)
@@ -245,7 +260,12 @@ if ! grep -Fq "Started tmux session 'kanna-v0_0_30'" <<<"$OUTPUT"; then
   exit 1
 fi
 
-assert_tmux_log_contains "new-session -d"
+if ! grep -Fq "Attach with: tmux -L kanna-v0_0_30 attach -t kanna-v0_0_30" <<<"$OUTPUT"; then
+  printf 'expected attach command to include tmux server, got:\n%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+assert_tmux_log_contains "server=default cmd=new-session"
 assert_tmux_log_contains "-s kanna-v0_0_30 -n desktop"
 assert_tmux_log_contains "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DB_NAME=kanna-wt-v0.0.30.db"
@@ -284,11 +304,13 @@ fi
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_TWO" "$REPO_ONE_ROOT/.git" start)"
 expect_success "dev.sh second worktree start" "$RESULT" >/dev/null
+assert_tmux_log_contains "server=default cmd=new-session"
 assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_THREE" "$REPO_TWO_ROOT/.git" start)"
 expect_success "dev.sh different repo start" "$RESULT" >/dev/null
+assert_tmux_log_contains "server=default cmd=new-session"
 assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 reset_logs
@@ -421,6 +443,31 @@ RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_APPIU
 expect_success "dev.sh with KANNA_APPIUM_PORT" "$RESULT" >/dev/null
 
 assert_tmux_log_contains "KANNA_APPIUM_PORT=4780"
+
+reset_logs
+printf '%s\n' 'kanna-v0_0_30|kanna-v0_0_30' > "$TMUX_STATE"
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" log)"
+expect_success "dev.sh log" "$RESULT" >/dev/null
+assert_tmux_log_contains "server=default cmd=capture-pane"
+
+reset_logs
+printf '%s\n' 'kanna-v0_0_30|kanna-v0_0_30' > "$TMUX_STATE"
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" stop)"
+expect_success "dev.sh stop" "$RESULT" >/dev/null
+assert_tmux_log_contains "server=default cmd=list-windows"
+assert_tmux_log_contains "server=default cmd=send-keys"
+assert_tmux_log_contains "server=default cmd=kill-session"
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --attach)"
+expect_success "dev.sh --attach" "$RESULT" >/dev/null
+assert_tmux_log_contains "server=default cmd=attach"
+
+reset_logs
+printf '%s\n' 'alpha|kanna' > "$TMUX_STATE"
+RESULT="$(run_dev_sh "$ROOT_CHECKOUT" "$ROOT_CHECKOUT/.git" start env KANNA_DB_NAME=dev-root.db KANNA_TMUX_SESSION=beta)"
+expect_success "dev.sh explicit tmux session override" "$RESULT" >/dev/null
+assert_tmux_log_contains "server=default cmd=new-session args=-d -e KANNA_BUILD_BRANCH=HEAD"
 
 reset_logs
 RESULT="$(run_dev_sh "$ROOT_CHECKOUT" "$ROOT_CHECKOUT/.git" start env KANNA_DB_NAME=dev-root.db)"
