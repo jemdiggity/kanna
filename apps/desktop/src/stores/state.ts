@@ -71,6 +71,7 @@ export interface CreateItemOptions {
   model?: string;
   permissionMode?: string;
   allowedTools?: string[];
+  displayName?: string | null;
   selectOnCreate?: boolean;
   resumeSessionId?: string | null;
   recoverySnapshot?: SessionRecoveryState | null;
@@ -160,7 +161,7 @@ export interface StoreServices {
     prompt: string,
     agentType?: "pty" | "sdk",
     opts?: CreateItemOptions,
-  ) => Promise<void>;
+  ) => Promise<string>;
   closeTask?: (targetItemId?: string, opts?: { selectNext?: boolean }) => Promise<void>;
   undoClose?: () => Promise<void>;
   checkUnblocked?: (blockerItemId: string) => Promise<void>;

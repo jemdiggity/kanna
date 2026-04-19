@@ -425,28 +425,24 @@ describe("App", () => {
   it("prevents browser navigation when files are dragged over or dropped on the app shell", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
     await flushPromises();
+    await flushPromises();
+    await flushPromises();
 
-    const dragOverEvent = new Event("dragover", { cancelable: true }) as Event & {
-      dataTransfer: {
-        files: Array<{ path: string; type: string }>;
-        types: string[];
-      };
-    };
-    dragOverEvent.dataTransfer = {
-      files: [{ path: "/tmp/image.png", type: "image/png" }],
-      types: ["Files"],
-    };
+    const dragOverEvent = new DragEvent("dragover", { cancelable: true });
+    Object.defineProperty(dragOverEvent, "dataTransfer", {
+      value: {
+        files: [{ path: "/tmp/image.png", type: "image/png" }],
+        types: ["Files"],
+      },
+    });
 
-    const dropEvent = new Event("drop", { cancelable: true }) as Event & {
-      dataTransfer: {
-        files: Array<{ path: string; type: string }>;
-        types: string[];
-      };
-    };
-    dropEvent.dataTransfer = {
-      files: [{ path: "/tmp/image.png", type: "image/png" }],
-      types: ["Files"],
-    };
+    const dropEvent = new DragEvent("drop", { cancelable: true });
+    Object.defineProperty(dropEvent, "dataTransfer", {
+      value: {
+        files: [{ path: "/tmp/image.png", type: "image/png" }],
+        types: ["Files"],
+      },
+    });
 
     window.dispatchEvent(dragOverEvent);
     window.dispatchEvent(dropEvent);
@@ -460,17 +456,16 @@ describe("App", () => {
   it("does not suppress non-file drags on the app shell", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
     await flushPromises();
+    await flushPromises();
+    await flushPromises();
 
-    const dragOverEvent = new Event("dragover", { cancelable: true }) as Event & {
-      dataTransfer: {
-        files: Array<{ path: string; type: string }>;
-        types: string[];
-      };
-    };
-    dragOverEvent.dataTransfer = {
-      files: [],
-      types: ["text/plain"],
-    };
+    const dragOverEvent = new DragEvent("dragover", { cancelable: true });
+    Object.defineProperty(dragOverEvent, "dataTransfer", {
+      value: {
+        files: [],
+        types: ["text/plain"],
+      },
+    });
 
     window.dispatchEvent(dragOverEvent);
 

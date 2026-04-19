@@ -4,7 +4,9 @@ import {
   shouldApplyRecoverySnapshot,
 } from "./sessionRecoveryState";
 
-const invokeMock = vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>();
+const { invokeMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>(),
+}));
 
 vi.mock("../invoke", () => ({
   invoke: invokeMock,

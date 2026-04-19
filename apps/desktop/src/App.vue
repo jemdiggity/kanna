@@ -1044,6 +1044,11 @@ async function handlePreferenceUpdate(key: string, value: string) {
 // Init
 onMounted(async () => {
   appUpdate.start();
+  window.addEventListener("dragenter", suppressFileDropNavigation);
+  window.addEventListener("dragover", suppressFileDropNavigation);
+  window.addEventListener("drop", suppressFileDropNavigation);
+  document.addEventListener("file-link-activate", handleFileLinkActivate);
+
   await store.init(db);
   await importPendingIncomingTransfers();
 
@@ -1160,10 +1165,6 @@ onMounted(async () => {
     catch (e) { console.error("[App] corrupt commandPaletteUsage setting:", e); }
   }
 
-  window.addEventListener("dragenter", suppressFileDropNavigation);
-  window.addEventListener("dragover", suppressFileDropNavigation);
-  window.addEventListener("drop", suppressFileDropNavigation);
-  document.addEventListener("file-link-activate", handleFileLinkActivate);
 });
 
 onUnmounted(() => {
