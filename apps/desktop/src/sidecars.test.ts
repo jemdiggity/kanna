@@ -1,11 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import rootPkg from "../../../package.json";
 import desktopPkg from "../package.json";
 import tauriConf from "../src-tauri/tauri.conf.json";
-
-const repoRoot = resolve(process.cwd(), "../..");
 
 describe("desktop sidecar packaging", () => {
   it("keeps release builds free of dev-only version and sidecar staging hooks", () => {
@@ -16,40 +12,38 @@ describe("desktop sidecar packaging", () => {
   });
 
   it("stages and builds all desktop sidecars, including kanna-server", () => {
-    const buildSidecarsScript = readFileSync(
-      resolve(repoRoot, "scripts/build-sidecars.sh"),
-      "utf8",
+    const buildSidecarsScript = desktopPkg.scripts?.["build:sidecars"];
+    const rootBuildSidecarsScript = rootPkg.scripts?.["build:desktop-sidecars"];
+    const stageSidecarsScript = tauriConf.bundle.externalBin.join("\n");
+    expect(buildSidecarsScript).toBe("pnpm -C ../.. run build:desktop-sidecars");
+    expect(rootBuildSidecarsScript).toContain(
+      'cargo build --target "$TARGET" --manifest-path packages/terminal-recovery/Cargo.toml',
     );
-    const stageSidecarsScript = readFileSync(
-      resolve(repoRoot, "scripts/stage-sidecars.sh"),
-      "utf8",
+    expect(rootBuildSidecarsScript).toContain(
+      'cargo build --target "$TARGET" --manifest-path crates/kanna-server/Cargo.toml',
     );
-    expect(desktopPkg.scripts?.["build:sidecars"]).toBe("../../scripts/build-sidecars.sh");
-    expect(buildSidecarsScript).toContain("packages/terminal-recovery/Cargo.toml");
-    expect(buildSidecarsScript).toContain("crates/kanna-server/Cargo.toml");
-    expect(buildSidecarsScript).not.toContain(".build/sidecar-target");
-    expect(buildSidecarsScript).toContain("CARGO_BUILD_BUILD_DIR");
+    expect(rootBuildSidecarsScript).toContain('env -u CARGO_TARGET_DIR cargo build');
+    expect(rootBuildSidecarsScript).toContain('TARGET="$(rustc -vV');
+    expect(rootBuildSidecarsScript).toContain('--target "$TARGET"');
+    expect(rootBuildSidecarsScript).toContain("scripts/stage-sidecars.sh");
+    expect(rootBuildSidecarsScript).toContain('--target "$TARGET"');
     expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-terminal-recovery");
-    expect(stageSidecarsScript).toContain("kanna-terminal-recovery");
-    expect(stageSidecarsScript).toContain("kanna-daemon");
-    expect(stageSidecarsScript).toContain("kanna-cli");
-    expect(stageSidecarsScript).toContain("kanna-server");
-    expect(stageSidecarsScript).toContain('BUILD_DIR="$ROOT/.build"');
+    expect(stageSidecarsScript).toContain("binaries/kanna-terminal-recovery");
+    expect(stageSidecarsScript).toContain("binaries/kanna-daemon");
+    expect(stageSidecarsScript).toContain("binaries/kanna-cli");
+    expect(stageSidecarsScript).toContain("binaries/kanna-server");
   });
 
   it("stages and bundles the task transfer sidecar", () => {
-    const buildSidecarsScript = readFileSync(
-      resolve(repoRoot, "scripts/build-sidecars.sh"),
-      "utf8",
+    const buildSidecarsScript = desktopPkg.scripts?.["build:sidecars"];
+    const rootBuildSidecarsScript = rootPkg.scripts?.["build:desktop-sidecars"];
+    const stageSidecarsScript = tauriConf.bundle.externalBin.join("\n");
+    expect(buildSidecarsScript).toBe("pnpm -C ../.. run build:desktop-sidecars");
+    expect(rootBuildSidecarsScript).toContain(
+      'cargo build --target "$TARGET" --manifest-path crates/task-transfer/Cargo.toml',
     );
-    const stageSidecarsScript = readFileSync(
-      resolve(repoRoot, "scripts/stage-sidecars.sh"),
-      "utf8",
-    );
-    expect(desktopPkg.scripts?.["build:sidecars"]).toBe("../../scripts/build-sidecars.sh");
-    expect(buildSidecarsScript).toContain("crates/task-transfer/Cargo.toml");
     expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-task-transfer");
-    expect(stageSidecarsScript).toContain("kanna-task-transfer");
+    expect(stageSidecarsScript).toContain("binaries/kanna-task-transfer");
   });
 
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {

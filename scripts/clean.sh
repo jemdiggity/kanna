@@ -4,6 +4,7 @@
 # Usage:
 #   ./scripts/clean.sh          # clean Rust target dirs + local Bazel output
 #   ./scripts/clean.sh --all    # also remove node_modules, dist, .turbo
+#   ./scripts/clean.sh --shared-rust-build  # also remove shared Cargo intermediates
 #   ./scripts/clean.sh --dry    # show what would be removed and sizes
 set -e
 
@@ -11,13 +12,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 ALL=false
 DRY=false
+SHARED_RUST_BUILD=false
 
 for arg in "$@"; do
   case "$arg" in
     --all) ALL=true ;;
     --dry) DRY=true ;;
+    --shared-rust-build) SHARED_RUST_BUILD=true ;;
     -h|--help)
-      sed -n '2,6p' "$0" | sed 's/^# \?//'
+      sed -n '2,7p' "$0" | sed 's/^# \?//'
       exit 0
       ;;
   esac
@@ -54,12 +57,15 @@ bazel_output_base() {
 }
 
 # Rust final build outputs (.cargo/config.toml sets target-dir = ".build").
-# Shared Cargo intermediates under ~/Library/Caches/kanna/rust-build are kept.
 remove "$ROOT/.build"
 # Tauri CLI runs cargo from apps/desktop/src-tauri/, which uses default target dir
 remove "$ROOT/apps/desktop/src-tauri/target"
 # Bazel local output base for this workspace only
 remove "$(bazel_output_base)"
+
+if $SHARED_RUST_BUILD; then
+  remove "$HOME/Library/Caches/kanna/rust-build"
+fi
 
 if $ALL; then
   # Frontend build output

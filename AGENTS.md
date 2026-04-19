@@ -356,12 +356,11 @@ User makes PR → GitHub API → DB update → stage transition
 | Script | Purpose |
 |---|---|
 | `dev.sh` | Dev server in tmux, auto-detects worktree, manages daemon lifecycle, seed data |
-| `build-sidecars.sh` | Build desktop sidecars while keeping final outputs isolated from contested shared artifact paths |
 | `setup.sh` | Verify prerequisites (Xcode CLT, Rust, pnpm ≥10.8.1, tmux, etc.) |
 | `clean.sh` | Remove build artifacts (Rust targets, node_modules, dist, .turbo) |
 | `install.sh` | Download and install latest release from GitHub (DMG, arch auto-detect) |
 | `ship.sh` | Release automation: version bump, dual-arch build, sign, notarize, publish |
-| `stage-sidecars.sh` | Stage desktop sidecar binaries to Tauri's `externalBin` from a private build/staging location, not contested shared outputs |
+| `stage-sidecars.sh` | Stage desktop sidecar binaries from the repo-local `.build` output into Tauri's `externalBin` directory |
 
 ### Environment Variables
 
