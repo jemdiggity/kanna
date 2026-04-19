@@ -285,6 +285,7 @@ assert_tmux_log_contains "-s kanna-v0_0_30 -n desktop"
 assert_tmux_log_contains "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DB_NAME=kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DAEMON_DIR=$WORKTREE_ONE/.kanna-daemon"
+assert_tmux_log_contains "KANNA_WEBDRIVER_PORT=4445"
 assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 if grep -Fq "CARGO_TARGET_DIR=" "$TMUX_LOG"; then
