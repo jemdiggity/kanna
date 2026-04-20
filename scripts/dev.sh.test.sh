@@ -252,6 +252,20 @@ assert_tmux_log_contains() {
   fi
 }
 
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" --help)"
+OUTPUT="$(expect_success "dev.sh --help" "$RESULT")"
+
+if ! grep -Fq "Usage: ./scripts/dev.sh [start|stop|restart|kill-daemon|log [window]|seed]" <<<"$OUTPUT"; then
+  printf 'expected dev.sh --help to print usage, got:\n%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if [ -s "$TMUX_LOG" ]; then
+  printf 'expected dev.sh --help not to talk to tmux, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start)"
 OUTPUT="$(expect_success "dev.sh start" "$RESULT")"
 
