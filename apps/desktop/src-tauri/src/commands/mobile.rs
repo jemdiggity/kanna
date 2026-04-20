@@ -290,24 +290,7 @@ fn local_server_port() -> u16 {
 }
 
 fn find_sidecar(name: &str) -> Result<PathBuf, String> {
-    let sidecar_name = format!("{}-{}", name, crate::commands::fs::current_target_triple());
-    let candidates = [
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|dir| dir.join(&sidecar_name))),
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|dir| dir.join(name))),
-        std::env::current_exe().ok().and_then(|path| {
-            path.parent()
-                .map(|dir| dir.join("../Resources").join(&sidecar_name))
-        }),
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|dir| dir.join("../Resources").join(name))),
-    ];
-
-    for candidate in candidates.into_iter().flatten() {
+    for candidate in crate::commands::fs::sidecar_candidates(name) {
         if candidate.exists() {
             return Ok(candidate);
         }

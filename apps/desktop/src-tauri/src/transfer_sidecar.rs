@@ -497,24 +497,7 @@ fn required_bool(value: &Value, keys: &[&str]) -> Result<bool, String> {
 }
 
 fn resolve_sidecar_binary() -> Result<PathBuf, String> {
-    let sidecar_name = format!(
-        "kanna-task-transfer-{}",
-        crate::commands::fs::current_target_triple()
-    );
-    let candidates = [
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join(&sidecar_name))),
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("kanna-task-transfer"))),
-        std::env::current_exe().ok().and_then(|p| {
-            p.parent()
-                .map(|d| d.join("../Resources").join("kanna-task-transfer"))
-        }),
-    ];
-
-    for candidate in candidates.into_iter().flatten() {
+    for candidate in crate::commands::fs::sidecar_candidates("kanna-task-transfer") {
         if candidate.exists() {
             return Ok(candidate);
         }
