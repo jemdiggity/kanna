@@ -1934,4 +1934,58 @@ describe("useTerminal", () => {
       data: expect.any(Array),
     }));
   });
+
+  it("does not force-scroll the viewport after manual scrollback during live output", async () => {
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "hello",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "copilot",
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    const viewport = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn((selector: string) => {
+      return selector === ".xterm-viewport" ? viewport : null;
+    }) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+    await wrapper.vm.startListening();
+
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    terminal.buffer.active.viewportY = 12;
+
+    viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -30 }));
+
+    const outputListener = eventListeners.get("terminal_output")?.[0];
+    outputListener?.({
+      payload: {
+        session_id: "session-1",
+        data: Array.from(new TextEncoder().encode("streaming output")),
+      },
+    });
+
+    expect(terminal.scrollToLine).not.toHaveBeenCalled();
+  });
 });
