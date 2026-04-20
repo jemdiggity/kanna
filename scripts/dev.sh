@@ -14,6 +14,46 @@
 #   ./scripts/dev.sh seed         # seed the DB with test data (no server start)
 #   ./scripts/dev.sh start --seed # start + seed
 set -e
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/dev.sh [start|stop|restart|kill-daemon|log [window]|seed] [--mobile] [--seed] [--attach] [--kill-daemon]
+
+Start, stop, inspect, or seed the Kanna dev environment in a tmux session.
+
+Commands:
+  start         Start the dev environment (default)
+  stop          Stop the tmux session
+  restart       Stop and start the tmux session again
+  kill-daemon   Kill the daemon without touching tmux
+  log [window]   Print recent output from a tmux window
+  seed          Seed the database with test data without starting the server
+
+Options:
+  --mobile      Start the Expo mobile app alongside the desktop dev server
+  --seed        Seed after starting
+  --attach      Attach to the tmux session after starting or restarting
+  --kill-daemon Kill the daemon after stopping
+  -h, --help    Show this help message
+
+Examples:
+  ./scripts/dev.sh
+  ./scripts/dev.sh --mobile
+  ./scripts/dev.sh start --seed
+  ./scripts/dev.sh stop -k
+  ./scripts/dev.sh log mobile
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 ROOT="$(git rev-parse --show-toplevel)"
 export KANNA_BUILD_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 export KANNA_BUILD_COMMIT="$(git rev-parse --short HEAD)"
@@ -357,5 +397,5 @@ case "$CMD" in
   kill-daemon) kill_daemon ;;
   log)     log "$2" ;;
   seed)    seed ;;
-  *)       echo "Usage: $0 {start|stop|restart|kill-daemon|log [window]|seed} [--mobile] [--seed] [--attach] [--kill-daemon]" ;;
+  *)       usage ;;
 esac
