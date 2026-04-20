@@ -656,7 +656,13 @@ async function importPendingIncomingTransfers() {
 
 // Keyboard shortcuts
 const keyboardActions = {
-  newTask: () => { openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e)); },
+  newTask: () => {
+    if (store.repos.length === 0) {
+      toast.warning(t("toasts.noReposLoaded"));
+      return;
+    }
+    openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e));
+  },
   newWindow: async () => {
     if (isTauri) {
       const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");

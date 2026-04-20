@@ -125,6 +125,7 @@
     "blockedWorktreeFailed": "ブロックタスクのワークツリー作成に失敗しました",
     "blockTaskFailed": "タスクのブロックに失敗しました",
     "selectRepoFirst": "リポジトリを先に選択してください",
+    "noReposLoaded": "リポジトリを先に読み込んでください",
     "agentStartFailed": "エージェントの開始に失敗しました",
     "sessionRespawned": "以前のターミナルセッションへ再接続できませんでした。新しいセッションを開始しました。",
     "sessionRespawnedWithScrollback": "以前のターミナルセッションへ再接続できませんでした。スクロールバックを復元し、新しいセッションを開始しました。",

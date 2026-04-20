@@ -88,6 +88,7 @@ const store = {
   spawnPtySession: vi.fn(async () => {}),
 };
 const toastInfoMock = vi.fn();
+const toastWarningMock = vi.fn();
 
 let capturedKeyboardActions: KeyboardActions | null = null;
 
@@ -193,7 +194,7 @@ vi.mock("./composables/useToast", () => ({
   useToast: () => ({
     error: vi.fn(),
     info: toastInfoMock,
-    warning: vi.fn(),
+    warning: toastWarningMock,
   }),
 }));
 
@@ -395,6 +396,7 @@ describe("App", () => {
     store.approveIncomingTransfer.mockClear();
     store.rejectIncomingTransfer.mockClear();
     store.handleOutgoingTransferCommitted.mockClear();
+    store.repos = [{ id: "repo-1", path: "/tmp/repo", name: "repo" }];
     store.selectedRepoId = "repo-1";
     store.selectedRepo = { id: "repo-1", path: "/tmp/repo", name: "repo" };
     store.sortedItemsForCurrentRepo = [];
@@ -405,6 +407,7 @@ describe("App", () => {
     dbSelectMock.mockResolvedValue([]);
     invokeMock.mockClear();
     toastInfoMock.mockClear();
+    toastWarningMock.mockClear();
     appUpdateStartMock.mockClear();
     appUpdateMock.dispose.mockClear();
     appUpdateMock.dismiss.mockClear();
@@ -483,6 +486,26 @@ describe("App", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="base-branch-value"]').text()).toBe("origin/main");
+  });
+
+  it("warns when Cmd+Shift+N is pressed without any repositories loaded", async () => {
+    store.repos = [];
+    store.selectedRepoId = null;
+    store.selectedRepo = null;
+
+    const wrapper = await mountApp(SidebarWithoutRepoStub);
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.newTask();
+    await flushPromises();
+    await flushPromises();
+
+    expect(toastWarningMock).toHaveBeenCalledWith("toasts.noReposLoaded");
+    expect(wrapper.find("textarea").exists()).toBe(false);
+
+    wrapper.unmount();
   });
 
   it("submits undefined baseBranch when the resolved default branch was never explicitly changed", async () => {
