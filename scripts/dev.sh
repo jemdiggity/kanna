@@ -4,6 +4,8 @@
 # Usage:
 #   ./scripts/dev.sh              # start desktop only
 #   ./scripts/dev.sh --mobile     # start desktop + Expo mobile app
+#   ./scripts/dev.sh --db /tmp/kanna-test.db
+#   ./scripts/dev.sh --db test-task.db --delete-db
 #   ./scripts/dev.sh stop         # stop the session
 #   ./scripts/dev.sh stop -k      # stop the session and kill the daemon
 #   ./scripts/dev.sh restart      # stop + start
@@ -17,7 +19,7 @@ set -e
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/dev.sh [start|stop|restart|kill-daemon|log [window]|seed] [--mobile] [--seed] [--attach] [--kill-daemon]
+Usage: ./scripts/dev.sh [start|stop|restart|kill-daemon|log [window]|seed] [--mobile] [--seed] [--attach] [--kill-daemon] [--delete-db]
 
 Start, stop, inspect, or seed the Kanna dev environment in a tmux session.
 
@@ -31,6 +33,12 @@ Commands:
 
 Options:
   --mobile      Start the Expo mobile app alongside the desktop dev server
+  --db PATH     Use an explicit database file path or filename
+  --daemon-dir PATH
+                Use an explicit daemon data directory
+  --transfer-root PATH
+                Use an explicit transfer root directory
+  --delete-db   Delete the resolved database file, WAL, and SHM before launch/seed
   --seed        Seed after starting
   --attach      Attach to the tmux session after starting or restarting
   --kill-daemon Kill the daemon after stopping
@@ -39,6 +47,9 @@ Options:
 Examples:
   ./scripts/dev.sh
   ./scripts/dev.sh --mobile
+  ./scripts/dev.sh --db kanna-test.db
+  ./scripts/dev.sh --db kanna-test.db --delete-db
+  ./scripts/dev.sh --daemon-dir /tmp/kanna-daemon --transfer-root /tmp/kanna-transfer
   ./scripts/dev.sh start --seed
   ./scripts/dev.sh stop -k
   ./scripts/dev.sh log mobile
@@ -98,6 +109,9 @@ tmux_env_args() {
     KANNA_DAEMON_DIR \
     KANNA_TRANSFER_ROOT \
     KANNA_TRANSFER_PORT \
+    KANNA_TRANSFER_DISPLAY_NAME \
+    KANNA_TRANSFER_PEER_ID \
+    KANNA_TRANSFER_REGISTRY_DIR \
     KANNA_DEV_PORT \
     KANNA_APPIUM_PORT \
     KANNA_WEBDRIVER_PORT \
@@ -150,7 +164,93 @@ read_port() {
   fi
 }
 
+EXPLICIT_DB_PATH=""
+EXPLICIT_DAEMON_DIR=""
+EXPLICIT_TRANSFER_ROOT=""
+CMD=""
+CMD_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    start|stop|restart|kill-daemon|log|seed)
+      if [ -z "$CMD" ]; then
+        CMD="$1"
+      else
+        CMD_ARGS+=("$1")
+      fi
+      shift
+      ;;
+    --attach|-a)
+      ATTACH=true
+      shift
+      ;;
+    --kill-daemon|-k)
+      KILL_DAEMON=true
+      shift
+      ;;
+    --seed|-s)
+      SEED=true
+      shift
+      ;;
+    --mobile|-m)
+      MOBILE=true
+      shift
+      ;;
+    --db)
+      if [ $# -lt 2 ]; then
+        echo "ERROR: --db requires a full database path."
+        usage
+        exit 1
+      fi
+      EXPLICIT_DB_PATH="$2"
+      shift 2
+      ;;
+    --daemon-dir)
+      if [ $# -lt 2 ]; then
+        echo "ERROR: --daemon-dir requires a full directory path."
+        usage
+        exit 1
+      fi
+      EXPLICIT_DAEMON_DIR="$2"
+      shift 2
+      ;;
+    --transfer-root)
+      if [ $# -lt 2 ]; then
+        echo "ERROR: --transfer-root requires a full directory path."
+        usage
+        exit 1
+      fi
+      EXPLICIT_TRANSFER_ROOT="$2"
+      shift 2
+      ;;
+    --delete-db)
+      DELETE_DB=true
+      shift
+      ;;
+    --*|-*)
+      echo "ERROR: unknown flag $1"
+      usage
+      exit 1
+      ;;
+    *)
+      if [ -z "$CMD" ]; then
+        CMD="$1"
+      else
+        CMD_ARGS+=("$1")
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$CMD" ]; then
+  CMD="start"
+fi
+
 resolve_db_name() {
+  if [ -n "${EXPLICIT_DB_PATH:-}" ]; then
+    basename -- "$(resolve_explicit_db_path)"
+    return
+  fi
   if [ -z "${KANNA_WORKTREE:-}" ] && [ -n "${KANNA_DB_NAME:-}" ]; then
     printf '%s\n' "$KANNA_DB_NAME"
     return
@@ -162,7 +262,25 @@ resolve_db_name() {
   fi
 }
 
+resolve_explicit_db_path() {
+  if [ -z "${EXPLICIT_DB_PATH:-}" ]; then
+    return
+  fi
+  case "$EXPLICIT_DB_PATH" in
+    /*)
+      printf '%s\n' "$EXPLICIT_DB_PATH"
+      ;;
+    *)
+      printf '%s/Library/Application Support/%s/%s\n' "$HOME" "$DESKTOP_BUNDLE_IDENTIFIER" "$EXPLICIT_DB_PATH"
+      ;;
+  esac
+}
+
 resolve_db_path() {
+  if [ -n "${EXPLICIT_DB_PATH:-}" ]; then
+    resolve_explicit_db_path
+    return
+  fi
   if [ -z "${KANNA_WORKTREE:-}" ] && [ -n "${KANNA_DB_PATH:-}" ]; then
     printf '%s\n' "$KANNA_DB_PATH"
     return
@@ -171,6 +289,10 @@ resolve_db_path() {
 }
 
 resolve_daemon_dir() {
+  if [ -n "${EXPLICIT_DAEMON_DIR:-}" ]; then
+    printf '%s\n' "$EXPLICIT_DAEMON_DIR"
+    return
+  fi
   if [ -z "${KANNA_WORKTREE:-}" ] && [ -n "${KANNA_DAEMON_DIR:-}" ]; then
     printf '%s\n' "$KANNA_DAEMON_DIR"
     return
@@ -187,6 +309,10 @@ shared_rust_build_dir() {
 }
 
 resolve_transfer_root() {
+  if [ -n "${EXPLICIT_TRANSFER_ROOT:-}" ]; then
+    printf '%s\n' "$EXPLICIT_TRANSFER_ROOT"
+    return
+  fi
   if [ -z "${KANNA_WORKTREE:-}" ] && [ -n "${KANNA_TRANSFER_ROOT:-}" ]; then
     printf '%s\n' "$KANNA_TRANSFER_ROOT"
     return
@@ -334,6 +460,11 @@ log() {
   fi
 }
 
+delete_db() {
+  mkdir -p "$(dirname "$KANNA_DB_PATH")"
+  rm -f "$KANNA_DB_PATH" "${KANNA_DB_PATH}-wal" "${KANNA_DB_PATH}-shm"
+}
+
 seed() {
   # SAFETY: never seed the production database
   if [ "$KANNA_DB_NAME" = "kanna-v2.db" ]; then
@@ -354,27 +485,17 @@ seed() {
   echo "Seeded $KANNA_DB_PATH"
 }
 
-ATTACH=false
-KILL_DAEMON=false
-SEED=false
-MOBILE=false
-for arg in "$@"; do
-  case "$arg" in
-    --attach|-a) ATTACH=true ;;
-    --kill-daemon|-k) KILL_DAEMON=true ;;
-    --seed|-s) SEED=true ;;
-    --mobile|-m) MOBILE=true ;;
-  esac
-done
-
-CMD="${1:-start}"
-# Don't treat flags as the command
-case "$CMD" in
-  --*|-*) CMD="start" ;;
-esac
+ATTACH=${ATTACH:-false}
+KILL_DAEMON=${KILL_DAEMON:-false}
+SEED=${SEED:-false}
+MOBILE=${MOBILE:-false}
+DELETE_DB=${DELETE_DB:-false}
 
 case "$CMD" in
   start)
+    if $DELETE_DB; then
+      delete_db
+    fi
     start
     if $SEED; then
       seed
@@ -387,6 +508,9 @@ case "$CMD" in
   restart)
     stop
     sleep 1
+    if $DELETE_DB; then
+      delete_db
+    fi
     start
     if $SEED; then
       seed
@@ -396,7 +520,12 @@ case "$CMD" in
     fi
     ;;
   kill-daemon) kill_daemon ;;
-  log)     log "$2" ;;
-  seed)    seed ;;
-  *)       usage ;;
+  log)     log "${CMD_ARGS[0]:-}" ;;
+  seed)
+    if $DELETE_DB; then
+      delete_db
+    fi
+    seed
+    ;;
+  *)       usage; exit 1 ;;
 esac

@@ -70,6 +70,21 @@ export class WebDriverClient {
     });
   }
 
+  async pressKey(value: string): Promise<void> {
+    await this.post(`/session/${this.sid}/actions`, {
+      actions: [
+        {
+          type: "key",
+          id: "keyboard",
+          actions: [
+            { type: "keyDown", value },
+            { type: "keyUp", value },
+          ],
+        },
+      ],
+    });
+  }
+
   // ── JavaScript execution ──────────────────────────────────────────
 
   async executeSync<T = unknown>(

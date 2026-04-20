@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { readdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { homedir } from "node:os";
-import { dirname, join, posix, resolve } from "node:path";
+import { dirname, basename, join, posix, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { buildRealE2eAgentEnv } from "./runEnv";
 
 interface CommandOptions {
   cwd: string;
@@ -14,7 +14,6 @@ interface CommandOptions {
 interface InstanceConfig {
   baseUrl: string;
   daemonDir: string;
-  dbPath: string;
   env: Record<string, string>;
   startCommand: string[];
   stopCommand: string[];
@@ -181,11 +180,9 @@ function needsSecondaryInstance(testTargets: string[]): boolean {
 function createInstanceConfig(input: {
   daemonDir: string;
   dbName: string;
-  dbPath: string;
   devPortEnvValue: number;
   effectiveWebDriverPort: number;
   envOverrides?: Record<string, string>;
-  secondary?: boolean;
   sessionName: string;
   transferPortEnvValue: number;
   webDriverPortEnvValue: number;
@@ -193,7 +190,6 @@ function createInstanceConfig(input: {
   const env = toSpawnEnv({
     KANNA_DAEMON_DIR: input.daemonDir,
     KANNA_DB_NAME: input.dbName,
-    KANNA_DB_PATH: input.dbPath,
     KANNA_DEV_PORT: String(input.devPortEnvValue),
     KANNA_TMUX_SESSION: input.sessionName,
     KANNA_TRANSFER_PORT: String(input.transferPortEnvValue),
@@ -204,11 +200,18 @@ function createInstanceConfig(input: {
   return {
     baseUrl: `http://127.0.0.1:${input.effectiveWebDriverPort}`,
     daemonDir: input.daemonDir,
-    dbPath: input.dbPath,
     env,
-    startCommand: input.secondary
-      ? ["./scripts/dev.sh", "start", "--secondary"]
-      : ["./scripts/dev.sh", "start"],
+    startCommand: [
+      "./scripts/dev.sh",
+      "start",
+      "--db",
+      input.dbName,
+      "--delete-db",
+      "--daemon-dir",
+      input.daemonDir,
+      "--transfer-root",
+      join(input.daemonDir, "transfer-root"),
+    ],
     stopCommand: ["./scripts/dev.sh", "stop", "--kill-daemon"],
     webDriverPort: input.effectiveWebDriverPort,
   };
@@ -224,30 +227,25 @@ async function main(): Promise<void> {
   if (testTargets.length === 0) {
     throw new Error(`no E2E tests matched ${suite ?? "default suites"}`);
   }
+  const realE2eAgentEnv = buildRealE2eAgentEnv(testTargets, process.env);
 
   const enableSecondary = needsSecondaryInstance(testTargets);
-  const suffixBase = sanitizeSuffix(`${process.pid}-${Date.now()}`);
-  const sessionName = `kanna-e2e-${suffixBase}`;
-  const transferRegistryDir = join(repoRoot, ".kanna-transfer-registry-e2e", suffixBase);
+  const worktreeName = sanitizeSuffix(basename(repoRoot));
+  const runSuffix = sanitizeSuffix(`${process.pid}-${Date.now()}`);
+  const sessionName = `kanna-e2e-${worktreeName}-${runSuffix}`;
+  const transferRegistryDir = join(repoRoot, ".kanna-transfer-registry-e2e", runSuffix);
   const primaryDevPort = await findFreePort();
   const primaryWebDriverPort = await findFreePort();
   const primaryTransferPort = await findFreePort();
-  const primaryDbName = `kanna-test-${suffixBase}.db`;
-  const primaryDaemonDir = join(repoRoot, ".kanna-daemon-e2e", suffixBase);
-  const primaryDbPath = join(
-    homedir(),
-    "Library",
-    "Application Support",
-    "com.kanna.app",
-    primaryDbName,
-  );
+  const primaryDbName = `test-${worktreeName}-primary.db`;
+  const primaryDaemonDir = join(repoRoot, ".kanna-daemon-e2e", runSuffix);
   const primary = createInstanceConfig({
     daemonDir: primaryDaemonDir,
     dbName: primaryDbName,
-    dbPath: primaryDbPath,
     devPortEnvValue: primaryDevPort,
     effectiveWebDriverPort: primaryWebDriverPort,
     envOverrides: {
+      ...realE2eAgentEnv,
       KANNA_TRANSFER_DISPLAY_NAME: "Primary",
       KANNA_TRANSFER_PEER_ID: "peer-primary",
       KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,
@@ -260,53 +258,40 @@ async function main(): Promise<void> {
   const secondaryDevPort = enableSecondary ? await findFreePort() : null;
   const secondaryWebDriverPort = enableSecondary ? await findFreePort() : null;
   const secondaryTransferPort = enableSecondary ? await findFreePort() : null;
-  const secondaryDbName = enableSecondary ? `kanna-test-${suffixBase}-secondary.db` : null;
+  const secondaryDbName = enableSecondary ? `test-${worktreeName}-secondary.db` : null;
   const secondaryDaemonDir = enableSecondary
-    ? join(repoRoot, ".kanna-daemon-e2e", `${suffixBase}-secondary`)
-    : null;
-  const secondaryDbPath = secondaryDbName
-    ? join(
-        homedir(),
-        "Library",
-        "Application Support",
-        "com.kanna.app",
-        secondaryDbName,
-      )
+    ? join(repoRoot, ".kanna-daemon-e2e", `${runSuffix}-secondary`)
     : null;
   const secondary = enableSecondary &&
     secondaryDevPort !== null &&
     secondaryWebDriverPort !== null &&
     secondaryTransferPort !== null &&
     secondaryDbName !== null &&
-    secondaryDaemonDir !== null &&
-    secondaryDbPath !== null
+    secondaryDaemonDir !== null
     ? createInstanceConfig({
         daemonDir: secondaryDaemonDir,
         dbName: secondaryDbName,
-        dbPath: secondaryDbPath,
-        // dev.sh applies a +1 secondary offset, so seed the base env with the
-        // previous port to land on the allocated effective port.
-        devPortEnvValue: secondaryDevPort - 1,
+        devPortEnvValue: secondaryDevPort,
         effectiveWebDriverPort: secondaryWebDriverPort,
         envOverrides: {
+          ...realE2eAgentEnv,
           KANNA_TRANSFER_DISPLAY_NAME: "Secondary",
           KANNA_TRANSFER_PEER_ID: "peer-secondary",
           KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,
         },
-        secondary: true,
         sessionName: `${sessionName}-secondary`,
-        transferPortEnvValue: secondaryTransferPort - 1,
-        webDriverPortEnvValue: secondaryWebDriverPort - 1,
+        transferPortEnvValue: secondaryTransferPort,
+        webDriverPortEnvValue: secondaryWebDriverPort,
       })
     : null;
 
   const testEnv = toSpawnEnv({
     KANNA_DAEMON_DIR: primaryDaemonDir,
     KANNA_DB_NAME: primaryDbName,
-    KANNA_DB_PATH: primaryDbPath,
     KANNA_DEV_PORT: String(primaryDevPort),
     KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,
     KANNA_WEBDRIVER_PORT: String(primaryWebDriverPort),
+    ...realE2eAgentEnv,
     ...(secondary ? { KANNA_E2E_TARGET_WEBDRIVER_PORT: String(secondary.webDriverPort) } : {}),
   });
 
@@ -315,9 +300,13 @@ async function main(): Promise<void> {
     if (secondary) {
       await runCommand(secondary.startCommand, { cwd: repoRoot, env: secondary.env });
     }
+    console.log(`[e2e] waiting for primary app at ${primary.baseUrl}`);
     await waitForApp(primary.baseUrl, 10 * 60_000);
+    console.log(`[e2e] primary app ready at ${primary.baseUrl}`);
     if (secondary) {
+      console.log(`[e2e] waiting for secondary app at ${secondary.baseUrl}`);
       await waitForApp(secondary.baseUrl, 10 * 60_000);
+      console.log(`[e2e] secondary app ready at ${secondary.baseUrl}`);
     }
 
     for (const testTarget of testTargets) {
@@ -344,18 +333,12 @@ async function main(): Promise<void> {
         env: secondary.env,
       }).catch(() => undefined);
       await rm(secondary.daemonDir, { recursive: true, force: true }).catch(() => undefined);
-      await rm(secondary.dbPath, { force: true }).catch(() => undefined);
-      await rm(`${secondary.dbPath}-shm`, { force: true }).catch(() => undefined);
-      await rm(`${secondary.dbPath}-wal`, { force: true }).catch(() => undefined);
     }
     await runCommand(primary.stopCommand, {
       cwd: repoRoot,
       env: primary.env,
     }).catch(() => undefined);
     await rm(primary.daemonDir, { recursive: true, force: true }).catch(() => undefined);
-    await rm(primary.dbPath, { force: true }).catch(() => undefined);
-    await rm(`${primary.dbPath}-shm`, { force: true }).catch(() => undefined);
-    await rm(`${primary.dbPath}-wal`, { force: true }).catch(() => undefined);
     await rm(transferRegistryDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }

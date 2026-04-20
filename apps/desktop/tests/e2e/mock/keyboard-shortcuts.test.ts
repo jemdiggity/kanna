@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
+import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
 import { getVueState } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 const CTX_SCRIPT = 'window.__KANNA_E2E__.setupState';
@@ -16,6 +17,9 @@ describe("keyboard shortcuts", () => {
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
+    await client.executeSync("location.reload()");
+    await client.waitForAppReady();
+    await dismissStartupShortcutsModal(client);
     fixtureRepoRoot = await createFixtureRepo("keyboard-test");
     testRepoPath = join(fixtureRepoRoot, "apps");
   });
