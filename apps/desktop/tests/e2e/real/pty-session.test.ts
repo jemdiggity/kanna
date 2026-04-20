@@ -2,9 +2,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
-import { nudgeAgentTrustPrompt } from "../helpers/agentTrustPrompt";
 import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
 import { submitTaskFromUi } from "../helpers/newTaskFlow";
+import { nudgeTerminalTrustPrompt } from "../helpers/terminalInput";
 import { queryDb } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 
@@ -58,7 +58,11 @@ describe("pty session (real CLI)", () => {
     await submitTaskFromUi(client, prompt);
 
     await waitForTaskCreated(client, prompt);
-    await nudgeAgentTrustPrompt(client);
+    await nudgeTerminalTrustPrompt(client, {
+      initialDelayMs: 5_000,
+      attempts: 4,
+      intervalMs: 5_000,
+    });
 
     // In PTY mode, output appears in the terminal container
     // Wait for the terminal to have content (xterm.js renders into a canvas)
