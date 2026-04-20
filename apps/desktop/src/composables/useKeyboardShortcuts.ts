@@ -92,7 +92,7 @@ export const shortcuts: ShortcutDef[] = [
   // { action: "newWindow",  labelKey: "shortcuts.newWindow", groupKey: "shortcuts.groupWindow", key: ["N", "n"],                     meta: true, shift: true,  display: "⇧⌘N" },
   // Views — layout and framing controls
   { action: "toggleSidebar", labelKey: "shortcuts.toggleSidebar", groupKey: "shortcuts.groupWorkspace", key: "b",                            meta: true,               display: "⌘B",       context: ["main"] },
-  { action: "toggleMaximize", labelKey: "shortcuts.maximize",       groupKey: "shortcuts.groupWorkspace", key: "Enter",                     meta: true, shift: true,  display: "⇧⌘Enter", context: ["main", "diff", "file", "shell"] },
+  { action: "toggleMaximize", labelKey: "shortcuts.maximize",       groupKey: "shortcuts.groupWorkspace", key: "Enter",                     meta: true, shift: true,  display: "⇧⌘Enter", context: ["main", "diff", "file", "shell", "tree"] },
   { action: "goBack",       labelKey: "shortcuts.goBack",         groupKey: "shortcuts.groupMoveAround", key: "-",                            ctrl: true,               display: "⌃-",       context: ["main"] },
   { action: "goForward",    labelKey: "shortcuts.goForward",      groupKey: "shortcuts.groupMoveAround", key: ["_", "-"],                     ctrl: true, shift: true,  display: "⌃⇧-",     context: ["main"] },
   { action: "toggleTreeExplorer", labelKey: "shortcuts.treeExplorer", groupKey: "shortcuts.groupOpenInspect", key: "e", meta: true, shift: true, display: "⇧⌘E", context: ["main", "diff", "shell", "file"] },

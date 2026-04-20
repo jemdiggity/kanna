@@ -523,6 +523,11 @@ function onShellClose() {
   }
 }
 
+function closeTreeExplorer() {
+  showTreeExplorer.value = false;
+  maximizedModal.value = maximizedModal.value === "tree" ? null : maximizedModal.value;
+}
+
 function closeFileFlow() {
   showFilePreviewModal.value = false;
   showFilePickerModal.value = false;
@@ -688,7 +693,7 @@ const keyboardActions = {
     if (showTreeExplorer.value) {
       const z = treeExplorerRef.value?.zIndex ?? 0;
       if (isTopModal(z)) {
-        showTreeExplorer.value = false;
+        closeTreeExplorer();
       } else {
         treeExplorerRef.value?.bringToFront();
       }
@@ -740,7 +745,7 @@ const keyboardActions = {
     if (showDiffModal.value) { showDiffModal.value = false; maximizedModal.value = null; return true; }
     if (showAnalyticsModal.value) { showAnalyticsModal.value = false; return true; }
     if (showCommitGraphModal.value) { showCommitGraphModal.value = false; return true; }
-    if (showTreeExplorer.value) { showTreeExplorer.value = false; return true; }
+    if (showTreeExplorer.value) { closeTreeExplorer(); return true; }
     if (showNewTaskModal.value) { showNewTaskModal.value = false; return true; }
     if (showAddRepoModal.value) { showAddRepoModal.value = false; return true; }
   },
@@ -1312,8 +1317,9 @@ onBeforeUnmount(() => {
       :worktree-path="treeExplorerRoot"
       :repo-root="store.selectedRepo?.path ?? treeExplorerRoot"
       :home-path="homePath"
+      :maximized="maximizedModal === 'tree'"
       :suspended="showFilePreviewModal"
-      @close="showTreeExplorer = false"
+      @close="closeTreeExplorer"
       @open-file="(f: string) => { previewFilePath = f; previewInitialLine = undefined; showFilePreviewModal = true; previewFromPicker = false; previewHidden = false; }"
     />
     <FilePreviewModal

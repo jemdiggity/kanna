@@ -86,6 +86,7 @@ describe("useShortcutContext", () => {
       register("tree", [{ label: "Yank path", display: "y" }]);
       const result = getContextShortcuts("tree");
       const actions = result.map((s) => s.action);
+      expect(actions).toContain("shortcuts.maximize");
       expect(actions).toContain("Yank path");
       expect(actions).not.toContain("shortcuts.treeExplorer");
       expect(actions).not.toContain("shortcuts.keyboardShortcuts");

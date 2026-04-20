@@ -23,6 +23,7 @@ const props = defineProps<{
   worktreePath: string;
   repoRoot: string;
   homePath?: string;
+  maximized?: boolean;
   suspended?: boolean;
 }>();
 
@@ -117,7 +118,13 @@ function isDimmed(entry: TreeNode): boolean {
 </script>
 
 <template>
-  <div v-show="!suspended" class="modal-overlay" :style="{ zIndex }" @click.self="emit('close')">
+  <div
+    v-show="!suspended"
+    class="modal-overlay"
+    :class="{ maximized }"
+    :style="{ zIndex }"
+    @click.self="emit('close')"
+  >
     <div
       ref="modalRef"
       class="tree-modal"
@@ -242,6 +249,20 @@ function isDimmed(entry: TreeNode): boolean {
   outline: none;
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.maximized {
+  background: none;
+  align-items: stretch;
+  padding-top: 0;
+}
+
+.maximized .tree-modal {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
 }
 
 /* Breadcrumb */
