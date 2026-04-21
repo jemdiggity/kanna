@@ -59,6 +59,16 @@ describe("ship script release retry behavior", () => {
     expect(shipScript).toContain("--output=files");
     expect(shipScript).not.toContain('DMG_SOURCE="$BAZEL_BIN/release/');
   });
+
+  it("sources desktop_crates from the narrow desktop workspace manifest", () => {
+    const moduleBazel = readFileSync(resolve(repoRoot, "MODULE.bazel"), "utf8");
+
+    expect(moduleBazel).toContain('name = "desktop_crates"');
+    expect(moduleBazel).toContain(
+      'manifests = ["//tools/bazel/desktop-workspace:Cargo.toml"]',
+    );
+    expect(moduleBazel).not.toContain('manifests = ["//:Cargo.toml"]');
+  });
 });
 
 describe("release bundle naming", () => {

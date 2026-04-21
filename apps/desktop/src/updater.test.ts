@@ -90,6 +90,10 @@ describe("desktop updater runtime", () => {
     expect(bazelDefs).toContain(
       "ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, embedded_assets_rust, acl_out_dir]",
     );
+    expect(bazelWorkspaceCargoToml).toContain("../../../apps/desktop/src-tauri");
+    expect(bazelWorkspaceCargoToml).toContain("../../../crates/claude-agent-sdk");
+    expect(bazelWorkspaceCargoToml).not.toContain("../../../crates/daemon");
+    expect(bazelWorkspaceCargoToml).not.toContain("../../../crates/kanna-cli");
     expect(bazelWorkspaceCargoToml).not.toContain(
       "../../../crates/tauri-plugin-delta-updater",
     );
