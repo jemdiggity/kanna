@@ -250,6 +250,24 @@ const FilePreviewModalTestStub = defineComponent({
   `,
 });
 
+const TreeExplorerModalTestStub = defineComponent({
+  name: "TreeExplorerModal",
+  props: {
+    maximized: Boolean,
+    worktreePath: {
+      type: String,
+      required: true,
+    },
+  },
+  template: `
+    <div
+      data-testid="tree-explorer-modal"
+      :data-maximized="String(maximized)"
+      :data-worktree-path="worktreePath"
+    />
+  `,
+});
+
 function buildIncomingTransferEvent() {
   return {
     payload: {
@@ -1017,5 +1035,60 @@ describe("App", () => {
     expect(handled).toBe(true);
     expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+  });
+
+  it("passes maximize state through to the tree explorer modal", async () => {
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      TreeExplorerModal: TreeExplorerModalTestStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.toggleTreeExplorer();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-maximized")).toBe("false");
+
+    capturedKeyboardActions?.toggleMaximize();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-maximized")).toBe("true");
+  });
+
+  it("clears tree explorer maximize state when the modal closes", async () => {
+    const TreeExplorerClosableStub = defineComponent({
+      name: "TreeExplorerModal",
+      props: {
+        maximized: Boolean,
+      },
+      emits: ["close"],
+      template: `
+        <div data-testid="tree-explorer-modal" :data-maximized="String(maximized)">
+          <button data-testid="close-tree-explorer" @click="$emit('close')">close</button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      TreeExplorerModal: TreeExplorerClosableStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.toggleTreeExplorer();
+    await flushPromises();
+    capturedKeyboardActions?.toggleMaximize();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-maximized")).toBe("true");
+
+    await wrapper.get('[data-testid="close-tree-explorer"]').trigger("click");
+    await flushPromises();
+    capturedKeyboardActions?.toggleTreeExplorer();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-maximized")).toBe("false");
   });
 });

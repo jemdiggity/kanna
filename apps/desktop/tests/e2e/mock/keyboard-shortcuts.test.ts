@@ -11,6 +11,7 @@ describe("keyboard shortcuts", () => {
   const client = new WebDriverClient();
   let fixtureRepoRoot = "";
   let testRepoPath = "";
+  let repoImported = false;
 
   beforeAll(async () => {
     await client.createSession();
@@ -36,6 +37,12 @@ describe("keyboard shortcuts", () => {
     );
   }
 
+  async function ensureRepoImported() {
+    if (repoImported) return;
+    await importTestRepo(client, testRepoPath, "keyboard-test");
+    repoImported = true;
+  }
+
   it("Shift+Cmd+N opens New Task modal", async () => {
     await pressKey("N", { meta: true, shift: true });
     await sleep(300);
@@ -57,7 +64,7 @@ describe("keyboard shortcuts", () => {
   });
 
   it("navigation changes selected item", async () => {
-    await importTestRepo(client, testRepoPath, "keyboard-test");
+    await ensureRepoImported();
     // Insert tasks directly into DB without spawning Claude
     const repoId = await getVueState(client, "selectedRepoId") as string;
     await client.executeAsync<string>(
@@ -92,5 +99,28 @@ describe("keyboard shortcuts", () => {
 
     // Navigate down worked — that's the key assertion.
     // Navigate up may not change if we're already at the boundary or sort order differs.
+  });
+
+  it("Shift+Cmd+Enter maximizes the tree explorer", async () => {
+    await ensureRepoImported();
+
+    await pressKey("E", { meta: true, shift: true });
+    await client.waitForElement(".tree-modal", 2000);
+    await sleep(300);
+
+    const maximizedBefore = await client.executeSync<boolean>(
+      `const modal = document.querySelector(".tree-modal");
+       return modal?.parentElement?.classList.contains("maximized") ?? false;`
+    );
+    expect(maximizedBefore).toBe(false);
+
+    await pressKey("Enter", { meta: true, shift: true });
+    await sleep(300);
+
+    const maximizedAfter = await client.executeSync<boolean>(
+      `const modal = document.querySelector(".tree-modal");
+       return modal?.parentElement?.classList.contains("maximized") ?? false;`
+    );
+    expect(maximizedAfter).toBe(true);
   });
 });
