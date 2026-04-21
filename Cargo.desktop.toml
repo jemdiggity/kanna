@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "apps/desktop/src-tauri",
+    "crates/claude-agent-sdk",
+]
+resolver = "2"

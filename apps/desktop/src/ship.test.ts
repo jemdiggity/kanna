@@ -64,9 +64,9 @@ describe("ship script release retry behavior", () => {
     const moduleBazel = readFileSync(resolve(repoRoot, "MODULE.bazel"), "utf8");
 
     expect(moduleBazel).toContain('name = "desktop_crates"');
-    expect(moduleBazel).toContain(
-      'manifests = ["//tools/bazel/desktop-workspace:Cargo.toml"]',
-    );
+    expect(moduleBazel).toContain('cargo_lockfile = "//:Cargo.desktop.lock"');
+    expect(moduleBazel).toContain('manifests = ["//:Cargo.desktop.toml"]');
+    expect(moduleBazel).not.toContain('cargo_lockfile = "//apps/desktop/src-tauri:Cargo.lock"');
     expect(moduleBazel).not.toContain('manifests = ["//:Cargo.toml"]');
   });
 });

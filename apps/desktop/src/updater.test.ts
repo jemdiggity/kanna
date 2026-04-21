@@ -53,9 +53,14 @@ describe("desktop updater runtime", () => {
       "utf8",
     );
     const bazelWorkspaceCargoToml = readFileSync(
-      resolve(repoRoot, "tools/bazel/desktop-workspace/Cargo.toml"),
+      resolve(repoRoot, "Cargo.desktop.toml"),
       "utf8",
     );
+    const deltaUpdaterWorkspaceCargoToml = readFileSync(
+      resolve(repoRoot, "Cargo.delta-updater.toml"),
+      "utf8",
+    );
+    const moduleBazel = readFileSync(resolve(repoRoot, "MODULE.bazel"), "utf8");
 
     expect(cargoToml).toContain('tauri-plugin-process = "2"');
     expect(cargoToml).toContain('tauri-plugin-updater = "2"');
@@ -90,12 +95,22 @@ describe("desktop updater runtime", () => {
     expect(bazelDefs).toContain(
       "ctx.files.cargo_srcs + ctx.files.tauri_build_data + [config, embedded_assets_rust, acl_out_dir]",
     );
-    expect(bazelWorkspaceCargoToml).toContain("../../../apps/desktop/src-tauri");
-    expect(bazelWorkspaceCargoToml).toContain("../../../crates/claude-agent-sdk");
-    expect(bazelWorkspaceCargoToml).not.toContain("../../../crates/daemon");
-    expect(bazelWorkspaceCargoToml).not.toContain("../../../crates/kanna-cli");
+    expect(bazelWorkspaceCargoToml).toContain("apps/desktop/src-tauri");
+    expect(bazelWorkspaceCargoToml).toContain("crates/claude-agent-sdk");
+    expect(bazelWorkspaceCargoToml).not.toContain("crates/daemon");
+    expect(bazelWorkspaceCargoToml).not.toContain("crates/kanna-cli");
     expect(bazelWorkspaceCargoToml).not.toContain(
-      "../../../crates/tauri-plugin-delta-updater",
+      "crates/tauri-plugin-delta-updater",
     );
+    expect(deltaUpdaterWorkspaceCargoToml).toContain(
+      "crates/tauri-plugin-delta-updater",
+    );
+    expect(deltaUpdaterWorkspaceCargoToml).not.toContain(
+      "apps/desktop/src-tauri",
+    );
+    expect(moduleBazel).toContain('name = "delta_updater_crates"');
+    expect(moduleBazel).toContain('cargo_lockfile = "//:Cargo.delta-updater.lock"');
+    expect(moduleBazel).toContain('manifests = ["//:Cargo.delta-updater.toml"]');
+    expect(moduleBazel).toContain('cargo_lockfile = "//:Cargo.desktop.lock"');
   });
 });
