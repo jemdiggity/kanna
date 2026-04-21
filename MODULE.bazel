@@ -104,7 +104,16 @@ crate.from_cargo(
 crate.from_cargo(
     name = "desktop_crates",
     cargo_lockfile = "//apps/desktop/src-tauri:Cargo.lock",
-    manifests = ["//:Cargo.toml"],
+    manifests = ["//tools/bazel/desktop-workspace:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+)
+crate.from_cargo(
+    name = "delta_updater_crates",
+    cargo_lockfile = "//apps/desktop/src-tauri:Cargo.lock",
+    manifests = ["//crates/tauri-plugin-delta-updater:Cargo.toml"],
     supported_platform_triples = [
         "aarch64-apple-darwin",
         "x86_64-apple-darwin",
@@ -154,6 +163,7 @@ use_repo(crate, "kanna_cli_crates")
 use_repo(
     crate,
     "daemon_crates",
+    "delta_updater_crates",
     "desktop_crates",
     "desktop_crates__tauri-2.10.3",
     "desktop_crates__tauri-plugin-dialog-2.7.0",

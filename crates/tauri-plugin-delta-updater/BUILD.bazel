@@ -1,4 +1,4 @@
-load("@desktop_crates//:defs.bzl", "all_crate_deps")
+load("@delta_updater_crates//:defs.bzl", "all_crate_deps")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(default_visibility = ["//visibility:public"])
