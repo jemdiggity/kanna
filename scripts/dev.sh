@@ -97,32 +97,6 @@ canonical_tmux_session_name() {
   printf '%s' "$1" | tr '.' '_'
 }
 
-tmux_env_args() {
-  local key
-  for key in \
-    KANNA_WORKTREE \
-    KANNA_BUILD_BRANCH \
-    KANNA_BUILD_COMMIT \
-    KANNA_BUILD_WORKTREE \
-    KANNA_DB_NAME \
-    KANNA_DB_PATH \
-    KANNA_DAEMON_DIR \
-    KANNA_TRANSFER_ROOT \
-    KANNA_TRANSFER_PORT \
-    KANNA_TRANSFER_DISPLAY_NAME \
-    KANNA_TRANSFER_PEER_ID \
-    KANNA_TRANSFER_REGISTRY_DIR \
-    KANNA_DEV_PORT \
-    KANNA_APPIUM_PORT \
-    KANNA_WEBDRIVER_PORT \
-    TAURI_WEBDRIVER_PORT \
-    CARGO_BUILD_BUILD_DIR; do
-    if [ -n "${!key:-}" ]; then
-      printf '%s\0%s\0' "-e" "${key}=${!key}"
-    fi
-  done
-}
-
 # Auto-detect worktree by checking if we're inside .kanna-worktrees/
 if [ -n "$KANNA_WORKTREE" ] || echo "$ROOT" | grep -q '\.kanna-worktrees/'; then
   export KANNA_WORKTREE=1
@@ -387,10 +361,6 @@ start() {
     CARGO_BUILD_BUILD_DIR="$(shared_rust_build_dir)"
   fi
   local DESKTOP_CWD="$ROOT/apps/desktop"
-  local TMUX_ENV=()
-  while IFS= read -r -d '' arg; do
-    TMUX_ENV+=("$arg")
-  done < <(tmux_env_args)
 
   # Build dev sidecars before tauri dev so externalBin inputs exist and are
   # owned by the dev path instead of beforeBuildCommand.
@@ -407,7 +377,7 @@ LOCALEOF
     DEV_CMD="pnpm run build:sidecars && pnpm exec tauri dev --config $LOCAL_CONF"
   fi
 
-  tmux_cmd new-session -d "${TMUX_ENV[@]}" -s "$SESSION" -n desktop -c "$DESKTOP_CWD" "$DEV_CMD"
+  tmux_cmd new-session -d -s "$SESSION" -n desktop -c "$DESKTOP_CWD" "$DEV_CMD"
   tmux_cmd set-option -t "$SESSION" remain-on-exit on >/dev/null
 
   if $MOBILE; then

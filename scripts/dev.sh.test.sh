@@ -86,6 +86,33 @@ session_exists() {
   grep -Fxq "\$(session_key "\$server" "\$session")" "\$state_file"
 }
 
+log_forwarded_env() {
+  local saw_explicit=false
+  local entry
+
+  for entry in "\$@"; do
+    case "\$entry" in
+      *=*)
+        printf 'env %s\n' "\$entry" >> "\$log_file"
+        saw_explicit=true
+        ;;
+    esac
+  done
+
+  if \$saw_explicit; then
+    return
+  fi
+
+  local key
+  while IFS='=' read -r key value; do
+    case "\$key" in
+      KANNA_*|TAURI_WEBDRIVER_PORT|CARGO_BUILD_BUILD_DIR)
+        printf 'env %s=%s\n' "\$key" "\$value" >> "\$log_file"
+        ;;
+    esac
+  done < <(env)
+}
+
 server="default"
 if [ "\${1:-}" = "-L" ]; then
   server="\$(normalize "\${2:-}")"
@@ -118,8 +145,13 @@ case "\$cmd" in
     ;;
   new-session)
     session=""
+    forwarded_env=()
     while [ \$# -gt 0 ]; do
       case "\$1" in
+        -e)
+          forwarded_env+=("\$2")
+          shift 2
+          ;;
         -s)
           session="\$2"
           shift 2
@@ -135,6 +167,11 @@ case "\$cmd" in
       exit 1
     fi
     printf '%s\n' "\$(session_key "\$server" "\$normalized_session")" >> "\$state_file"
+    if [ "\${#forwarded_env[@]}" -gt 0 ]; then
+      log_forwarded_env "\${forwarded_env[@]}"
+    else
+      log_forwarded_env
+    fi
     ;;
   send-keys|capture-pane|new-window|kill-session|list-windows|attach|set-option)
     target=""
@@ -463,6 +500,24 @@ fi
 
 if ! grep -Fq "KANNA_TRANSFER_REGISTRY_DIR=/tmp/transfer-registry" "$TMUX_LOG"; then
   printf 'expected transfer registry dir to be forwarded into tmux, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env \
+  KANNA_E2E_REAL_AGENT_PROVIDER=codex \
+  KANNA_E2E_REAL_AGENT_MODEL=gpt-5.4-mini)"
+expect_success "dev.sh forwards real e2e agent env" "$RESULT" >/dev/null
+
+if ! grep -Fq "KANNA_E2E_REAL_AGENT_PROVIDER=codex" "$TMUX_LOG"; then
+  printf 'expected real e2e provider env to reach tmux launch, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_E2E_REAL_AGENT_MODEL=gpt-5.4-mini" "$TMUX_LOG"; then
+  printf 'expected real e2e model env to reach tmux launch, got:\n' >&2
   cat "$TMUX_LOG" >&2
   exit 1
 fi
