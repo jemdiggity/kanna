@@ -1,5 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { buildGlobalKeydownScript } from "./keyboard";
+
 export interface StartupOverlayClient {
   executeSync<T = unknown>(script: string, args?: unknown[]): Promise<T>;
   waitForNoElement(css: string, timeoutMs?: number): Promise<void>;
@@ -17,12 +19,7 @@ export async function dismissStartupShortcutsModal(
       "return Boolean(window.__KANNA_E2E__?.setupState?.showShortcutsModal);",
     );
     if (visible) {
-      await client.executeSync(
-        `document.dispatchEvent(new KeyboardEvent("keydown", {
-          key: "Escape",
-          bubbles: true,
-        }));`,
-      );
+      await client.executeSync(buildGlobalKeydownScript({ key: "Escape" }));
       await client.waitForNoElement(".shortcuts-modal", 5000);
       return;
     }

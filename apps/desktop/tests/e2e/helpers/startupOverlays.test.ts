@@ -33,6 +33,7 @@ describe("dismissStartupShortcutsModal", () => {
 
     await dismissStartupShortcutsModal(client);
 
+    expect(client.executeCalls.at(-1)).toContain("window.dispatchEvent");
     expect(client.executeCalls.at(-1)).toContain('key: "Escape"');
     expect(client.waitCalls).toEqual([{ css: ".shortcuts-modal", timeoutMs: 5000 }]);
   });

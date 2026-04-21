@@ -7,6 +7,7 @@ import { submitTaskFromUi } from "../helpers/newTaskFlow";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 import { cleanupWorktrees, importTestRepo, resetDatabase } from "../helpers/reset";
 import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
+import { waitForTaskCreated } from "../helpers/taskCreation";
 import { nudgeTerminalTrustPrompt } from "../helpers/terminalInput";
 import { WebDriverClient } from "../helpers/webdriver";
 import { waitForFile, waitForNewTaskWorktree } from "../helpers/worktreeFs";
@@ -27,6 +28,39 @@ async function nudgeTrustPromptViaUi(client: WebDriverClient): Promise<void> {
     attempts: 4,
     intervalMs: 5_000,
   });
+}
+
+async function captureTaskCreateDiagnostics(client: WebDriverClient) {
+  const ui = await client.executeSync<{
+    pendingSetupIds: string[];
+    selectedRepoId: string | null;
+    selectedRepoPath: string | null;
+    showNewTaskModal: boolean;
+    toastMessages: string[];
+  }>(`const ctx = window.__KANNA_E2E__.setupState;
+      const toastMessages = Array.from(document.querySelectorAll(".toast-message"))
+        .map((node) => node.textContent ?? "")
+        .filter((text) => text.length > 0);
+      return {
+        pendingSetupIds: ctx.store?.pendingSetupIds?.value ?? [],
+        selectedRepoId: ctx.store?.selectedRepoId?.value ?? null,
+        selectedRepoPath: ctx.store?.selectedRepo?.path ?? null,
+        showNewTaskModal: Boolean(ctx.showNewTaskModal?.value ?? ctx.showNewTaskModal),
+        toastMessages,
+      };`);
+  const db = await client.executeAsync<{
+    repos: Array<{ id: string; path: string }>;
+    items: Array<{ id: string; prompt: string | null; repo_id: string; agent_provider: string | null }>;
+  }>(`const cb = arguments[arguments.length - 1];
+      const ctx = window.__KANNA_E2E__.setupState;
+      const db = ctx.db.value || ctx.db;
+      Promise.all([
+        db.select("SELECT id, path FROM repo ORDER BY created_at DESC"),
+        db.select("SELECT id, prompt, repo_id, agent_provider FROM pipeline_item ORDER BY created_at DESC LIMIT 5"),
+      ])
+        .then(([repos, items]) => cb({ repos, items }))
+        .catch((error) => cb({ repos: [], items: [], error: error.message || String(error) }));`);
+  return { ...ui, ...db };
 }
 
 describe("agent writes file (real CLI)", () => {
@@ -56,9 +90,19 @@ describe("agent writes file (real CLI)", () => {
     const worktreeBaseline = new Set(await readTaskWorktreeNames(testRepoPath));
 
     await submitTaskFromUi(client, prompt);
-    await client.waitForElement(".terminal-container", 15_000);
+    let task;
+    try {
+      task = await waitForTaskCreated(client, prompt, 20_000);
+    } catch (error) {
+      const diagnostics = await captureTaskCreateDiagnostics(client);
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n` +
+        `diagnostics=${JSON.stringify(diagnostics)}`,
+      );
+    }
+    expect(task.agent_provider).toBe("codex");
 
-    const worktreePath = await waitForNewTaskWorktree(testRepoPath, worktreeBaseline, 20_000);
+    const worktreePath = await waitForNewTaskWorktree(testRepoPath, worktreeBaseline, 60_000);
 
     await nudgeTrustPromptViaUi(client);
 

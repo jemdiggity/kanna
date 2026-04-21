@@ -28,7 +28,6 @@ export async function resolveRealE2eAgentOverride(
   input: RealE2eAgentOverrideInput,
 ): Promise<RealE2eAgentOverride | null> {
   if (input.agentType !== "pty") return null;
-  if (input.explicitAgentProvider || input.explicitModel) return null;
 
   const [rawProvider, rawModel] = await Promise.all([
     readEnv("KANNA_E2E_REAL_AGENT_PROVIDER"),

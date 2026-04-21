@@ -35,6 +35,7 @@ import {
   getPreferredAgentProviders,
   resolveAgentProvider,
 } from "./agent-provider";
+import { resolveRealE2eAgentOverride } from "./e2eRealAgentOverride";
 import { buildPendingTaskPlaceholder } from "./taskCreationPlaceholder";
 import { getTaskCloseBehavior } from "./taskCloseBehavior";
 import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
@@ -294,6 +295,7 @@ export function createTasksApi(
     opts?: CreateItemOptions,
   ) {
     const s0 = performance.now();
+    const resolvedModel = opts?.customTask?.model ?? opts?.model ?? null;
     const markSetupFailed = async (error: unknown, logPrefix: string, toastMessage: string) => {
       await updatePipelineItemActivity(context.requireDb(), id, "idle");
       await reloadSnapshot();
@@ -360,7 +362,7 @@ export function createTasksApi(
             env: sdkEnv,
             systemPrompt: null,
             permissionMode: opts?.customTask?.permissionMode ?? null,
-            model: opts?.customTask?.model ?? null,
+            model: resolvedModel,
             allowedTools: opts?.customTask?.allowedTools ?? null,
             disallowedTools: opts?.customTask?.disallowedTools ?? null,
             maxTurns: opts?.customTask?.maxTurns ?? null,
@@ -372,7 +374,7 @@ export function createTasksApi(
             prompt,
             {
               agentProvider,
-              model: opts?.customTask?.model,
+              model: resolvedModel ?? undefined,
               permissionMode: opts?.customTask?.permissionMode,
               allowedTools: opts?.customTask?.allowedTools,
               disallowedTools: opts?.customTask?.disallowedTools,
@@ -449,7 +451,15 @@ export function createTasksApi(
     const effectivePrompt = opts?.customTask?.prompt ?? prompt;
     const effectiveAgentType = opts?.customTask?.executionMode ?? agentType;
     const requestedAgentProviders = opts?.customTask?.agentProvider ?? opts?.agentProvider;
+    const requestedModel = opts?.customTask?.model ?? opts?.model;
     const displayName = opts?.customTask?.name ?? opts?.displayName ?? null;
+    const realE2eAgentOverride = await resolveRealE2eAgentOverride({
+      agentType: effectiveAgentType,
+      explicitAgentProvider: requestedAgentProviders,
+      explicitModel: requestedModel,
+    });
+    const providerCandidatesExplicit = realE2eAgentOverride?.agentProvider ?? requestedAgentProviders;
+    const resolvedModel = requestedModel ?? realE2eAgentOverride?.model ?? null;
 
     const pendingPlaceholder = buildPendingTaskPlaceholder({
       id,
@@ -524,7 +534,7 @@ export function createTasksApi(
     let effectiveAgentProvider: AgentProvider;
     try {
       const candidates = getPreferredAgentProviders({
-        explicit: requestedAgentProviders,
+        explicit: providerCandidatesExplicit,
         stage: firstStageProviders,
         agent: firstStageAgentProviders,
       });
@@ -616,7 +626,10 @@ export function createTasksApi(
             pipelinePrompt,
             effectiveAgentType,
             effectiveAgentProvider,
-            opts,
+            {
+              ...opts,
+              model: resolvedModel ?? undefined,
+            },
           );
         },
         reconcile: reloadSnapshot,

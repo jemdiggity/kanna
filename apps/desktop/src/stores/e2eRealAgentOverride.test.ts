@@ -78,7 +78,7 @@ describe("resolveRealE2eAgentOverride", () => {
     });
   });
 
-  it("does not apply overrides when an explicit provider is supplied", async () => {
+  it("still applies overrides when an explicit provider is supplied", async () => {
     readEnvVarMock.mockImplementation(async (name: string) => {
       if (name === "KANNA_E2E_REAL_AGENT_PROVIDER") return "codex";
       if (name === "KANNA_E2E_REAL_AGENT_MODEL") return "gpt-5.4-mini";
@@ -93,10 +93,13 @@ describe("resolveRealE2eAgentOverride", () => {
         explicitAgentProvider: "copilot",
         explicitModel: undefined,
       }),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({
+      agentProvider: "codex",
+      model: "gpt-5.4-mini",
+    });
   });
 
-  it("does not apply overrides when an explicit model is supplied", async () => {
+  it("still applies overrides when an explicit model is supplied", async () => {
     readEnvVarMock.mockImplementation(async (name: string) => {
       if (name === "KANNA_E2E_REAL_AGENT_PROVIDER") return "codex";
       if (name === "KANNA_E2E_REAL_AGENT_MODEL") return "gpt-5.4-mini";
@@ -111,7 +114,10 @@ describe("resolveRealE2eAgentOverride", () => {
         explicitAgentProvider: undefined,
         explicitModel: "gpt-5.1",
       }),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({
+      agentProvider: "codex",
+      model: "gpt-5.4-mini",
+    });
   });
 
   it("does not apply overrides to SDK tasks", async () => {

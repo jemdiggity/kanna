@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   callVueMethod: vi.fn(),
   execDb: vi.fn(),
-  getVueState: vi.fn(),
   queryDb: vi.fn(),
   tauriInvoke: vi.fn(),
 }));
@@ -11,7 +10,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./vue", () => ({
   callVueMethod: mocks.callVueMethod,
   execDb: mocks.execDb,
-  getVueState: mocks.getVueState,
   queryDb: mocks.queryDb,
   tauriInvoke: mocks.tauriInvoke,
 }));
@@ -23,7 +21,6 @@ describe("reset helpers", () => {
     vi.resetModules();
     mocks.callVueMethod.mockReset();
     mocks.execDb.mockReset();
-    mocks.getVueState.mockReset();
     mocks.queryDb.mockReset();
     mocks.tauriInvoke.mockReset();
     process.env.KANNA_E2E_LIVE_REPO_ROOT = originalLiveRepoRoot;
@@ -31,7 +28,10 @@ describe("reset helpers", () => {
 
   it("cleans up only task worktrees created after the imported repo baseline", async () => {
     const client = {
-      waitForText: vi.fn().mockResolvedValue("ok"),
+      executeSync: vi.fn().mockResolvedValueOnce({
+        selectedRepoId: "repo-1",
+        selectedRepoPath: "/repo",
+      }),
     };
 
     mocks.tauriInvoke
@@ -75,9 +75,7 @@ describe("reset helpers", () => {
   });
 
   it("refuses to import repos from the live checkout", async () => {
-    const client = {
-      waitForText: vi.fn().mockResolvedValue("ok"),
-    };
+    const client = {};
 
     process.env.KANNA_E2E_LIVE_REPO_ROOT = "/live/kanna";
     mocks.callVueMethod.mockResolvedValue(undefined);
@@ -91,14 +89,32 @@ describe("reset helpers", () => {
   });
 
   it("refuses to remove worktrees when no baseline was recorded for the repo", async () => {
-    const client = {
-      waitForText: vi.fn().mockResolvedValue("ok"),
-    };
+    const client = {};
 
     const { cleanupWorktrees } = await import("./reset");
 
     await cleanupWorktrees(client as never, "/repo");
 
     expect(mocks.tauriInvoke).not.toHaveBeenCalled();
+  });
+
+  it("waits for the imported repo to become selected in Vue state instead of relying on sidebar DOM", async () => {
+    const client = {
+      executeSync: vi.fn()
+        .mockResolvedValueOnce({ selectedRepoId: null, selectedRepoPath: null })
+        .mockResolvedValueOnce({ selectedRepoId: null, selectedRepoPath: null })
+        .mockResolvedValueOnce({ selectedRepoId: "repo-1", selectedRepoPath: "/repo" }),
+    };
+
+    mocks.tauriInvoke.mockResolvedValueOnce([]);
+    mocks.callVueMethod.mockResolvedValue(undefined);
+    mocks.queryDb.mockResolvedValueOnce([{ id: "repo-1", name: "test-repo" }]);
+
+    const { importTestRepo } = await import("./reset");
+
+    await expect(importTestRepo(client as never, "/repo", "test-repo")).resolves.toBe("repo-1");
+    expect(mocks.callVueMethod).toHaveBeenCalledWith(client, "handleImportRepo", "/repo", "test-repo", "main");
+    expect(mocks.callVueMethod).toHaveBeenCalledWith(client, "handleSelectRepo", "repo-1");
+    expect(client.executeSync).toHaveBeenCalled();
   });
 });

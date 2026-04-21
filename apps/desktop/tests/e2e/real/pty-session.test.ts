@@ -5,30 +5,8 @@ import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/rese
 import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
 import { submitTaskFromUi } from "../helpers/newTaskFlow";
 import { nudgeTerminalTrustPrompt } from "../helpers/terminalInput";
-import { queryDb } from "../helpers/vue";
+import { waitForTaskCreated } from "../helpers/taskCreation";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
-
-interface PipelineItemRow {
-  id: string;
-}
-
-async function waitForTaskCreated(client: WebDriverClient, prompt: string, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const rows = (await queryDb(
-      client,
-      "SELECT id FROM pipeline_item WHERE prompt = ? ORDER BY created_at DESC LIMIT 1",
-      [prompt],
-    )) as PipelineItemRow[];
-    if (rows[0]?.id) {
-      return;
-    }
-    await sleep(200);
-  }
-
-  throw new Error(`timed out waiting for task prompt ${prompt}`);
-}
 
 describe("pty session (real CLI)", () => {
   const client = new WebDriverClient();
@@ -57,7 +35,8 @@ describe("pty session (real CLI)", () => {
 
     await submitTaskFromUi(client, prompt);
 
-    await waitForTaskCreated(client, prompt);
+    const task = await waitForTaskCreated(client, prompt);
+    expect(task.agent_provider).toBe("codex");
     await nudgeTerminalTrustPrompt(client, {
       initialDelayMs: 5_000,
       attempts: 4,

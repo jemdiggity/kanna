@@ -20,6 +20,11 @@ interface InstanceConfig {
   webDriverPort: number;
 }
 
+interface RunningInstances {
+  primary: InstanceConfig;
+  secondary: InstanceConfig | null;
+}
+
 function sanitizeSuffix(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
@@ -177,6 +182,14 @@ function needsSecondaryInstance(testTargets: string[]): boolean {
   return testTargets.some((target) => /real\/local-transfer-.*\.test\.ts$/.test(target));
 }
 
+function targetNeedsSecondaryInstance(testTarget: string): boolean {
+  return needsSecondaryInstance([testTarget]);
+}
+
+function isRealTestTarget(testTarget: string): boolean {
+  return testTarget.includes("/real/");
+}
+
 function createInstanceConfig(input: {
   daemonDir: string;
   dbName: string;
@@ -285,39 +298,83 @@ async function main(): Promise<void> {
       })
     : null;
 
-  const testEnv = toSpawnEnv({
-    KANNA_DAEMON_DIR: primaryDaemonDir,
-    KANNA_DB_NAME: primaryDbName,
-    KANNA_DEV_PORT: String(primaryDevPort),
-    KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,
-    KANNA_WEBDRIVER_PORT: String(primaryWebDriverPort),
-    ...realE2eAgentEnv,
-    ...(secondary ? { KANNA_E2E_TARGET_WEBDRIVER_PORT: String(secondary.webDriverPort) } : {}),
-  });
+  function buildTestEnv(withSecondary: boolean): Record<string, string> {
+    return toSpawnEnv({
+      KANNA_DAEMON_DIR: primaryDaemonDir,
+      KANNA_DB_NAME: primaryDbName,
+      KANNA_DEV_PORT: String(primaryDevPort),
+      KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,
+      KANNA_WEBDRIVER_PORT: String(primaryWebDriverPort),
+      ...realE2eAgentEnv,
+      ...(withSecondary && secondary
+        ? { KANNA_E2E_TARGET_WEBDRIVER_PORT: String(secondary.webDriverPort) }
+        : {}),
+    });
+  }
 
-  try {
+  async function startInstances(withSecondary: boolean): Promise<RunningInstances> {
     await runCommand(primary.startCommand, { cwd: repoRoot, env: primary.env });
-    if (secondary) {
-      await runCommand(secondary.startCommand, { cwd: repoRoot, env: secondary.env });
+    const secondaryInstance = withSecondary ? secondary : null;
+    if (secondaryInstance) {
+      await runCommand(secondaryInstance.startCommand, { cwd: repoRoot, env: secondaryInstance.env });
     }
     console.log(`[e2e] waiting for primary app at ${primary.baseUrl}`);
     await waitForApp(primary.baseUrl, 10 * 60_000);
     console.log(`[e2e] primary app ready at ${primary.baseUrl}`);
-    if (secondary) {
-      console.log(`[e2e] waiting for secondary app at ${secondary.baseUrl}`);
-      await waitForApp(secondary.baseUrl, 10 * 60_000);
-      console.log(`[e2e] secondary app ready at ${secondary.baseUrl}`);
+    if (secondaryInstance) {
+      console.log(`[e2e] waiting for secondary app at ${secondaryInstance.baseUrl}`);
+      await waitForApp(secondaryInstance.baseUrl, 10 * 60_000);
+      console.log(`[e2e] secondary app ready at ${secondaryInstance.baseUrl}`);
     }
 
+    return { primary, secondary: secondaryInstance };
+  }
+
+  async function stopInstances(instances: RunningInstances | null): Promise<void> {
+    if (!instances) return;
+
+    if (instances.secondary) {
+      await runCommand(instances.secondary.stopCommand, {
+        cwd: repoRoot,
+        env: instances.secondary.env,
+      }).catch(() => undefined);
+    }
+    await runCommand(instances.primary.stopCommand, {
+      cwd: repoRoot,
+      env: instances.primary.env,
+    }).catch(() => undefined);
+  }
+
+  let runningInstances: RunningInstances | null = null;
+  let lastTargetWasReal = false;
+
+  try {
+    runningInstances = await startInstances(false);
+
     for (const testTarget of testTargets) {
+      const targetIsReal = isRealTestTarget(testTarget);
+      const needsSecondaryForTarget = targetNeedsSecondaryInstance(testTarget);
+      if (targetIsReal) {
+        if (!lastTargetWasReal) {
+          console.log("\n[e2e] restarting app instances before real test isolation\n");
+        } else {
+          console.log("\n[e2e] restarting app instances between real tests\n");
+        }
+        await stopInstances(runningInstances);
+        runningInstances = await startInstances(needsSecondaryForTarget);
+      } else if (runningInstances?.secondary && !needsSecondaryForTarget) {
+        await stopInstances(runningInstances);
+        runningInstances = await startInstances(false);
+      }
       console.log(`\n[e2e] running ${testTarget}\n`);
       await runCommand(
         ["pnpm", "exec", "vitest", "run", "--config", "./tests/e2e/vitest.config.ts", testTarget],
         {
           cwd: desktopRoot,
-          env: testEnv,
+          env: buildTestEnv(needsSecondaryForTarget),
         },
       );
+      lastTargetWasReal = targetIsReal;
     }
   } catch (error) {
     console.error("\n[e2e] recent dev log:\n");
@@ -327,17 +384,10 @@ async function main(): Promise<void> {
     }
     throw error;
   } finally {
+    await stopInstances(runningInstances);
     if (secondary) {
-      await runCommand(secondary.stopCommand, {
-        cwd: repoRoot,
-        env: secondary.env,
-      }).catch(() => undefined);
       await rm(secondary.daemonDir, { recursive: true, force: true }).catch(() => undefined);
     }
-    await runCommand(primary.stopCommand, {
-      cwd: repoRoot,
-      env: primary.env,
-    }).catch(() => undefined);
     await rm(primary.daemonDir, { recursive: true, force: true }).catch(() => undefined);
     await rm(transferRegistryDir, { recursive: true, force: true }).catch(() => undefined);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getShortcutGroups } from "./useKeyboardShortcuts";
+import { getShortcutGroups, isAppShortcut } from "./useKeyboardShortcuts";
 
 function identityTranslate(key: string): string {
   return key;
@@ -101,5 +101,15 @@ describe("getShortcutGroups", () => {
       "Tree Explorer",
       "View Diff",
     ]);
+  });
+});
+
+describe("isAppShortcut", () => {
+  it("matches shifted letter shortcuts using the uppercase event key", () => {
+    expect(isAppShortcut(new KeyboardEvent("keydown", {
+      key: "E",
+      metaKey: true,
+      shiftKey: true,
+    }))).toBe(true);
   });
 });

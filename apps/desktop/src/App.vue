@@ -176,6 +176,7 @@ const commitGraphModalRef = ref<InstanceType<typeof CommitGraphModal> | null>(nu
 const treeExplorerRef = ref<InstanceType<typeof TreeExplorerModal> | null>(null);
 const filePreviewRef = ref<InstanceType<typeof FilePreviewModal> | null>(null);
 const preferencesRef = ref<InstanceType<typeof PreferencesPanel> | null>(null);
+const e2eAppReady = ref(false);
 
 interface PendingIncomingTransferRow {
   id: string;
@@ -1062,6 +1063,7 @@ onMounted(async () => {
 
   await store.init(db);
   await importPendingIncomingTransfers();
+  e2eAppReady.value = true;
 
   try {
     const unlistenTransferRequest = await listen("transfer-request", async (event: unknown) => {

@@ -3,6 +3,7 @@
  * Checks that the Tauri app is running with WebDriver available.
  */
 import { getWebDriverBaseUrl, getWebDriverPort } from "./helpers/webdriverPort";
+import { APP_READY_SCRIPT } from "./helpers/appReady";
 
 const WD_URL = getWebDriverBaseUrl();
 const WD_PORT = getWebDriverPort();
@@ -56,9 +57,7 @@ const readyDeadline = Date.now() + 15_000;
 let vueReady = false;
 while (Date.now() < readyDeadline) {
   try {
-    vueReady = Boolean(await executeSync(
-      "return Boolean(window.__KANNA_E2E__ && window.__KANNA_E2E__.setupState);"
-    ));
+    vueReady = Boolean(await executeSync(`return ${APP_READY_SCRIPT};`));
     if (vueReady) break;
   } catch {
     // The window may still be booting.
