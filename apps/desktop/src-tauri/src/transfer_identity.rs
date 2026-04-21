@@ -15,21 +15,34 @@ pub(crate) struct ResolvedTransferIdentity {
     pub display_name: String,
 }
 
-pub(crate) fn resolve_transfer_identity(
+pub(crate) fn resolve_transfer_root_with_override(
     app_data_dir: &Path,
+    override_root: Option<&Path>,
+) -> PathBuf {
+    override_root
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| app_data_dir.join("transfer"))
+}
+
+pub(crate) fn resolve_transfer_identity_for_root(
+    transfer_root: &Path,
     machine_name: Option<&str>,
 ) -> Result<ResolvedTransferIdentity, String> {
-    let identity = load_or_create_transfer_identity(app_data_dir)?;
+    let identity = load_or_create_transfer_identity_for_root(transfer_root)?;
     Ok(ResolvedTransferIdentity {
         peer_id: identity.peer_id.clone(),
         display_name: resolve_transfer_display_name(&identity, machine_name),
     })
 }
 
-pub(crate) fn load_or_create_transfer_identity(
-    app_data_dir: &Path,
+pub(crate) fn load_or_create_transfer_identity_for_root(
+    transfer_root: &Path,
 ) -> Result<TransferIdentityRecord, String> {
-    let path = transfer_identity_path(app_data_dir);
+    let path = transfer_identity_path_for_root(transfer_root);
+    load_or_create_transfer_identity_at_path(&path)
+}
+
+fn load_or_create_transfer_identity_at_path(path: &Path) -> Result<TransferIdentityRecord, String> {
     match std::fs::read_to_string(&path) {
         Ok(contents) => {
             serde_json::from_str::<TransferIdentityRecord>(&contents).map_err(|error| {
@@ -57,15 +70,15 @@ pub(crate) fn load_or_create_transfer_identity(
 }
 
 pub(crate) fn resolve_transfer_root(app_data_dir: &Path) -> PathBuf {
-    std::env::var("KANNA_TRANSFER_ROOT")
+    let override_root = std::env::var("KANNA_TRANSFER_ROOT")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| app_data_dir.join("transfer"))
+        .map(PathBuf::from);
+    resolve_transfer_root_with_override(app_data_dir, override_root.as_deref())
 }
 
-pub(crate) fn transfer_identity_path(app_data_dir: &Path) -> PathBuf {
-    resolve_transfer_root(app_data_dir).join("identity.json")
+pub(crate) fn transfer_identity_path_for_root(transfer_root: &Path) -> PathBuf {
+    transfer_root.join("identity.json")
 }
 
 pub(crate) fn resolve_transfer_display_name(
@@ -185,7 +198,8 @@ mod tests {
     #[test]
     fn loads_existing_transfer_identity_from_app_data() {
         let temp = TestTempDir::new();
-        let path = transfer_identity_path(temp.path());
+        let transfer_root = resolve_transfer_root(temp.path());
+        let path = transfer_identity_path_for_root(&transfer_root);
         std::fs::create_dir_all(path.parent().expect("identity path should have parent"))
             .expect("identity directory should be created");
         std::fs::write(
@@ -197,7 +211,30 @@ mod tests {
         )
         .expect("identity record should be written");
 
-        let identity = load_or_create_transfer_identity(temp.path())
+        let identity = load_or_create_transfer_identity_for_root(&transfer_root)
+            .expect("existing transfer identity should load");
+
+        assert_eq!(identity.peer_id, "peer-stable");
+        assert_eq!(identity.nickname.as_deref(), Some("Desk"));
+    }
+
+    #[test]
+    fn loads_existing_transfer_identity_from_explicit_root() {
+        let temp = TestTempDir::new();
+        let transfer_root = temp.path().join("explicit-transfer-root");
+        let path = transfer_identity_path_for_root(&transfer_root);
+        std::fs::create_dir_all(path.parent().expect("identity path should have parent"))
+            .expect("identity directory should be created");
+        std::fs::write(
+            &path,
+            r#"{
+  "peer_id": "peer-stable",
+  "nickname": "Desk"
+}"#,
+        )
+        .expect("identity record should be written");
+
+        let identity = load_or_create_transfer_identity_for_root(&transfer_root)
             .expect("existing transfer identity should load");
 
         assert_eq!(identity.peer_id, "peer-stable");
@@ -207,12 +244,26 @@ mod tests {
     #[test]
     fn creates_and_persists_transfer_identity_when_missing() {
         let temp = TestTempDir::new();
+        let transfer_root = resolve_transfer_root(temp.path());
 
-        let identity = load_or_create_transfer_identity(temp.path())
+        let identity = load_or_create_transfer_identity_for_root(&transfer_root)
             .expect("missing transfer identity should be created");
 
         assert!(!identity.peer_id.is_empty());
-        assert!(transfer_identity_path(temp.path()).exists());
+        assert!(transfer_identity_path_for_root(&transfer_root).exists());
+    }
+
+    #[test]
+    fn creates_and_persists_transfer_identity_under_explicit_root() {
+        let temp = TestTempDir::new();
+        let transfer_root = temp.path().join("explicit-transfer-root");
+
+        let identity = load_or_create_transfer_identity_for_root(&transfer_root)
+            .expect("missing transfer identity should be created");
+
+        assert!(!identity.peer_id.is_empty());
+        assert!(transfer_identity_path_for_root(&transfer_root).exists());
+        assert!(!temp.path().join("transfer").join("identity.json").exists());
     }
 
     #[test]

@@ -17,7 +17,10 @@ const ports = computed<number[]>(() => {
   if (!props.item.port_env) return [];
   try {
     const env = JSON.parse(props.item.port_env) as Record<string, string | number>;
-    return Object.values(env).map(Number).filter((n) => !isNaN(n));
+    return Object.values(env)
+      .map(Number)
+      .filter((n) => !Number.isNaN(n))
+      .sort((a, b) => a - b);
   } catch {
     return [];
   }
