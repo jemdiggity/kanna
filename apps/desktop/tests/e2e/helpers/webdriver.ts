@@ -4,6 +4,7 @@
 import { writeFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { APP_READY_SCRIPT } from "./appReady";
 import { dismissStartupShortcutsModal } from "./startupOverlays";
 import { getWebDriverPort } from "./webdriverPort";
 
@@ -67,6 +68,21 @@ export class WebDriverClient {
   async sendKeys(elementId: string, text: string): Promise<void> {
     await this.post(`/session/${this.sid}/element/${elementId}/value`, {
       text,
+    });
+  }
+
+  async pressKey(value: string): Promise<void> {
+    await this.post(`/session/${this.sid}/actions`, {
+      actions: [
+        {
+          type: "key",
+          id: "keyboard",
+          actions: [
+            { type: "keyDown", value },
+            { type: "keyUp", value },
+          ],
+        },
+      ],
     });
   }
 
@@ -171,9 +187,7 @@ export class WebDriverClient {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
-        const ready = await this.executeSync<boolean>(
-          "return Boolean(window.__KANNA_E2E__ && window.__KANNA_E2E__.setupState);"
-        );
+        const ready = await this.executeSync<boolean>(`return ${APP_READY_SCRIPT};`);
         if (ready) return;
       } catch {
         // The window may still be booting.

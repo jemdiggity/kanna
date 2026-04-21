@@ -3,6 +3,7 @@
  */
 import { join } from "path";
 import { copyFile, access } from "fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { WebDriverClient } from "./webdriver";
 import { execDb, callVueMethod, getVueState, queryDb, tauriInvoke } from "./vue";
 import { assertSafeE2eRepoPath } from "./fixture-repo";
@@ -13,6 +14,8 @@ interface GitWorktreeEntry {
 }
 
 const worktreeCleanupBaselines = new Map<string, Set<string>>();
+const IMPORT_REPO_SELECTION_TIMEOUT_MS = 10_000;
+const IMPORT_REPO_SELECTION_POLL_MS = 100;
 
 async function recordWorktreeCleanupBaseline(
   client: WebDriverClient,
@@ -162,7 +165,6 @@ export async function importTestRepo(
   assertSafeE2eRepoPath(repoPath);
   await recordWorktreeCleanupBaseline(client, repoPath);
   await callVueMethod(client, "handleImportRepo", repoPath, name, branch);
-  await client.waitForText(".repo-header", name);
   const rows = (await queryDb(
     client,
     "SELECT id, name FROM repo WHERE path = ?",
@@ -173,5 +175,21 @@ export async function importTestRepo(
 
   // Select it
   await callVueMethod(client, "handleSelectRepo", repo.id);
-  return repo.id;
+  const deadline = Date.now() + IMPORT_REPO_SELECTION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const selected = await client.executeSync<{
+      selectedRepoId: string | null;
+      selectedRepoPath: string | null;
+    }>(`const ctx = window.__KANNA_E2E__.setupState;
+      return {
+        selectedRepoId: ctx.store?.selectedRepoId?.value ?? null,
+        selectedRepoPath: ctx.store?.selectedRepo?.path ?? null,
+      };`);
+    if (selected.selectedRepoId === repo.id || selected.selectedRepoPath === repoPath) {
+      return repo.id;
+    }
+    await sleep(IMPORT_REPO_SELECTION_POLL_MS);
+  }
+
+  throw new Error(`Repo "${name}" was imported but never became selected.`);
 }

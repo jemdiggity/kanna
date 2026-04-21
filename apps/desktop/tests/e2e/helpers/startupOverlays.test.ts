@@ -4,20 +4,20 @@ import { dismissStartupShortcutsModal } from "./startupOverlays";
 interface FakeClient {
   executeCalls: string[];
   waitCalls: Array<{ css: string; timeoutMs: number }>;
-  visible: boolean;
+  visibilityChecks: boolean[];
   executeSync<T = unknown>(script: string): Promise<T>;
   waitForNoElement(css: string, timeoutMs?: number): Promise<void>;
 }
 
-function createFakeClient(visible: boolean): FakeClient {
+function createFakeClient(visibilityChecks: boolean[]): FakeClient {
   return {
     executeCalls: [],
     waitCalls: [],
-    visible,
+    visibilityChecks,
     async executeSync<T = unknown>(script: string): Promise<T> {
       this.executeCalls.push(script);
       if (script.includes("showShortcutsModal")) {
-        return this.visible as T;
+        return (this.visibilityChecks.shift() ?? false) as T;
       }
       return undefined as T;
     },
@@ -28,22 +28,22 @@ function createFakeClient(visible: boolean): FakeClient {
 }
 
 describe("dismissStartupShortcutsModal", () => {
-  it("dismisses the shortcuts modal when it is visible", async () => {
-    const client = createFakeClient(true);
+  it("waits for the shortcuts modal and dismisses it with Escape", async () => {
+    const client = createFakeClient([false, false, true]);
 
     await dismissStartupShortcutsModal(client);
 
-    expect(client.executeCalls).toHaveLength(2);
-    expect(client.executeCalls[1]).toContain("showShortcutsModal = false");
+    expect(client.executeCalls.at(-1)).toContain("window.dispatchEvent");
+    expect(client.executeCalls.at(-1)).toContain('key: "Escape"');
     expect(client.waitCalls).toEqual([{ css: ".shortcuts-modal", timeoutMs: 5000 }]);
   });
 
   it("does nothing when the shortcuts modal is already hidden", async () => {
-    const client = createFakeClient(false);
+    const client = createFakeClient([false, false, false]);
 
     await dismissStartupShortcutsModal(client);
 
-    expect(client.executeCalls).toHaveLength(1);
+    expect(client.executeCalls.every((call) => !call.includes('key: "Escape"'))).toBe(true);
     expect(client.waitCalls).toEqual([]);
   });
 });

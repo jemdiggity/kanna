@@ -63,6 +63,9 @@ const mockState = vi.hoisted(() => {
     name: "default",
     stages: [],
   };
+  let readEnvVarOverrides: Record<string, string> = {
+    KANNA_DB_NAME: "kanna-wt-task-existing.db",
+  };
   let baseBranchResponse: string[] | Error = ["origin/main", "main"];
   let repoConfig: RepoConfig = {};
   let repoConfigResolver: ((path: string) => RepoConfig | undefined) | null = null;
@@ -113,8 +116,7 @@ const mockState = vi.hoisted(() => {
       case "get_pipeline_socket_path":
         return "/tmp/kanna.sock";
       case "read_env_var":
-        if (args?.name === "KANNA_DB_NAME") return "kanna-wt-task-existing.db";
-        return "";
+        return readEnvVarOverrides[String(args?.name ?? "")] ?? "";
       case "read_builtin_resource":
         return "{}";
       case "read_text_file":
@@ -177,6 +179,9 @@ const mockState = vi.hoisted(() => {
     pipelineItems = [];
     pipelineDefinition = { name: "default", stages: [] };
     baseBranchResponse = ["origin/main", "main"];
+    readEnvVarOverrides = {
+      KANNA_DB_NAME: "kanna-wt-task-existing.db",
+    };
     repoConfig = {};
     repoConfigResolver = null;
     taskPorts = [];
@@ -217,6 +222,12 @@ const mockState = vi.hoisted(() => {
     },
     set baseBranchResponse(value: string[] | Error) {
       baseBranchResponse = value;
+    },
+    get readEnvVarOverrides() {
+      return readEnvVarOverrides;
+    },
+    set readEnvVarOverrides(value: Record<string, string>) {
+      readEnvVarOverrides = value;
     },
     get repoConfig() {
       return repoConfig;
@@ -742,6 +753,68 @@ describe("kanna store task base branch integration", () => {
             KANNA_CLI_DB_PATH: "/tmp/kanna/kanna-wt-task-existing.db",
             KANNA_SOCKET_PATH: "/tmp/kanna.sock",
           }),
+        }),
+      );
+    });
+  });
+
+  it("uses the real E2E override for PTY task provider and model when no explicit choice is supplied", async () => {
+    mockState.readEnvVarOverrides = {
+      KANNA_DB_NAME: "kanna-wt-task-existing.db",
+      KANNA_E2E_REAL_AGENT_PROVIDER: "codex",
+      KANNA_E2E_REAL_AGENT_MODEL: "gpt-5.4-mini",
+    };
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Use cheap real e2e agent", "pty");
+
+    expect(mockState.insertPipelineItemMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        agent_provider: "codex",
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "spawn_session",
+        expect.objectContaining({
+          agentProvider: "codex",
+          args: expect.arrayContaining([
+            expect.stringContaining("codex -m gpt-5.4-mini"),
+          ]),
+        }),
+      );
+    });
+  });
+
+  it("forces the real E2E PTY provider override even when the UI supplied one", async () => {
+    mockState.readEnvVarOverrides = {
+      KANNA_DB_NAME: "kanna-wt-task-existing.db",
+      KANNA_E2E_REAL_AGENT_PROVIDER: "codex",
+      KANNA_E2E_REAL_AGENT_MODEL: "gpt-5.4-mini",
+    };
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Respect explicit provider", "pty", {
+      agentProvider: "copilot",
+    });
+
+    expect(mockState.insertPipelineItemMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        agent_provider: "codex",
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "spawn_session",
+        expect.objectContaining({
+          agentProvider: "codex",
+          args: expect.arrayContaining([
+            expect.stringContaining("codex -m gpt-5.4-mini"),
+          ]),
         }),
       );
     });

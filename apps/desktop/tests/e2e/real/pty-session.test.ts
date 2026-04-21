@@ -2,16 +2,22 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
-import { callVueMethod } from "../helpers/vue";
+import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
+import { submitTaskFromUi } from "../helpers/newTaskFlow";
+import { nudgeTerminalTrustPrompt } from "../helpers/terminalInput";
+import { waitForTaskCreated } from "../helpers/taskCreation";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 
-describe("claude session (real CLI)", () => {
+describe("pty session (real CLI)", () => {
   const client = new WebDriverClient();
   let testRepoPath = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
+    await client.executeSync("location.reload()");
+    await client.waitForAppReady();
+    await dismissStartupShortcutsModal(client);
     testRepoPath = await createFixtureRepo("claude-real-test");
     await importTestRepo(client, testRepoPath, "claude-real-test");
   });
@@ -24,15 +30,18 @@ describe("claude session (real CLI)", () => {
     await client.deleteSession();
   });
 
-  it("creates task and Claude produces terminal output", async () => {
-    await callVueMethod(
-      client,
-      "handleNewTaskSubmit",
-      "Respond with exactly: E2E_TEST_OK"
-    );
+  it("creates a PTY task and renders terminal output", async () => {
+    const prompt = "Respond with exactly: E2E_TEST_OK";
 
-    // Wait for task to appear
-    await client.waitForText(".sidebar", "In Progress");
+    await submitTaskFromUi(client, prompt);
+
+    const task = await waitForTaskCreated(client, prompt);
+    expect(task.agent_provider).toBe("codex");
+    await nudgeTerminalTrustPrompt(client, {
+      initialDelayMs: 5_000,
+      attempts: 4,
+      intervalMs: 5_000,
+    });
 
     // In PTY mode, output appears in the terminal container
     // Wait for the terminal to have content (xterm.js renders into a canvas)
@@ -45,11 +54,11 @@ describe("claude session (real CLI)", () => {
       `const el = document.querySelector(".xterm-screen");
        return el ? el.textContent : "";`
     );
-    // Terminal should have some content from Claude
+    // Terminal should have some content from the real agent session
     expect(termText.length).toBeGreaterThan(0);
   });
 
-  it("terminal view is rendered for PTY mode", async () => {
+  it("renders the terminal view for PTY mode", async () => {
     const container = await client.findElement(".terminal-container");
     expect(container).toBeTruthy();
   });

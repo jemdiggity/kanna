@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { buildGlobalKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
+import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
 import { getVueState } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 const CTX_SCRIPT = 'window.__KANNA_E2E__.setupState';
@@ -16,6 +18,9 @@ describe("keyboard shortcuts", () => {
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
+    await client.executeSync("location.reload()");
+    await client.waitForAppReady();
+    await dismissStartupShortcutsModal(client);
     fixtureRepoRoot = await createFixtureRepo("keyboard-test");
     testRepoPath = join(fixtureRepoRoot, "apps");
   });
@@ -26,15 +31,12 @@ describe("keyboard shortcuts", () => {
   });
 
   async function pressKey(key: string, opts: { meta?: boolean; shift?: boolean; alt?: boolean } = {}) {
-    await client.executeSync(
-      `document.dispatchEvent(new KeyboardEvent("keydown", {
-        key: ${JSON.stringify(key)},
-        metaKey: ${opts.meta ?? false},
-        shiftKey: ${opts.shift ?? false},
-        altKey: ${opts.alt ?? false},
-        bubbles: true,
-      }));`
-    );
+    await client.executeSync(buildGlobalKeydownScript({
+      key,
+      meta: opts.meta,
+      shift: opts.shift,
+      alt: opts.alt,
+    }));
   }
 
   async function ensureRepoImported() {
@@ -43,7 +45,19 @@ describe("keyboard shortcuts", () => {
     repoImported = true;
   }
 
-  it("Shift+Cmd+N opens New Task modal", async () => {
+  it("Shift+Cmd+N shows a warning when no repos are loaded", async () => {
+    expect(await client.findElements(".toast.warning")).toHaveLength(0);
+    await pressKey("N", { meta: true, shift: true });
+    await sleep(300);
+    const modalElements = await client.findElements(".modal-overlay");
+    expect(modalElements).toHaveLength(0);
+    const warningToast = await client.waitForElement(".toast.warning", 2000);
+    const warningText = await client.getText(warningToast);
+    expect(warningText.toLowerCase()).toContain("repo");
+  });
+
+  it("Shift+Cmd+N opens New Task modal when a repo is loaded", async () => {
+    await ensureRepoImported();
     await pressKey("N", { meta: true, shift: true });
     await sleep(300);
     const modal = await client.waitForElement(".modal-overlay", 2000);
@@ -122,5 +136,8 @@ describe("keyboard shortcuts", () => {
        return modal?.parentElement?.classList.contains("maximized") ?? false;`
     );
     expect(maximizedAfter).toBe(true);
+
+    await client.executeSync(`${CTX_SCRIPT}.showTreeExplorer = false; ${CTX_SCRIPT}.maximizedModal = null;`);
+    await client.waitForNoElement(".tree-modal", 2000);
   });
 });

@@ -18,11 +18,13 @@ FAKE_BIN="$TMPDIR_ROOT/bin"
 TMUX_STATE="$TMPDIR_ROOT/tmux-state"
 TMUX_LOG="$TMPDIR_ROOT/tmux-log"
 SQLITE_LOG="$TMPDIR_ROOT/sqlite-log"
+RM_LOG="$TMPDIR_ROOT/rm-log"
 
 mkdir -p "$FAKE_BIN"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 : > "$SQLITE_LOG"
+: > "$RM_LOG"
 
 setup_worktree_fixture() {
   local worktree_root="$1"
@@ -84,6 +86,33 @@ session_exists() {
   grep -Fxq "\$(session_key "\$server" "\$session")" "\$state_file"
 }
 
+log_forwarded_env() {
+  local saw_explicit=false
+  local entry
+
+  for entry in "\$@"; do
+    case "\$entry" in
+      *=*)
+        printf 'env %s\n' "\$entry" >> "\$log_file"
+        saw_explicit=true
+        ;;
+    esac
+  done
+
+  if \$saw_explicit; then
+    return
+  fi
+
+  local key
+  while IFS='=' read -r key value; do
+    case "\$key" in
+      KANNA_*|TAURI_WEBDRIVER_PORT|CARGO_BUILD_BUILD_DIR)
+        printf 'env %s=%s\n' "\$key" "\$value" >> "\$log_file"
+        ;;
+    esac
+  done < <(env)
+}
+
 server="default"
 if [ "\${1:-}" = "-L" ]; then
   server="\$(normalize "\${2:-}")"
@@ -116,8 +145,13 @@ case "\$cmd" in
     ;;
   new-session)
     session=""
+    forwarded_env=()
     while [ \$# -gt 0 ]; do
       case "\$1" in
+        -e)
+          forwarded_env+=("\$2")
+          shift 2
+          ;;
         -s)
           session="\$2"
           shift 2
@@ -133,6 +167,11 @@ case "\$cmd" in
       exit 1
     fi
     printf '%s\n' "\$(session_key "\$server" "\$normalized_session")" >> "\$state_file"
+    if [ "\${#forwarded_env[@]}" -gt 0 ]; then
+      log_forwarded_env "\${forwarded_env[@]}"
+    else
+      log_forwarded_env
+    fi
     ;;
   send-keys|capture-pane|new-window|kill-session|list-windows|attach|set-option)
     target=""
@@ -172,7 +211,24 @@ printf '%s\n' "\$1" >> "$SQLITE_LOG"
 cat >/dev/null
 EOF
 
-chmod +x "$FAKE_BIN/git" "$FAKE_BIN/tmux" "$FAKE_BIN/sqlite3"
+cat > "$FAKE_BIN/rm" <<EOF
+#!/bin/bash
+set -euo pipefail
+args=()
+for arg in "\$@"; do
+  case "\$arg" in
+    -f|-r|-rf|-fr|--|-R)
+      ;;
+    *)
+      printf '%s\n' "\$arg" >> "$RM_LOG"
+      ;;
+  esac
+  args+=("\$arg")
+done
+exec /bin/rm "\${args[@]}"
+EOF
+
+chmod +x "$FAKE_BIN/git" "$FAKE_BIN/tmux" "$FAKE_BIN/sqlite3" "$FAKE_BIN/rm"
 
 reset_logs() {
   rm -f "$TMUX_STATE" "$TMUX_LOG"
@@ -185,18 +241,65 @@ run_dev_sh() {
   local common_dir="$2"
   local cmd="$3"
   shift 3 || true
+  local -a script_args=()
+  local -a env_args=()
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--" ]; then
+      shift
+      while [ $# -gt 0 ]; do
+        script_args+=("$1")
+        shift
+      done
+      break
+    fi
+    env_args+=("$1")
+    shift
+  done
   set +e
   local output
-  output="$(
-    env -i \
-      PATH="$FAKE_BIN:/usr/bin:/bin:/sbin" \
-      HOME="$TMPDIR_ROOT/home" \
-      GIT_FAKE_TOPLEVEL="$worktree_root" \
-      GIT_FAKE_COMMON_DIR="$common_dir" \
-      KANNA_DEV_PORT=1452 \
-      "$@" \
-      bash "$SCRIPT" "$cmd" 2>&1
-  )"
+  if [ "${#script_args[@]}" -gt 0 ] && [ "${#env_args[@]}" -gt 0 ]; then
+    output="$(
+      env -i \
+        PATH="$FAKE_BIN:/usr/bin:/bin:/sbin" \
+        HOME="$TMPDIR_ROOT/home" \
+        GIT_FAKE_TOPLEVEL="$worktree_root" \
+        GIT_FAKE_COMMON_DIR="$common_dir" \
+        KANNA_DEV_PORT=1452 \
+        "${env_args[@]}" \
+        bash "$SCRIPT" "$cmd" "${script_args[@]}" 2>&1
+    )"
+  elif [ "${#script_args[@]}" -gt 0 ]; then
+    output="$(
+      env -i \
+        PATH="$FAKE_BIN:/usr/bin:/bin:/sbin" \
+        HOME="$TMPDIR_ROOT/home" \
+        GIT_FAKE_TOPLEVEL="$worktree_root" \
+        GIT_FAKE_COMMON_DIR="$common_dir" \
+        KANNA_DEV_PORT=1452 \
+        bash "$SCRIPT" "$cmd" "${script_args[@]}" 2>&1
+    )"
+  elif [ "${#env_args[@]}" -gt 0 ]; then
+    output="$(
+      env -i \
+        PATH="$FAKE_BIN:/usr/bin:/bin:/sbin" \
+        HOME="$TMPDIR_ROOT/home" \
+        GIT_FAKE_TOPLEVEL="$worktree_root" \
+        GIT_FAKE_COMMON_DIR="$common_dir" \
+        KANNA_DEV_PORT=1452 \
+        "${env_args[@]}" \
+        bash "$SCRIPT" "$cmd" 2>&1
+    )"
+  else
+    output="$(
+      env -i \
+        PATH="$FAKE_BIN:/usr/bin:/bin:/sbin" \
+        HOME="$TMPDIR_ROOT/home" \
+        GIT_FAKE_TOPLEVEL="$worktree_root" \
+        GIT_FAKE_COMMON_DIR="$common_dir" \
+        KANNA_DEV_PORT=1452 \
+        bash "$SCRIPT" "$cmd" 2>&1
+    )"
+  fi
   local status=$?
   set -e
   printf '%s\n===STATUS:%s===\n' "$output" "$status"
@@ -285,6 +388,7 @@ assert_tmux_log_contains "-s kanna-v0_0_30 -n desktop"
 assert_tmux_log_contains "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DB_NAME=kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DAEMON_DIR=$WORKTREE_ONE/.kanna-daemon"
+assert_tmux_log_contains "KANNA_WEBDRIVER_PORT=4445"
 assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 if grep -Fq "CARGO_TARGET_DIR=" "$TMUX_LOG"; then
@@ -345,6 +449,125 @@ if ! grep -Fq "KANNA_DB_NAME=kanna-wt-v0.0.30.db" "$TMUX_LOG"; then
 fi
 
 reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start -- --db /tmp/e2e/explicit.db)"
+expect_success "dev.sh start --db" "$RESULT" >/dev/null
+
+if ! grep -Fq "KANNA_DB_PATH=/tmp/e2e/explicit.db" "$TMUX_LOG"; then
+  printf 'expected --db path to be forwarded, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_DB_NAME=explicit.db" "$TMUX_LOG"; then
+  printf 'expected --db to derive KANNA_DB_NAME from basename, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env \
+  KANNA_TRANSFER_DISPLAY_NAME=Primary \
+  KANNA_TRANSFER_PEER_ID=peer-primary \
+  KANNA_TRANSFER_REGISTRY_DIR=/tmp/transfer-registry \
+  -- \
+  --daemon-dir /tmp/e2e-daemon \
+  --transfer-root /tmp/e2e-transfer)"
+expect_success "dev.sh explicit daemon and transfer overrides" "$RESULT" >/dev/null
+
+if ! grep -Fq "KANNA_DAEMON_DIR=/tmp/e2e-daemon" "$TMUX_LOG"; then
+  printf 'expected --daemon-dir to override worktree daemon dir, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_TRANSFER_ROOT=/tmp/e2e-transfer" "$TMUX_LOG"; then
+  printf 'expected --transfer-root to override worktree transfer root, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_TRANSFER_DISPLAY_NAME=Primary" "$TMUX_LOG"; then
+  printf 'expected transfer display name to be forwarded into tmux, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_TRANSFER_PEER_ID=peer-primary" "$TMUX_LOG"; then
+  printf 'expected transfer peer id to be forwarded into tmux, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_TRANSFER_REGISTRY_DIR=/tmp/transfer-registry" "$TMUX_LOG"; then
+  printf 'expected transfer registry dir to be forwarded into tmux, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env \
+  KANNA_E2E_REAL_AGENT_PROVIDER=codex \
+  KANNA_E2E_REAL_AGENT_MODEL=gpt-5.4-mini)"
+expect_success "dev.sh forwards real e2e agent env" "$RESULT" >/dev/null
+
+if ! grep -Fq "KANNA_E2E_REAL_AGENT_PROVIDER=codex" "$TMUX_LOG"; then
+  printf 'expected real e2e provider env to reach tmux launch, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_E2E_REAL_AGENT_MODEL=gpt-5.4-mini" "$TMUX_LOG"; then
+  printf 'expected real e2e model env to reach tmux launch, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start -- --secondary --db foobar.db)"
+OUTPUT="${RESULT%===STATUS:*===}"
+STATUS="${RESULT##*===STATUS:}"
+STATUS="${STATUS%===}"
+
+if [ "$STATUS" -eq 0 ]; then
+  printf 'expected unknown --secondary flag to be rejected, got success:\n%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+if ! grep -Fq "ERROR: unknown flag --secondary" <<<"$OUTPUT"; then
+  printf 'expected unknown --secondary error message, got:\n%s\n' "$OUTPUT" >&2
+  exit 1
+fi
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start -- --db foobar.db)"
+expect_success "dev.sh start --db filename" "$RESULT" >/dev/null
+
+if ! grep -Fq "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Support/build.kanna/foobar.db" "$TMUX_LOG"; then
+  printf 'expected filename-only --db to resolve inside app data dir, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+if ! grep -Fq "KANNA_DB_NAME=foobar.db" "$TMUX_LOG"; then
+  printf 'expected filename-only --db to preserve the explicit name, got:\n' >&2
+  cat "$TMUX_LOG" >&2
+  exit 1
+fi
+
+reset_logs
+: > "$RM_LOG"
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start -- --db test-task-v0.0.30-primary.db --delete-db)"
+expect_success "dev.sh start --delete-db" "$RESULT" >/dev/null
+
+for suffix in "" "-wal" "-shm"; do
+  if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/test-task-v0.0.30-primary.db${suffix}" "$RM_LOG"; then
+    printf 'expected --delete-db to remove %s variant, got:\n' "$suffix" >&2
+    cat "$RM_LOG" >&2
+    exit 1
+  fi
+done
+
+reset_logs
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_DAEMON_DIR=/tmp/shared-daemon-dir)"
 expect_success "dev.sh with KANNA_DAEMON_DIR" "$RESULT" >/dev/null
 
@@ -402,6 +625,26 @@ expect_success "dev.sh seed with KANNA_DB_NAME" "$RESULT" >/dev/null
 
 if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-wt-v0.0.30.db" "$SQLITE_LOG"; then
   printf 'expected seed to ignore explicit KANNA_DB_NAME, got:\n' >&2
+  cat "$SQLITE_LOG" >&2
+  exit 1
+fi
+
+: > "$SQLITE_LOG"
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed -- --db /tmp/e2e/seed.db)"
+expect_success "dev.sh seed --db" "$RESULT" >/dev/null
+
+if ! grep -Fxq "/tmp/e2e/seed.db" "$SQLITE_LOG"; then
+  printf 'expected seed --db to target explicit database path, got:\n' >&2
+  cat "$SQLITE_LOG" >&2
+  exit 1
+fi
+
+: > "$SQLITE_LOG"
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed -- --db seed.db)"
+expect_success "dev.sh seed --db filename" "$RESULT" >/dev/null
+
+if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/seed.db" "$SQLITE_LOG"; then
+  printf 'expected filename-only seed --db to target the app data dir, got:\n' >&2
   cat "$SQLITE_LOG" >&2
   exit 1
 fi

@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { buildGlobalKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase } from "../helpers/reset";
 import { queryDb } from "../helpers/vue";
@@ -35,9 +36,7 @@ describe("preferences", () => {
 
   it("closes preferences panel", async () => {
     // Preferences closes via Escape or clicking the overlay
-    await client.executeSync(
-      `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));`
-    );
+    await client.executeSync(buildGlobalKeydownScript({ key: "Escape" }));
     await sleep(500);
     // If still open, close via Vue state
     try {
