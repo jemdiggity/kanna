@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -47,6 +47,9 @@ enum Cmd {
         session_id: String,
         data: Vec<u8>,
     },
+    Snapshot {
+        session_id: String,
+    },
     Kill {
         session_id: String,
     },
@@ -82,7 +85,7 @@ enum Evt {
     },
     Snapshot {
         session_id: String,
-        snapshot: Value,
+        snapshot: SnapshotPayload,
     },
     StatusChanged {
         session_id: String,
@@ -94,6 +97,17 @@ enum Evt {
     },
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Deserialize)]
+struct SnapshotPayload {
+    version: u32,
+    rows: u16,
+    cols: u16,
+    cursor_row: u16,
+    cursor_col: u16,
+    cursor_visible: bool,
+    vt: String,
 }
 
 // ---- Test harness ----
@@ -221,6 +235,28 @@ impl ClientConn {
         collected
     }
 
+    fn collect_output_until_contains(&mut self, needle: &str) -> Vec<u8> {
+        let mut collected = Vec::new();
+        loop {
+            match self.recv() {
+                Evt::Output { data, .. } => {
+                    collected.extend_from_slice(&data);
+                    if String::from_utf8_lossy(&collected).contains(needle) {
+                        return collected;
+                    }
+                }
+                Evt::Exit { .. } => {
+                    panic!(
+                        "session exited before output contained {:?}: {:?}",
+                        needle,
+                        String::from_utf8_lossy(&collected)
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Drain all pending Output events (non-blocking after first timeout).
     fn drain_output(&mut self, timeout: Duration) -> Vec<u8> {
         self.writer.set_read_timeout(Some(timeout)).unwrap();
@@ -296,11 +332,124 @@ fn attach_snapshot(conn: &mut ClientConn, session_id: &str) {
 
     match conn.recv() {
         Evt::Snapshot {
-            session_id: sid, ..
-        } => assert_eq!(sid, session_id),
+            session_id: sid,
+            snapshot,
+        } => {
+            assert_eq!(sid, session_id);
+            let _ = (
+                snapshot.version,
+                snapshot.rows,
+                snapshot.cols,
+                snapshot.cursor_row,
+                snapshot.cursor_col,
+                snapshot.cursor_visible,
+            );
+        }
         Evt::Error { message } => panic!("attach snapshot failed: {}", message),
         other => panic!("expected Snapshot, got: {:?}", other),
     }
+}
+
+fn attach_snapshot_and_capture(conn: &mut ClientConn, session_id: &str) -> SnapshotPayload {
+    conn.send(&Cmd::AttachSnapshot {
+        session_id: session_id.to_string(),
+        emulate_terminal: true,
+    });
+
+    match conn.recv() {
+        Evt::Snapshot {
+            session_id: sid,
+            snapshot,
+        } => {
+            assert_eq!(sid, session_id);
+            snapshot
+        }
+        Evt::Error { message } => panic!("attach snapshot failed: {}", message),
+        other => panic!("expected Snapshot, got: {:?}", other),
+    }
+}
+
+fn request_snapshot(conn: &mut ClientConn, session_id: &str) -> SnapshotPayload {
+    conn.send(&Cmd::Snapshot {
+        session_id: session_id.to_string(),
+    });
+
+    match conn.recv() {
+        Evt::Snapshot {
+            session_id: sid,
+            snapshot,
+        } => {
+            assert_eq!(sid, session_id);
+            snapshot
+        }
+        Evt::Error { message } => panic!("snapshot failed: {}", message),
+        other => panic!("expected Snapshot, got: {:?}", other),
+    }
+}
+
+fn spawn_hidden_prefix_session(conn: &mut ClientConn, session_id: &str, cwd: &Path) {
+    conn.send(&Cmd::Spawn {
+        session_id: session_id.to_string(),
+        executable: "/bin/sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            "printf 'EARLY-HIDDEN-0001\\r\\n'; printf '\\033[2J\\033[HSNAPSHOT-VISIBLE-0001\\r\\n'; : > ready; while [ ! -f go ]; do sleep 0.01; done; printf 'AFTER-ATTACH-0001\\r\\n'".to_string(),
+        ],
+        cwd: cwd.display().to_string(),
+        env: HashMap::new(),
+        cols: 80,
+        rows: 24,
+    });
+
+    match conn.recv() {
+        Evt::SessionCreated { session_id: sid } => assert_eq!(sid, session_id),
+        other => panic!("expected SessionCreated, got: {:?}", other),
+    }
+}
+
+fn atomic_attach_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "kanna-atomic-attach-{}-{}",
+        std::process::id(),
+        name
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn wait_for_file(path: &Path) {
+    for _ in 0..100 {
+        if path.exists() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    panic!("timed out waiting for file {:?}", path);
+}
+
+fn release_hidden_prefix_session(dir: &Path) {
+    std::fs::write(dir.join("go"), b"go").unwrap();
+}
+
+fn cleanup_atomic_attach_dir(dir: &Path) {
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn wait_for_snapshot(conn: &mut ClientConn, session_id: &str, needle: &str) -> SnapshotPayload {
+    for _ in 0..50 {
+        let snapshot = request_snapshot(conn, session_id);
+        if snapshot.vt.contains(needle) {
+            return snapshot;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    panic!(
+        "snapshot for session {:?} never contained {:?}",
+        session_id, needle
+    );
 }
 
 fn send_input(conn: &mut ClientConn, session_id: &str, data: &[u8]) {
@@ -405,6 +554,89 @@ fn test_attach_snapshot_replays_current_status() {
             other
         ),
     }
+}
+
+#[test]
+fn test_atomic_attach_flushes_pre_attach_buffer() {
+    let daemon = DaemonHandle::start();
+    let mut shared = daemon.connect();
+    let dir = atomic_attach_dir("plain");
+    spawn_hidden_prefix_session(&mut shared, "sess-atomic-attach", &dir);
+    wait_for_file(&dir.join("ready"));
+
+    let pre_attach_snapshot =
+        wait_for_snapshot(&mut shared, "sess-atomic-attach", "SNAPSHOT-VISIBLE-0001");
+    assert!(
+        !pre_attach_snapshot.vt.contains("EARLY-HIDDEN-0001"),
+        "test precondition failed: early prefix should not survive in snapshot, got {:?}",
+        pre_attach_snapshot.vt
+    );
+
+    let mut attached = daemon.connect();
+    attach(&mut attached, "sess-atomic-attach");
+
+    let initial_output = attached.collect_output_until_contains("SNAPSHOT-VISIBLE-0001");
+    let initial_output_str = String::from_utf8_lossy(&initial_output);
+    assert!(
+        initial_output_str.contains("EARLY-HIDDEN-0001"),
+        "plain attach should flush pre-attach bytes, got {:?}",
+        initial_output_str
+    );
+
+    release_hidden_prefix_session(&dir);
+    let later_output = attached.collect_output_until_contains("AFTER-ATTACH-0001");
+    let later_output_str = String::from_utf8_lossy(&later_output);
+    assert!(
+        later_output_str.contains("AFTER-ATTACH-0001"),
+        "plain attach should continue streaming after the flush, got {:?}",
+        later_output_str
+    );
+    cleanup_atomic_attach_dir(&dir);
+}
+
+#[test]
+fn test_atomic_attach_snapshot_preserves_pre_attach_bytes() {
+    let daemon = DaemonHandle::start();
+    let mut shared = daemon.connect();
+    let dir = atomic_attach_dir("snapshot");
+    spawn_hidden_prefix_session(&mut shared, "sess-atomic-snapshot", &dir);
+    wait_for_file(&dir.join("ready"));
+
+    let pre_attach_snapshot =
+        wait_for_snapshot(&mut shared, "sess-atomic-snapshot", "SNAPSHOT-VISIBLE-0001");
+    assert!(
+        !pre_attach_snapshot.vt.contains("EARLY-HIDDEN-0001"),
+        "test precondition failed: early prefix should not survive in snapshot, got {:?}",
+        pre_attach_snapshot.vt
+    );
+
+    let mut attached = daemon.connect();
+    let snapshot = attach_snapshot_and_capture(&mut attached, "sess-atomic-snapshot");
+    assert!(
+        snapshot.vt.contains("SNAPSHOT-VISIBLE-0001"),
+        "attach snapshot should include the current visible screen, got {:?}",
+        snapshot.vt
+    );
+    assert!(
+        !snapshot.vt.contains("EARLY-HIDDEN-0001"),
+        "test precondition failed: snapshot unexpectedly contains the hidden prefix, got {:?}",
+        snapshot.vt
+    );
+
+    release_hidden_prefix_session(&dir);
+    let later_output = attached.collect_output_until_contains("AFTER-ATTACH-0001");
+    let observed = format!("{}{}", snapshot.vt, String::from_utf8_lossy(&later_output));
+    assert!(
+        observed.contains("AFTER-ATTACH-0001"),
+        "attach snapshot should continue streaming after attach, got {:?}",
+        observed
+    );
+    assert!(
+        observed.contains("EARLY-HIDDEN-0001"),
+        "attach snapshot must not lose pre-attach bytes absent from the snapshot, got {:?}",
+        observed
+    );
+    cleanup_atomic_attach_dir(&dir);
 }
 
 /// Reattach from the SAME connection: second Attach should cancel the first

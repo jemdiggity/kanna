@@ -11,8 +11,8 @@ use std::io::Read;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
 pub use kanna_daemon::subprocess_env;
@@ -23,7 +23,7 @@ use kanna_daemon::{
 use serde::Serialize;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{broadcast, Mutex};
 
 /// A single client's writer handle.
 type SessionWriter = Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>;
@@ -99,7 +99,7 @@ enum HandoffEventLegacy {
     },
 }
 use protocol::{Command, Event, SessionStatus};
-use session::{STATUS_DETECTION_THROTTLE_MS, SessionManager, SessionRecord, StreamControl};
+use session::{SessionManager, SessionRecord, StreamControl, STATUS_DETECTION_THROTTLE_MS};
 use socket::{bind_socket, read_command, write_event};
 
 fn recovery_snapshot_to_terminal_snapshot(
@@ -251,6 +251,69 @@ async fn unregister_terminal_emulator_client(
     let empty = client_ids.is_empty();
     if empty {
         terminal_clients.remove(session_id);
+    }
+}
+
+async fn take_pre_attach_output(
+    pre_attach_buffers: &PreAttachBuffers,
+    session_id: &str,
+) -> Option<Vec<u8>> {
+    let buffer = pre_attach_buffers.lock().await.remove(session_id)?;
+    let data = buffer.lock().await.take();
+    match data {
+        Some(data) if data.is_empty() => {
+            log::info!("[attach] pre-attach buffer empty for {}", session_id);
+            None
+        }
+        Some(data) => Some(data),
+        None => {
+            log::info!(
+                "[attach] no buffered pre-attach output remained for {}",
+                session_id
+            );
+            None
+        }
+    }
+}
+
+async fn finish_attach_cutover(
+    writer: &SessionWriter,
+    session_writers: &SessionWriters,
+    terminal_emulator_clients: &TerminalEmulatorClients,
+    pre_attach_buffers: &PreAttachBuffers,
+    session_id: &str,
+    emulate_terminal: bool,
+    initial_event: &Event,
+) {
+    let mut writer_guard = writer.lock().await;
+    {
+        let mut writers = session_writers.lock().await;
+        writers
+            .entry(session_id.to_string())
+            .or_default()
+            .push(writer.clone());
+    }
+    if emulate_terminal {
+        register_terminal_emulator_client(terminal_emulator_clients, session_id, writer).await;
+    }
+
+    let buffered_output = take_pre_attach_output(pre_attach_buffers, session_id).await;
+
+    let _ = write_event(&mut *writer_guard, initial_event).await;
+
+    if let Some(data) = buffered_output {
+        log::info!(
+            "[attach] flushing {} bytes of pre-attach output for {}",
+            data.len(),
+            session_id
+        );
+        let evt = Event::Output {
+            session_id: session_id.to_string(),
+            data,
+        };
+        let _ = write_event(&mut *writer_guard, &evt).await;
+    } else {
+        log::info!("[attach] no pre-attach buffer found for {}", session_id);
     }
 }
 
@@ -937,44 +1000,16 @@ async fn handle_command(
                 // stream_output already running (started at Spawn) — push writer to broadcast list
                 let current_status = mgr.sessions.get(&session_id).map(|session| session.status);
                 drop(mgr);
-                {
-                    let mut writers = session_writers.lock().await;
-                    if let Some(vec) = writers.get_mut(&session_id) {
-                        vec.push(writer.clone());
-                    }
-                }
-                if emulate_terminal {
-                    register_terminal_emulator_client(
-                        &terminal_emulator_clients,
-                        &session_id,
-                        &writer,
-                    )
-                    .await
-                }
-
-                let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
-
-                // Flush pre-attach buffer (startup output including kitty keyboard push)
-                if let Some(buffer) = pre_attach_buffers.lock().await.remove(&session_id) {
-                    if let Some(data) = buffer.lock().await.take() {
-                        if !data.is_empty() {
-                            log::info!(
-                                "[attach] flushing {} bytes of pre-attach output for {}",
-                                data.len(),
-                                session_id
-                            );
-                            let evt = Event::Output {
-                                session_id: session_id.clone(),
-                                data,
-                            };
-                            let _ = write_event(&mut *writer.lock().await, &evt).await;
-                        } else {
-                            log::info!("[attach] pre-attach buffer empty for {}", session_id);
-                        }
-                    }
-                } else {
-                    log::info!("[attach] no pre-attach buffer found for {}", session_id);
-                }
+                finish_attach_cutover(
+                    &writer,
+                    &session_writers,
+                    &terminal_emulator_clients,
+                    &pre_attach_buffers,
+                    &session_id,
+                    emulate_terminal,
+                    &Event::Ok,
+                )
+                .await;
 
                 if let Some(status) = current_status {
                     replay_current_status(&writer, &session_id, status).await;
@@ -1281,32 +1316,20 @@ async fn handle_command(
                 }
             };
 
-            if let Some(buffer) = pre_attach_buffers.lock().await.remove(&session_id) {
-                let _ = buffer.lock().await.take();
-            }
-
-            {
-                let mut writers = session_writers.lock().await;
-                writers
-                    .entry(session_id.clone())
-                    .or_default()
-                    .push(writer.clone());
-                if emulate_terminal {
-                    register_terminal_emulator_client(
-                        &terminal_emulator_clients,
-                        &session_id,
-                        &writer,
-                    )
-                    .await;
-                }
+            let snapshot_event = Event::Snapshot {
+                session_id: session_id.clone(),
+                snapshot,
             };
-            {
-                let evt = Event::Snapshot {
-                    session_id: session_id.clone(),
-                    snapshot,
-                };
-                let _ = write_event(&mut *writer.lock().await, &evt).await;
-            }
+            finish_attach_cutover(
+                &writer,
+                &session_writers,
+                &terminal_emulator_clients,
+                &pre_attach_buffers,
+                &session_id,
+                emulate_terminal,
+                &snapshot_event,
+            )
+            .await;
 
             let current_status = mgr.sessions.get(&session_id).map(|session| session.status);
             drop(mgr);
