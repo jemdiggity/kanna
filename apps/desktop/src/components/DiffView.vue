@@ -187,14 +187,19 @@ function getMatchElements(match: DiffSearchMatch): HTMLElement[] {
   const wrapper = getFileWrapper(match.anchor.fileId);
   const container = wrapper?.querySelector<HTMLElement>("diffs-container");
   const shadowRoot = container?.shadowRoot;
-  if (!shadowRoot) return [];
-
-  ensureSearchStyles(shadowRoot);
+  if (shadowRoot) {
+    ensureSearchStyles(shadowRoot);
+  }
 
   if (match.anchor.type === "file-header") {
+    const stickyHeader = wrapper?.querySelector<HTMLElement>(".diff-file-header");
+    if (stickyHeader) return [stickyHeader];
+    if (!shadowRoot) return [];
     const title = shadowRoot.querySelector<HTMLElement>("[data-title]");
     return title ? [title] : [];
   }
+
+  if (!shadowRoot) return [];
 
   const lineIndexPrefix = `${match.anchor.unifiedLineIndex},`;
   const gutter = shadowRoot.querySelector<HTMLElement>(`[data-gutter] [data-line-index^="${lineIndexPrefix}"]`);
@@ -202,7 +207,15 @@ function getMatchElements(match: DiffSearchMatch): HTMLElement[] {
   return [gutter, content].filter((element): element is HTMLElement => element != null);
 }
 
+function getDisplayPath(fileMeta: FileDiffMetadata & DiffFilePathMetadata): string {
+  return fileMeta.name || fileMeta.newName || fileMeta.oldName || fileMeta.fileName || "";
+}
+
 function clearSearchHighlights() {
+  for (const header of containerRef.value?.querySelectorAll<HTMLElement>(".diff-file-header.diff-search-match, .diff-file-header.diff-search-active") ?? []) {
+    header.classList.remove("diff-search-match", "diff-search-active");
+  }
+
   const containers = containerRef.value?.querySelectorAll<HTMLElement>("diffs-container");
   if (!containers) return;
 
@@ -482,11 +495,7 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
   for (const [fileIndex, rawFileMeta] of allFiles.entries()) {
     const fileRenderStartedAt = performance.now();
     const pathMeta = rawFileMeta as typeof rawFileMeta & DiffFilePathMetadata;
-    const displayPath =
-      pathMeta.newName ||
-      pathMeta.oldName ||
-      pathMeta.fileName ||
-      "";
+    const displayPath = getDisplayPath(pathMeta);
     let didLogPostRender = false;
 
     const fileMeta = isBazelSyntaxPath(displayPath)
@@ -499,6 +508,27 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
     const wrapper = document.createElement("div");
     wrapper.className = "diff-file";
     wrapper.dataset.fileId = renderedFiles.value[fileIndex]?.id ?? `${context.loadId}:${fileIndex}`;
+
+    const header = document.createElement("div");
+    header.className = "diff-file-header";
+    header.textContent = displayPath;
+    header.title = displayPath;
+    header.style.position = "sticky";
+    header.style.top = "0";
+    header.style.zIndex = "2";
+    header.style.padding = "7px 12px";
+    header.style.borderBottom = "1px solid #30363d";
+    header.style.background = "#161b22";
+    header.style.color = "#e6edf3";
+    header.style.fontFamily = '"SF Mono", Menlo, monospace';
+    header.style.fontSize = "12px";
+    header.style.lineHeight = "1.4";
+    header.style.whiteSpace = "nowrap";
+    header.style.overflow = "hidden";
+    header.style.textOverflow = "ellipsis";
+    header.style.boxSizing = "border-box";
+    wrapper.appendChild(header);
+
     containerRef.value.appendChild(wrapper);
 
     const instance = new FileDiff(
@@ -506,6 +536,7 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
         theme: "github-dark",
         diffStyle: "unified",
         diffIndicators: "classic",
+        disableFileHeader: true,
         onPostRender: () => {
           if (didLogPostRender) return;
           didLogPostRender = true;
@@ -830,7 +861,18 @@ defineExpose({ refresh: loadDiff });
 }
 
 .diff-container :deep(.diff-file) {
+  position: relative;
   margin-bottom: 2px;
+}
+
+.diff-container :deep(.diff-file-header.diff-search-match) {
+  background: rgba(255, 196, 61, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(255, 196, 61, 0.3);
+}
+
+.diff-container :deep(.diff-file-header.diff-search-active) {
+  background: rgba(255, 196, 61, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(255, 196, 61, 0.85);
 }
 
 .diff-container :deep(diffs-container) {

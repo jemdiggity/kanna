@@ -196,6 +196,47 @@ describe("DiffView", () => {
     wrapper.unmount();
   });
 
+  it("renders a sticky filename header for each diff file", async () => {
+    diffMocks.parsePatchFilesMock.mockReturnValueOnce([
+      {
+        files: [
+          {
+            name: "src/sticky.ts",
+            hunks: [],
+          },
+        ],
+      },
+    ]);
+
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "git_diff") return "diff --git a/src/sticky.ts b/src/sticky.ts";
+      return "";
+    });
+
+    const wrapper = mount(DiffView, {
+      props: {
+        repoPath: "/repo",
+        initialScope: "working",
+      },
+      attachTo: document.body,
+      global: {
+        mocks: {
+          $t: (key: string) => key,
+        },
+      },
+    });
+
+    await flushPromises();
+    await flushPromises();
+
+    const header = wrapper.get(".diff-file-header");
+    expect(header.text()).toBe("src/sticky.ts");
+    expect(header.classes()).toContain("diff-file-header");
+    expect((header.element as HTMLElement).style.position).toBe("sticky");
+
+    wrapper.unmount();
+  });
+
   it("restores the previous scroll position when switching diff scopes", async () => {
     invokeMock.mockImplementation(async (command) => {
       if (command === "git_diff") return "diff --git a/working.txt b/working.txt";
