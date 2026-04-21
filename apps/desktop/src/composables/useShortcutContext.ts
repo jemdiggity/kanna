@@ -96,7 +96,7 @@ function buildContextShortcutGroups(
     diff: ["toggleMaximize", "showShortcuts"],
     file: ["toggleMaximize", "showShortcuts"],
     shell: ["toggleMaximize", "showShortcuts"],
-    tree: ["showShortcuts"],
+    tree: ["toggleMaximize", "showShortcuts"],
     graph: ["showShortcuts"],
     newTask: ["showShortcuts"],
     transfer: ["showShortcuts"],
