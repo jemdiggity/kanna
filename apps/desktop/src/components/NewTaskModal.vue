@@ -12,7 +12,7 @@ import {
 const { zIndex } = useModalZIndex();
 
 registerContextShortcuts("newTask", [
-  { label: "Switch agent", display: "⇧⌘[ / ⇧⌘]" },
+  { label: "Switch agent", display: "⇧⌘[ / ⇧⌘]", groupKey: "shortcuts.groupActions" },
 ]);
 
 const props = defineProps<{

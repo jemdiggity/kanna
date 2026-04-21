@@ -44,19 +44,19 @@ const searchInputRef = ref<HTMLInputElement | null>(null);
 
 const showLineNumbers = ref(false);
 registerContextShortcuts("file", [
-  { label: t('filePreview.shortcutSearch'), display: "/" },
-  { label: t('filePreview.shortcutSearchAlt'), display: "⌘F" },
-  { label: t('filePreview.shortcutNextPrevMatch'), display: "n / N" },
-  { label: t('filePreview.shortcutOpenIDE'), display: "⌘O" },
-  { label: t('filePreview.shortcutToggleLineNumbers'), display: "l" },
+  { label: t('filePreview.shortcutSearch'), display: "/", groupKey: "shortcuts.groupSearch" },
+  { label: t('filePreview.shortcutSearchAlt'), display: "⌘F", groupKey: "shortcuts.groupSearch" },
+  { label: t('filePreview.shortcutNextPrevMatch'), display: "n / N", groupKey: "shortcuts.groupSearch" },
+  { label: t('filePreview.shortcutLineUpDown'), display: "j / k", groupKey: "shortcuts.groupNavigation" },
+  { label: t('filePreview.shortcutPageUpDown'), display: "f / b", groupKey: "shortcuts.groupNavigation" },
+  { label: t('filePreview.shortcutHalfUpDown'), display: "d / u", groupKey: "shortcuts.groupNavigation" },
+  { label: t('filePreview.shortcutTopBottom'), display: "g / G", groupKey: "shortcuts.groupNavigation" },
+  { label: t('filePreview.shortcutToggleLineNumbers'), display: "l", groupKey: "shortcuts.groupViews" },
   ...(props.filePath.toLowerCase().endsWith(".md")
-    ? [{ label: t('filePreview.shortcutToggleMarkdown'), display: "m" }]
+    ? [{ label: t('filePreview.shortcutToggleMarkdown'), display: "m", groupKey: "shortcuts.groupViews" }]
     : []),
-  { label: t('filePreview.shortcutLineUpDown'), display: "j / k" },
-  { label: t('filePreview.shortcutPageUpDown'), display: "f / b" },
-  { label: t('filePreview.shortcutHalfUpDown'), display: "d / u" },
-  { label: t('filePreview.shortcutTopBottom'), display: "g / G" },
-  { label: t('filePreview.shortcutClose'), display: "q" },
+  { label: t('filePreview.shortcutOpenIDE'), display: "⌘O", groupKey: "shortcuts.groupActions" },
+  { label: t('filePreview.shortcutClose'), display: "q", groupKey: "shortcuts.groupActions" },
 ]);
 const highlighted = ref("");
 const currentLang = ref("text");

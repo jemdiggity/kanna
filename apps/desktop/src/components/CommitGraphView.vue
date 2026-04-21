@@ -162,16 +162,12 @@ useLessScroll(scrollRef, {
 });
 
 registerContextShortcuts("graph", [
-  { label: "Scroll down", display: "j" },
-  { label: "Scroll up", display: "k" },
-  { label: "Page down", display: "f" },
-  { label: "Page up", display: "b" },
-  { label: "Half-page down", display: "d" },
-  { label: "Half-page up", display: "u" },
-  { label: "Top", display: "g" },
-  { label: "Bottom", display: "G" },
-  { label: "Toggle auto / all", display: "Space" },
-  { label: "Close", display: "q" },
+  { label: "Scroll ↓/↑", display: "j / k", groupKey: "shortcuts.groupNavigation" },
+  { label: "Page ↓/↑", display: "f / b", groupKey: "shortcuts.groupNavigation" },
+  { label: "Half-page ↓/↑", display: "d / u", groupKey: "shortcuts.groupNavigation" },
+  { label: "Top / Bottom", display: "g / G", groupKey: "shortcuts.groupNavigation" },
+  { label: "Toggle auto / all", display: "Space", groupKey: "shortcuts.groupViews" },
+  { label: "Close", display: "q", groupKey: "shortcuts.groupActions" },
 ]);
 
 async function loadGraph() {

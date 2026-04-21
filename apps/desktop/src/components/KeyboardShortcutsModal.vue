@@ -2,7 +2,12 @@
 import { ref, watch, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { getShortcutGroups } from "../composables/useKeyboardShortcuts";
-import { getContextShortcuts, getContextTitle, type ShortcutContext } from "../composables/useShortcutContext";
+import {
+  getContextShortcutGroups,
+  getContextTitle,
+  type ContextShortcutGroup,
+  type ShortcutContext,
+} from "../composables/useShortcutContext";
 
 const { t } = useI18n();
 
@@ -25,27 +30,47 @@ watch(hideOnStartup, (val) => emit("update:hide-on-startup", val));
 const showFullMode = ref(props.startInFullMode ?? false);
 watch(() => props.startInFullMode, (val) => { showFullMode.value = val ?? false; });
 const contextTitle = computed(() => getContextTitle(t, props.context));
-const contextItems = computed(() => getContextShortcuts(props.context).map(s => ({ ...s, action: t(s.action) })));
 const groups = computed(() => getShortcutGroups(t));
+const contextGroups = computed(() => getContextShortcutGroups(t, props.context));
 
-interface FullModeEntrySection {
+interface ShortcutDisplayEntrySection {
   kind: "section";
   key: string;
   text: string;
-  column: number;
-  row: number;
 }
 
-interface FullModeEntryItem {
+interface ShortcutDisplayEntryItem {
   kind: "item";
   key: string;
   action: string;
   keys: string;
+}
+
+type ShortcutDisplayEntry = ShortcutDisplayEntrySection | ShortcutDisplayEntryItem;
+
+interface FullModeEntrySection extends ShortcutDisplayEntrySection {
+  column: number;
+  row: number;
+}
+
+interface FullModeEntryItem extends ShortcutDisplayEntryItem {
   column: number;
   row: number;
 }
 
 type FullModeEntry = FullModeEntrySection | FullModeEntryItem;
+
+interface ContextModeEntrySection extends ShortcutDisplayEntrySection {
+  column: number;
+  row: number;
+}
+
+interface ContextModeEntryItem extends ShortcutDisplayEntryItem {
+  column: number;
+  row: number;
+}
+
+type ContextModeEntry = ContextModeEntrySection | ContextModeEntryItem;
 
 const fullModeEntries = computed(() => {
   const groupMap = new Map(groups.value.map((group) => [group.key, group]));
@@ -74,6 +99,102 @@ const fullModeEntries = computed(() => {
     ...entriesFor("shortcuts.groupOpenInspect", 3, 1),
   ];
 });
+
+function getContextColumn(context: ShortcutContext, groupKey: string): 1 | 2 | 3 {
+  if (groupKey === "shortcuts.groupSearch") {
+    return 1;
+  }
+  if (context === "graph" && groupKey === "shortcuts.groupNavigation") {
+    return 1;
+  }
+  if ((context === "file" || context === "diff") && groupKey === "shortcuts.groupViews") {
+    return 1;
+  }
+  if (
+    groupKey === "shortcuts.groupMoveAround" ||
+    groupKey === "shortcuts.groupNavigation" ||
+    groupKey.startsWith("context:")
+  ) {
+    return 2;
+  }
+  if (
+    groupKey === "shortcuts.groupOpenInspect" ||
+    groupKey === "shortcuts.groupViews" ||
+    groupKey === "shortcuts.groupActions"
+  ) {
+    return 3;
+  }
+  return 1;
+}
+
+function buildContextModeEntries(groupsForContext: ContextShortcutGroup[]): ContextModeEntry[] {
+  const nextRowByColumn: Record<1 | 2 | 3, number> = { 1: 1, 2: 1, 3: 1 };
+  const entries: ContextModeEntry[] = [];
+  const helpGroup = groupsForContext.find((group) => group.key === "shortcuts.groupAppHelp");
+  const nonHelpGroups = groupsForContext.filter((group) => group.key !== "shortcuts.groupAppHelp");
+
+  for (const group of nonHelpGroups) {
+    const column = getContextColumn(props.context, group.key);
+    const startRow = nextRowByColumn[column];
+    entries.push({
+      kind: "section",
+      key: `${group.key}-section`,
+      text: group.title,
+      column,
+      row: startRow,
+    });
+
+    for (const [index, shortcut] of group.shortcuts.entries()) {
+      entries.push({
+        kind: "item",
+        key: `${group.key}-${shortcut.action}-${shortcut.keys}`,
+        action: shortcut.action,
+        keys: shortcut.keys,
+        column,
+        row: startRow + index + 1,
+      });
+    }
+
+    nextRowByColumn[column] = startRow + group.shortcuts.length + 2;
+  }
+
+  if (helpGroup) {
+    const startRow = Math.max(
+      nextRowByColumn[1],
+      nextRowByColumn[2],
+      nextRowByColumn[3],
+    );
+
+    entries.push({
+      kind: "section",
+      key: `${helpGroup.key}-section`,
+      text: helpGroup.title,
+      column: 1,
+      row: startRow,
+    });
+
+    for (const [index, shortcut] of helpGroup.shortcuts.entries()) {
+      entries.push({
+        kind: "item",
+        key: `${helpGroup.key}-${shortcut.action}-${shortcut.keys}`,
+        action: shortcut.action,
+        keys: shortcut.keys,
+        column: 1,
+        row: startRow + index + 1,
+      });
+    }
+  }
+
+  return entries;
+}
+
+const contextModeEntries = computed<ContextModeEntry[]>(() => {
+  return buildContextModeEntries(contextGroups.value);
+});
+
+const visibleEntries = computed(() => (
+  showFullMode.value ? fullModeEntries.value : contextModeEntries.value
+));
 
 function toggleMode() {
   showFullMode.value = !showFullMode.value;
@@ -104,20 +225,9 @@ function splitKeys(display: string): string[] {
     <div class="modal shortcuts-modal">
       <h3>{{ showFullMode ? t('shortcuts.title') : contextTitle }}</h3>
 
-      <!-- Context mode: multi-column grid -->
-      <div v-if="!showFullMode" class="context-shortcuts">
-        <div v-for="s in contextItems" :key="s.keys" class="shortcut-row">
-          <span class="shortcut-action">{{ s.action }}</span>
-          <span class="shortcut-keys">
-            <kbd v-for="(k, i) in splitKeys(s.keys)" :key="i">{{ k }}</kbd>
-          </span>
-        </div>
-      </div>
-
-      <!-- Full mode: grouped columns -->
-      <div v-else class="shortcuts-grid">
+      <div class="shortcuts-grid">
         <div
-          v-for="entry in fullModeEntries"
+          v-for="entry in visibleEntries"
           :key="entry.key"
           :class="['shortcut-entry', `shortcut-entry--${entry.kind}`]"
           :style="{ gridColumn: `${entry.column}`, gridRow: `${entry.row}` }"
@@ -204,12 +314,6 @@ kbd {
   min-width: 20px;
   text-align: center;
   line-height: 1.4;
-}
-.context-shortcuts {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 0 28px;
-  margin-bottom: 12px;
 }
 .shortcuts-footer {
   display: flex;

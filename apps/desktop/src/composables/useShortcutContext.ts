@@ -6,6 +6,18 @@ export type ShortcutContext = "main" | "diff" | "file" | "shell" | "tree" | "new
 export interface ContextShortcut {
   label: string;
   display: string;
+  groupKey?: string;
+}
+
+export interface ContextShortcutItem {
+  keys: string;
+  action: string;
+}
+
+export interface ContextShortcutGroup {
+  key: string;
+  title: string;
+  shortcuts: ContextShortcutItem[];
 }
 
 /** Active context — module-level singleton. */
@@ -71,23 +83,47 @@ export function clearContextShortcuts(ctx?: ShortcutContext) {
  * The `action` field contains an i18n key (for global shortcuts) or a
  * pre-translated label (for supplementary shortcuts registered by components).
  */
-export function getContextShortcuts(ctx: ShortcutContext): { keys: string; action: string }[] {
-  const result: { keys: string; action: string }[] = [];
+function buildContextShortcutGroups(
+  ctx: ShortcutContext,
+  resolveTitle: (groupKey: string) => string,
+  resolveAction: (actionKey: string, translated: boolean) => string,
+): ContextShortcutGroup[] {
+  const result = new Map<string, ContextShortcutItem[]>();
   const hiddenGlobalActionsByContext: Partial<Record<ShortcutContext, string[]>> = {
-    newTask: ["showShortcuts", "dismiss"],
-    tree: ["showShortcuts"],
+    newTask: ["dismiss"],
+  };
+  const visibleGlobalActionsByContext: Partial<Record<ShortcutContext, string[]>> = {
+    diff: ["toggleMaximize", "showShortcuts"],
+    file: ["toggleMaximize", "showShortcuts"],
+    shell: ["toggleMaximize", "showShortcuts"],
+    tree: ["toggleMaximize", "showShortcuts"],
+    graph: ["showShortcuts"],
+    newTask: ["showShortcuts"],
+    transfer: ["showShortcuts"],
   };
   const hiddenGlobalActions = hiddenGlobalActionsByContext[ctx] ?? [];
+  const visibleGlobalActions = ctx === "main"
+    ? null
+    : (visibleGlobalActionsByContext[ctx] ?? []);
+  const extraGroupKey = `context:${ctx}`;
 
   // Global shortcuts: include if explicitly tagged for this context.
   // Untagged shortcuts fall back to "main" context only.
   for (const def of shortcuts) {
     if (def.hidden) continue;
     if (hiddenGlobalActions.includes(def.action)) continue;
+    if (visibleGlobalActions != null && !visibleGlobalActions.includes(def.action)) continue;
+    const targetGroupKey = (ctx === "file" || ctx === "diff") && def.groupKey === "shortcuts.groupWorkspace"
+      ? "shortcuts.groupViews"
+      : def.groupKey;
     if (def.context && def.context.includes(ctx)) {
-      result.push({ keys: def.display, action: def.labelKey });
+      const existing = result.get(targetGroupKey) ?? [];
+      existing.push({ keys: def.display, action: resolveAction(def.labelKey, true) });
+      result.set(targetGroupKey, existing);
     } else if (!def.context && ctx === "main") {
-      result.push({ keys: def.display, action: def.labelKey });
+      const existing = result.get(targetGroupKey) ?? [];
+      existing.push({ keys: def.display, action: resolveAction(def.labelKey, true) });
+      result.set(targetGroupKey, existing);
     }
   }
 
@@ -95,11 +131,61 @@ export function getContextShortcuts(ctx: ShortcutContext): { keys: string; actio
   const extras = contextShortcuts.value.get(ctx);
   if (extras) {
     for (const s of extras) {
-      result.push({ keys: s.display, action: s.label });
+      const targetGroupKey = s.groupKey ?? extraGroupKey;
+      const existing = result.get(targetGroupKey) ?? [];
+      existing.push({ keys: s.display, action: resolveAction(s.label, false) });
+      result.set(targetGroupKey, existing);
     }
   }
 
-  return result;
+  const orderedExtraGroupKeys = [
+    "shortcuts.groupSearch",
+    "shortcuts.groupNavigation",
+    "shortcuts.groupViews",
+    "shortcuts.groupActions",
+    extraGroupKey,
+  ].filter((groupKey) => result.has(groupKey));
+
+  const orderedGroupKeys = [
+    "shortcuts.groupCreateOrganize",
+    "shortcuts.groupWorkspace",
+    "shortcuts.groupAppHelp",
+    "shortcuts.groupMoveAround",
+    "shortcuts.groupOpenInspect",
+    ...orderedExtraGroupKeys,
+  ];
+
+  return orderedGroupKeys
+    .filter((groupKey) => result.has(groupKey))
+    .map((groupKey) => ({
+      key: groupKey,
+      title: resolveTitle(groupKey),
+      shortcuts: result.get(groupKey) ?? [],
+    }));
+}
+
+export function getContextShortcuts(ctx: ShortcutContext): ContextShortcutItem[] {
+  return buildContextShortcutGroups(
+    ctx,
+    (groupKey) => groupKey,
+    (actionKey) => actionKey,
+  ).flatMap((group) => group.shortcuts);
+}
+
+export function getContextShortcutGroups(
+  t: (key: string) => string,
+  ctx: ShortcutContext,
+): ContextShortcutGroup[] {
+  return buildContextShortcutGroups(
+    ctx,
+    (groupKey) => {
+      if (groupKey.startsWith("context:")) {
+        return getContextTitle(t, ctx);
+      }
+      return t(groupKey);
+    },
+    (actionKey, translated) => (translated ? t(actionKey) : actionKey),
+  );
 }
 
 /** Human-readable context title for the modal header. */
