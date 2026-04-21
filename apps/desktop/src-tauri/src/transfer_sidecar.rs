@@ -454,7 +454,23 @@ fn build_transfer_sidecar_env(
     machine_name: Option<&str>,
 ) -> Result<HashMap<String, String>, String> {
     let transfer_root = crate::transfer_identity::resolve_transfer_root(app_data_dir);
-    let resolved = crate::transfer_identity::resolve_transfer_identity(app_data_dir, machine_name)?;
+    build_transfer_sidecar_env_for_root(app_data_dir, &transfer_root, machine_name)
+}
+
+fn build_transfer_sidecar_env_for_root(
+    _app_data_dir: &std::path::Path,
+    transfer_root: &std::path::Path,
+    machine_name: Option<&str>,
+) -> Result<HashMap<String, String>, String> {
+    let resolved =
+        crate::transfer_identity::resolve_transfer_identity_for_root(transfer_root, machine_name)?;
+    build_transfer_sidecar_env_from_resolved(transfer_root, resolved)
+}
+
+fn build_transfer_sidecar_env_from_resolved(
+    transfer_root: &std::path::Path,
+    resolved: crate::transfer_identity::ResolvedTransferIdentity,
+) -> Result<HashMap<String, String>, String> {
     let mut env = HashMap::new();
     env.insert(
         "KANNA_TRANSFER_PORT".to_string(),
@@ -509,9 +525,7 @@ fn resolve_sidecar_binary() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CString;
     use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TestTempDir {
@@ -544,22 +558,6 @@ mod tests {
         }
     }
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    unsafe fn set_env_var(key: &str, value: &str) {
-        let key = CString::new(key).expect("env key should be valid");
-        let value = CString::new(value).expect("env value should be valid");
-        assert_eq!(libc::setenv(key.as_ptr(), value.as_ptr(), 1), 0);
-    }
-
-    unsafe fn unset_env_var(key: &str) {
-        let key = CString::new(key).expect("env key should be valid");
-        assert_eq!(libc::unsetenv(key.as_ptr()), 0);
-    }
-
     #[test]
     fn transfer_sidecar_env_includes_stable_peer_id_and_display_name() {
         let temp = TestTempDir::new();
@@ -575,27 +573,25 @@ mod tests {
     }
 
     #[test]
-    fn transfer_sidecar_env_uses_instance_scoped_transfer_root_when_present() {
-        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+    fn transfer_sidecar_env_uses_explicit_transfer_root() {
         let temp = TestTempDir::new();
         let transfer_root = temp.path().join("worktree-transfer-root");
 
-        unsafe {
-            set_env_var(
-                "KANNA_TRANSFER_ROOT",
+        let env = build_transfer_sidecar_env_for_root(
+            temp.path(),
+            &transfer_root,
+            Some("Jeremy's MacBook Pro"),
+        )
+        .expect("sidecar env should be built");
+
+        assert_eq!(
+            env.get("KANNA_TRANSFER_ROOT").map(String::as_str),
+            Some(
                 transfer_root
                     .to_str()
                     .expect("transfer root should be utf-8"),
-            );
-        }
-
-        let env = build_transfer_sidecar_env(temp.path(), Some("Jeremy's MacBook Pro"))
-            .expect("sidecar env should be built");
-
-        unsafe {
-            unset_env_var("KANNA_TRANSFER_ROOT");
-        }
-
+            )
+        );
         assert_eq!(
             env.get("KANNA_TRANSFER_REGISTRY_DIR").map(String::as_str),
             Some(
