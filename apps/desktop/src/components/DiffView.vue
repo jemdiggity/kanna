@@ -30,17 +30,17 @@ import {
 const { t } = useI18n();
 
 registerContextShortcuts("diff", [
-  { label: t('diffView.shortcutSearch'), display: "/" },
-  { label: t('diffView.shortcutSearchAlt'), display: "⌘F" },
-  { label: t('diffView.shortcutNextPrevMatch'), display: "n / N" },
-  { label: t('diffView.shortcutScopeNext'), display: "⇧⌘]" },
-  { label: t('diffView.shortcutScopePrev'), display: "⇧⌘[" },
-  { label: t('diffView.shortcutCycleFilter'), display: "s" },
-  { label: t('diffView.shortcutLineUpDown'), display: "j / k" },
-  { label: t('diffView.shortcutPageUpDown'), display: "f / b" },
-  { label: t('diffView.shortcutHalfUpDown'), display: "d / u" },
-  { label: t('diffView.shortcutTopBottom'), display: "g / G" },
-  { label: t('diffView.shortcutClose'), display: "q" },
+  { label: t('diffView.shortcutSearch'), display: "/", groupKey: "shortcuts.groupSearch" },
+  { label: t('diffView.shortcutSearchAlt'), display: "⌘F", groupKey: "shortcuts.groupSearch" },
+  { label: t('diffView.shortcutNextPrevMatch'), display: "n / N", groupKey: "shortcuts.groupSearch" },
+  { label: t('diffView.shortcutLineUpDown'), display: "j / k", groupKey: "shortcuts.groupNavigation" },
+  { label: t('diffView.shortcutPageUpDown'), display: "f / b", groupKey: "shortcuts.groupNavigation" },
+  { label: t('diffView.shortcutHalfUpDown'), display: "d / u", groupKey: "shortcuts.groupNavigation" },
+  { label: t('diffView.shortcutTopBottom'), display: "g / G", groupKey: "shortcuts.groupNavigation" },
+  { label: t('diffView.shortcutScopeNext'), display: "⇧⌘]", groupKey: "shortcuts.groupViews" },
+  { label: t('diffView.shortcutScopePrev'), display: "⇧⌘[", groupKey: "shortcuts.groupViews" },
+  { label: t('diffView.shortcutCycleFilter'), display: "s", groupKey: "shortcuts.groupViews" },
+  { label: t('diffView.shortcutClose'), display: "q", groupKey: "shortcuts.groupActions" },
 ]);
 
 type WorkingFilter = "all" | "unstaged" | "staged";

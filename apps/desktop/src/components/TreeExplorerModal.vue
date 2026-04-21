@@ -6,14 +6,14 @@ import { useModalZIndex } from "../composables/useModalZIndex";
 
 useShortcutContext("tree");
 registerContextShortcuts("tree", [
-  { label: "Move ↓ / ↑", display: "j / k" },
-  { label: "Enter dir / Open file", display: "l" },
-  { label: "Go to parent", display: "h" },
-  { label: "Yank path", display: "y" },
-  { label: "Top / Bottom", display: "g g / G" },
-  { label: "Filter", display: "/" },
-  { label: "Clear filter", display: "Esc" },
-  { label: "Close", display: "Esc" },
+  { label: "Filter", display: "/", groupKey: "shortcuts.groupSearch" },
+  { label: "Clear filter", display: "Esc", groupKey: "shortcuts.groupSearch" },
+  { label: "Move ↓ / ↑", display: "j / k", groupKey: "shortcuts.groupNavigation" },
+  { label: "Enter dir / Open file", display: "l", groupKey: "shortcuts.groupNavigation" },
+  { label: "Go to parent", display: "h", groupKey: "shortcuts.groupNavigation" },
+  { label: "Top / Bottom", display: "g g / G", groupKey: "shortcuts.groupNavigation" },
+  { label: "Yank path", display: "y", groupKey: "shortcuts.groupActions" },
+  { label: "Close", display: "Esc", groupKey: "shortcuts.groupActions" },
 ]);
 
 const { zIndex, bringToFront } = useModalZIndex();

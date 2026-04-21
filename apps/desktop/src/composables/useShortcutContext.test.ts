@@ -5,7 +5,9 @@ import {
   setContext,
   resetContext,
   setContextShortcuts as register,
+  setContextShortcuts,
   clearContextShortcuts,
+  getContextShortcutGroups,
   getContextShortcuts,
   type ShortcutContext,
 } from "./useShortcutContext";
@@ -64,21 +66,13 @@ describe("useShortcutContext", () => {
       expect(actions).not.toContain("shortcuts.dismiss");
     });
 
-    it("excludes command palette from modal contexts but allows keyboard shortcuts", () => {
+    it("keeps only modal-relevant global shortcuts in modal contexts", () => {
       for (const ctx of ["diff", "file", "shell", "tree", "graph"] as ShortcutContext[]) {
         const result = getContextShortcuts(ctx);
         const actions = result.map((s) => s.action);
         expect(actions).not.toContain("shortcuts.commandPalette");
-        if (ctx === "tree") {
-          expect(actions).not.toContain("shortcuts.keyboardShortcuts");
-          expect(actions).not.toContain("shortcuts.dismiss");
-        } else if (ctx === "shell") {
-          expect(actions).toContain("shortcuts.keyboardShortcuts");
-          expect(actions).not.toContain("shortcuts.dismiss");
-        } else {
-          expect(actions).toContain("shortcuts.keyboardShortcuts");
-          expect(actions).not.toContain("shortcuts.dismiss");
-        }
+        expect(actions).toContain("shortcuts.keyboardShortcuts");
+        expect(actions).not.toContain("shortcuts.dismiss");
       }
     });
 
@@ -89,13 +83,13 @@ describe("useShortcutContext", () => {
       expect(actions).toContain("shortcuts.maximize");
       expect(actions).toContain("Yank path");
       expect(actions).not.toContain("shortcuts.treeExplorer");
-      expect(actions).not.toContain("shortcuts.keyboardShortcuts");
+      expect(actions).toContain("shortcuts.keyboardShortcuts");
     });
 
-    it("excludes generic help and dismiss shortcuts from new task context", () => {
+    it("keeps help but excludes dismiss and unrelated global actions from new task context", () => {
       const result = getContextShortcuts("newTask");
       const actions = result.map((s) => s.action);
-      expect(actions).not.toContain("shortcuts.keyboardShortcuts");
+      expect(actions).toContain("shortcuts.keyboardShortcuts");
       expect(actions).not.toContain("shortcuts.dismiss");
       expect(actions).not.toContain("shortcuts.commandPalette");
     });
@@ -105,6 +99,82 @@ describe("useShortcutContext", () => {
       const actions = result.map((s) => s.action);
       expect(actions).not.toContain("shortcuts.newTask");
       expect(actions).not.toContain("shortcuts.filePicker");
+    });
+
+    it("excludes cross-tool shortcuts from file context", () => {
+      const result = getContextShortcuts("file");
+      const actions = result.map((s) => s.action);
+
+      expect(actions).not.toContain("shortcuts.treeExplorer");
+      expect(actions).not.toContain("shortcuts.viewDiff");
+      expect(actions).not.toContain("shortcuts.shellTerminal");
+      expect(actions).toContain("shortcuts.maximize");
+      expect(actions).toContain("shortcuts.keyboardShortcuts");
+    });
+
+    it("translates grouped context shortcut labels while preserving supplementary labels", () => {
+      register("diff", [{ label: "Cycle Scope", display: "Space" }]);
+
+      const result = getContextShortcutGroups((key) => `translated:${key}`, "diff");
+      const flattened = result.flatMap((group) => group.shortcuts.map((shortcut) => shortcut.action));
+
+      expect(flattened).toContain("translated:shortcuts.maximize");
+      expect(flattened).toContain("Cycle Scope");
+      expect(flattened).not.toContain("shortcuts.maximize");
+    });
+
+    it("keeps Help in its own group for modal contexts", () => {
+      register("diff", [{ label: "Cycle Scope", display: "Space" }]);
+
+      const result = getContextShortcutGroups((key) => `translated:${key}`, "diff");
+      const helpGroup = result.find((group) => group.key === "shortcuts.groupAppHelp");
+
+      expect(helpGroup).toBeDefined();
+      expect(helpGroup?.shortcuts).toEqual([
+        { action: "translated:shortcuts.keyboardShortcuts", keys: "⌘/" },
+      ]);
+    });
+
+    it("groups file context shortcuts into search, navigation, view, and help sections", () => {
+      setContextShortcuts(
+        "file",
+        [
+          { label: "Search", display: "/", groupKey: "shortcuts.groupSearch" },
+          { label: "Next / Prev match", display: "n / N", groupKey: "shortcuts.groupSearch" },
+          { label: "Line ↓/↑", display: "j / k", groupKey: "shortcuts.groupNavigation" },
+          { label: "Toggle line numbers", display: "l", groupKey: "shortcuts.groupViews" },
+        ] as unknown as Parameters<typeof setContextShortcuts>[1],
+      );
+
+      const result = getContextShortcutGroups((key) => key, "file");
+
+      expect(result.map((group) => group.key)).toEqual([
+        "shortcuts.groupAppHelp",
+        "shortcuts.groupSearch",
+        "shortcuts.groupNavigation",
+        "shortcuts.groupViews",
+      ]);
+    });
+
+    it("groups diff context shortcuts into search, navigation, view, and help sections", () => {
+      setContextShortcuts(
+        "diff",
+        [
+          { label: "Search", display: "/", groupKey: "shortcuts.groupSearch" },
+          { label: "Next / Prev match", display: "n / N", groupKey: "shortcuts.groupSearch" },
+          { label: "Line ↓/↑", display: "j / k", groupKey: "shortcuts.groupNavigation" },
+          { label: "Cycle filter", display: "s", groupKey: "shortcuts.groupViews" },
+        ] as unknown as Parameters<typeof setContextShortcuts>[1],
+      );
+
+      const result = getContextShortcutGroups((key) => key, "diff");
+
+      expect(result.map((group) => group.key)).toEqual([
+        "shortcuts.groupAppHelp",
+        "shortcuts.groupSearch",
+        "shortcuts.groupNavigation",
+        "shortcuts.groupViews",
+      ]);
     });
   });
 });
