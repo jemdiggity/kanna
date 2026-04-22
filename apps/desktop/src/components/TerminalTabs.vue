@@ -5,6 +5,8 @@ import TerminalView from "./TerminalView.vue";
 import { shouldEnableKittyKeyboard } from "../composables/terminalSessionRecovery";
 import { buildTerminalSpawnOptions } from "../composables/terminalSpawnOptions";
 
+const taskTerminalWarmCacheMax = 10;
+
 const props = defineProps<{
   sessionId: string | null;
   agentType?: string;
@@ -34,17 +36,19 @@ function buildSpawnOptions() {
 <template>
   <div class="terminal-panel">
     <!-- PTY mode: mount only the active terminal view -->
-    <TerminalView
-      v-if="sessionId && agentType === 'pty'"
-      :key="sessionId"
-      :session-id="sessionId"
-      :active="true"
-      :spawn-options="buildSpawnOptions()"
-      :kitty-keyboard="!!(spawnPtySession && worktreePath && prompt) && shouldEnableKittyKeyboard({ agentProvider })"
-      :agent-provider="agentProvider"
-      :worktree-path="worktreePath"
-      :agent-terminal="true"
-    />
+    <KeepAlive :max="taskTerminalWarmCacheMax">
+      <TerminalView
+        v-if="sessionId && agentType === 'pty'"
+        :key="sessionId"
+        :session-id="sessionId"
+        :active="true"
+        :spawn-options="buildSpawnOptions()"
+        :kitty-keyboard="!!(spawnPtySession && worktreePath && prompt) && shouldEnableKittyKeyboard({ agentProvider })"
+        :agent-provider="agentProvider"
+        :worktree-path="worktreePath"
+        :agent-terminal="true"
+      />
+    </KeepAlive>
     <!-- SDK mode: key by sessionId so switching tasks creates a new view -->
     <AgentView
       v-if="sessionId && agentType !== 'pty'"

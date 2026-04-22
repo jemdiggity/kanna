@@ -2,16 +2,20 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase } from "../helpers/reset";
+import { pauseForSlowMode } from "../helpers/slowMode";
 
 describe("app launch", () => {
   const client = new WebDriverClient();
 
   beforeAll(async () => {
-    await client.createSession();
+    await client.createSession({ dismissStartupShortcuts: false });
+    await pauseForSlowMode("app-launch session created");
     await resetDatabase(client);
+    await pauseForSlowMode("app-launch database reset");
     // Reload to get fresh UI after reset
     await client.executeSync("location.reload()");
     await sleep(1000);
+    await pauseForSlowMode("app-launch UI reloaded");
   });
 
   afterAll(async () => {
@@ -19,26 +23,31 @@ describe("app launch", () => {
   });
 
   it("renders with title Kanna", async () => {
+    await pauseForSlowMode("before title assertion");
     const title = await client.getTitle();
     expect(title).toBe("Kanna");
   });
 
   it("shows empty sidebar message", async () => {
+    await pauseForSlowMode("before empty sidebar assertion");
     const el = await client.waitForText(".sidebar", "No repos yet.");
     expect(el).toBeTruthy();
   });
 
   it("shows onboarding guidance in main panel", async () => {
+    await pauseForSlowMode("before onboarding guidance assertion");
     const el = await client.waitForText(".main-panel", "Press ⇧⌘J to open a shell");
     expect(el).toBeTruthy();
   });
 
   it("shows repo creation shortcut hint", async () => {
+    await pauseForSlowMode("before repo creation hint assertion");
     const bodyText = await client.executeSync<string>("return document.body.innerText;");
     expect(bodyText).toContain("Press ⌘I to create one.");
   });
 
   it("shows keyboard shortcuts reference", async () => {
+    await pauseForSlowMode("before keyboard shortcuts assertion");
     const bodyText = await client.executeSync<string>("return document.body.innerText;");
     expect(bodyText).toContain("Keyboard Shortcuts");
   });

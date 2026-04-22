@@ -3,6 +3,7 @@ import { watchDebounced } from "@vueuse/core";
 import { DEFAULT_STAGE_ORDER } from "@kanna/core";
 import { insertOperatorEvent, setSetting, updatePipelineItemActivity, type PipelineItem, type Repo } from "@kanna/db";
 import { createNavigationHistory } from "../composables/useNavigationHistory";
+import { beginTaskSwitch } from "../perf/taskSwitchPerf";
 import { hasTag, requireService, type StoreContext } from "./state";
 
 export interface SelectionApi {
@@ -120,6 +121,9 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     nav.select(itemId, context.state.selectedItemId.value);
     context.state.selectedItemId.value = itemId;
     const item = context.state.items.value.find((candidate) => candidate.id === itemId);
+    if (item?.agent_type === "pty") {
+      beginTaskSwitch(itemId);
+    }
     if (item) {
       context.state.lastSelectedItemByRepo.value[item.repo_id] = itemId;
     }

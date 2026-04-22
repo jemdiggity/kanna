@@ -3,6 +3,7 @@ import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "../appError";
 
+const markTaskSwitchFirstOutputMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.fn();
 const listenMock = vi.fn();
 const warningToastMock = vi.fn();
@@ -118,6 +119,10 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
+vi.mock("../perf/taskSwitchPerf", () => ({
+  markTaskSwitchFirstOutput: (...args: unknown[]) => markTaskSwitchFirstOutputMock(...args),
+}));
+
 vi.mock("@tauri-apps/api/event", () => ({
   listen: listenMock,
 }));
@@ -196,6 +201,7 @@ describe("useTerminal", () => {
       };
     });
     terminals.length = 0;
+    markTaskSwitchFirstOutputMock.mockReset();
     listenMock.mockImplementation(async (eventName: string, handler: (event: any) => void) => {
       const listeners = eventListeners.get(eventName) ?? [];
       listeners.push(handler);
@@ -1987,5 +1993,66 @@ describe("useTerminal", () => {
     });
 
     expect(terminal.scrollToLine).not.toHaveBeenCalled();
+  });
+
+  it("marks the first live output once per selected terminal session", async () => {
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "hello",
+            spawnFn: async () => {},
+          },
+          {
+            agentProvider: "copilot",
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+    await wrapper.vm.startListening();
+
+    const outputListener = eventListeners.get("terminal_output")?.[0];
+    outputListener?.({
+      payload: {
+        session_id: "session-1",
+        data: Array.from(new TextEncoder().encode("streaming output")),
+      },
+    });
+    outputListener?.({
+      payload: {
+        session_id: "session-1",
+        data: Array.from(new TextEncoder().encode("more output")),
+      },
+    });
+    outputListener?.({
+      payload: {
+        session_id: "td-session-1",
+        data: Array.from(new TextEncoder().encode("teardown output")),
+      },
+    });
+
+    expect(markTaskSwitchFirstOutputMock).toHaveBeenCalledTimes(2);
+    expect(markTaskSwitchFirstOutputMock).toHaveBeenNthCalledWith(1, "session-1");
+    expect(markTaskSwitchFirstOutputMock).toHaveBeenNthCalledWith(2, "session-1");
+
+    wrapper.unmount();
   });
 });

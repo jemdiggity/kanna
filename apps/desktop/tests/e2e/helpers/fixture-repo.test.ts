@@ -49,4 +49,48 @@ describe("fixture repo helpers", () => {
     ]);
     expect(await realpath(stdout.trim())).toBe(await realpath(fixtureRepoPath));
   });
+
+  it("creates a disposable repo from committed seed content with a local bare origin", async () => {
+    const { createSeedFixtureRepo } = await import("./fixture-repo");
+
+    const fixtureRepoPath = await createSeedFixtureRepo("task-switch-minimal");
+    createdRepoPaths.push(fixtureRepoPath);
+
+    expect(fixtureRepoPath.startsWith(`${LIVE_REPO_ROOT}/`)).toBe(false);
+    await expect(access(resolve(fixtureRepoPath, ".git"))).resolves.toBeUndefined();
+
+    const { stdout: topLevel } = await execFileAsync("git", [
+      "-C",
+      fixtureRepoPath,
+      "rev-parse",
+      "--show-toplevel",
+    ]);
+    expect(await realpath(topLevel.trim())).toBe(await realpath(fixtureRepoPath));
+
+    const { stdout: originUrl } = await execFileAsync("git", [
+      "-C",
+      fixtureRepoPath,
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    const resolvedOriginPath = await realpath(originUrl.trim());
+    expect(resolvedOriginPath.endsWith(".git")).toBe(true);
+
+    const { stdout: isBare } = await execFileAsync("git", [
+      "--git-dir",
+      resolvedOriginPath,
+      "rev-parse",
+      "--is-bare-repository",
+    ]);
+    expect(isBare.trim()).toBe("true");
+
+    const { stdout: mainRef } = await execFileAsync("git", [
+      "--git-dir",
+      resolvedOriginPath,
+      "rev-parse",
+      "refs/heads/main",
+    ]);
+    expect(mainRef.trim().length).toBeGreaterThan(0);
+  });
 });

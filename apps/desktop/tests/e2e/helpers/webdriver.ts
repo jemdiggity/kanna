@@ -10,6 +10,10 @@ import { getWebDriverPort } from "./webdriverPort";
 
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
 
+interface CreateSessionOptions {
+  dismissStartupShortcuts?: boolean;
+}
+
 export class WebDriverClient {
   private baseUrl: string;
   private sessionId: string | null = null;
@@ -24,11 +28,13 @@ export class WebDriverClient {
 
   // ── Session lifecycle ─────────────────────────────────────────────
 
-  async createSession(): Promise<string> {
+  async createSession(options: CreateSessionOptions = {}): Promise<string> {
     const res = await this.post("/session", { capabilities: {} });
     this.sessionId = res.value.sessionId;
     await this.waitForAppReady();
-    await dismissStartupShortcutsModal(this);
+    if (options.dismissStartupShortcuts ?? true) {
+      await dismissStartupShortcutsModal(this);
+    }
     return this.sessionId;
   }
 

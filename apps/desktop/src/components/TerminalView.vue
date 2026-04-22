@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from "vue"
+import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch, nextTick } from "vue"
 import { useTerminal, type SpawnOptions } from "../composables/useTerminal"
 import { shouldDelayConnectUntilAfterInitialLayout } from "../composables/terminalSessionRecovery"
 import { shouldStartTerminalSession } from "../composables/terminalVisibility"
+import { markTaskSwitchMounted, markTaskSwitchReady } from "../perf/taskSwitchPerf"
 import "@xterm/xterm/css/xterm.css"
 
 const props = defineProps<{
@@ -82,8 +83,32 @@ onMounted(async () => {
     init(containerRef.value)
     resizeObserver = new ResizeObserver(() => fitDeferred())
     resizeObserver.observe(containerRef.value)
+    if (props.agentTerminal && props.active !== false) {
+      markTaskSwitchMounted(props.sessionId)
+    }
     await startWhenActive()
+    if (props.agentTerminal && props.active !== false) {
+      markTaskSwitchReady(props.sessionId, "cold")
+    }
     await focusWhenActive()
+  }
+})
+
+onActivated(async () => {
+  if (props.agentTerminal && props.active !== false) {
+    markTaskSwitchMounted(props.sessionId)
+  }
+  fitDeferred()
+  await focusWhenActive()
+  if (props.agentTerminal && props.active !== false) {
+    markTaskSwitchReady(props.sessionId, "warm")
+  }
+})
+
+onDeactivated(() => {
+  if (focusRafId) {
+    cancelAnimationFrame(focusRafId)
+    focusRafId = 0
   }
 })
 
