@@ -46,8 +46,6 @@ interface ShortcutDisplayEntryItem {
   keys: string;
 }
 
-type ShortcutDisplayEntry = ShortcutDisplayEntrySection | ShortcutDisplayEntryItem;
-
 interface FullModeEntrySection extends ShortcutDisplayEntrySection {
   column: number;
   row: number;
