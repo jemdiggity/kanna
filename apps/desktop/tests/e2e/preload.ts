@@ -3,7 +3,7 @@
  * Checks that the Tauri app is running with WebDriver available.
  */
 import { getWebDriverBaseUrl, getWebDriverPort } from "./helpers/webdriverPort";
-import { APP_READY_SCRIPT } from "./helpers/appReady";
+import { APP_DB_NAME_SCRIPT, APP_READY_SCRIPT } from "./helpers/appReady";
 
 const WD_URL = getWebDriverBaseUrl();
 const WD_PORT = getWebDriverPort();
@@ -72,7 +72,7 @@ if (!vueReady) {
 
 // Verify the app is running with a test database — refuse to run tests against production data
 const currentDb = await executeSync(
-  "return window.__KANNA_E2E__ ? window.__KANNA_E2E__.dbName : null;"
+  `return ${APP_DB_NAME_SCRIPT};`
 );
 
 await fetch(`${WD_URL}/session/${sid}`, { method: "DELETE" });

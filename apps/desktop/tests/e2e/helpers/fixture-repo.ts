@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -9,14 +9,31 @@ interface CreateFixtureRepoOptions {
   tempRoot?: string;
 }
 
+interface CreateSeedFixtureRepoOptions {
+  fixtureRoot?: string;
+  tempRoot?: string;
+}
+
 interface CommandOptions {
   cwd?: string;
 }
+
+const RM_RETRY_OPTIONS = {
+  force: true,
+  recursive: true,
+  maxRetries: 10,
+  retryDelay: 100,
+} as const;
 
 const DEFAULT_LIVE_REPO_ROOT = resolve(
   process.env.KANNA_E2E_LIVE_REPO_ROOT ??
     dirname(fileURLToPath(import.meta.url)),
   "../../../../..",
+);
+
+const DEFAULT_SEED_FIXTURE_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../fixtures/repos",
 );
 
 function sanitizeRepoName(name: string): string {
@@ -101,7 +118,36 @@ export async function createFixtureRepo(
     ["git", "clone", "--local", "--no-hardlinks", sourceRepoPath, fixtureRepoPath],
     { cwd: tempDir },
   );
-  await rm(join(fixtureRepoPath, ".kanna-worktrees"), { recursive: true, force: true });
+  await rm(join(fixtureRepoPath, ".kanna-worktrees"), RM_RETRY_OPTIONS);
+
+  return fixtureRepoPath;
+}
+
+export async function createSeedFixtureRepo(
+  fixtureName: string,
+  options: CreateSeedFixtureRepoOptions = {},
+): Promise<string> {
+  const fixtureRoot = resolve(options.fixtureRoot ?? DEFAULT_SEED_FIXTURE_ROOT);
+  const sourceFixturePath = join(fixtureRoot, fixtureName);
+  const tempRoot = options.tempRoot ?? join(tmpdir(), "kanna-e2e-fixtures");
+
+  await mkdir(tempRoot, { recursive: true });
+  const tempDir = await mkdtemp(join(tempRoot, "fixture-"));
+  const fixtureRepoPath = join(tempDir, sanitizeRepoName(fixtureName));
+  const originPath = join(tempDir, `${sanitizeRepoName(fixtureName)}-origin.git`);
+
+  await cp(sourceFixturePath, fixtureRepoPath, { recursive: true });
+
+  await runCommand(["git", "init"], { cwd: fixtureRepoPath });
+  await runCommand(["git", "config", "user.name", "Kanna E2E"], { cwd: fixtureRepoPath });
+  await runCommand(["git", "config", "user.email", "kanna-e2e@example.com"], { cwd: fixtureRepoPath });
+  await runCommand(["git", "add", "."], { cwd: fixtureRepoPath });
+  await runCommand(["git", "commit", "-m", "seed fixture"], { cwd: fixtureRepoPath });
+  await runCommand(["git", "branch", "-M", "main"], { cwd: fixtureRepoPath });
+
+  await runCommand(["git", "init", "--bare", originPath], { cwd: tempDir });
+  await runCommand(["git", "remote", "add", "origin", originPath], { cwd: fixtureRepoPath });
+  await runCommand(["git", "push", "-u", "origin", "main"], { cwd: fixtureRepoPath });
 
   return fixtureRepoPath;
 }
@@ -111,10 +157,10 @@ export async function cleanupFixtureRepos(repoPaths: string[]): Promise<void> {
     const resolvedRepoPath = resolve(repoPath);
     const parentDir = dirname(resolvedRepoPath);
     if (basename(parentDir).startsWith("fixture-")) {
-      await rm(parentDir, { recursive: true, force: true });
+      await rm(parentDir, RM_RETRY_OPTIONS);
       continue;
     }
 
-    await rm(resolvedRepoPath, { recursive: true, force: true });
+    await rm(resolvedRepoPath, RM_RETRY_OPTIONS);
   }
 }

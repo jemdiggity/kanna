@@ -3,6 +3,8 @@ import { nextTick } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DbHandle, PipelineItem, Repo } from "@kanna/db";
 
+const beginTaskSwitchMock = vi.hoisted(() => vi.fn());
+
 const mockState = vi.hoisted(() => {
   const now = "2026-04-17T00:00:00.000Z";
 
@@ -222,6 +224,10 @@ vi.mock("./taskRuntimeStatus", () => ({
   shouldIgnoreRuntimeStatusDuringSetup: vi.fn(() => false),
 }));
 
+vi.mock("../perf/taskSwitchPerf", () => ({
+  beginTaskSwitch: (...args: unknown[]) => beginTaskSwitchMock(...args),
+}));
+
 vi.mock("./agent-permissions", () => ({
   getAgentPermissionFlags: vi.fn(() => []),
 }));
@@ -326,6 +332,7 @@ describe("kanna query snapshot regressions", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-17T00:00:00.000Z"));
     mockState.reset();
+    beginTaskSwitchMock.mockReset();
   });
 
   afterEach(() => {
@@ -380,5 +387,14 @@ describe("kanna query snapshot regressions", () => {
 
     expect(store.selectedRepo?.id).toBe("repo-1");
     expect(store.currentItem?.id).toBe("item-1");
+  });
+
+  it("begins a task-switch perf record when selecting a PTY task", async () => {
+    const store = await createStore();
+
+    await store.selectRepo("repo-1");
+    await store.selectItem("item-1");
+
+    expect(beginTaskSwitchMock).toHaveBeenCalledWith("item-1");
   });
 });
