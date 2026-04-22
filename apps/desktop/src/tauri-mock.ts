@@ -7,9 +7,27 @@
 export const isTauri = !!(window as any).__TAURI_INTERNALS__;
 
 type Row = Record<string, unknown>;
+type MockTauriEventPayload = Record<string, unknown>;
+type MockTauriEventHandler = (event: { payload: MockTauriEventPayload }) => void;
 
 // In-memory SQLite mock
 const tables: Record<string, Row[]> = {};
+const mockEventHandlers = new Map<string, Set<MockTauriEventHandler>>();
+
+function emitMockEvent(event: string, payload: MockTauriEventPayload) {
+  for (const handler of mockEventHandlers.get(event) ?? []) {
+    handler({ payload });
+  }
+}
+
+function scheduleMockTerminalOutput(sessionId: string) {
+  queueMicrotask(() => {
+    emitMockEvent("terminal_output", {
+      session_id: sessionId,
+      data: Array.from(new TextEncoder().encode(`mock output for ${sessionId}`)),
+    });
+  });
+}
 
 function ensureTable(name: string) {
   if (!tables[name]) tables[name] = [];
@@ -192,7 +210,33 @@ class MockDatabase {
 const invokeHandlers: Record<string, (...args: any[]) => any> = {
   list_sessions: () => [],
   spawn_session: () => ({}),
-  attach_session: () => ({}),
+  attach_session: (args?: { sessionId?: string }) => {
+    if (args?.sessionId) {
+      scheduleMockTerminalOutput(args.sessionId);
+    }
+    return {};
+  },
+  attach_session_with_snapshot: (args?: { sessionId?: string }) => {
+    if (args?.sessionId) {
+      const sessionId = args.sessionId;
+      queueMicrotask(() => {
+        emitMockEvent("terminal_snapshot", {
+          session_id: sessionId,
+          snapshot: {
+            version: 1,
+            rows: 24,
+            cols: 80,
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            vt: `mock restored scrollback for ${sessionId}`,
+          },
+        });
+        scheduleMockTerminalOutput(sessionId);
+      });
+    }
+    return {};
+  },
   detach_session: () => ({}),
   get_session_recovery_state: () => null,
   send_input: () => ({}),
@@ -330,8 +374,17 @@ export function getMockDatabase(): MockDatabase {
 }
 
 // Mock listen — returns a no-op unlisten function
-export function mockListen(_event: string, _handler: (event: any) => void): Promise<() => void> {
-  return Promise.resolve(() => {});
+export function mockListen(event: string, handler: (event: any) => void): Promise<() => void> {
+  const handlers = mockEventHandlers.get(event) ?? new Set<MockTauriEventHandler>();
+  handlers.add(handler as MockTauriEventHandler);
+  mockEventHandlers.set(event, handlers);
+  return Promise.resolve(() => {
+    const current = mockEventHandlers.get(event);
+    current?.delete(handler as MockTauriEventHandler);
+    if (current && current.size === 0) {
+      mockEventHandlers.delete(event);
+    }
+  });
 }
 
 // Mock dialog open — prompts via browser prompt()

@@ -5,6 +5,7 @@ import { dirname, basename, join, posix, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { buildRealE2eAgentEnv } from "./runEnv";
+import { pauseBeforeTestTarget, pauseForAppReady } from "./helpers/runSlowMode";
 
 interface CommandOptions {
   cwd: string;
@@ -321,10 +322,12 @@ async function main(): Promise<void> {
     console.log(`[e2e] waiting for primary app at ${primary.baseUrl}`);
     await waitForApp(primary.baseUrl, 10 * 60_000);
     console.log(`[e2e] primary app ready at ${primary.baseUrl}`);
+    await pauseForAppReady("primary");
     if (secondaryInstance) {
       console.log(`[e2e] waiting for secondary app at ${secondaryInstance.baseUrl}`);
       await waitForApp(secondaryInstance.baseUrl, 10 * 60_000);
       console.log(`[e2e] secondary app ready at ${secondaryInstance.baseUrl}`);
+      await pauseForAppReady("secondary");
     }
 
     return { primary, secondary: secondaryInstance };
@@ -366,6 +369,7 @@ async function main(): Promise<void> {
         await stopInstances(runningInstances);
         runningInstances = await startInstances(false);
       }
+      await pauseBeforeTestTarget(testTarget);
       console.log(`\n[e2e] running ${testTarget}\n`);
       await runCommand(
         ["pnpm", "exec", "vitest", "run", "--config", "./tests/e2e/vitest.config.ts", testTarget],

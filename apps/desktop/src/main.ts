@@ -5,6 +5,11 @@ import { isTauri } from "./tauri-mock";
 import { loadDatabase, runMigrations } from "./stores/db";
 import { shouldMountBaseBranchDropdownPreview } from "./previewMode";
 import { formatLogArgument } from "./logForwarding";
+import {
+  clearTaskSwitchPerfRecords,
+  getLatestTaskSwitchPerfRecord,
+  getTaskSwitchPerfRecords,
+} from "./perf/taskSwitchPerf";
 import App from "./App.vue";
 
 interface AppWithSetupState {
@@ -65,11 +70,11 @@ try {
   app.use(i18n);
   app.provide("db", db);
   app.provide("dbName", dbName);
-  app.mount("#app");
 
   if (import.meta.env.DEV) {
     const appWithSetupState = app as typeof app & AppWithSetupState;
     window.__KANNA_E2E__ = {
+      ready: false,
       get setupState() {
         const setupState = appWithSetupState._instance?.setupState;
         if (!setupState) return null;
@@ -114,8 +119,15 @@ try {
       get dbName() {
         return dbName;
       },
+      taskSwitchPerf: {
+        getLatest: () => getLatestTaskSwitchPerfRecord(),
+        getAll: () => getTaskSwitchPerfRecords(),
+        clear: () => clearTaskSwitchPerfRecords(),
+      },
     };
   }
+
+  app.mount("#app");
 } catch (e) {
   console.error("[init] fatal:", e);
   const el = document.getElementById("app");

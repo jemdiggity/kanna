@@ -5,6 +5,8 @@ import { nextTick, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalView from "../TerminalView.vue";
 
+const markTaskSwitchMountedMock = vi.fn();
+const markTaskSwitchReadyMock = vi.fn();
 const useTerminalMock = vi.fn(() => ({
   terminal: ref({ focus: focusMock }),
   init: initMock,
@@ -43,6 +45,11 @@ vi.mock("../../composables/terminalSessionRecovery", () => ({
   shouldDelayConnectUntilAfterInitialLayout: () => false,
 }));
 
+vi.mock("../../perf/taskSwitchPerf", () => ({
+  markTaskSwitchMounted: (...args: unknown[]) => markTaskSwitchMountedMock(...args),
+  markTaskSwitchReady: (...args: unknown[]) => markTaskSwitchReadyMock(...args),
+}));
+
 describe("TerminalView", () => {
   beforeEach(() => {
     useTerminalMock.mockClear();
@@ -54,6 +61,8 @@ describe("TerminalView", () => {
     redrawMock.mockReset();
     ensureConnectedMock.mockReset();
     disposeMock.mockReset();
+    markTaskSwitchMountedMock.mockReset();
+    markTaskSwitchReadyMock.mockReset();
 
     globalThis.ResizeObserver = class ResizeObserver {
       observe = vi.fn();
@@ -92,6 +101,8 @@ describe("TerminalView", () => {
     expect(initMock).toHaveBeenCalledTimes(1);
     expect(startListeningMock).toHaveBeenCalledTimes(1);
     expect(focusMock).toHaveBeenCalledTimes(1);
+    expect(markTaskSwitchMountedMock).toHaveBeenCalledWith("session-1");
+    expect(markTaskSwitchReadyMock).toHaveBeenCalledWith("session-1", "cold");
 
     wrapper.unmount();
   });

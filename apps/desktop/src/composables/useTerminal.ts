@@ -42,6 +42,7 @@ import {
 import { useToast } from "./useToast"
 import i18n from "../i18n"
 import { getAppErrorMessage } from "../appError"
+import { markTaskSwitchFirstOutput } from "../perf/taskSwitchPerf"
 
 export interface SpawnOptions {
   cwd: string
@@ -962,6 +963,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           const sid = event.payload.session_id
           if ((sid === sessionId || sid === teardownId) && terminal.value) {
             outputChunkCount += 1
+            if (sid === sessionId) {
+              markTaskSwitchFirstOutput(sessionId)
+            }
 
             if (event.payload.data_b64) {
               const binary = atob(event.payload.data_b64)
