@@ -42,6 +42,7 @@ import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import { getCreateWorktreeStartPoint, resolveInitialBaseRef } from "./taskBaseBranch";
 import { buildTaskRuntimeEnv } from "./kannaCliEnv";
+import { buildWorktreeSessionEnv } from "./worktreeEnv";
 import {
   reportCloseSessionError,
   reportPrewarmSessionError,
@@ -347,14 +348,22 @@ export function createTasksApi(
         }
 
         if (agentType !== "pty") {
-          const sdkEnv = buildTaskRuntimeEnv({
+          const sdkBaseEnv = buildWorktreeSessionEnv({
+            worktreePath,
+            repoConfig,
+            portEnv,
+            inheritedPath: await invoke<string>("read_env_var", { name: "PATH" }).catch(() => null),
+          });
+          const sdkEnv = {
+            ...sdkBaseEnv,
+            ...buildTaskRuntimeEnv({
             taskId: id,
             dbName: await resolveDbName(),
             appDataDir: await invoke<string>("get_app_data_dir"),
             socketPath: await invoke<string>("get_pipeline_socket_path"),
-            portEnv,
             kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
-          });
+            }),
+          };
           await invoke("create_agent_session", {
             sessionId: id,
             cwd: worktreePath,
@@ -381,6 +390,8 @@ export function createTasksApi(
               maxTurns: opts?.customTask?.maxTurns,
               maxBudgetUsd: opts?.customTask?.maxBudgetUsd,
               setupCmdsOverride: opts?.customTask?.setup,
+              worktreePath,
+              repoConfig,
               portEnv,
               setupCmds: ptySetupCmds,
               resumeSessionId: opts?.resumeSessionId ?? undefined,

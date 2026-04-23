@@ -6,6 +6,7 @@ import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/termin
 import { resolveDbName } from "./db";
 import { buildTaskRuntimeEnv } from "./kannaCliEnv";
 import { getAgentPermissionFlags } from "./agent-permissions";
+import { buildWorktreeSessionEnv } from "./worktreeEnv";
 import {
   requireResolvedAgentProvider,
   type AgentProviderAvailability,
@@ -60,6 +61,33 @@ export interface SessionsApi {
 export function createSessionsApi(context: StoreContext): SessionsApi {
   const sessionExitWaiters = new Map<string, Array<() => void>>();
   const runtimeStatusSyncDelayMs = 250;
+
+  function parsePortEnv(portEnv?: string | null): Record<string, string> {
+    if (!portEnv) {
+      return {};
+    }
+
+    try {
+      return JSON.parse(portEnv) as Record<string, string>;
+    } catch (error) {
+      console.error("[store] failed to parse portEnv:", error);
+      return {};
+    }
+  }
+
+  async function readInheritedPath(explicitPath?: string): Promise<string | null> {
+    if (explicitPath && explicitPath.length > 0) {
+      return explicitPath;
+    }
+
+    try {
+      const inheritedPath = await invoke<string>("read_env_var", { name: "PATH" });
+      return inheritedPath.length > 0 ? inheritedPath : null;
+    } catch (error) {
+      console.error("[store] failed to resolve inherited PATH:", error);
+      return null;
+    }
+  }
 
   async function applyTaskRuntimeStatus(item: import("@kanna/db").PipelineItem, status: string) {
     if (shouldIgnoreRuntimeStatusDuringSetup(status, context.state.pendingSetupIds.value.includes(item.id))) {
@@ -167,14 +195,19 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     isWorktree = true,
     fallbackCwd?: string | null,
   ): Promise<void> {
-    const env: Record<string, string> = { TERM: "xterm-256color" };
-    if (isWorktree) env.KANNA_WORKTREE = "1";
-    if (portEnv) {
-      try {
-        Object.assign(env, JSON.parse(portEnv));
-      } catch (error) {
-        console.error("[store] failed to parse portEnv:", error);
-      }
+    const parsedPortEnv = parsePortEnv(portEnv);
+    let env: Record<string, string> = { TERM: "xterm-256color" };
+    if (isWorktree) {
+      env.KANNA_WORKTREE = "1";
+      env = buildWorktreeSessionEnv({
+        worktreePath: cwd,
+        baseEnv: env,
+        repoConfig: await readRepoConfig(cwd),
+        portEnv: parsedPortEnv,
+        inheritedPath: await readInheritedPath(env.PATH),
+      });
+    } else if (Object.keys(parsedPortEnv).length > 0) {
+      Object.assign(env, parsedPortEnv);
     }
     try {
       env.ZDOTDIR = await invoke<string>("ensure_term_init");
@@ -222,32 +255,50 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     const env: Record<string, string> = { ...getTaskTerminalEnv(provider) };
     let kannaCliPath: string | undefined;
     let setupCmds: string[] = options?.setupCmds || [];
+    let portEnv = options?.portEnv;
+    let worktreePath = options?.worktreePath;
+    let repoConfig = options?.repoConfig;
 
-    if (options?.portEnv) {
-      Object.assign(env, options.portEnv);
-    } else {
-      const item = context.state.items.value.find((candidate) => candidate.id === sessionId);
-      if (item) {
-        if (item.port_env) {
-          try {
-            Object.assign(env, JSON.parse(item.port_env));
-          } catch (error) {
-            console.error("[store] failed to parse port_env:", error);
+    const item = context.state.items.value.find((candidate) => candidate.id === sessionId);
+    if (item) {
+      if (!portEnv && item.port_env) {
+        portEnv = parsePortEnv(item.port_env);
+      }
+
+      if (!worktreePath || (setupCmds.length === 0 && !repoConfig)) {
+        try {
+          const repo = await getRepo(context.requireDb(), item.repo_id);
+          if (repo && item.branch) {
+            worktreePath ??= `${repo.path}/.kanna-worktrees/${item.branch}`;
           }
-        }
-        if (setupCmds.length === 0) {
-          try {
-            const repo = await getRepo(context.requireDb(), item.repo_id);
-            if (repo && item.branch) {
-              const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-              const repoConfig = await readRepoConfig(worktreePath);
-              if (repoConfig.setup?.length) setupCmds = repoConfig.setup;
-            }
-          } catch (error) {
-            console.error("[store] failed to read setup config:", error);
-          }
+        } catch (error) {
+          console.error("[store] failed to resolve worktree path:", error);
         }
       }
+    }
+
+    if (worktreePath && !repoConfig) {
+      try {
+        repoConfig = await readRepoConfig(worktreePath);
+      } catch (error) {
+        console.error("[store] failed to read setup config:", error);
+      }
+    }
+
+    if (setupCmds.length === 0 && repoConfig?.setup?.length) {
+      setupCmds = repoConfig.setup;
+    }
+
+    if (worktreePath) {
+      Object.assign(env, buildWorktreeSessionEnv({
+        worktreePath,
+        baseEnv: env,
+        repoConfig,
+        portEnv,
+        inheritedPath: await readInheritedPath(env.PATH),
+      }));
+    } else if (portEnv) {
+      Object.assign(env, portEnv);
     }
 
     let resolvedKannaCliPath: string | null = null;
@@ -356,7 +407,10 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     rows = 24,
     options?: PtySpawnOptions,
   ) {
-    const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(sessionId, prompt, options);
+    const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(sessionId, prompt, {
+      ...options,
+      worktreePath: options?.worktreePath ?? cwd,
+    });
     const fullCmd = buildTaskShellCommand(agentCmd, setupCmds, { kannaCliPath });
 
     await invoke("spawn_session", {

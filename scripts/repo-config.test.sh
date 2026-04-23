@@ -15,3 +15,6 @@ assert_contains() {
 assert_contains "\"/bin/sh ./scripts/setup-worktree.sh\""
 assert_contains "\"/bin/bash ./scripts/dev.sh stop -k\""
 assert_contains "\"/bin/bash ./scripts/clean.sh --all\""
+assert_contains "\"\$schema\": \"https://schemas.kanna.build/config.schema.json\""
+assert_contains "\"workspace\""
+assert_contains "\"prepend\": [\"./node_modules/.bin\"]"
