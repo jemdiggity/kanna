@@ -43,6 +43,7 @@ import { useToast } from "./useToast"
 import i18n from "../i18n"
 import { getAppErrorMessage } from "../appError"
 import { markTaskSwitchFirstOutput } from "../perf/taskSwitchPerf"
+import { hasObservedDaemonReady, markDaemonReadyObserved } from "./daemonReadyState"
 
 export interface SpawnOptions {
   cwd: string
@@ -864,11 +865,31 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
             true,
           )
         }
+        let missingInitialTaskWorktreeExists = false
+        if (!hasAttachedOnce && isMissingDaemonSessionFailure(e)) {
+          missingInitialTaskWorktreeExists = await taskWorktreeExists()
+        }
+
         const shouldRespawnMissingInitialTaskSession =
           !hasAttachedOnce &&
           isMissingDaemonSessionFailure(e) &&
           recoveryState == null &&
-          await taskWorktreeExists()
+          hasObservedDaemonReady() &&
+          missingInitialTaskWorktreeExists
+
+        const shouldWaitForDaemonReadyBeforeInitialRespawn =
+          !hasAttachedOnce &&
+          isMissingDaemonSessionFailure(e) &&
+          !hasObservedDaemonReady() &&
+          missingInitialTaskWorktreeExists
+
+        if (shouldWaitForDaemonReadyBeforeInitialRespawn) {
+          console.warn("[terminal][connect] missing_initial_session:waiting_for_daemon_ready", {
+            sessionId,
+            instanceId,
+          })
+          return
+        }
 
         if (shouldRespawnMissingInitialTaskSession) {
           console.warn("[terminal][connect] missing_initial_session:respawn", {
@@ -1048,6 +1069,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
     if (!unlistenDaemonReady && shouldReattachOnDaemonReady(spawnOptions, options)) {
       unlistenDaemonReady = await listen("daemon_ready", () => {
+        markDaemonReadyObserved()
         console.warn("[terminal][event] daemon_ready", {
           sessionId,
           instanceId,

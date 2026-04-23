@@ -3,6 +3,7 @@ import { invoke } from "../invoke";
 import { isTauri } from "../tauri-mock";
 import { listen } from "../listen";
 import { clearCachedTerminalState } from "../composables/terminalStateCache";
+import { markDaemonReadyObserved } from "../composables/daemonReadyState";
 import {
   getTaskIdFromTeardownSessionId,
   isTeardownSessionId,
@@ -24,7 +25,7 @@ export interface InitApi {
 export function createInitApi(
   context: StoreContext,
   ports: import("./ports").PortsStore,
-  tasks: Pick<import("./tasks").TasksApi, "checkUnblocked" | "handleAgentFinished" | "startBlockedTask">,
+  tasks: Pick<import("./tasks").TasksApi, "checkUnblocked" | "handleAgentFinished" | "restoreUnblockedTask">,
 ): InitApi {
   async function loadPreferences() {
     const suspendAfter = await getSetting(context.requireDb(), "suspendAfterMinutes");
@@ -82,8 +83,8 @@ export function createInitApi(
 
     const unblockedItems = await getUnblockedItems(context.requireDb());
     for (const item of unblockedItems) {
-      console.debug(`[store] auto-starting previously blocked task: ${item.id}`);
-      await tasks.startBlockedTask(item);
+      console.debug(`[store] restoring previously blocked task: ${item.id}`);
+      await tasks.restoreUnblockedTask(item);
     }
 
     await requireService(context.services.loadInitialData, "loadInitialData")();
@@ -205,6 +206,7 @@ export function createInitApi(
     });
 
     listen("daemon_ready", async () => {
+      markDaemonReadyObserved();
       await requireService(context.services.syncTaskStatusesFromDaemon, "syncTaskStatusesFromDaemon")();
     });
 
