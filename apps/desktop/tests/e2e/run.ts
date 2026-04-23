@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readdir, rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, basename, join, posix, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -299,11 +299,17 @@ async function main(): Promise<void> {
       })
     : null;
 
-  function buildTestEnv(withSecondary: boolean): Record<string, string> {
+  function buildPerfOutputPath(testTarget: string): string {
+    const perfSuffix = sanitizeSuffix(testTarget.replace(/^tests\/e2e\//, ""));
+    return join(primaryDaemonDir, `${perfSuffix}.perf.log`);
+  }
+
+  function buildTestEnv(withSecondary: boolean, perfOutputPath: string): Record<string, string> {
     return toSpawnEnv({
       KANNA_DAEMON_DIR: primaryDaemonDir,
       KANNA_DB_NAME: primaryDbName,
       KANNA_DEV_PORT: String(primaryDevPort),
+      KANNA_E2E_PERF_OUTPUT_PATH: perfOutputPath,
       KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,
       KANNA_WEBDRIVER_PORT: String(primaryWebDriverPort),
       ...realE2eAgentEnv,
@@ -371,13 +377,19 @@ async function main(): Promise<void> {
       }
       await pauseBeforeTestTarget(testTarget);
       console.log(`\n[e2e] running ${testTarget}\n`);
+      const perfOutputPath = buildPerfOutputPath(testTarget);
+      await rm(perfOutputPath, { force: true }).catch(() => undefined);
       await runCommand(
         ["pnpm", "exec", "vitest", "run", "--config", "./tests/e2e/vitest.config.ts", testTarget],
         {
           cwd: desktopRoot,
-          env: buildTestEnv(needsSecondaryForTarget),
+          env: buildTestEnv(needsSecondaryForTarget, perfOutputPath),
         },
       );
+      const perfSummary = await readFile(perfOutputPath, "utf8").catch(() => "");
+      if (perfSummary.trim()) {
+        process.stdout.write(`${perfSummary.trimEnd()}\n`);
+      }
       lastTargetWasReal = targetIsReal;
     }
   } catch (error) {

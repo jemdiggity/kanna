@@ -86,7 +86,6 @@ const workingFilterLabel = computed(() => {
   };
   return labels[workingFilter.value];
 });
-let fileDiffInstance: FileDiff | null = null;
 let workerPool: WorkerPoolManager | null = null;
 
 interface DiffFilePathMetadata {
@@ -115,6 +114,13 @@ interface DiffRenderContext {
   loadStartedAt: number;
 }
 
+interface DiffRenderFileEntry {
+  id: string;
+  rawFileMeta: FileDiffMetadata & DiffFilePathMetadata;
+  displayPath: string;
+  wrapper: HTMLDivElement;
+}
+
 const searchTargets = computed(() => buildDiffSearchTargets(renderedFiles.value));
 const searchMatches = computed(() => findDiffSearchMatches(searchTargets.value, searchQuery.value));
 const searchMatchCount = computed(() => searchMatches.value.length);
@@ -125,9 +131,23 @@ const searchCountLabel = computed(() => {
 });
 
 let nextDiffLoadId = 0;
+let activeDiffLoadId = 0;
+let fileDiffInstances: FileDiff[] = [];
+
+const DIFF_RENDER_BATCH_SIZE = 12;
 
 function roundDuration(durationMs: number): number {
   return Math.round(durationMs * 10) / 10;
+}
+
+function isActiveDiffLoad(loadId: number): boolean {
+  return activeDiffLoadId === loadId;
+}
+
+async function waitForRenderTurn(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
 }
 
 function getWorkerPoolStatsSnapshot(pool: WorkerPoolManager | null): DiffWorkerPoolStats | null {
@@ -323,6 +343,7 @@ async function loadDiff(options: { preserveCurrentScroll?: boolean } = {}) {
   closeSearch();
   const path = props.worktreePath || props.repoPath;
   const loadId = ++nextDiffLoadId;
+  activeDiffLoadId = loadId;
   const loadStartedAt = performance.now();
   const renderContext: DiffRenderContext = {
     loadId,
@@ -380,6 +401,10 @@ async function loadDiff(options: { preserveCurrentScroll?: boolean } = {}) {
       });
     }
 
+    if (!isActiveDiffLoad(loadId)) {
+      return;
+    }
+
     if (!patch?.trim()) {
       noDiff.value = true;
       diffContent.value = "";
@@ -399,15 +424,23 @@ async function loadDiff(options: { preserveCurrentScroll?: boolean } = {}) {
 
     diffContent.value = patch;
     await renderDiff(diffContent.value, renderContext);
+    if (!isActiveDiffLoad(loadId)) {
+      return;
+    }
     restoreScrollPosition();
   } catch (e: unknown) {
+    if (!isActiveDiffLoad(loadId)) {
+      return;
+    }
     error.value = e instanceof Error ? e.message : String(e);
     logDiffPerf(loadId, "error", {
       totalMs: roundDuration(performance.now() - loadStartedAt),
       error: error.value,
     });
   } finally {
-    loading.value = false;
+    if (isActiveDiffLoad(loadId)) {
+      loading.value = false;
+    }
   }
 }
 
@@ -427,16 +460,133 @@ async function detectBaseRef(path: string): Promise<string> {
 }
 
 function cleanupInstance() {
-  if (fileDiffInstance) {
-    // FileDiff doesn't have a destroy method — just null the reference
-    fileDiffInstance = null;
-  }
+  fileDiffInstances = [];
   // Clear rendered diff elements safely
   if (containerRef.value) {
     while (containerRef.value.firstChild) {
       containerRef.value.removeChild(containerRef.value.firstChild);
     }
   }
+}
+
+function createDiffFileWrapper(entry: { id: string; displayPath: string }): HTMLDivElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "diff-file";
+  wrapper.dataset.fileId = entry.id;
+
+  const header = document.createElement("div");
+  header.className = "diff-file-header";
+  header.textContent = entry.displayPath;
+  header.title = entry.displayPath;
+  header.style.position = "sticky";
+  header.style.top = "0";
+  header.style.zIndex = "2";
+  header.style.padding = "7px 12px";
+  header.style.borderBottom = "1px solid #30363d";
+  header.style.background = "#161b22";
+  header.style.color = "#e6edf3";
+  header.style.fontFamily = '"SF Mono", Menlo, monospace';
+  header.style.fontSize = "12px";
+  header.style.lineHeight = "1.4";
+  header.style.whiteSpace = "nowrap";
+  header.style.overflow = "hidden";
+  header.style.textOverflow = "ellipsis";
+  header.style.boxSizing = "border-box";
+  wrapper.appendChild(header);
+
+  return wrapper;
+}
+
+function resolveRenderableFileMeta(
+  rawFileMeta: FileDiffMetadata & DiffFilePathMetadata,
+  displayPath: string,
+): FileDiffMetadata {
+  if (!isBazelSyntaxPath(displayPath)) {
+    return rawFileMeta;
+  }
+
+  return setLanguageOverride(
+    rawFileMeta,
+    getSyntaxLanguageForPath(displayPath) as "python"
+  );
+}
+
+function renderDiffFile(
+  entry: DiffRenderFileEntry,
+  pool: WorkerPoolManager | null,
+  context: DiffRenderContext,
+  allFilesCount: number,
+  progress: { completedFiles: number; firstCompletedAt: number | null; completedAllLogged: boolean },
+  fileIndex: number,
+): void {
+  const fileRenderStartedAt = performance.now();
+  let didLogPostRender = false;
+  const fileMeta = resolveRenderableFileMeta(entry.rawFileMeta, entry.displayPath);
+
+  const instance = new FileDiff(
+    {
+      theme: "github-dark",
+      diffStyle: "unified",
+      diffIndicators: "classic",
+      disableFileHeader: true,
+      onPostRender: () => {
+        if (didLogPostRender || !isActiveDiffLoad(context.loadId)) return;
+        didLogPostRender = true;
+        nextTick(() => applySearchHighlights());
+        const completedAt = performance.now();
+        const sinceFileStartMs = completedAt - fileRenderStartedAt;
+        const sinceLoadStartMs = completedAt - context.loadStartedAt;
+        progress.completedFiles += 1;
+        if (progress.firstCompletedAt == null) {
+          progress.firstCompletedAt = completedAt;
+          logDiffPerf(context.loadId, "content:first_file_ready", {
+            durationMs: roundDuration(sinceLoadStartMs),
+            fileIndex,
+            fileCount: allFilesCount,
+            path: entry.displayPath,
+            workerStats: getWorkerPoolStatsSnapshot(pool),
+          });
+        }
+        if (sinceFileStartMs >= 250) {
+          logDiffPerf(context.loadId, "content:file_ready", {
+            fileIndex,
+            fileCount: allFilesCount,
+            path: entry.displayPath,
+            sinceFileStartMs: roundDuration(sinceFileStartMs),
+            sinceLoadStartMs: roundDuration(sinceLoadStartMs),
+            workerStats: getWorkerPoolStatsSnapshot(pool),
+          });
+        }
+        if (!progress.completedAllLogged && progress.completedFiles === allFilesCount) {
+          progress.completedAllLogged = true;
+          logDiffPerf(context.loadId, "content:all_files_ready", {
+            durationMs: roundDuration(sinceLoadStartMs),
+            fileCount: allFilesCount,
+            firstContentMs: roundDuration(
+              (progress.firstCompletedAt ?? completedAt) - context.loadStartedAt,
+            ),
+            workerStats: getWorkerPoolStatsSnapshot(pool),
+          });
+        }
+      },
+    },
+    pool || undefined
+  );
+
+  instance.render({
+    fileDiff: fileMeta,
+    containerWrapper: entry.wrapper,
+  });
+
+  fileDiffInstances.push(instance);
+
+  logDiffPerf(context.loadId, "render:file_invoked", {
+    fileIndex,
+    fileCount: allFilesCount,
+    path: entry.displayPath,
+    syncMs: roundDuration(performance.now() - fileRenderStartedAt),
+    workerStats: getWorkerPoolStatsSnapshot(pool),
+  });
 }
 
 async function renderDiff(patch: string, context: DiffRenderContext) {
@@ -469,9 +619,21 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
     fileCount: allFiles.length,
   });
 
-  renderedFiles.value = allFiles.map((fileMeta, fileIndex) => ({
-    id: `${context.loadId}:${fileIndex}`,
-    fileDiff: fileMeta as FileDiffMetadata,
+  const renderEntries: DiffRenderFileEntry[] = allFiles.map((rawFileMeta, fileIndex) => {
+    const typedFileMeta = rawFileMeta as FileDiffMetadata & DiffFilePathMetadata;
+    const id = `${context.loadId}:${fileIndex}`;
+    const displayPath = getDisplayPath(typedFileMeta);
+    return {
+      id,
+      rawFileMeta: typedFileMeta,
+      displayPath,
+      wrapper: createDiffFileWrapper({ id, displayPath }),
+    };
+  });
+
+  renderedFiles.value = renderEntries.map((entry) => ({
+    id: entry.id,
+    fileDiff: entry.rawFileMeta,
   }));
 
   const workerInitStartedAt = performance.now();
@@ -487,120 +649,52 @@ async function renderDiff(patch: string, context: DiffRenderContext) {
     durationMs: roundDuration(performance.now() - cleanupStartedAt),
   });
 
-  // Render each file diff
-  let completedFiles = 0;
-  let firstCompletedAt: number | null = null;
-  let completedAllLogged = false;
+  for (const entry of renderEntries) {
+    containerRef.value.appendChild(entry.wrapper);
+  }
 
-  for (const [fileIndex, rawFileMeta] of allFiles.entries()) {
-    const fileRenderStartedAt = performance.now();
-    const pathMeta = rawFileMeta as typeof rawFileMeta & DiffFilePathMetadata;
-    const displayPath = getDisplayPath(pathMeta);
-    let didLogPostRender = false;
+  const progress = {
+    completedFiles: 0,
+    firstCompletedAt: null as number | null,
+    completedAllLogged: false,
+  };
 
-    const fileMeta = isBazelSyntaxPath(displayPath)
-      ? setLanguageOverride(
-          rawFileMeta,
-          getSyntaxLanguageForPath(displayPath) as "python"
-        )
-      : rawFileMeta;
+  for (let batchStart = 0; batchStart < renderEntries.length; batchStart += DIFF_RENDER_BATCH_SIZE) {
+    if (!isActiveDiffLoad(context.loadId)) {
+      return;
+    }
 
-    const wrapper = document.createElement("div");
-    wrapper.className = "diff-file";
-    wrapper.dataset.fileId = renderedFiles.value[fileIndex]?.id ?? `${context.loadId}:${fileIndex}`;
+    const batch = renderEntries.slice(batchStart, batchStart + DIFF_RENDER_BATCH_SIZE);
+    const batchStartedAt = performance.now();
 
-    const header = document.createElement("div");
-    header.className = "diff-file-header";
-    header.textContent = displayPath;
-    header.title = displayPath;
-    header.style.position = "sticky";
-    header.style.top = "0";
-    header.style.zIndex = "2";
-    header.style.padding = "7px 12px";
-    header.style.borderBottom = "1px solid #30363d";
-    header.style.background = "#161b22";
-    header.style.color = "#e6edf3";
-    header.style.fontFamily = '"SF Mono", Menlo, monospace';
-    header.style.fontSize = "12px";
-    header.style.lineHeight = "1.4";
-    header.style.whiteSpace = "nowrap";
-    header.style.overflow = "hidden";
-    header.style.textOverflow = "ellipsis";
-    header.style.boxSizing = "border-box";
-    wrapper.appendChild(header);
+    for (const [batchIndex, entry] of batch.entries()) {
+      renderDiffFile(
+        entry,
+        pool,
+        context,
+        renderEntries.length,
+        progress,
+        batchStart + batchIndex,
+      );
+    }
 
-    containerRef.value.appendChild(wrapper);
-
-    const instance = new FileDiff(
-      {
-        theme: "github-dark",
-        diffStyle: "unified",
-        diffIndicators: "classic",
-        disableFileHeader: true,
-        onPostRender: () => {
-          if (didLogPostRender) return;
-          didLogPostRender = true;
-          nextTick(() => applySearchHighlights());
-          const completedAt = performance.now();
-          const sinceFileStartMs = completedAt - fileRenderStartedAt;
-          const sinceLoadStartMs = completedAt - context.loadStartedAt;
-          completedFiles += 1;
-          if (firstCompletedAt == null) {
-            firstCompletedAt = completedAt;
-            logDiffPerf(context.loadId, "content:first_file_ready", {
-              durationMs: roundDuration(sinceLoadStartMs),
-              fileIndex,
-              fileCount: allFiles.length,
-              path: displayPath,
-              workerStats: getWorkerPoolStatsSnapshot(pool),
-            });
-          }
-          if (sinceFileStartMs >= 250) {
-            logDiffPerf(context.loadId, "content:file_ready", {
-              fileIndex,
-              fileCount: allFiles.length,
-              path: displayPath,
-              sinceFileStartMs: roundDuration(sinceFileStartMs),
-              sinceLoadStartMs: roundDuration(sinceLoadStartMs),
-              workerStats: getWorkerPoolStatsSnapshot(pool),
-            });
-          }
-          if (!completedAllLogged && completedFiles === allFiles.length) {
-            completedAllLogged = true;
-            logDiffPerf(context.loadId, "content:all_files_ready", {
-              durationMs: roundDuration(sinceLoadStartMs),
-              fileCount: allFiles.length,
-              firstContentMs: roundDuration(
-                (firstCompletedAt ?? completedAt) - context.loadStartedAt,
-              ),
-              workerStats: getWorkerPoolStatsSnapshot(pool),
-            });
-          }
-        },
-      },
-      pool || undefined
-    );
-
-    instance.render({
-      fileDiff: fileMeta,
-      containerWrapper: wrapper,
-    });
-
-    // Keep last instance for cleanup
-    fileDiffInstance = instance;
-
-    logDiffPerf(context.loadId, "render:file_invoked", {
-      fileIndex,
-      fileCount: allFiles.length,
-      path: displayPath,
-      syncMs: roundDuration(performance.now() - fileRenderStartedAt),
+    logDiffPerf(context.loadId, "render:batch_invoked", {
+      batchIndex: Math.floor(batchStart / DIFF_RENDER_BATCH_SIZE),
+      batchSize: batch.length,
+      renderedCount: Math.min(batchStart + batch.length, renderEntries.length),
+      fileCount: renderEntries.length,
+      durationMs: roundDuration(performance.now() - batchStartedAt),
       workerStats: getWorkerPoolStatsSnapshot(pool),
     });
+
+    if (batchStart + batch.length < renderEntries.length) {
+      await waitForRenderTurn();
+    }
   }
 
   logDiffPerf(context.loadId, "render:scheduled", {
     totalMs: roundDuration(performance.now() - context.loadStartedAt),
-    fileCount: allFiles.length,
+    fileCount: renderEntries.length,
     workerStats: getWorkerPoolStatsSnapshot(pool),
   });
 }
@@ -751,7 +845,10 @@ onMounted(() => {
   nextTick(() => diffViewRef.value?.focus());
 });
 
-onUnmounted(() => cleanupInstance());
+onUnmounted(() => {
+  activeDiffLoadId = 0;
+  cleanupInstance();
+});
 
 defineExpose({ refresh: loadDiff });
 </script>
