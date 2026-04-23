@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/daemon",
+    "crates/kanna-server",
+]
+resolver = "2"

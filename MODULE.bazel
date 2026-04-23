@@ -93,6 +93,24 @@ crate.from_cargo(
     ],
 )
 crate.from_cargo(
+    name = "kanna_server_crates",
+    cargo_lockfile = "//crates/kanna-server:Cargo.lock",
+    manifests = ["//:Cargo.server.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+)
+crate.from_cargo(
+    name = "task_transfer_crates",
+    cargo_lockfile = "//crates/task-transfer:Cargo.lock",
+    manifests = ["//crates/task-transfer:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+)
+crate.from_cargo(
     name = "terminal_recovery_crates",
     cargo_lockfile = "//packages/terminal-recovery:Cargo.lock",
     manifests = ["//packages/terminal-recovery:Cargo.toml"],
@@ -173,6 +191,8 @@ use_repo(
     "desktop_crates__tauri-plugin-sql-2.4.0",
     "desktop_crates__tauri-plugin-updater-2.10.1",
     "desktop_crates__tauri-plugin-webdriver-0.2.1",
+    "kanna_server_crates",
+    "task_transfer_crates",
     "terminal_recovery_crates",
 )
 

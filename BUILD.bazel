@@ -25,6 +25,16 @@ filegroup(
     srcs = ["//packages/terminal-recovery:cargo_srcs"],
 )
 
+filegroup(
+    name = "kanna_server_cargo_srcs",
+    srcs = ["//crates/kanna-server:cargo_srcs"],
+)
+
+filegroup(
+    name = "task_transfer_cargo_srcs",
+    srcs = ["//crates/task-transfer:cargo_srcs"],
+)
+
 genrule(
     name = "kanna_daemon_arm64",
     srcs = ["//crates/daemon:kanna_daemon"],
@@ -64,6 +74,48 @@ genrule(
     name = "kanna_cli_release_x86_64",
     srcs = ["//crates/kanna-cli:kanna_cli_x86_64"],
     outs = ["release/kanna-cli-x86_64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_server_arm64",
+    srcs = ["//crates/kanna-server:kanna_server"],
+    outs = ["kanna-server-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_server_release_arm64",
+    srcs = ["//crates/kanna-server:kanna_server"],
+    outs = ["release/kanna-server-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_server_release_x86_64",
+    srcs = ["//crates/kanna-server:kanna_server_x86_64"],
+    outs = ["release/kanna-server-x86_64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_task_transfer_arm64",
+    srcs = ["//crates/task-transfer:kanna_task_transfer"],
+    outs = ["kanna-task-transfer-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_task_transfer_release_arm64",
+    srcs = ["//crates/task-transfer:kanna_task_transfer"],
+    outs = ["release/kanna-task-transfer-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_task_transfer_release_x86_64",
+    srcs = ["//crates/task-transfer:kanna_task_transfer_x86_64"],
+    outs = ["release/kanna-task-transfer-x86_64-apple-darwin"],
     cmd = "cp $< $@ && chmod +x $@",
 )
 
@@ -136,6 +188,8 @@ tauri_bundle_inputs(
     sidecars = [
         ":kanna_cli_arm64",
         ":kanna_daemon_arm64",
+        ":kanna_server_arm64",
+        ":kanna_task_transfer_arm64",
         ":kanna_terminal_recovery_arm64",
     ],
     resource_trees = {
@@ -164,6 +218,8 @@ tauri_bundle_inputs(
     sidecars = [
         ":kanna_cli_release_arm64",
         ":kanna_daemon_release_arm64",
+        ":kanna_server_release_arm64",
+        ":kanna_task_transfer_release_arm64",
         ":kanna_terminal_recovery_release_arm64",
     ],
     resource_trees = {
@@ -226,6 +282,8 @@ tauri_bundle_inputs(
     sidecars = [
         ":kanna_cli_release_x86_64",
         ":kanna_daemon_release_x86_64",
+        ":kanna_server_release_x86_64",
+        ":kanna_task_transfer_release_x86_64",
         ":kanna_terminal_recovery_release_x86_64",
     ],
     resource_trees = {
