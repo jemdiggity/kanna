@@ -6,6 +6,7 @@ import type { SessionRecoveryState } from "../composables/sessionRecoveryState";
 import { invoke } from "../invoke";
 import i18n from "../i18n";
 import { useToast } from "../composables/useToast";
+import { getAppErrorMessage } from "../appError";
 
 /** Generate an 8-char hex ID (32 bits of randomness). */
 export function generateId(): string {
@@ -191,14 +192,35 @@ export function requireService<T>(
 }
 
 export async function readRepoConfig(basePath: string): Promise<RepoConfig> {
+  const configPath = `${basePath}/.kanna/config.json`;
+
+  function isMissingRepoConfigError(error: unknown): boolean {
+    const message = getAppErrorMessage(error).toLowerCase();
+    return message.includes("no such file or directory")
+      || message.includes("missing config")
+      || message.includes("not found");
+  }
+
   try {
     const content = await invoke<string>("read_text_file", {
-      path: `${basePath}/.kanna/config.json`,
+      path: configPath,
     });
-    return content ? parseRepoConfig(content) : {};
+
+    if (!content) {
+      return {};
+    }
+
+    try {
+      return parseRepoConfig(content);
+    } catch (error) {
+      throw new Error(`invalid repo config '${configPath}': ${getAppErrorMessage(error)}`);
+    }
   } catch (error) {
-    console.debug("[store] no .kanna/config.json:", error);
-    return {};
+    if (isMissingRepoConfigError(error)) {
+      console.debug("[store] no .kanna/config.json:", error);
+      return {};
+    }
+    throw error;
   }
 }
 

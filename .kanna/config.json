@@ -2,7 +2,7 @@
   "$schema": "https://schemas.kanna.build/config.schema.json",
   "setup": [
     "/bin/sh ./scripts/setup-worktree.sh",
-    "pnpm install",
+    "pnpm install"
   ],
   "teardown": ["/bin/bash ./scripts/dev.sh stop -k", "/bin/bash ./scripts/clean.sh --all"],
   "test": ["pnpm test"],
