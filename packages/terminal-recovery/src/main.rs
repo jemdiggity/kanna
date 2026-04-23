@@ -14,6 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ))?;
 
     let snapshot_store = SnapshotStore::new(snapshot_dir);
+    snapshot_store.spawn_stale_temp_cleanup();
     let mut service = RecoveryService::new(snapshot_store);
     let result = service.run(std::io::stdin(), std::io::stdout().lock());
 

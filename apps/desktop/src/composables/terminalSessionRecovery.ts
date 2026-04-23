@@ -1,5 +1,9 @@
 import type { SpawnOptions, TerminalOptions } from "./useTerminal";
 import { getAppErrorCode } from "../appError";
+import {
+  renderBestEffortLifecycleCommand,
+  shellSingleQuote,
+} from "../utils/lifecycleCommands";
 
 export type TerminalRecoveryMode = "attach-only" | "spawn-on-missing";
 export interface ReconnectRedrawPolicy {
@@ -100,10 +104,6 @@ export function getShellTerminalEnv(): TaskTerminalEnv {
   };
 }
 
-function shellSingleQuote(value: string): string {
-  return value.replace(/'/g, "'\\''");
-}
-
 function directoryName(path: string): string | null {
   const lastSlash = path.lastIndexOf("/");
   if (lastSlash <= 0) return null;
@@ -131,10 +131,7 @@ export function buildTaskShellCommand(
     }
   }
 
-  const setupParts = setupCmds.map((cmd) => {
-    const escaped = shellSingleQuote(cmd);
-    return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${cmd}`;
-  });
+  const setupParts = setupCmds.map((cmd) => renderBestEffortLifecycleCommand(cmd, "Setup"));
 
   const commandParts: string[] = [];
   if (preludeParts.length > 0) {

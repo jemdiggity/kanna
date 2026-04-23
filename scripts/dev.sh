@@ -389,18 +389,42 @@ LOCALEOF
 
 kill_daemon() {
   local pid_file="$RESOLVED_DAEMON_DIR/daemon.pid"
+  local had_pid=false
   if [ -f "$pid_file" ]; then
     local pid
     pid="$(cat "$pid_file")"
     if kill -0 "$pid" 2>/dev/null; then
       kill "$pid"
       echo "Killed daemon (pid=$pid)."
+      had_pid=true
     else
       echo "Daemon not running (stale pid=$pid)."
       rm -f "$pid_file"
     fi
   else
     echo "No daemon pid file found."
+  fi
+
+  local orphaned_processes
+  orphaned_processes="$(ps -axo pid=,command= | awk -v root="$ROOT" '
+    index($0, root "/.build/") && ($0 ~ /kanna-daemon/ || $0 ~ /kanna-terminal-recovery/) {
+      pid = $1
+      $1 = ""
+      sub(/^ +/, "", $0)
+      print pid "\t" $0
+    }
+  ')"
+
+  if [ -n "$orphaned_processes" ]; then
+    while IFS=$'\t' read -r pid command; do
+      [ -n "$pid" ] || continue
+      if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+        echo "Killed orphaned workspace daemon process (pid=$pid, command=$command)."
+      fi
+    done <<< "$orphaned_processes"
+  elif ! $had_pid; then
+    echo "No orphaned workspace daemon processes found."
   fi
 }
 

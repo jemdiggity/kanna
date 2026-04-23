@@ -1,3 +1,9 @@
+import {
+  renderBestEffortLifecycleCommand,
+  renderVisibleLifecycleCommand,
+  shellSingleQuote,
+} from "./lifecycleCommands";
+
 export interface TaskBootstrapCommandOptions {
   worktreePath: string;
   visibleBootstrapSteps: string[];
@@ -5,26 +11,14 @@ export interface TaskBootstrapCommandOptions {
   agentCmd: string;
 }
 
-function shSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function renderVisibleStep(command: string): string {
-  const escaped = command.replace(/'/g, `'\\''`);
-  return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}'`;
-}
-
 export function buildTaskBootstrapCommand(options: TaskBootstrapCommandOptions): string {
-  const visibleBootstrapLines = options.visibleBootstrapSteps.map((command) => renderVisibleStep(command));
-  const setupLines = options.setupCmds.flatMap((command) => [
-    renderVisibleStep(command),
-    command,
-  ]);
+  const visibleBootstrapLines = options.visibleBootstrapSteps.map((command) => renderVisibleLifecycleCommand(command));
+  const setupLines = options.setupCmds.map((command) => renderBestEffortLifecycleCommand(command, "Setup"));
 
   return [
     "set -e",
     ...visibleBootstrapLines,
-    `cd ${shSingleQuote(options.worktreePath)}`,
+    `cd '${shellSingleQuote(options.worktreePath)}'`,
     ...setupLines,
     "printf '\\n'",
     options.agentCmd,

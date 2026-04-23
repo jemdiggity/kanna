@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   shouldDelayConnectUntilAfterInitialLayout,
@@ -390,7 +394,7 @@ describe("buildTaskShellCommand", () => {
     const command = buildTaskShellCommand("codex 'ship it'", ["bun test"]);
 
     expect(command).toContain("Running startup...");
-    expect(command).toContain("printf '\\033[2m$ %s\\033[0m\\n' 'bun test' && bun test");
+    expect(command).toContain("printf '\\033[2m$ %s\\033[0m\\n' 'bun test' && ( bun test )");
     expect(command).toContain("codex 'ship it'");
   });
 
@@ -399,6 +403,18 @@ describe("buildTaskShellCommand", () => {
 
     expect(command).toContain("printf '\\033[2m$ %s\\033[0m\\n' 'codex '\\''ship it'\\'''");
     expect(command).toContain("&& codex 'ship it'");
+  });
+
+  it("continues to the agent when a setup command fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kanna-setup-failure-"));
+    const marker = join(dir, "agent-started");
+    const command = buildTaskShellCommand(`printf agent-started > '${marker}'`, ["false"]);
+
+    const result = spawnSync("/bin/zsh", ["-c", command], { encoding: "utf8" });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(marker, "utf8")).toBe("agent-started");
+    expect(result.stdout).toContain("Setup command failed");
   });
 
   it("truncates the visible agent command when it is too long", () => {
