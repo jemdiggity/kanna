@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import rootPkg from "../../../package.json";
 import desktopPkg from "../package.json";
@@ -44,6 +46,29 @@ describe("desktop sidecar packaging", () => {
     );
     expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-task-transfer");
     expect(stageSidecarsScript).toContain("binaries/kanna-task-transfer");
+  });
+
+  it("keeps Bazel release bundles in sync with the desktop sidecar set", () => {
+    const repoRoot = resolve(import.meta.dirname, "../../..");
+    const bazelBuild = readFileSync(resolve(repoRoot, "BUILD.bazel"), "utf8");
+    const moduleBazel = readFileSync(resolve(repoRoot, "MODULE.bazel"), "utf8");
+
+    expect(bazelBuild).toContain('name = "kanna_bundle_inputs_release_arm64"');
+    expect(bazelBuild).toContain('name = "kanna_bundle_inputs_release_x86_64"');
+    expect(bazelBuild).toContain('":kanna_cli_release_arm64"');
+    expect(bazelBuild).toContain('":kanna_daemon_release_arm64"');
+    expect(bazelBuild).toContain('":kanna_terminal_recovery_release_arm64"');
+    expect(bazelBuild).toContain('":kanna_server_release_arm64"');
+    expect(bazelBuild).toContain('":kanna_task_transfer_release_arm64"');
+    expect(bazelBuild).toContain('":kanna_cli_release_x86_64"');
+    expect(bazelBuild).toContain('":kanna_daemon_release_x86_64"');
+    expect(bazelBuild).toContain('":kanna_terminal_recovery_release_x86_64"');
+    expect(bazelBuild).toContain('":kanna_server_release_x86_64"');
+    expect(bazelBuild).toContain('":kanna_task_transfer_release_x86_64"');
+    expect(moduleBazel).toContain('name = "kanna_server_crates"');
+    expect(moduleBazel).toContain('manifests = ["//:Cargo.server.toml"]');
+    expect(moduleBazel).toContain('name = "task_transfer_crates"');
+    expect(moduleBazel).toContain('manifests = ["//crates/task-transfer:Cargo.toml"]');
   });
 
   it("builds sidecars as a prerequisite and keeps beforeDevCommand limited to vite", () => {
