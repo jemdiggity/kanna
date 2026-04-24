@@ -32,12 +32,13 @@ PTY session daemon for Kanna. Runs as a standalone process, persists terminal se
 ## Session Lifecycle
 
 ```
-Spawn ──► create PTY, store session (no reader yet)
+Spawn ──► create PTY, store session, start stream_output
                │
-Attach ──► first: clone reader + start stream_output + set ActiveWriter
-           reattach: swap ActiveWriter + send resize (SIGWINCH → Claude redraws)
+PTY output ──► stream_output updates the headless terminal
                │
-Detach ──► set ActiveWriter to None (output discarded)
+AttachSnapshot ──► send headless snapshot + add live writer
+               │
+Detach ──► remove live writer (headless terminal keeps updating)
                │
 Kill ──────► kill child process, stream_output exits on read() EOF
                │
@@ -68,23 +69,22 @@ Cancel flags were added as a mitigation, but they only work when `read()` return
   PTY master ──────►│  reader.read(&mut buf)    │
   (one fd)          │         │                 │
                     │         ▼                 │
-                    │  ActiveWriter.lock()      │
-                    │    ├─ Some(writer) ──► send to client
-                    │    └─ None ──► discard (still buffered)
+                    │  update headless terminal │
+                    │  broadcast to live writers│
                     │                           │
                     └─────────────────────────┘
                                 ▲
-                                │ Attach swaps
-                                │ the writer
+                                │ AttachSnapshot adds
+                                │ a live writer
                     ┌───────────┴───────────┐
-                    │    ActiveWriter        │
-                    │  Arc<Mutex<Option<W>>> │
+                    │    SessionWriters      │
+                    │    broadcast list      │
                     └───────────────────────┘
 ```
 
-- **Spawn**: Creates PTY, clones the reader once, spawns one `stream_output` task. Creates an `ActiveWriter` (initially `None`).
-- **Attach**: Locks `ActiveWriter`, replaces it with the new connection's writer. Instant, no new tasks or readers.
-- **Detach**: Sets `ActiveWriter` to `None`. Output continues to be read and buffered, just not sent.
+- **Spawn**: Creates PTY, clones the reader once, spawns one `stream_output` task, and creates the headless terminal.
+- **AttachSnapshot**: Sends the current headless terminal snapshot and adds the new connection's writer to the broadcast list. Instant, no new tasks or readers for spawned sessions.
+- **Detach**: Removes the connection's writer. Output continues to be read and applied to the headless terminal.
 - **Process exit**: `read()` returns 0 (EOF), `stream_output` cleans up the session.
 
 ### Trade-offs
@@ -92,21 +92,20 @@ Cancel flags were added as a mitigation, but they only work when `read()` return
 | Aspect | Decision | Trade-off |
 |--------|----------|-----------|
 | Reader count | One per session | Simpler, no byte-splitting. But if the single reader panics, the session is lost. |
-| Writer swap | `Arc<Mutex<Option<Arc<Mutex<W>>>>>` | Extra lock per output chunk. In practice, PTY output is ~4KB chunks at ~60Hz — negligible overhead. |
-| No scrollback buffer | Rely on SIGWINCH to trigger TUI redraw | Eliminates replay race conditions and 256KB per-session memory. Trade-off: only works with TUI apps that redraw on resize (like Claude CLI). A plain shell would show a blank terminal on reconnect. |
+| Writer registry | Per-session broadcast list | Extra lock per output chunk. In practice, PTY output is ~4KB chunks at ~60Hz, so this is negligible. |
+| No raw scrollback buffer | Hydrate from the headless terminal snapshot | Eliminates raw replay races and overwritten-output resurrection. Detached state has one source of truth. |
 | Blocking read | `spawn_blocking` with `std::io::Read` | Can't use async I/O for PTY reads (portable-pty gives `Box<dyn Read>`). The blocking thread is pinned for the session lifetime. One thread per session is acceptable for expected scale (<100 sessions). |
 
 ## Reconnection Strategy
 
-The daemon does **not** buffer scrollback. Instead, reconnection relies on the TUI application (Claude CLI) redrawing itself.
+The daemon does **not** buffer raw scrollback. Instead, `stream_output` continuously applies PTY bytes to the per-session headless terminal. Reconnection is:
 
-Claude CLI is built on ink (React for terminals). On SIGWINCH (terminal resize), ink re-renders the entire component tree — conversation history, tool outputs, everything. The frontend exploits this:
+1. **AttachSnapshot** — send the serialized headless terminal state and add the live writer
+2. **Hydrate xterm.js** — frontend resets xterm.js and writes the snapshot VT stream
+3. **Send Resize** — `resize_session` updates PTY dimensions and may trigger a child redraw
+4. **Stream live output** — later PTY bytes flow to all attached clients and the headless terminal
 
-1. **Reattach** — swap the ActiveWriter to the new connection
-2. **Send Resize** — `resize_session` with the current xterm dimensions triggers SIGWINCH
-3. **Claude redraws** — the full TUI is re-rendered into the terminal
-
-This eliminates the need for scrollback buffers, replay logic, and the race conditions they introduce. The trade-off: a brief blank terminal between reattach and redraw (typically <100ms).
+This leaves detached terminal state with one authority. Raw PTY bytes are never replayed after they have already been interpreted by the headless terminal.
 
 ## Protocol
 
@@ -117,7 +116,7 @@ Line-delimited JSON over Unix socket. Each message is a single JSON object termi
 | Command | Description |
 |---------|-------------|
 | `Spawn` | Create a new PTY session |
-| `Attach` | Start receiving output from a session |
+| `AttachSnapshot` | Snapshot current headless terminal and start receiving live output |
 | `Detach` | Stop receiving output |
 | `Input` | Send keystrokes to the PTY |
 | `Resize` | Update terminal dimensions |

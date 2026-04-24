@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
@@ -144,7 +144,7 @@ fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, Da
 
 #[cfg(test)]
 mod tests {
-    use super::{TerminalSnapshotPayload, parse_snapshot_response, require_option_mut};
+    use super::{parse_snapshot_response, require_option_mut, TerminalSnapshotPayload};
 
     #[test]
     fn parse_snapshot_response_defaults_cursor_visible_for_older_payloads() {
@@ -583,58 +583,6 @@ pub async fn list_sessions(
     }
 }
 
-pub async fn attach_session_inner(
-    app: &tauri::AppHandle,
-    session_id: String,
-    attached: &AttachedSessions,
-    active_streams: &ActiveAttachedStreams,
-    agent_provider: Option<String>,
-) -> Result<(), DaemonCommandError> {
-    eprintln!(
-        "[attach] start session={} provider={:?}",
-        session_id, agent_provider
-    );
-    // Create a dedicated connection for this session's output streaming.
-    // This avoids mixing Output events with command responses.
-    let socket_path = daemon_socket_path();
-    let mut stream_client = DaemonClient::connect(&socket_path).await?;
-
-    // Send Attach command
-    let cmd = serde_json::json!({
-        "type": "Attach",
-        "session_id": session_id,
-        "emulate_terminal": true,
-    });
-    stream_client
-        .send_command(&serde_json::to_string(&cmd).unwrap())
-        .await?;
-
-    // Read the Ok/Error response
-    let response = stream_client.read_event().await?;
-    let event: serde_json::Value = serde_json::from_str(&response).map_err(|e| e.to_string())?;
-    if let Some("Error") = event.get("type").and_then(|t| t.as_str()) {
-        let error = parse_error_event(&event);
-        eprintln!(
-            "[attach] rejected session={} error={} code={:?}",
-            session_id, error.message, error.code
-        );
-        return Err(error);
-    }
-
-    eprintln!("[attach] acknowledged session={}", session_id);
-    spawn_attached_stream_task(
-        app.clone(),
-        stream_client,
-        session_id,
-        attached.clone(),
-        active_streams.clone(),
-        None,
-    )
-    .await;
-
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn attach_session_with_snapshot(
     app: tauri::AppHandle,
@@ -665,17 +613,6 @@ pub async fn attach_session_with_snapshot(
     )
     .await;
     Ok(())
-}
-
-#[tauri::command]
-pub async fn attach_session(
-    app: tauri::AppHandle,
-    attached: tauri::State<'_, AttachedSessions>,
-    active_streams: tauri::State<'_, ActiveAttachedStreams>,
-    session_id: String,
-    agent_provider: Option<String>,
-) -> Result<(), DaemonCommandError> {
-    attach_session_inner(&app, session_id, &attached, &active_streams, agent_provider).await
 }
 
 #[tauri::command]

@@ -64,10 +64,10 @@
             } else if (msg.type === 'SessionCreated') {
               sessionId = msg.session_id
               status.textContent = `Session: ${sessionId}`
-              // Attach
-              ws.send(JSON.stringify({ type: 'Attach', session_id: sessionId }))
-            } else if (msg.type === 'Ok') {
-              // Attach confirmed
+              // AttachSnapshot
+              ws.send(JSON.stringify({ type: 'AttachSnapshot', session_id: sessionId }))
+            } else if (msg.type === 'Snapshot') {
+              // AttachSnapshot confirmed
             } else {
               console.log('msg:', msg)
             }

@@ -210,12 +210,6 @@ class MockDatabase {
 const invokeHandlers: Record<string, (...args: any[]) => any> = {
   list_sessions: () => [],
   spawn_session: () => ({}),
-  attach_session: (args?: { sessionId?: string }) => {
-    if (args?.sessionId) {
-      scheduleMockTerminalOutput(args.sessionId);
-    }
-    return {};
-  },
   attach_session_with_snapshot: (args?: { sessionId?: string }) => {
     if (args?.sessionId) {
       const sessionId = args.sessionId;

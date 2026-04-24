@@ -86,12 +86,12 @@ onMounted(async () => {
     return
   }
 
-  // 5. Attach — this creates a dedicated connection for output streaming
+  // 5. AttachSnapshot — this creates a dedicated connection for output streaming
   try {
-    await invoke("attach_session", { sessionId })
+    await invoke("attach_session_with_snapshot", { sessionId })
     status.value = "Attached — waiting for output..."
   } catch (e: any) {
-    status.value = `Attach failed: ${e}`
+    status.value = `AttachSnapshot failed: ${e}`
     term.write(`\r\nAttach error: ${e}\r\n`)
   }
 })

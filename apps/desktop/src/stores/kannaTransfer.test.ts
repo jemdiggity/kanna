@@ -2529,7 +2529,7 @@ describe("outgoing transfer commit acknowledgment", () => {
         teardownSpawnArgs = args as Record<string, unknown>;
         return null;
       }
-      if (cmd === "attach_session") return null;
+      if (cmd === "attach_session_with_snapshot") return null;
       if (cmd === "read_text_file") {
         const path = args?.path as string | undefined;
         if (path === `${repo.path}/.kanna-worktrees/${sourceItem.branch}/.kanna/config.json`) {

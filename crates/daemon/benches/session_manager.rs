@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use kanna_daemon::bench::transcript::{BenchmarkMode, BenchmarkProvider, TranscriptSpec};
+use kanna_daemon::headless_terminal::{initial_session_status, HeadlessTerminal};
 use kanna_daemon::protocol::{AgentProvider, SessionStatus};
-use kanna_daemon::session::{replay_sidecar_for_benchmark, BenchmarkStatusState};
-use kanna_daemon::sidecar::{initial_session_status, TerminalSidecar};
+use kanna_daemon::session::{replay_headless_terminal_for_benchmark, BenchmarkStatusState};
 use std::time::Instant;
 
 fn agent_provider(provider: BenchmarkProvider) -> AgentProvider {
@@ -15,15 +15,15 @@ fn agent_provider(provider: BenchmarkProvider) -> AgentProvider {
 
 struct ReplayState {
     started_at: Instant,
-    sidecars: Vec<TerminalSidecar>,
+    headless_terminals: Vec<HeadlessTerminal>,
     statuses: Vec<BenchmarkStatusState>,
 }
 
 fn new_replay_state(provider: AgentProvider, sessions: usize) -> ReplayState {
     ReplayState {
         started_at: Instant::now(),
-        sidecars: (0..sessions)
-            .map(|_| TerminalSidecar::new(120, 40, 10_000).unwrap())
+        headless_terminals: (0..sessions)
+            .map(|_| HeadlessTerminal::new(120, 40, 10_000).unwrap())
             .collect(),
         statuses: (0..sessions)
             .map(|_| BenchmarkStatusState::new(initial_session_status(Some(provider))))
@@ -38,8 +38,8 @@ fn replay_case(provider: BenchmarkProvider, mode: BenchmarkMode, sessions: usize
 
     for chunk in &transcript.chunks {
         for index in 0..sessions {
-            let changed = replay_sidecar_for_benchmark(
-                &mut state.sidecars[index],
+            let changed = replay_headless_terminal_for_benchmark(
+                &mut state.headless_terminals[index],
                 Some(provider),
                 &mut state.statuses[index],
                 state.started_at,

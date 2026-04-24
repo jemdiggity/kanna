@@ -10,7 +10,7 @@ pub enum ErrorCode {
     HandoffVersionMismatch,
     PtySpawnFailed,
     PtyCloneFailed,
-    SidecarInitFailed,
+    HeadlessTerminalInitFailed,
     WriteFailed,
     UnknownSignal,
 }
@@ -87,11 +87,6 @@ pub enum Command {
         rows: u16,
         #[serde(default)]
         agent_provider: Option<AgentProvider>,
-    },
-    Attach {
-        session_id: String,
-        #[serde(default)]
-        emulate_terminal: bool,
     },
     AttachSnapshot {
         session_id: String,

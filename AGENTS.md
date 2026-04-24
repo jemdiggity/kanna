@@ -227,9 +227,9 @@ The first `./scripts/dev.sh start` in a fresh worktree compiles ~523 Rust crates
 ### Data flow
 
 ```
-User creates task → worktree + DB record → daemon Spawn → Attach (start streaming)
-  → daemon forks child (zsh -c "claude ...") → reads PTY output → Output events via Unix socket
-  → Tauri events → frontend xterm.js
+User creates task → worktree + DB record → daemon Spawn (start reader + headless terminal)
+  → daemon forks child (zsh -c "claude ...") → reads PTY output → headless terminal + live Output events
+  → frontend AttachSnapshot hydrates xterm.js from the headless terminal, then streams live output
 
 User types → xterm.js onData → invoke("send_input") → daemon Input → PTY write
 
@@ -301,7 +301,7 @@ User makes PR → GitHub API → DB update → stage transition
 | Module | Commands |
 |---|---|
 | `agent.rs` | `create_agent_session` (background drainer), `agent_next_message` (poll buffer), `agent_send_message`, `agent_interrupt`, `agent_close_session`, `get_claude_usage` |
-| `daemon.rs` | `spawn_session`, `attach_session`, `detach_session`, `send_input`, `resize_session`, `signal_session`, `kill_session`, `list_sessions` |
+| `daemon.rs` | `spawn_session`, `attach_session_with_snapshot`, `detach_session`, `send_input`, `resize_session`, `signal_session`, `kill_session`, `list_sessions` |
 | `fs.rs` | `get_app_data_dir`, `file_exists`, `read_text_file`, `write_text_file`, `copy_file`, `remove_file`, `list_dir`, `list_files` (gitignore-aware), `read_dir_entries`, `read_env_var`, `which_binary`, `ensure_directory`, `append_log` |
 | `git.rs` | `git_diff` (staged + unstaged + untracked), `git_diff_range`, `git_merge_base`, `git_worktree_list`, `git_worktree_add`, `git_worktree_remove`, `git_log`, `git_default_branch`, `git_remote_url`, `git_push`, `git_fetch`, `git_clone`, `git_init`, `git_app_info` |
 | `shell.rs` | `ensure_term_init` (ZDOTDIR proxy), `run_script` |
@@ -394,14 +394,14 @@ User makes PR → GitHub API → DB update → stage transition
 - Raw libc PTY (not portable-pty) — needed for `SCM_RIGHTS` fd handoff
 - Always spawned fresh on app start, handoff from old daemon preserves sessions
 - App waits for new daemon's PID file before connecting (prevents stale connections)
-- One reader per session, started on first Attach (not on Spawn) — prevents byte-splitting across multiple fd readers
-- **Pre-attach buffering** — output between Spawn and first Attach is buffered (max 64KB) so startup sequences (e.g., kitty keyboard mode) are captured and replayed
-- **Broadcast output** — all attached clients receive output simultaneously; attach swaps the active writer without creating new readers
+- One reader per session. New spawned sessions start the reader at Spawn; adopted handoff sessions start it on first AttachSnapshot.
+- **Headless terminal authority** — detached PTY output is interpreted into the per-session headless terminal. There is no pre-attach raw byte buffer.
+- **Broadcast output** — all attached clients receive output simultaneously; AttachSnapshot adds a live writer without creating new readers
 - **Terminal size coordination** — effective PTY dimensions are `min(cols)` × `min(rows)` across all attached clients
-- No scrollback buffer — reconnection uses SIGWINCH to trigger Claude TUI redraw
+- No raw scrollback replay — reconnection hydrates xterm.js from the headless terminal snapshot, then streams live output
 - Logs to `~/Library/Application Support/Kanna/kanna-daemon_*.log` via flexi_logger
 - `KANNA_DAEMON_DIR` env var overrides data directory (used by tests)
-- Protocol: line-delimited JSON over Unix socket. Commands include Spawn, Attach, Detach, Input, Resize, Signal, Kill, List, Subscribe, Handoff, HookEvent
+- Protocol: line-delimited JSON over Unix socket. Commands include Spawn, AttachSnapshot, Detach, Input, Resize, Signal, Kill, List, Subscribe, Handoff, HookEvent
 
 ### Daemon invariants
 
@@ -410,8 +410,8 @@ User makes PR → GitHub API → DB update → stage transition
 3. **Always spawn.** App always starts a fresh daemon. Never reuses existing.
 4. **Always wait.** App waits for the new daemon's PID before connecting.
 5. **Sessions survive upgrades.** Child processes are unaware of daemon restarts.
-6. **One reader per session.** Single `stream_output` task, started on first Attach.
-7. **One client per session.** Attach swaps the output target atomically.
+6. **One reader per session.** Single `stream_output` task; spawned sessions start it immediately, adopted sessions start it on first AttachSnapshot.
+7. **Headless terminal is authoritative while detached.** AttachSnapshot atomically snapshots that state and joins the live output stream.
 
 ### App startup sequence
 
@@ -421,7 +421,7 @@ User makes PR → GitHub API → DB update → stage transition
 4. App polls PID file until it matches the spawned child
 5. App clears stale command connection (`DaemonState`)
 6. App connects to new daemon (event bridge + on-demand command connection)
-7. Frontend mounts terminals, calls Attach → Resize → Claude redraws
+7. Frontend mounts terminals, calls AttachSnapshot → Resize → live stream resumes
 
 ## Database
 

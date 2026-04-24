@@ -2,7 +2,7 @@
 //!
 //! These tests spawn a real daemon process and communicate with it over
 //! Unix sockets, verifying that:
-//!   - Attach/reattach doesn't split PTY bytes between readers
+//!   - AttachSnapshot/reattach doesn't split PTY bytes between readers
 //!   - Multiple clients can attach and all receive output (broadcast)
 //!   - Input after reattach reaches the PTY
 //!   - New attachments join the broadcast without disrupting existing ones
@@ -32,11 +32,6 @@ enum Cmd {
         env: HashMap<String, String>,
         cols: u16,
         rows: u16,
-    },
-    Attach {
-        session_id: String,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        emulate_terminal: bool,
     },
     AttachSnapshot {
         session_id: String,
@@ -100,6 +95,7 @@ enum Evt {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SnapshotPayload {
     version: u32,
     rows: u16,
@@ -299,32 +295,21 @@ fn spawn_echo_session(conn: &mut ClientConn, session_id: &str) {
 }
 
 fn attach(conn: &mut ClientConn, session_id: &str) {
-    conn.send(&Cmd::Attach {
+    conn.send(&Cmd::AttachSnapshot {
         session_id: session_id.to_string(),
         emulate_terminal: false,
     });
 
     match conn.recv() {
-        Evt::Ok => {}
+        Evt::Snapshot {
+            session_id: sid, ..
+        } => assert_eq!(sid, session_id),
         Evt::Error { message } => panic!("attach failed: {}", message),
-        other => panic!("expected Ok, got: {:?}", other),
+        other => panic!("expected Snapshot, got: {:?}", other),
     }
 }
 
 fn attach_emulating_terminal(conn: &mut ClientConn, session_id: &str) {
-    conn.send(&Cmd::Attach {
-        session_id: session_id.to_string(),
-        emulate_terminal: true,
-    });
-
-    match conn.recv() {
-        Evt::Ok => {}
-        Evt::Error { message } => panic!("attach failed: {}", message),
-        other => panic!("expected Ok, got: {:?}", other),
-    }
-}
-
-fn attach_snapshot(conn: &mut ClientConn, session_id: &str) {
     conn.send(&Cmd::AttachSnapshot {
         session_id: session_id.to_string(),
         emulate_terminal: true,
@@ -332,20 +317,9 @@ fn attach_snapshot(conn: &mut ClientConn, session_id: &str) {
 
     match conn.recv() {
         Evt::Snapshot {
-            session_id: sid,
-            snapshot,
-        } => {
-            assert_eq!(sid, session_id);
-            let _ = (
-                snapshot.version,
-                snapshot.rows,
-                snapshot.cols,
-                snapshot.cursor_row,
-                snapshot.cursor_col,
-                snapshot.cursor_visible,
-            );
-        }
-        Evt::Error { message } => panic!("attach snapshot failed: {}", message),
+            session_id: sid, ..
+        } => assert_eq!(sid, session_id),
+        Evt::Error { message } => panic!("attach failed: {}", message),
         other => panic!("expected Snapshot, got: {:?}", other),
     }
 }
@@ -472,7 +446,7 @@ fn send_input(conn: &mut ClientConn, session_id: &str, data: &[u8]) {
 
 // ---- Tests ----
 
-/// Mimics the real Tauri flow: Spawn on shared conn, Attach on dedicated conn,
+/// Mimics the real Tauri flow: Spawn on shared conn, AttachSnapshot on dedicated conn,
 /// Input on shared conn, Output received on dedicated conn.
 #[test]
 fn test_separate_conn_spawn_attach_input() {
@@ -482,7 +456,7 @@ fn test_separate_conn_spawn_attach_input() {
     let mut shared = daemon.connect();
     spawn_echo_session(&mut shared, "sess-split");
 
-    // Dedicated connection (like attach_session) — used for Attach + output streaming
+    // Dedicated connection (like attach_session_with_snapshot) — used for snapshot + output streaming
     let mut dedicated = daemon.connect();
     attach(&mut dedicated, "sess-split");
     dedicated.drain_output(Duration::from_millis(200));
@@ -520,7 +494,7 @@ fn test_spawn_attach_io() {
 }
 
 #[test]
-fn test_attach_replays_current_status() {
+fn test_attach_snapshot_replays_current_status() {
     let daemon = DaemonHandle::start();
     let mut conn = daemon.connect();
 
@@ -532,23 +506,6 @@ fn test_attach_replays_current_status() {
             assert_eq!(session_id, "sess-status");
             assert!(matches!(status, SessionStatus::Idle));
         }
-        other => panic!("expected StatusChanged after attach, got: {:?}", other),
-    }
-}
-
-#[test]
-fn test_attach_snapshot_replays_current_status() {
-    let daemon = DaemonHandle::start();
-    let mut conn = daemon.connect();
-
-    spawn_echo_session(&mut conn, "sess-snapshot-status");
-    attach_snapshot(&mut conn, "sess-snapshot-status");
-
-    match conn.recv() {
-        Evt::StatusChanged { session_id, status } => {
-            assert_eq!(session_id, "sess-snapshot-status");
-            assert!(matches!(status, SessionStatus::Idle));
-        }
         other => panic!(
             "expected StatusChanged after attach snapshot, got: {:?}",
             other
@@ -557,57 +514,19 @@ fn test_attach_snapshot_replays_current_status() {
 }
 
 #[test]
-fn test_atomic_attach_flushes_pre_attach_buffer() {
-    let daemon = DaemonHandle::start();
-    let mut shared = daemon.connect();
-    let dir = atomic_attach_dir("plain");
-    spawn_hidden_prefix_session(&mut shared, "sess-atomic-attach", &dir);
-    wait_for_file(&dir.join("ready"));
-
-    let pre_attach_snapshot =
-        wait_for_snapshot(&mut shared, "sess-atomic-attach", "SNAPSHOT-VISIBLE-0001");
-    assert!(
-        !pre_attach_snapshot.vt.contains("EARLY-HIDDEN-0001"),
-        "test precondition failed: early prefix should not survive in snapshot, got {:?}",
-        pre_attach_snapshot.vt
-    );
-
-    let mut attached = daemon.connect();
-    attach(&mut attached, "sess-atomic-attach");
-
-    let initial_output = attached.collect_output_until_contains("SNAPSHOT-VISIBLE-0001");
-    let initial_output_str = String::from_utf8_lossy(&initial_output);
-    assert!(
-        initial_output_str.contains("EARLY-HIDDEN-0001"),
-        "plain attach should flush pre-attach bytes, got {:?}",
-        initial_output_str
-    );
-
-    release_hidden_prefix_session(&dir);
-    let later_output = attached.collect_output_until_contains("AFTER-ATTACH-0001");
-    let later_output_str = String::from_utf8_lossy(&later_output);
-    assert!(
-        later_output_str.contains("AFTER-ATTACH-0001"),
-        "plain attach should continue streaming after the flush, got {:?}",
-        later_output_str
-    );
-    cleanup_atomic_attach_dir(&dir);
-}
-
-#[test]
-fn test_atomic_attach_snapshot_preserves_pre_attach_bytes() {
+fn test_atomic_attach_snapshot_uses_headless_terminal_snapshot_without_raw_replay() {
     let daemon = DaemonHandle::start();
     let mut shared = daemon.connect();
     let dir = atomic_attach_dir("snapshot");
     spawn_hidden_prefix_session(&mut shared, "sess-atomic-snapshot", &dir);
     wait_for_file(&dir.join("ready"));
 
-    let pre_attach_snapshot =
+    let detached_snapshot =
         wait_for_snapshot(&mut shared, "sess-atomic-snapshot", "SNAPSHOT-VISIBLE-0001");
     assert!(
-        !pre_attach_snapshot.vt.contains("EARLY-HIDDEN-0001"),
+        !detached_snapshot.vt.contains("EARLY-HIDDEN-0001"),
         "test precondition failed: early prefix should not survive in snapshot, got {:?}",
-        pre_attach_snapshot.vt
+        detached_snapshot.vt
     );
 
     let mut attached = daemon.connect();
@@ -632,14 +551,14 @@ fn test_atomic_attach_snapshot_preserves_pre_attach_bytes() {
         observed
     );
     assert!(
-        observed.contains("EARLY-HIDDEN-0001"),
-        "attach snapshot must not lose pre-attach bytes absent from the snapshot, got {:?}",
+        !observed.contains("EARLY-HIDDEN-0001"),
+        "attach snapshot should not append raw pre-attach bytes absent from the headless terminal snapshot, got {:?}",
         observed
     );
     cleanup_atomic_attach_dir(&dir);
 }
 
-/// Reattach from the SAME connection: second Attach should cancel the first
+/// Reattach from the SAME connection: second AttachSnapshot should cancel the first
 /// stream_output and the new attach should receive all bytes.
 #[test]
 fn test_reattach_same_connection_no_split_bytes() {
@@ -670,7 +589,7 @@ fn test_reattach_same_connection_no_split_bytes() {
     );
 }
 
-/// Attach from a DIFFERENT connection: both connections receive output (broadcast).
+/// AttachSnapshot from a DIFFERENT connection: both connections receive output (broadcast).
 #[test]
 fn test_reattach_new_connection_no_split_bytes() {
     let daemon = DaemonHandle::start();
@@ -767,7 +686,7 @@ fn test_broadcast_both_clients_receive_output() {
 /// inject its own terminal-query replies into the PTY. The real frontend
 /// terminal will answer those queries itself.
 #[test]
-fn test_attached_client_suppresses_sidecar_terminal_replies() {
+fn test_attached_client_suppresses_headless_terminal_replies() {
     let daemon = DaemonHandle::start();
 
     let mut shared = daemon.connect();
@@ -793,7 +712,7 @@ fn test_attached_client_suppresses_sidecar_terminal_replies() {
     attached.drain_output(Duration::from_millis(200));
 
     // Kick the helper process after the live client is attached so any reply it
-    // sees can only come from the daemon-side sidecar.
+    // sees can only come from the daemon-side headless terminal.
     send_input(&mut shared, "sess-terminal-query", b"x");
 
     let query = b"\x1b[c";
@@ -805,7 +724,7 @@ fn test_attached_client_suppresses_sidecar_terminal_replies() {
 }
 
 /// Rapid attach from separate connections: all connections receive output (broadcast).
-/// With the single-reader + broadcast architecture, each Attach pushes a writer
+/// With the single-reader + broadcast architecture, each AttachSnapshot pushes a writer
 /// to the broadcast Vec. The final connection (and all earlier ones) receive output.
 #[test]
 fn test_rapid_reattach() {

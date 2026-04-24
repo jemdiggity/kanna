@@ -75,7 +75,7 @@
         let data = await res.json()
         term.writeln('Spawn: ' + JSON.stringify(data))
 
-        // Attach and stream
+        // AttachSnapshot and stream
         res = await fetch(`${SOCK_PROXY}/attach`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

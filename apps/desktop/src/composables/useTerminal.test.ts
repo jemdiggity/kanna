@@ -508,8 +508,7 @@ describe("useTerminal", () => {
     expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
     expect(errorToastMock).not.toHaveBeenCalled();
     expect(spawnFn).toHaveBeenCalledTimes(1);
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(3);
     expect(terminal.write).toHaveBeenCalledWith("restored scrollback", expect.any(Function));
     expect(
       terminal.write.mock.calls.some(
@@ -598,9 +597,6 @@ describe("useTerminal", () => {
         emitTerminalSnapshot("session-1", "fresh session output");
         return null;
       }
-      if (cmd === "attach_session") {
-        return null;
-      }
       if (cmd === "get_session_recovery_state") {
         return null;
       }
@@ -662,9 +658,8 @@ describe("useTerminal", () => {
     expect(spawnFn).toHaveBeenCalledTimes(1);
     expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawned");
     expect(errorToastMock).not.toHaveBeenCalled();
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
-    expect(terminal.write).not.toHaveBeenCalledWith("fresh session output", expect.any(Function));
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(3);
+    expect(terminal.write.mock.calls.some(([data]) => data === "fresh session output")).toBe(true);
     expect(
       terminal.write.mock.calls.some(
         ([data]) =>
@@ -674,15 +669,16 @@ describe("useTerminal", () => {
     ).toBe(false);
   });
 
-  it("attaches freshly spawned task sessions live instead of replaying a snapshot after daemon_ready", async () => {
+  it("attaches freshly spawned task sessions from a headless terminal snapshot after daemon_ready", async () => {
     const spawnFn = vi.fn(async () => {});
     const { useTerminal } = await import("./useTerminal");
 
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "attach_session_with_snapshot") {
-        throw new AppError("session not found: session-1", "session_not_found");
-      }
-      if (cmd === "attach_session") {
+        if (spawnFn.mock.calls.length === 0) {
+          throw new AppError("session not found: session-1", "session_not_found");
+        }
+        emitTerminalSnapshot("session-1", "fresh session output");
         return null;
       }
       if (cmd === "file_exists") {
@@ -738,10 +734,9 @@ describe("useTerminal", () => {
     }
 
     expect(spawnFn).toHaveBeenCalledTimes(1);
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(3);
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "resume_session_stream")).toHaveLength(0);
-    expect(terminals[0]?.reset).not.toHaveBeenCalled();
+    expect(terminals[0]?.reset).toHaveBeenCalledTimes(1);
   });
 
   it("spawns a shell terminal when no pre-warmed session exists", async () => {
@@ -749,7 +744,7 @@ describe("useTerminal", () => {
     const { useTerminal } = await import("./useTerminal");
 
     invokeMock.mockImplementation(async (cmd: string) => {
-      if (cmd === "attach_session") {
+      if (cmd === "attach_session_with_snapshot") {
         if (spawnFn.mock.calls.length === 0) {
           throw new Error("session not found: shell-wt-1");
         }
@@ -790,7 +785,7 @@ describe("useTerminal", () => {
     expect(spawnFn).toHaveBeenCalledTimes(1);
     expect(spawnFn).toHaveBeenCalledWith("shell-wt-1", "/tmp/task", "", 80, 24);
     expect(errorToastMock).not.toHaveBeenCalled();
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(2);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
   });
 
   it("respawns once when a previously attached task session disappears and daemon_ready fires", async () => {
@@ -827,11 +822,10 @@ describe("useTerminal", () => {
           emitTerminalSnapshot("session-1");
           return null;
         }
-      }
-      if (cmd === "attach_session") {
         if (!spawnCompleted) {
           throw new AppError("session not found: session-1", "session_not_found");
         }
+        emitTerminalSnapshot("session-1");
       }
       return null;
     });
@@ -917,7 +911,8 @@ describe("useTerminal", () => {
     for (
       let attempt = 0;
       attempt < 10 &&
-      (spawnFn.mock.calls.length === 0 || invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session").length < 2);
+      (spawnFn.mock.calls.length === 0 ||
+        invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot").length < 3);
       attempt += 1
     ) {
       await Promise.resolve();
@@ -1086,10 +1081,10 @@ describe("useTerminal", () => {
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
-      "attach_session",
+      "attach_session_with_snapshot",
       "resize_session",
     ]);
-    expect(terminal.reset).toHaveBeenCalledTimes(1);
+    expect(terminal.reset).toHaveBeenCalledTimes(2);
   });
 
   it("marks the terminal detached after session_exit so ensureConnected rechecks the daemon", async () => {
@@ -1190,7 +1185,7 @@ describe("useTerminal", () => {
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
-      "attach_session",
+      "attach_session_with_snapshot",
       "resize_session",
     ]);
   });
@@ -1267,10 +1262,10 @@ describe("useTerminal", () => {
     expect(callOrder).toEqual([
       "attach_session_with_snapshot",
       "resize_session",
-      "attach_session",
+      "attach_session_with_snapshot",
       "resize_session",
     ]);
-    expect(terminal.reset).toHaveBeenCalledTimes(1);
+    expect(terminal.reset).toHaveBeenCalledTimes(2);
   });
 
   it("suppresses browser navigation and pastes dropped file paths into agent terminals", async () => {
@@ -1889,7 +1884,7 @@ describe("useTerminal", () => {
           height: 1,
         };
       }
-      if (cmd === "attach_session") {
+      if (cmd === "attach_session_with_snapshot") {
         return null;
       }
       return null;

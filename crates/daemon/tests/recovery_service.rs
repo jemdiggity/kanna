@@ -146,7 +146,7 @@ enum Cmd {
         cols: u16,
         rows: u16,
     },
-    Attach {
+    AttachSnapshot {
         session_id: String,
     },
     Snapshot {
@@ -366,14 +366,14 @@ fn daemon_does_not_serve_snapshot_after_session_exit() {
         other => panic!("expected SessionCreated, got {:?}", other),
     }
 
-    conn.send(&Cmd::Attach {
+    conn.send(&Cmd::AttachSnapshot {
         session_id: session_id.to_string(),
     });
     loop {
         match conn.recv() {
-            Evt::Ok => break,
+            Evt::Snapshot { .. } => break,
             Evt::StatusChanged { .. } => continue,
-            other => panic!("expected Ok, got {:?}", other),
+            other => panic!("expected Snapshot, got {:?}", other),
         }
     }
 

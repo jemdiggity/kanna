@@ -30,18 +30,18 @@ real time. The timestamps only control when status detection is allowed to run.
 
 ## Benchmarks
 
-### `sidecar_status`
+### `headless_terminal_status`
 
 Command:
 
 ```bash
 cd crates/daemon
-cargo bench --bench sidecar_status
+cargo bench --bench headless_terminal_status
 ```
 
 Cases:
 
-- `write_only`: replay the full transcript through `TerminalSidecar::write()`
+- `write_only`: replay the full transcript through `HeadlessTerminal::write()`
 - `write_plus_status`: replay the same transcript and call `visible_status()`
   on the daemon throttle schedule, currently once every `500ms`
 
@@ -70,7 +70,7 @@ show scaling across multiple in-memory sessions.
 Representative numbers from the current branch on this machine, after the
 low-allocation footer-scan refactor in `visible_status()`.
 
-### Sidecar
+### HeadlessTerminal
 
 | Case | Time |
 |------|------|
@@ -86,7 +86,7 @@ low-allocation footer-scan refactor in `visible_status()`.
 
 Interpretation:
 
-- raw sidecar replay is cheap
+- raw headless terminal replay is cheap
 - status detection is the dominant additional cost in this layer
 
 ### Session Layer
