@@ -379,16 +379,19 @@ async function main(): Promise<void> {
       console.log(`\n[e2e] running ${testTarget}\n`);
       const perfOutputPath = buildPerfOutputPath(testTarget);
       await rm(perfOutputPath, { force: true }).catch(() => undefined);
-      await runCommand(
-        ["pnpm", "exec", "vitest", "run", "--config", "./tests/e2e/vitest.config.ts", testTarget],
-        {
-          cwd: desktopRoot,
-          env: buildTestEnv(needsSecondaryForTarget, perfOutputPath),
-        },
-      );
-      const perfSummary = await readFile(perfOutputPath, "utf8").catch(() => "");
-      if (perfSummary.trim()) {
-        process.stdout.write(`${perfSummary.trimEnd()}\n`);
+      try {
+        await runCommand(
+          ["pnpm", "exec", "vitest", "run", "--config", "./tests/e2e/vitest.config.ts", testTarget],
+          {
+            cwd: desktopRoot,
+            env: buildTestEnv(needsSecondaryForTarget, perfOutputPath),
+          },
+        );
+      } finally {
+        const perfSummary = await readFile(perfOutputPath, "utf8").catch(() => "");
+        if (perfSummary.trim()) {
+          process.stdout.write(`${perfSummary.trimEnd()}\n`);
+        }
       }
       lastTargetWasReal = targetIsReal;
     }
