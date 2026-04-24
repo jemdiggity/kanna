@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildTaskBootstrapCommand } from "./taskBootstrap";
 import { buildTaskShellCommand } from "../composables/terminalSessionRecovery";
@@ -65,5 +69,22 @@ describe("buildTaskBootstrapCommand", () => {
     expect(command).toContain(
       "export PATH='/Applications/Kanna.app/Contents/MacOS':\"$PATH\"",
     );
+  });
+
+  it("continues to the agent when a setup command fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kanna-bootstrap-setup-failure-"));
+    const marker = join(dir, "agent-started");
+    const command = buildTaskBootstrapCommand({
+      worktreePath: dir,
+      visibleBootstrapSteps: [],
+      setupCmds: ["false"],
+      agentCmd: `printf agent-started > '${marker}'`,
+    });
+
+    const result = spawnSync("/bin/zsh", ["-c", command], { encoding: "utf8" });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(marker, "utf8")).toBe("agent-started");
+    expect(result.stdout).toContain("Setup command failed");
   });
 });

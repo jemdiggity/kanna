@@ -2570,6 +2570,8 @@ describe("outgoing transfer commit acknowledgment", () => {
         KANNA_E2E_TARGET_WEBDRIVER_PORT: "",
       }),
     });
+    const teardownArgs = teardownSpawnArgs?.args as string[] | undefined;
+    expect(teardownArgs?.at(-1)).toContain("Teardown command failed");
     expect(fakeDb.tables.pipeline_item[0]).toMatchObject({
       id: "task-source",
       stage: "teardown",

@@ -31,6 +31,7 @@ import { invoke } from "../invoke";
 import { isTauri } from "../tauri-mock";
 import { buildTaskShellCommand } from "../composables/terminalSessionRecovery";
 import { buildTaskBootstrapCommand } from "../utils/taskBootstrap";
+import { renderBestEffortLifecycleCommand } from "../utils/lifecycleCommands";
 import {
   getPreferredAgentProviders,
   resolveAgentProvider,
@@ -759,10 +760,7 @@ export function createTasksApi(
       let teardownExit: Promise<void> | null = null;
       if (teardownCmds.length > 0) {
         const worktreePath = `${repo.path}/.kanna-worktrees/${item.branch}`;
-        const scriptParts = teardownCmds.map((command) => {
-          const escaped = command.replace(/'/g, "'\\''");
-          return `printf '\\033[2m$ %s\\033[0m\\n' '${escaped}' && ${command}`;
-        });
+        const scriptParts = teardownCmds.map((command) => renderBestEffortLifecycleCommand(command, "Teardown"));
         const fullCmd = `printf '\\033[33mRunning teardown...\\033[0m\\n' && ${scriptParts.join(" && ")} && printf '\\n'`;
         const tdSessionId = `td-${item.id}`;
         teardownExit = requireService(context.services.waitForSessionExit, "waitForSessionExit")(tdSessionId);

@@ -16,6 +16,64 @@ interface GitWorktreeEntry {
 const worktreeCleanupBaselines = new Map<string, Set<string>>();
 const IMPORT_REPO_SELECTION_TIMEOUT_MS = 10_000;
 const IMPORT_REPO_SELECTION_POLL_MS = 100;
+const TASK_CLOSE_TIMEOUT_MS = 20_000;
+
+function isVueCallError(result: unknown): result is { __error: string } {
+  return Boolean(
+    result &&
+    typeof result === "object" &&
+    "__error" in result &&
+    typeof (result as { __error?: unknown }).__error === "string",
+  );
+}
+
+async function waitForTaskClosed(
+  client: WebDriverClient,
+  taskId: string,
+  timeoutMs = TASK_CLOSE_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const rows = await queryDb(
+      client,
+      "SELECT stage, closed_at FROM pipeline_item WHERE id = ?",
+      [taskId],
+    ) as Array<{ stage?: string | null; closed_at?: string | null }>;
+    const row = rows[0];
+    if (!row) return;
+    if (row.stage === "done" && typeof row.closed_at === "string" && row.closed_at.length > 0) {
+      return;
+    }
+    await sleep(250);
+  }
+
+  throw new Error(`timed out waiting for task ${taskId} to close`);
+}
+
+async function closeTaskThroughApp(
+  client: WebDriverClient,
+  taskId: string,
+): Promise<void> {
+  const result = await callVueMethod(client, "store.closeTask", taskId);
+  if (isVueCallError(result)) {
+    throw new Error(result.__error);
+  }
+  await waitForTaskClosed(client, taskId);
+}
+
+async function listOpenTaskIds(
+  client: WebDriverClient,
+): Promise<string[]> {
+  const rows = await queryDb(
+    client,
+    "SELECT id FROM pipeline_item WHERE closed_at IS NULL ORDER BY created_at DESC",
+  ) as Array<{ id?: string | null }>;
+
+  return rows
+    .map((row) => row.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
 
 async function recordWorktreeCleanupBaseline(
   client: WebDriverClient,
@@ -33,26 +91,24 @@ async function recordWorktreeCleanupBaseline(
   );
 }
 
-async function getTrackedTaskWorktreePaths(
+async function listOpenTaskIdsForRepo(
   client: WebDriverClient,
   repoPath: string
-): Promise<Set<string>> {
+): Promise<string[]> {
   const rows = await queryDb(
     client,
-    `SELECT branch
-       FROM pipeline_item
-      WHERE branch IS NOT NULL
-        AND branch != ''
-        AND repo_id IN (SELECT id FROM repo WHERE path = ?)`,
+    `SELECT p.id
+       FROM pipeline_item p
+       JOIN repo r ON r.id = p.repo_id
+      WHERE r.path = ?
+        AND p.closed_at IS NULL
+      ORDER BY p.created_at DESC`,
     [repoPath],
-  ) as Array<{ branch?: string | null }>;
+  ) as Array<{ id?: string | null }>;
 
-  return new Set(
-    rows
-      .map((row) => row.branch)
-      .filter((branch): branch is string => typeof branch === "string" && branch.length > 0)
-      .map((branch) => join(repoPath, ".kanna-worktrees", branch)),
-  );
+  return rows
+    .map((row) => row.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
 }
 
 /** Back up the SQLite DB file before wiping. Best-effort — logs but never throws. */
@@ -96,6 +152,11 @@ export async function resetDatabase(client: WebDriverClient): Promise<void> {
   // Back up the DB file before wiping
   await backupDatabase(client, currentDb);
 
+  const openTaskIds = await listOpenTaskIds(client).catch(() => [] as string[]);
+  for (const taskId of openTaskIds) {
+    await closeTaskThroughApp(client, taskId).catch(() => undefined);
+  }
+
   // Delete in FK-safe order (children before parents)
   await execDb(client, "DELETE FROM terminal_session");
   await execDb(client, "DELETE FROM worktree");
@@ -127,22 +188,12 @@ export async function cleanupWorktrees(
   if (!baseline) return;
 
   try {
-    const trackedPaths = await getTrackedTaskWorktreePaths(client, repoPath);
-    const result = await tauriInvoke(client, "git_worktree_list", { repoPath });
-    const worktrees = Array.isArray(result) ? result as GitWorktreeEntry[] : [];
-
-    for (const wt of worktrees) {
-      if (
-        wt.name?.startsWith("task-") &&
-        typeof wt.path === "string" &&
-        !baseline.has(wt.path) &&
-        trackedPaths.has(wt.path)
-      ) {
-        try {
-          await tauriInvoke(client, "git_worktree_remove", { repoPath, path: wt.path });
-        } catch {
-          // Worktree may already be removed
-        }
+    const taskIds = await listOpenTaskIdsForRepo(client, repoPath);
+    for (const taskId of taskIds) {
+      try {
+        await closeTaskThroughApp(client, taskId);
+      } catch {
+        // Cleanup is best-effort — don't fail tests
       }
     }
   } catch {

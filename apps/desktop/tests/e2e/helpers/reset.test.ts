@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   callVueMethod: vi.fn(),
   execDb: vi.fn(),
+  getVueState: vi.fn(),
   queryDb: vi.fn(),
   tauriInvoke: vi.fn(),
 }));
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./vue", () => ({
   callVueMethod: mocks.callVueMethod,
   execDb: mocks.execDb,
+  getVueState: mocks.getVueState,
   queryDb: mocks.queryDb,
   tauriInvoke: mocks.tauriInvoke,
 }));
@@ -21,6 +23,7 @@ describe("reset helpers", () => {
     vi.resetModules();
     mocks.callVueMethod.mockReset();
     mocks.execDb.mockReset();
+    mocks.getVueState.mockReset();
     mocks.queryDb.mockReset();
     mocks.tauriInvoke.mockReset();
     process.env.KANNA_E2E_LIVE_REPO_ROOT = originalLiveRepoRoot;
@@ -39,17 +42,15 @@ describe("reset helpers", () => {
         { name: "task-existing", path: "/repo/.kanna-worktrees/task-existing" },
         { name: "scratch", path: "/repo/.kanna-worktrees/scratch" },
       ])
-      .mockResolvedValueOnce([
-        { name: "task-existing", path: "/repo/.kanna-worktrees/task-existing" },
-        { name: "task-created-by-test", path: "/repo/.kanna-worktrees/task-created-by-test" },
-        { name: "task-created-externally", path: "/repo/.kanna-worktrees/task-created-externally" },
-        { name: "scratch", path: "/repo/.kanna-worktrees/scratch" },
-      ])
       .mockResolvedValue(undefined);
     mocks.queryDb
       .mockResolvedValueOnce([{ id: "repo-1", name: "test-repo" }])
       .mockResolvedValueOnce([
-        { branch: "task-created-by-test" },
+        { id: "task-created-by-test" },
+        { id: "task-created-externally" },
+      ])
+      .mockResolvedValue([
+        { stage: "done", closed_at: "2026-04-22T00:00:00.000Z" },
       ]);
     mocks.callVueMethod.mockResolvedValue(undefined);
 
@@ -58,18 +59,20 @@ describe("reset helpers", () => {
     await importTestRepo(client as never, "/repo", "test-repo");
     await cleanupWorktrees(client as never, "/repo");
 
-    const removeCalls = mocks.tauriInvoke.mock.calls.filter(
-      ([, cmd]) => cmd === "git_worktree_remove",
+    const closeCalls = mocks.callVueMethod.mock.calls.filter(
+      ([, method]) => method === "store.closeTask",
     );
 
-    expect(removeCalls).toEqual([
+    expect(closeCalls).toEqual([
       [
         client,
-        "git_worktree_remove",
-        {
-          repoPath: "/repo",
-          path: "/repo/.kanna-worktrees/task-created-by-test",
-        },
+        "store.closeTask",
+        "task-created-by-test",
+      ],
+      [
+        client,
+        "store.closeTask",
+        "task-created-externally",
       ],
     ]);
   });
@@ -116,5 +119,38 @@ describe("reset helpers", () => {
     expect(mocks.callVueMethod).toHaveBeenCalledWith(client, "handleImportRepo", "/repo", "test-repo", "main");
     expect(mocks.callVueMethod).toHaveBeenCalledWith(client, "handleSelectRepo", "repo-1");
     expect(client.executeSync).toHaveBeenCalled();
+  });
+
+  it("closes open tasks through the app before wiping the database", async () => {
+    const client = {};
+    mocks.getVueState.mockResolvedValue("kanna-test.db");
+    mocks.queryDb
+      .mockResolvedValueOnce([
+        { id: "task-a" },
+        { id: "task-b" },
+      ])
+      .mockResolvedValue([
+        { stage: "done", closed_at: "2026-04-22T00:00:00.000Z" },
+      ]);
+    mocks.execDb.mockResolvedValue(undefined);
+    mocks.callVueMethod.mockResolvedValue(undefined);
+    mocks.tauriInvoke
+      .mockResolvedValueOnce("/tmp/app-data")
+      .mockResolvedValue(undefined);
+
+    const { resetDatabase } = await import("./reset");
+
+    await resetDatabase(client as never);
+
+    expect(mocks.callVueMethod).toHaveBeenCalledWith(
+      client,
+      "store.closeTask",
+      "task-a",
+    );
+    expect(mocks.callVueMethod).toHaveBeenCalledWith(
+      client,
+      "store.closeTask",
+      "task-b",
+    );
   });
 });
