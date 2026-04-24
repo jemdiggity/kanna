@@ -89,6 +89,7 @@ export interface TasksApi {
   blockTask: (blockerIds: string[]) => Promise<void>;
   editBlockedTask: (itemId: string, newBlockerIds: string[]) => Promise<void>;
   checkUnblocked: (blockerItemId: string) => Promise<void>;
+  restoreUnblockedTask: (item: PipelineItem) => Promise<void>;
   startBlockedTask: (item: PipelineItem) => Promise<void>;
   pinItem: (itemId: string, position: number) => Promise<void>;
   unpinItem: (itemId: string) => Promise<void>;
@@ -866,13 +867,24 @@ export function createTasksApi(
       if (blockers.length === 0) continue;
       const allClear = blockers.every((blocker) => blocker.closed_at !== null);
       if (allClear) {
-        if (hasLiveTaskResources(blocked)) {
-          await resumeBlockedTaskInPlace(blocked, blockers);
-        } else {
-          await startBlockedTask(blocked);
-        }
+        await restoreUnblockedTask(blocked, blockers);
       }
     }
+  }
+
+  async function restoreUnblockedTask(
+    item: PipelineItem,
+    blockers?: PipelineItem[],
+  ): Promise<void> {
+    const resolvedBlockers = blockers ?? await listBlockersForItem(context.requireDb(), item.id);
+    if (resolvedBlockers.length === 0) return;
+
+    if (hasLiveTaskResources(item)) {
+      await resumeBlockedTaskInPlace(item, resolvedBlockers);
+      return;
+    }
+
+    await startBlockedTask(item);
   }
 
   async function resumeBlockedTaskInPlace(
@@ -1094,6 +1106,7 @@ export function createTasksApi(
     blockTask,
     editBlockedTask,
     checkUnblocked,
+    restoreUnblockedTask,
     startBlockedTask,
     pinItem,
     unpinItem,

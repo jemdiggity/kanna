@@ -2,6 +2,7 @@ import { defineComponent, h } from "vue";
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "../appError";
+import { resetDaemonReadyObservationForTests } from "./daemonReadyState";
 
 const markTaskSwitchFirstOutputMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.fn();
@@ -202,6 +203,7 @@ describe("useTerminal", () => {
     });
     terminals.length = 0;
     markTaskSwitchFirstOutputMock.mockReset();
+    resetDaemonReadyObservationForTests();
     listenMock.mockImplementation(async (eventName: string, handler: (event: any) => void) => {
       const listeners = eventListeners.get(eventName) ?? [];
       listeners.push(handler);
@@ -412,11 +414,14 @@ describe("useTerminal", () => {
     ]);
   });
 
-  it("respawns a task terminal when scrollback exists but the PTY is gone", async () => {
+  it("waits for daemon_ready before respawning a task terminal when scrollback exists but the PTY is gone", async () => {
     const spawnFn = vi.fn(async () => {});
     const { useTerminal } = await import("./useTerminal");
 
     invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "file_exists") {
+        return true;
+      }
       if (cmd === "get_session_recovery_state") {
         return {
           serialized: "restored scrollback",
@@ -482,7 +487,14 @@ describe("useTerminal", () => {
       terminal.flushNextStringWrite();
       await Promise.resolve();
     }
-    void startPromise;
+    await startPromise;
+
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(warningToastMock).not.toHaveBeenCalled();
+
+    const daemonReadyListeners = eventListeners.get("daemon_ready") ?? [];
+    expect(daemonReadyListeners).toHaveLength(1);
+    daemonReadyListeners[0]({ payload: {} });
 
     for (let attempt = 0; attempt < 20 && (spawnFn.mock.calls.length === 0 || warningToastMock.mock.calls.length === 0); attempt += 1) {
       while (terminal.pendingStringWrites.length > 0) {
@@ -496,7 +508,7 @@ describe("useTerminal", () => {
     expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
     expect(errorToastMock).not.toHaveBeenCalled();
     expect(spawnFn).toHaveBeenCalledTimes(1);
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
     expect(terminal.write).toHaveBeenCalledWith("restored scrollback", expect.any(Function));
     expect(
@@ -571,7 +583,7 @@ describe("useTerminal", () => {
     ).toBe(true);
   });
 
-  it("respawns a missing task session on first attach when the worktree still exists", async () => {
+  it("waits for daemon_ready before respawning a missing task session on first attach when the worktree still exists", async () => {
     const spawnFn = vi.fn(async () => {});
     const { useTerminal } = await import("./useTerminal");
 
@@ -629,6 +641,15 @@ describe("useTerminal", () => {
     const terminal = terminals[0];
     expect(terminal).toBeDefined();
 
+    await startPromise;
+
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(warningToastMock).not.toHaveBeenCalled();
+
+    const daemonReadyListeners = eventListeners.get("daemon_ready") ?? [];
+    expect(daemonReadyListeners).toHaveLength(1);
+    daemonReadyListeners[0]({ payload: {} });
+
     for (let attempt = 0; attempt < 20 && (spawnFn.mock.calls.length === 0 || warningToastMock.mock.calls.length === 0); attempt += 1) {
       while (terminal.pendingStringWrites.length > 0) {
         terminal.flushNextStringWrite();
@@ -638,25 +659,10 @@ describe("useTerminal", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    let startSettled = false;
-    startPromise.finally(() => {
-      startSettled = true;
-    });
-    for (let attempt = 0; attempt < 50 && !startSettled; attempt += 1) {
-      while (terminal.pendingStringWrites.length > 0) {
-        terminal.flushNextStringWrite();
-        await Promise.resolve();
-      }
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    await startPromise;
-
     expect(spawnFn).toHaveBeenCalledTimes(1);
     expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawned");
     expect(errorToastMock).not.toHaveBeenCalled();
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
     expect(terminal.write).not.toHaveBeenCalledWith("fresh session output", expect.any(Function));
     expect(
@@ -668,7 +674,7 @@ describe("useTerminal", () => {
     ).toBe(false);
   });
 
-  it("attaches freshly spawned task sessions live instead of replaying a snapshot", async () => {
+  it("attaches freshly spawned task sessions live instead of replaying a snapshot after daemon_ready", async () => {
     const spawnFn = vi.fn(async () => {});
     const { useTerminal } = await import("./useTerminal");
 
@@ -720,8 +726,19 @@ describe("useTerminal", () => {
 
     await wrapper.vm.startListening();
 
+    expect(spawnFn).not.toHaveBeenCalled();
+
+    const daemonReadyListeners = eventListeners.get("daemon_ready") ?? [];
+    expect(daemonReadyListeners).toHaveLength(1);
+    daemonReadyListeners[0]({ payload: {} });
+
+    for (let attempt = 0; attempt < 20 && spawnFn.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
     expect(spawnFn).toHaveBeenCalledTimes(1);
-    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session_with_snapshot")).toHaveLength(2);
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "attach_session")).toHaveLength(1);
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "resume_session_stream")).toHaveLength(0);
     expect(terminals[0]?.reset).not.toHaveBeenCalled();
