@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.kanna.build/config.schema.json",
+  "title": "Kanna Repo Config",
+  "description": "Schema for .kanna/config.json used by Kanna agents and editors.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "pipeline": {
+      "type": "string"
+    },
+    "setup": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "teardown": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "test": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ports": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "stage_order": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prepend": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "append": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "setup": [
+        "pnpm install"
+      ],
+      "ports": {
+        "KANNA_DEV_PORT": 1420
+      }
+    },
+    {
+      "workspace": {
+        "path": {
+          "prepend": [
+            "./node_modules/.bin"
+          ]
+        }
+      }
+    },
+    {
+      "workspace": {
+        "env": {
+          "FOO": "bar"
+        }
+      }
+    }
+  ]
+}

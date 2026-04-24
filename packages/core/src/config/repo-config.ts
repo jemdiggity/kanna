@@ -4,6 +4,16 @@
  */
 export const DEFAULT_STAGE_ORDER: readonly string[] = ["merge", "pr", "in progress"];
 
+export interface RepoWorkspacePathConfig {
+  prepend?: string[];
+  append?: string[];
+}
+
+export interface RepoWorkspaceConfig {
+  env?: Record<string, string>;
+  path?: RepoWorkspacePathConfig;
+}
+
 export interface RepoConfig {
   pipeline?: string;
   setup?: string[];
@@ -11,6 +21,7 @@ export interface RepoConfig {
   test?: string[];
   ports?: Record<string, number>;
   stage_order?: string[];
+  workspace?: RepoWorkspaceConfig;
 }
 
 export function parseRepoConfig(json: string): RepoConfig {
@@ -43,6 +54,50 @@ export function parseRepoConfig(json: string): RepoConfig {
 
   if (Array.isArray(raw.stage_order) && raw.stage_order.every((s) => typeof s === "string")) {
     config.stage_order = raw.stage_order as string[];
+  }
+
+  if (raw.workspace && typeof raw.workspace === "object" && !Array.isArray(raw.workspace)) {
+    const workspaceRaw = raw.workspace as Record<string, unknown>;
+    const workspace: RepoWorkspaceConfig = {};
+
+    if (workspaceRaw.env && typeof workspaceRaw.env === "object" && !Array.isArray(workspaceRaw.env)) {
+      const env: Record<string, string> = {};
+      for (const [name, value] of Object.entries(workspaceRaw.env as Record<string, unknown>)) {
+        if (typeof value === "string") {
+          env[name] = value;
+        }
+      }
+      if (Object.keys(env).length > 0) {
+        workspace.env = env;
+      }
+    }
+
+    if (workspaceRaw.path && typeof workspaceRaw.path === "object" && !Array.isArray(workspaceRaw.path)) {
+      const pathRaw = workspaceRaw.path as Record<string, unknown>;
+      const pathConfig: RepoWorkspacePathConfig = {};
+
+      if (Array.isArray(pathRaw.prepend)) {
+        const prepend = pathRaw.prepend.filter((entry): entry is string => typeof entry === "string");
+        if (prepend.length > 0) {
+          pathConfig.prepend = prepend;
+        }
+      }
+
+      if (Array.isArray(pathRaw.append)) {
+        const append = pathRaw.append.filter((entry): entry is string => typeof entry === "string");
+        if (append.length > 0) {
+          pathConfig.append = append;
+        }
+      }
+
+      if (Object.keys(pathConfig).length > 0) {
+        workspace.path = pathConfig;
+      }
+    }
+
+    if (Object.keys(workspace).length > 0) {
+      config.workspace = workspace;
+    }
   }
 
   return config;

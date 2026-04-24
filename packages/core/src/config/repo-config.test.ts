@@ -86,6 +86,56 @@ describe("parseRepoConfig", () => {
     expect(config.stage_order).toEqual(["merge", "pr", "in progress"]);
   });
 
+  it("parses workspace env and path config", () => {
+    const config = parseRepoConfig(JSON.stringify({
+      workspace: {
+        env: {
+          FOO: "bar",
+          BAZ: "qux",
+        },
+        path: {
+          prepend: ["./bin"],
+          append: ["/usr/local/custom"],
+        },
+      },
+    }));
+
+    expect(config.workspace).toEqual({
+      env: {
+        FOO: "bar",
+        BAZ: "qux",
+      },
+      path: {
+        prepend: ["./bin"],
+        append: ["/usr/local/custom"],
+      },
+    });
+  });
+
+  it("ignores malformed workspace env and path entries", () => {
+    const config = parseRepoConfig(JSON.stringify({
+      workspace: {
+        env: {
+          GOOD: "ok",
+          BAD: 42,
+        },
+        path: {
+          prepend: ["./bin", 1],
+          append: "nope",
+        },
+      },
+    }));
+
+    expect(config.workspace).toEqual({
+      env: {
+        GOOD: "ok",
+      },
+      path: {
+        prepend: ["./bin"],
+      },
+    });
+  });
+
   it("ignores stage_order if not an array of strings", () => {
     const config = parseRepoConfig(JSON.stringify({ stage_order: "not-an-array" }));
     expect(config.stage_order).toBeUndefined();

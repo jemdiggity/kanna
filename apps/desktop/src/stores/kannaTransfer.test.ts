@@ -2461,9 +2461,15 @@ describe("outgoing transfer commit acknowledgment", () => {
     store.repos = [repo];
     store.items = [sourceItem];
 
-    invokeMock.mockImplementation(async (cmd) => {
+    invokeMock.mockImplementation(async (cmd, args) => {
       if (cmd === "kill_session" || cmd === "signal_session") return null;
       if (cmd === "list_dir") return [];
+      if (
+        cmd === "read_text_file"
+        && args?.path === "/tmp/repo-1/.kanna-worktrees/task-task-source/.kanna/config.json"
+      ) {
+        throw new Error("failed to read '/tmp/repo-1/.kanna-worktrees/task-task-source/.kanna/config.json': No such file or directory");
+      }
       throw new Error(`unexpected invoke: ${cmd}`);
     });
 

@@ -65,6 +65,7 @@ const mockState = vi.hoisted(() => {
   };
   let readEnvVarOverrides: Record<string, string> = {
     KANNA_DB_NAME: "kanna-wt-task-existing.db",
+    PATH: "/usr/local/bin:/usr/bin:/bin",
   };
   let baseBranchResponse: string[] | Error = ["origin/main", "main"];
   let repoConfig: RepoConfig = {};
@@ -109,6 +110,8 @@ const mockState = vi.hoisted(() => {
         return undefined;
       case "file_exists":
         return false;
+      case "list_dir":
+        return [];
       case "which_binary":
         return `/usr/bin/${String(args?.name ?? "tool")}`;
       case "get_app_data_dir":
@@ -117,6 +120,8 @@ const mockState = vi.hoisted(() => {
         return "/tmp/kanna.sock";
       case "read_env_var":
         return readEnvVarOverrides[String(args?.name ?? "")] ?? "";
+      case "ensure_term_init":
+        return "/tmp/kanna-zdotdir";
       case "read_builtin_resource":
         return "{}";
       case "read_text_file":
@@ -181,6 +186,7 @@ const mockState = vi.hoisted(() => {
     baseBranchResponse = ["origin/main", "main"];
     readEnvVarOverrides = {
       KANNA_DB_NAME: "kanna-wt-task-existing.db",
+      PATH: "/usr/local/bin:/usr/bin:/bin",
     };
     repoConfig = {};
     repoConfigResolver = null;
@@ -758,6 +764,89 @@ describe("kanna store task base branch integration", () => {
     });
   });
 
+  it("passes workspace env and PATH updates to sdk agent sessions", async () => {
+    mockState.repoConfigResolver = (path: string) => {
+      if (path.includes("/.kanna-worktrees/") && path.endsWith("/.kanna/config.json")) {
+        return {
+          workspace: {
+            env: {
+              FOO: "bar",
+            },
+            path: {
+              prepend: ["./bin"],
+              append: ["vendor/tools"],
+            },
+          },
+        };
+      }
+      return undefined;
+    };
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Ship sdk env", "sdk", {
+      agentProvider: "claude",
+    });
+
+    await vi.waitFor(() => {
+      const createdItem = mockState.pipelineItems.at(-1);
+      expect(createdItem).toBeTruthy();
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "create_agent_session",
+        expect.objectContaining({
+          env: expect.objectContaining({
+            FOO: "bar",
+            PATH: `/tmp/repo/.kanna-worktrees/task-${createdItem?.id}/bin:/usr/local/bin:/usr/bin:/bin:/tmp/repo/.kanna-worktrees/task-${createdItem?.id}/vendor/tools`,
+          }),
+        }),
+      );
+    });
+  });
+
+  it("passes workspace env and PATH updates to PTY task sessions", async () => {
+    mockState.repoConfigResolver = (path: string) => {
+      if (path === "/tmp/repo/.kanna-worktrees/task-pty-env/.kanna/config.json") {
+        return {
+          workspace: {
+            env: {
+              FOO: "bar",
+            },
+            path: {
+              prepend: ["./bin"],
+              append: ["vendor/tools"],
+            },
+          },
+        };
+      }
+      return undefined;
+    };
+    const store = await createStore();
+
+    await store.spawnPtySession(
+      "task-pty-env",
+      "/tmp/repo/.kanna-worktrees/task-pty-env",
+      "Ship PTY env",
+      80,
+      24,
+      {
+        agentProvider: "claude",
+        worktreePath: "/tmp/repo/.kanna-worktrees/task-pty-env",
+      },
+    );
+
+    expect(mockState.invokeMock).toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({
+        cwd: "/tmp/repo/.kanna-worktrees/task-pty-env",
+        env: expect.objectContaining({
+          FOO: "bar",
+          PATH: "/tmp/repo/.kanna-worktrees/task-pty-env/bin:/usr/local/bin:/usr/bin:/bin:/tmp/repo/.kanna-worktrees/task-pty-env/vendor/tools",
+          KANNA_WORKTREE: "1",
+          KANNA_CLI_PATH: "/usr/bin/kanna-cli",
+        }),
+      }),
+    );
+  });
+
   it("uses the real E2E override for PTY task provider and model when no explicit choice is supplied", async () => {
     mockState.readEnvVarOverrides = {
       KANNA_DB_NAME: "kanna-wt-task-existing.db",
@@ -947,6 +1036,52 @@ describe("kanna store task base branch integration", () => {
       "KANNA_DEV_PORT:1421",
       "KANNA_TRANSFER_PORT:4456",
     ]);
+  });
+
+  it("passes workspace env and PATH updates to worktree shell sessions", async () => {
+    mockState.repoConfigResolver = (path: string) => {
+      if (path === "/tmp/repo/.kanna-worktrees/task-shell/.kanna/config.json") {
+        return {
+          workspace: {
+            env: {
+              FOO: "bar",
+            },
+            path: {
+              prepend: ["./bin"],
+              append: ["vendor/tools"],
+            },
+          },
+        };
+      }
+      return undefined;
+    };
+    const store = await createStore();
+
+    await store.spawnShellSession(
+      "shell-task-shell",
+      "/tmp/repo/.kanna-worktrees/task-shell",
+      JSON.stringify({
+        KANNA_DEV_PORT: "1421",
+      }),
+      true,
+      "/tmp/repo",
+    );
+
+    expect(mockState.invokeMock).toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({
+        cwd: "/tmp/repo/.kanna-worktrees/task-shell",
+        args: [ "--login" ],
+        env: expect.objectContaining({
+          TERM: "xterm-256color",
+          ZDOTDIR: "/tmp/kanna-zdotdir",
+          KANNA_WORKTREE: "1",
+          KANNA_DEV_PORT: "1421",
+          FOO: "bar",
+          PATH: "/tmp/repo/.kanna-worktrees/task-shell/bin:/usr/local/bin:/usr/bin:/bin:/tmp/repo/.kanna-worktrees/task-shell/vendor/tools",
+        }),
+      }),
+    );
   });
 
   it("reuses the saved prompt when respawning a reopened PTY task", async () => {

@@ -88,11 +88,27 @@ describe("task lifecycle config resolution", () => {
         command === "read_text_file" &&
         args?.path === "/repo/.kanna-worktrees/task-123/.kanna/config.json"
       ) {
-        throw new Error("missing config");
+        throw new Error("failed to read '/repo/.kanna-worktrees/task-123/.kanna/config.json': No such file or directory");
       }
       throw new Error(`unexpected invoke: ${command} ${JSON.stringify(args)}`);
     });
 
     await expect(readRepoConfig("/repo/.kanna-worktrees/task-123")).resolves.toEqual({});
+  });
+
+  it("rejects invalid worktree config instead of treating it as empty", async () => {
+    invokeMock.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (
+        command === "read_text_file" &&
+        args?.path === "/repo/.kanna-worktrees/task-123/.kanna/config.json"
+      ) {
+        return '{ "setup": ["pnpm install", ], }';
+      }
+      throw new Error(`unexpected invoke: ${command} ${JSON.stringify(args)}`);
+    });
+
+    await expect(readRepoConfig("/repo/.kanna-worktrees/task-123")).rejects.toThrow(
+      "invalid repo config '/repo/.kanna-worktrees/task-123/.kanna/config.json'",
+    );
   });
 });
