@@ -1,4 +1,5 @@
 load("@daemon_crates//:defs.bzl", "all_crate_deps")
+load("@kanna_server_crates//:defs.bzl", all_crate_deps_for_server = "all_crate_deps")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
 
@@ -29,6 +30,16 @@ rust_library(
     edition = "2021",
     deps = all_crate_deps(normal = True),
     proc_macro_deps = all_crate_deps(proc_macro = True),
+)
+
+rust_library(
+    name = "kanna_daemon_lib_for_server",
+    srcs = glob(["src/**/*.rs"], exclude = ["src/main.rs"]),
+    crate_root = "src/lib.rs",
+    crate_name = "kanna_daemon",
+    edition = "2021",
+    deps = all_crate_deps_for_server(normal = True, package_name = "crates/daemon"),
+    proc_macro_deps = all_crate_deps_for_server(proc_macro = True, package_name = "crates/daemon"),
 )
 
 rust_binary(

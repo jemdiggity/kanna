@@ -1,8 +1,15 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(process.cwd(), "../..");
+const defaultTauriIconSha256 =
+  "3dc10493b7de48a61de58f768f8a5708d3a44a068c148cedf0502b9b9b71ba5d";
+
+function sha256(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
 
 describe("ship script release retry behavior", () => {
   it("uses the VERSION file as the source of truth for the current version", () => {
@@ -121,6 +128,27 @@ describe("release bundle naming", () => {
     expect(tauriConfig).toContain('"identifier": "build.kanna"');
     expect(rootBuild).toContain('bundle_id = "build.kanna"');
     expect(rootBuild).not.toContain('bundle_id = "com.kanna.app"');
+  });
+
+  it("uses the custom macOS app icon for Bazel app and DMG builds", () => {
+    const rootBuild = readFileSync(
+      resolve(repoRoot, "BUILD.bazel"),
+      "utf8",
+    );
+    const tauriConfig = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/tauri.conf.json"),
+      "utf8",
+    );
+    const macosIcon = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/icons/icon.icns"),
+    );
+
+    expect(rootBuild).toContain(
+      'srcs = ["//apps/desktop/src-tauri:icons/icon.icns"]',
+    );
+    expect(rootBuild).toContain('volume_icon = ":desktop_macos_icon"');
+    expect(tauriConfig).toContain('"icons/icon.icns"');
+    expect(sha256(macosIcon)).not.toBe(defaultTauriIconSha256);
   });
 });
 

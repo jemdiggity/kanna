@@ -153,6 +153,7 @@ crate.annotation(
     patches = ["//tools/bazel:libghostty-vt-sys-zig-env.patch"],
     repositories = [
         "daemon_crates",
+        "kanna_server_crates",
         "terminal_recovery_crates",
     ],
     build_script_data = [
