@@ -160,6 +160,17 @@ export function createTasksApi(
     return item.branch !== null || item.agent_session_id !== null || item.port_env !== null;
   }
 
+  async function detachSessionsBeforeIntentionalKill(sessionIds: readonly string[]): Promise<void> {
+    const uniqueSessionIds = [...new Set(sessionIds)];
+    await Promise.all(
+      uniqueSessionIds.map((sessionId) =>
+        invoke("detach_session", { sessionId }).catch((error: unknown) =>
+          reportCloseSessionError(`[store] detach session before kill failed (${sessionId}):`, error),
+        ),
+      ),
+    );
+  }
+
   function buildBlockedResumeMessage(blockers: PipelineItem[]): string {
     const blockerContext = blockers
       .map((blocker) => {
@@ -684,6 +695,7 @@ export function createTasksApi(
       });
 
       if (closeBehavior === "finish" && existingTeardown) {
+        await detachSessionsBeforeIntentionalKill([item.id, `shell-wt-${item.id}`, `td-${item.id}`]);
         await Promise.all([
           invoke("kill_session", { sessionId: item.id }).catch((error: unknown) =>
             reportCloseSessionError("[store] kill agent session failed:", error)),
@@ -709,12 +721,15 @@ export function createTasksApi(
 
         if (opts?.selectNext !== false) selectNextItem(nextId);
         await reloadSnapshot();
-        void invoke("kill_session", { sessionId: item.id }).catch((error: unknown) =>
-          reportCloseSessionError("[store] kill_session failed:", error));
+        void detachSessionsBeforeIntentionalKill([item.id]).then(() =>
+          invoke("kill_session", { sessionId: item.id }).catch((error: unknown) =>
+            reportCloseSessionError("[store] kill_session failed:", error)),
+        );
         return;
       }
 
       if (closeBehavior === "finish") {
+        await detachSessionsBeforeIntentionalKill([item.id, `shell-wt-${item.id}`]);
         await Promise.all([
           invoke("kill_session", { sessionId: item.id }).catch((error: unknown) =>
             reportCloseSessionError("[store] kill agent session failed:", error)),

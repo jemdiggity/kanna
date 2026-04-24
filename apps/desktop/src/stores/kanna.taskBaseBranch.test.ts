@@ -104,6 +104,7 @@ const mockState = vi.hoisted(() => {
       case "signal_session":
       case "create_agent_session":
       case "kill_session":
+      case "detach_session":
       case "attach_session":
       case "send_input":
       case "run_script":
@@ -1144,6 +1145,40 @@ describe("kanna store task base branch integration", () => {
         }),
       );
     });
+  });
+
+  it("detaches the source task terminal before killing it during stage advance", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "pr", transition: "manual" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-source");
+    await flushStore();
+
+    await store.advanceStage("item-source");
+
+    const detachIndex = mockState.invokeMock.mock.calls.findIndex(
+      ([command, args]) => command === "detach_session" && args?.sessionId === "item-source",
+    );
+    const killIndex = mockState.invokeMock.mock.calls.findIndex(
+      ([command, args]) => command === "kill_session" && args?.sessionId === "item-source",
+    );
+
+    expect(detachIndex).toBeGreaterThanOrEqual(0);
+    expect(killIndex).toBeGreaterThanOrEqual(0);
+    expect(detachIndex).toBeLessThan(killIndex);
   });
 
   it("keeps selection on the next visible item when the destination stage sets follow_task to false", async () => {
