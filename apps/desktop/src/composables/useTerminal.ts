@@ -262,7 +262,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   }
 
   function restoreTerminalModesFromSnapshot(serializedTerminalState: string) {
-    // Attach/recovery snapshots redraw the terminal from a serialized VT stream.
+    // AttachSnapshot/recovery snapshots redraw the terminal from a serialized VT stream.
     // Replay the mode toggles embedded in that stream so local paste behavior
     // matches the restored terminal state.
     if (BRACKETED_PASTE_CONTROL_SEQUENCE.test(serializedTerminalState)) {
@@ -793,23 +793,16 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     let shouldSpawnRecoverySession = false
 
     try {
-      const shouldHydrateFromSnapshot =
-        recoveryMode === "attach-only" &&
-        !hasAttachedOnce
-      if (shouldHydrateFromSnapshot) {
-        await invoke("attach_session_with_snapshot", { sessionId })
-      }
-      if (!shouldHydrateFromSnapshot) {
-        await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
-      }
+      const shouldHydrateFromSnapshot = true
+      await invoke("attach_session_with_snapshot", { sessionId })
       console.warn("[terminal][connect] attach:ok", {
         sessionId,
         instanceId,
         shouldApplyReconnectEffects,
       })
-      // Attach succeeded — session was alive in daemon.
+      // AttachSnapshot succeeded — session was alive in daemon.
       const liveTerminal = getLiveTerminal()
-        if (liveTerminal) {
+      if (liveTerminal) {
         const reconnectKeyboardPush = getReconnectKeyboardPush({
           ...options,
           kittyKeyboard: options?.kittyKeyboard,
@@ -939,9 +932,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           spawnTerminal.write(`\r\n\x1b[31mFailed to start agent: ${msg}\x1b[0m\r\n`)
           return
         }
-        // A freshly spawned PTY should attach live immediately. The atomic
-        // snapshot attach path is reserved for already-running task sessions.
-        await invoke("attach_session", { sessionId, agentProvider: options?.agentProvider })
+        await invoke("attach_session_with_snapshot", { sessionId })
         attached = true
         hasAttachedOnce = true
         const attachedTerminal = getLiveTerminal()

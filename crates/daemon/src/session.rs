@@ -5,9 +5,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+use crate::headless_terminal::HeadlessTerminal;
 use crate::protocol::{AgentProvider, SessionInfo, SessionState, SessionStatus};
 use crate::pty::PtySession;
-use crate::sidecar::TerminalSidecar;
 
 pub const STATUS_DETECTION_THROTTLE_MS: u64 = 500;
 
@@ -50,7 +50,7 @@ impl StreamControl {
 
 pub struct SessionRecord {
     pub pty: PtySession,
-    pub sidecar: TerminalSidecar,
+    pub headless_terminal: HeadlessTerminal,
     pub stream_control: Option<StreamControl>,
     pub agent_provider: Option<AgentProvider>,
     pub status: SessionStatus,
@@ -155,7 +155,7 @@ impl SessionManager {
         match self.sessions.get_mut(session_id) {
             Some(session) => {
                 session.pty.resize(cols, rows)?;
-                session.sidecar.resize(cols, rows)?;
+                session.headless_terminal.resize(cols, rows)?;
                 Ok(())
             }
             None => Err(format!("session not found: {}", session_id).into()),
@@ -176,12 +176,12 @@ impl SessionManager {
         &mut self,
         session_id: &str,
         data: &[u8],
-        allow_sidecar_replies: bool,
+        allow_terminal_replies: bool,
     ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
         self.mirror_output_at(
             session_id,
             data,
-            allow_sidecar_replies,
+            allow_terminal_replies,
             Instant::now(),
             status_detection_throttle(),
         )
@@ -191,19 +191,19 @@ impl SessionManager {
         &mut self,
         session_id: &str,
         data: &[u8],
-        allow_sidecar_replies: bool,
+        allow_terminal_replies: bool,
         now: Instant,
         throttle: Duration,
     ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
         match self.sessions.get_mut(session_id) {
             Some(session) => {
-                session.sidecar.write(data);
-                if allow_sidecar_replies {
-                    for reply in session.sidecar.drain_pty_writes() {
+                session.headless_terminal.write(data);
+                if allow_terminal_replies {
+                    for reply in session.headless_terminal.drain_pty_writes() {
                         session.pty.write_input(&reply)?;
                     }
                 } else {
-                    session.sidecar.drain_pty_writes();
+                    session.headless_terminal.drain_pty_writes();
                 }
                 detect_status_if_due(session, now, throttle)
             }
@@ -252,8 +252,10 @@ impl SessionManager {
 
         Ok(Some(StatusObservation {
             provider: session.agent_provider,
-            detected_status: session.sidecar.visible_status(session.agent_provider)?,
-            lines: session.sidecar.debug_lines(8)?,
+            detected_status: session
+                .headless_terminal
+                .visible_status(session.agent_provider)?,
+            lines: session.headless_terminal.debug_lines(8)?,
         }))
     }
 
@@ -269,7 +271,7 @@ impl SessionManager {
             return Ok(None);
         }
 
-        session.sidecar.codex_resume_session_id()
+        session.headless_terminal.codex_resume_session_id()
     }
 
     pub fn kill_all(&mut self) {
@@ -291,8 +293,8 @@ fn status_detection_throttle() -> Duration {
     Duration::from_millis(STATUS_DETECTION_THROTTLE_MS)
 }
 
-fn detect_sidecar_status_if_due(
-    sidecar: &mut TerminalSidecar,
+fn detect_headless_terminal_status_if_due(
+    headless_terminal: &mut HeadlessTerminal,
     agent_provider: Option<AgentProvider>,
     status: SessionStatus,
     status_observed: &mut bool,
@@ -308,7 +310,7 @@ fn detect_sidecar_status_if_due(
 
     *last_status_check_at = Some(now);
 
-    let visible_status = sidecar.visible_status(agent_provider)?;
+    let visible_status = headless_terminal.visible_status(agent_provider)?;
     if let Some(next_status) = visible_status {
         *status_observed = true;
         return Ok(if status != next_status {
@@ -328,23 +330,23 @@ fn detect_sidecar_status_if_due(
 }
 
 #[allow(dead_code)]
-pub fn replay_sidecar_for_benchmark(
-    sidecar: &mut TerminalSidecar,
+pub fn replay_headless_terminal_for_benchmark(
+    headless_terminal: &mut HeadlessTerminal,
     agent_provider: Option<AgentProvider>,
     state: &mut BenchmarkStatusState,
     benchmark_started_at: Instant,
     chunk_at_ms: u64,
     data: &[u8],
 ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
-    sidecar.write(data);
-    sidecar.drain_pty_writes();
+    headless_terminal.write(data);
+    headless_terminal.drain_pty_writes();
 
     let now = benchmark_started_at
         .checked_add(Duration::from_millis(chunk_at_ms))
         .unwrap_or(benchmark_started_at);
 
-    detect_sidecar_status_if_due(
-        sidecar,
+    detect_headless_terminal_status_if_due(
+        headless_terminal,
         agent_provider,
         state.status,
         &mut state.status_observed,
@@ -359,8 +361,8 @@ fn detect_status_if_due(
     now: Instant,
     throttle: Duration,
 ) -> Result<Option<SessionStatus>, Box<dyn std::error::Error + Send + Sync>> {
-    detect_sidecar_status_if_due(
-        &mut session.sidecar,
+    detect_headless_terminal_status_if_due(
+        &mut session.headless_terminal,
         session.agent_provider,
         session.status,
         &mut session.status_observed,
@@ -376,12 +378,12 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        replay_sidecar_for_benchmark, BenchmarkStatusState, SessionManager, SessionRecord,
+        replay_headless_terminal_for_benchmark, BenchmarkStatusState, SessionManager, SessionRecord,
     };
     use crate::bench::transcript::{BenchmarkMode, BenchmarkProvider, TranscriptSpec};
+    use crate::headless_terminal::{initial_session_status, HeadlessTerminal};
     use crate::protocol::{AgentProvider, SessionStatus};
     use crate::pty::PtySession;
-    use crate::sidecar::{initial_session_status, TerminalSidecar};
 
     fn spawn_test_record(
         provider: AgentProvider,
@@ -398,7 +400,7 @@ mod tests {
 
         Ok(SessionRecord {
             pty,
-            sidecar: TerminalSidecar::new(80, 24, 10_000)?,
+            headless_terminal: HeadlessTerminal::new(80, 24, 10_000)?,
             stream_control: None,
             agent_provider: Some(provider),
             status,
@@ -433,7 +435,7 @@ mod tests {
         let mut manager = SessionManager::new();
         let mut record = spawn_test_record(AgentProvider::Codex, SessionStatus::Busy).unwrap();
         record.status_observed = true;
-        record.sidecar.write("Header\r\nDone".as_bytes());
+        record.headless_terminal.write("Header\r\nDone".as_bytes());
         record.pty.last_active_at = Instant::now() - Duration::from_millis(500);
         manager.insert("codex".to_string(), record);
 
@@ -455,7 +457,9 @@ mod tests {
     fn debug_status_observation_reports_detected_status_and_lines() {
         let mut manager = SessionManager::new();
         let mut record = spawn_test_record(AgentProvider::Copilot, SessionStatus::Idle).unwrap();
-        record.sidecar.write("Header\r\n(Esc to cancel)".as_bytes());
+        record
+            .headless_terminal
+            .write("Header\r\n(Esc to cancel)".as_bytes());
         manager.insert("copilot".to_string(), record);
 
         let observation = manager
@@ -584,14 +588,14 @@ mod tests {
     fn benchmark_replay_updates_status_without_real_pty_io() {
         let transcript =
             TranscriptSpec::new(BenchmarkProvider::Codex, BenchmarkMode::Steady).build();
-        let mut sidecar = TerminalSidecar::new(120, 40, 10_000).unwrap();
+        let mut headless_terminal = HeadlessTerminal::new(120, 40, 10_000).unwrap();
         let started_at = Instant::now();
         let mut state =
             BenchmarkStatusState::new(initial_session_status(Some(AgentProvider::Codex)));
 
         for chunk in &transcript.chunks {
-            let changed = replay_sidecar_for_benchmark(
-                &mut sidecar,
+            let changed = replay_headless_terminal_for_benchmark(
+                &mut headless_terminal,
                 Some(AgentProvider::Codex),
                 &mut state,
                 started_at,

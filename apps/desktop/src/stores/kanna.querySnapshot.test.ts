@@ -67,7 +67,7 @@ const mockState = vi.hoisted(() => {
       case "list_sessions":
       case "get_app_data_dir":
       case "spawn_session":
-      case "attach_session":
+      case "attach_session_with_snapshot":
       case "signal_session":
       case "kill_session":
       case "get_pipeline_socket_path":

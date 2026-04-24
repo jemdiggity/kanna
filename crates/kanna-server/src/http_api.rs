@@ -679,9 +679,7 @@ async fn read_initial_task_terminal_event(
                 return Ok(snapshot_output_event(task_id, snapshot));
             }
             DaemonEvent::Exit {
-                session_id,
-                code,
-                ..
+                session_id, code, ..
             } => {
                 return Ok(Some(TaskTerminalStreamEvent::Exit {
                     task_id: session_id,
@@ -731,9 +729,7 @@ fn daemon_event_to_task_terminal_event(
             })
         }
         DaemonEvent::Exit {
-            session_id,
-            code,
-            ..
+            session_id, code, ..
         } => Some(TaskTerminalStreamEvent::Exit {
             task_id: session_id,
             code,
@@ -1731,12 +1727,15 @@ mod tests {
                     cursor_row: 1,
                     cursor_col: 0,
                     cursor_visible: true,
+                    saved_at: 0,
+                    sequence: 0,
                     vt: "hello from snapshot".to_string(),
                 },
             };
             let exit = DaemonEvent::Exit {
                 session_id: "task-1".to_string(),
                 code: 0,
+                resume_session_id: None,
             };
 
             for event in [out_of_order_output, snapshot_response, exit] {
@@ -1809,6 +1808,8 @@ mod tests {
             cursor_row: 1,
             cursor_col: 0,
             cursor_visible: true,
+            saved_at: 0,
+            sequence: 0,
             vt: "hello from snapshot".to_string(),
         };
 

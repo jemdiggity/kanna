@@ -32,7 +32,7 @@ enum Cmd {
         cols: u16,
         rows: u16,
     },
-    Attach {
+    AttachSnapshot {
         session_id: String,
     },
     Input {
@@ -247,15 +247,15 @@ fn spawn_echo(conn: &mut ClientConn, id: &str) {
 }
 
 fn attach(conn: &mut ClientConn, id: &str) {
-    conn.send(&Cmd::Attach {
+    conn.send(&Cmd::AttachSnapshot {
         session_id: id.to_string(),
     });
     loop {
         match conn.recv() {
-            Evt::Ok => break,
+            Evt::Snapshot { .. } => break,
             Evt::StatusChanged { .. } => continue,
             Evt::Error { message } => panic!("attach failed: {}", message),
-            other => panic!("expected Ok, got: {:?}", other),
+            other => panic!("expected Snapshot, got: {:?}", other),
         }
     }
 }

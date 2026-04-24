@@ -43,12 +43,12 @@ fn main() {
     reader.read_line(&mut line).unwrap();
     eprintln!("[pty-test] Spawn response: {}", line.trim());
 
-    // Connection 2: Attach
+    // Connection 2: AttachSnapshot
     let attach_conn = UnixStream::connect(&socket_path).expect("Failed to connect for attach");
     let mut attach_writer = attach_conn.try_clone().unwrap();
 
     let attach_cmd = serde_json::json!({
-        "type": "Attach",
+        "type": "AttachSnapshot",
         "session_id": session_id,
     });
     let mut msg = serde_json::to_string(&attach_cmd).unwrap();
@@ -57,10 +57,10 @@ fn main() {
 
     let mut attach_reader = BufReader::new(&attach_conn);
 
-    // Read Ok response
+    // Read Snapshot response
     let mut line = String::new();
     attach_reader.read_line(&mut line).unwrap();
-    eprintln!("[pty-test] Attach response: {}", line.trim());
+    eprintln!("[pty-test] AttachSnapshot response: {}", line.trim());
 
     // Stream output — parse JSON, extract data bytes, write to stdout
     let stdout = std::io::stdout();

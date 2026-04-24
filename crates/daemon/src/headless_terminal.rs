@@ -10,7 +10,7 @@ use libghostty_vt::{
 
 use crate::protocol::{AgentProvider, SessionStatus, TerminalSnapshot};
 
-type SidecarResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+type HeadlessTerminalResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const STATUS_ROWS: usize = 8;
 const WAITING_MARKER: &str = "do you want to allow";
@@ -29,7 +29,7 @@ pub fn initial_session_status(provider: Option<AgentProvider>) -> SessionStatus 
     }
 }
 
-pub struct TerminalSidecar {
+pub struct HeadlessTerminal {
     terminal: Box<Terminal<'static, 'static>>,
     render_state: RenderState<'static>,
     row_iterator: RowIterator<'static>,
@@ -39,9 +39,9 @@ pub struct TerminalSidecar {
     cols: u16,
 }
 
-unsafe impl Send for TerminalSidecar {}
+unsafe impl Send for HeadlessTerminal {}
 
-impl TerminalSidecar {
+impl HeadlessTerminal {
     fn normalize_dimensions(cols: u16, rows: u16) -> (u16, u16) {
         let normalized_cols = if cols == 0 { 80 } else { cols };
         let normalized_rows = if rows == 0 { 24 } else { rows };
@@ -62,7 +62,7 @@ impl TerminalSidecar {
         )
     }
 
-    pub fn new(cols: u16, rows: u16, scrollback: usize) -> SidecarResult<Self> {
+    pub fn new(cols: u16, rows: u16, scrollback: usize) -> HeadlessTerminalResult<Self> {
         let pty_writes = Rc::new(RefCell::new(Vec::new()));
         let mut terminal = Box::new(Terminal::new(TerminalOptions {
             cols,
@@ -98,14 +98,14 @@ impl TerminalSidecar {
         self.pty_writes.borrow_mut().drain(..).collect()
     }
 
-    pub fn resize(&mut self, cols: u16, rows: u16) -> SidecarResult<()> {
+    pub fn resize(&mut self, cols: u16, rows: u16) -> HeadlessTerminalResult<()> {
         self.terminal.resize(cols, rows, 1, 1)?;
         self.cols = cols;
         self.rows = rows;
         Ok(())
     }
 
-    pub fn snapshot(&mut self) -> SidecarResult<TerminalSnapshot> {
+    pub fn snapshot(&mut self) -> HeadlessTerminalResult<TerminalSnapshot> {
         let had_synchronized_output = self.terminal.mode(Mode::SYNC_OUTPUT)?;
         if had_synchronized_output {
             self.terminal.set_mode(Mode::SYNC_OUTPUT, false)?;
@@ -130,7 +130,7 @@ impl TerminalSidecar {
         })
     }
 
-    fn visible_footer_lines(&mut self, rows: usize) -> SidecarResult<Vec<String>> {
+    fn visible_footer_lines(&mut self, rows: usize) -> HeadlessTerminalResult<Vec<String>> {
         let snapshot = self.render_state.update(&self.terminal)?;
         let cols = usize::from(snapshot.cols()?);
         let mut rendered_rows = VecDeque::with_capacity(rows);
@@ -167,18 +167,18 @@ impl TerminalSidecar {
     }
 
     #[cfg(test)]
-    pub fn visible_footer_text(&mut self, rows: usize) -> SidecarResult<String> {
+    pub fn visible_footer_text(&mut self, rows: usize) -> HeadlessTerminalResult<String> {
         Ok(self.visible_footer_lines(rows)?.join("\n"))
     }
 
-    pub fn debug_lines(&mut self, rows: usize) -> SidecarResult<Vec<String>> {
+    pub fn debug_lines(&mut self, rows: usize) -> HeadlessTerminalResult<Vec<String>> {
         self.visible_footer_lines(rows)
     }
 
     pub fn visible_status(
         &mut self,
         provider: Option<AgentProvider>,
-    ) -> SidecarResult<Option<SessionStatus>> {
+    ) -> HeadlessTerminalResult<Option<SessionStatus>> {
         let Some(provider) = provider else {
             return Ok(None);
         };
@@ -242,16 +242,19 @@ impl TerminalSidecar {
         Ok(status)
     }
 
-    pub fn codex_resume_session_id(&mut self) -> SidecarResult<Option<String>> {
+    pub fn codex_resume_session_id(&mut self) -> HeadlessTerminalResult<Option<String>> {
         let footer_lines = self.visible_footer_lines(16)?;
         let joined = footer_lines.join(" ");
         Ok(extract_codex_resume_session_id(&joined))
     }
 
-    pub fn from_snapshot(snapshot: &TerminalSnapshot, scrollback: usize) -> SidecarResult<Self> {
-        let mut sidecar = Self::new(snapshot.cols, snapshot.rows, scrollback)?;
-        sidecar.write(Self::restore_vt(snapshot).as_bytes());
-        Ok(sidecar)
+    pub fn from_snapshot(
+        snapshot: &TerminalSnapshot,
+        scrollback: usize,
+    ) -> HeadlessTerminalResult<Self> {
+        let mut headless_terminal = Self::new(snapshot.cols, snapshot.rows, scrollback)?;
+        headless_terminal.write(Self::restore_vt(snapshot).as_bytes());
+        Ok(headless_terminal)
     }
 
     pub fn from_handoff(
@@ -259,14 +262,14 @@ impl TerminalSidecar {
         cols: u16,
         rows: u16,
         scrollback: usize,
-    ) -> SidecarResult<Self> {
+    ) -> HeadlessTerminalResult<Self> {
         let (cols, rows) = Self::normalize_dimensions(cols, rows);
         match snapshot {
             Some(snapshot) => match Self::from_snapshot(snapshot, scrollback) {
-                Ok(sidecar) => Ok(sidecar),
+                Ok(headless_terminal) => Ok(headless_terminal),
                 Err(error) => {
                     log::warn!(
-                        "[handoff] failed to restore sidecar from snapshot rows={} cols={}: {}",
+                        "[handoff] failed to restore headless terminal from snapshot rows={} cols={}: {}",
                         snapshot.rows,
                         snapshot.cols,
                         error
@@ -424,7 +427,7 @@ mod tests {
 
     use crate::protocol::{AgentProvider, SessionStatus};
 
-    use super::{initial_session_status, TerminalSidecar, TerminalSnapshot};
+    use super::{initial_session_status, HeadlessTerminal, TerminalSnapshot};
 
     #[test]
     fn ascii_case_insensitive_contains_matches_status_markers() {
@@ -443,11 +446,11 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_snapshot_tracks_output_and_resize() {
-        let mut sidecar = TerminalSidecar::new(80, 24, 10_000).unwrap();
-        sidecar.write(b"abc");
-        sidecar.resize(100, 30).unwrap();
-        let snapshot = sidecar.snapshot().unwrap();
+    fn headless_terminal_snapshot_tracks_output_and_resize() {
+        let mut headless_terminal = HeadlessTerminal::new(80, 24, 10_000).unwrap();
+        headless_terminal.write(b"abc");
+        headless_terminal.resize(100, 30).unwrap();
+        let snapshot = headless_terminal.snapshot().unwrap();
 
         assert_eq!(snapshot.rows, 30);
         assert_eq!(snapshot.cols, 100);
@@ -455,22 +458,22 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_survives_move_after_callback_registration() {
+    fn headless_terminal_survives_move_after_callback_registration() {
         let mut by_id = HashMap::new();
         by_id.insert(
             "session".to_string(),
-            TerminalSidecar::new(80, 24, 10_000).unwrap(),
+            HeadlessTerminal::new(80, 24, 10_000).unwrap(),
         );
 
-        let sidecar = by_id.get_mut("session").unwrap();
-        sidecar.write(b"\x1b[>q");
+        let headless_terminal = by_id.get_mut("session").unwrap();
+        headless_terminal.write(b"\x1b[>q");
 
-        let replies = sidecar.drain_pty_writes();
+        let replies = headless_terminal.drain_pty_writes();
         assert!(!replies.is_empty());
     }
 
     #[test]
-    fn sidecar_restores_from_snapshot() {
+    fn headless_terminal_restores_from_snapshot() {
         let snapshot = TerminalSnapshot {
             version: 1,
             rows: 24,
@@ -483,8 +486,8 @@ mod tests {
             vt: "hello".to_string(),
         };
 
-        let mut sidecar = TerminalSidecar::from_snapshot(&snapshot, 10_000).unwrap();
-        let restored = sidecar.snapshot().unwrap();
+        let mut headless_terminal = HeadlessTerminal::from_snapshot(&snapshot, 10_000).unwrap();
+        let restored = headless_terminal.snapshot().unwrap();
 
         assert_eq!(restored.rows, 24);
         assert_eq!(restored.cols, 80);
@@ -494,18 +497,18 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_snapshot_tracks_cursor_visibility_and_strips_sync_output() {
-        let mut sidecar = TerminalSidecar::new(80, 24, 10_000).unwrap();
-        sidecar.write(b"\x1b[?25l\x1b[?2026hhello");
+    fn headless_terminal_snapshot_tracks_cursor_visibility_and_strips_sync_output() {
+        let mut headless_terminal = HeadlessTerminal::new(80, 24, 10_000).unwrap();
+        headless_terminal.write(b"\x1b[?25l\x1b[?2026hhello");
 
-        let snapshot = sidecar.snapshot().unwrap();
+        let snapshot = headless_terminal.snapshot().unwrap();
 
         assert!(!snapshot.cursor_visible);
         assert!(!snapshot.vt.contains("\x1b[?2026h"));
     }
 
     #[test]
-    fn handoff_snapshot_restore_falls_back_to_blank_sidecar() {
+    fn handoff_snapshot_restore_falls_back_to_blank_headless_terminal() {
         let snapshot = TerminalSnapshot {
             version: 1,
             rows: 0,
@@ -518,11 +521,12 @@ mod tests {
             vt: "ignored".to_string(),
         };
 
-        assert!(TerminalSidecar::from_snapshot(&snapshot, 10_000).is_err());
+        assert!(HeadlessTerminal::from_snapshot(&snapshot, 10_000).is_err());
 
-        let mut sidecar = TerminalSidecar::from_handoff(Some(&snapshot), 120, 45, 10_000).unwrap();
-        sidecar.write(b"hello");
-        let restored = sidecar.snapshot().unwrap();
+        let mut headless_terminal =
+            HeadlessTerminal::from_handoff(Some(&snapshot), 120, 45, 10_000).unwrap();
+        headless_terminal.write(b"hello");
+        let restored = headless_terminal.snapshot().unwrap();
 
         assert_eq!(restored.cols, 120);
         assert_eq!(restored.rows, 45);
@@ -531,9 +535,9 @@ mod tests {
 
     #[test]
     fn handoff_without_snapshot_falls_back_to_default_dimensions() {
-        let mut sidecar = TerminalSidecar::from_handoff(None, 0, 0, 10_000).unwrap();
-        sidecar.write(b"hello");
-        let restored = sidecar.snapshot().unwrap();
+        let mut headless_terminal = HeadlessTerminal::from_handoff(None, 0, 0, 10_000).unwrap();
+        headless_terminal.write(b"hello");
+        let restored = headless_terminal.snapshot().unwrap();
 
         assert_eq!(restored.cols, 80);
         assert_eq!(restored.rows, 24);
@@ -542,12 +546,12 @@ mod tests {
 
     #[test]
     fn visible_footer_text_reads_bottom_rendered_rows() {
-        let mut sidecar = TerminalSidecar::new(80, 4, 10_000).unwrap();
-        sidecar.write(
+        let mut headless_terminal = HeadlessTerminal::new(80, 4, 10_000).unwrap();
+        headless_terminal.write(
             "Header\r\nBody\r\n• Working(0s • esc to interrupt)\r\n› Find and fix a bug".as_bytes(),
         );
 
-        let footer = sidecar.visible_footer_text(3).unwrap();
+        let footer = headless_terminal.visible_footer_text(3).unwrap();
 
         assert!(footer.contains("Working(0s • esc to interrupt)"));
         assert!(footer.contains("› Find and fix a bug"));
@@ -555,42 +559,48 @@ mod tests {
 
     #[test]
     fn codex_status_comes_from_visible_footer_content() {
-        let mut sidecar = TerminalSidecar::new(80, 4, 10_000).unwrap();
-        sidecar.write(
+        let mut headless_terminal = HeadlessTerminal::new(80, 4, 10_000).unwrap();
+        headless_terminal.write(
             "Header\r\nBody\r\n• Working(0s • esc to interrupt)\r\n› Find and fix a bug".as_bytes(),
         );
 
         assert_eq!(
-            sidecar.visible_status(Some(AgentProvider::Codex)).unwrap(),
+            headless_terminal
+                .visible_status(Some(AgentProvider::Codex))
+                .unwrap(),
             Some(SessionStatus::Busy)
         );
 
-        sidecar.write("\x1b[2J\x1b[HHeader\r\nBody\r\nAll done\r\n›".as_bytes());
+        headless_terminal.write("\x1b[2J\x1b[HHeader\r\nBody\r\nAll done\r\n›".as_bytes());
 
         assert_eq!(
-            sidecar.visible_status(Some(AgentProvider::Codex)).unwrap(),
+            headless_terminal
+                .visible_status(Some(AgentProvider::Codex))
+                .unwrap(),
             Some(SessionStatus::Idle)
         );
     }
 
     #[test]
     fn codex_prompt_does_not_force_idle_while_interrupt_marker_is_visible() {
-        let mut sidecar = TerminalSidecar::new(80, 4, 10_000).unwrap();
-        sidecar.write(
+        let mut headless_terminal = HeadlessTerminal::new(80, 4, 10_000).unwrap();
+        headless_terminal.write(
             "Header\r\nBody\r\n• Working(0s • esc to interrupt)\r\n› The application panicked"
                 .as_bytes(),
         );
 
         assert_eq!(
-            sidecar.visible_status(Some(AgentProvider::Codex)).unwrap(),
+            headless_terminal
+                .visible_status(Some(AgentProvider::Codex))
+                .unwrap(),
             Some(SessionStatus::Busy)
         );
     }
 
     #[test]
     fn codex_resume_session_id_comes_from_visible_footer_content() {
-        let mut sidecar = TerminalSidecar::new(48, 6, 10_000).unwrap();
-        sidecar.write(
+        let mut headless_terminal = HeadlessTerminal::new(48, 6, 10_000).unwrap();
+        headless_terminal.write(
             concat!(
                 "Header\r\n",
                 "Done\r\n",
@@ -602,15 +612,15 @@ mod tests {
         );
 
         assert_eq!(
-            sidecar.codex_resume_session_id().unwrap(),
+            headless_terminal.codex_resume_session_id().unwrap(),
             Some("019d99a5-aa94-7c73-b786-644cc095c037".to_string())
         );
     }
 
     #[test]
     fn claude_permission_footer_maps_to_waiting() {
-        let mut sidecar = TerminalSidecar::new(120, 8, 10_000).unwrap();
-        sidecar.write(
+        let mut headless_terminal = HeadlessTerminal::new(120, 8, 10_000).unwrap();
+        headless_terminal.write(
             concat!(
                 "Claude Code\r\n",
                 "❯ foobar\r\n",
@@ -623,15 +633,17 @@ mod tests {
         );
 
         assert_eq!(
-            sidecar.visible_status(Some(AgentProvider::Claude)).unwrap(),
+            headless_terminal
+                .visible_status(Some(AgentProvider::Claude))
+                .unwrap(),
             Some(SessionStatus::Waiting)
         );
     }
 
     #[test]
     fn claude_permission_footer_maps_to_waiting_even_with_blank_rows_below() {
-        let mut sidecar = TerminalSidecar::new(120, 42, 10_000).unwrap();
-        sidecar.write(
+        let mut headless_terminal = HeadlessTerminal::new(120, 42, 10_000).unwrap();
+        headless_terminal.write(
             concat!(
                 "Claude Code\r\n",
                 "Sonnet 4.6 with high effort\r\n",
@@ -647,18 +659,20 @@ mod tests {
         );
 
         assert_eq!(
-            sidecar.visible_status(Some(AgentProvider::Claude)).unwrap(),
+            headless_terminal
+                .visible_status(Some(AgentProvider::Claude))
+                .unwrap(),
             Some(SessionStatus::Waiting)
         );
     }
 
     #[test]
     fn copilot_busy_detects_wrapped_footer_marker() {
-        let mut sidecar = TerminalSidecar::new(8, 4, 10_000).unwrap();
-        sidecar.write("Header\r\n(Esc to cancel)".as_bytes());
+        let mut headless_terminal = HeadlessTerminal::new(8, 4, 10_000).unwrap();
+        headless_terminal.write("Header\r\n(Esc to cancel)".as_bytes());
 
         assert_eq!(
-            sidecar
+            headless_terminal
                 .visible_status(Some(AgentProvider::Copilot))
                 .unwrap(),
             Some(SessionStatus::Busy)
@@ -667,11 +681,11 @@ mod tests {
 
     #[test]
     fn copilot_idle_detects_prompt_footer() {
-        let mut sidecar = TerminalSidecar::new(80, 4, 10_000).unwrap();
-        sidecar.write("Header\r\nDone\r\n❯".as_bytes());
+        let mut headless_terminal = HeadlessTerminal::new(80, 4, 10_000).unwrap();
+        headless_terminal.write("Header\r\nDone\r\n❯".as_bytes());
 
         assert_eq!(
-            sidecar
+            headless_terminal
                 .visible_status(Some(AgentProvider::Copilot))
                 .unwrap(),
             Some(SessionStatus::Idle)
@@ -680,8 +694,8 @@ mod tests {
 
     #[test]
     fn copilot_busy_detects_thinking_line_above_worktree_path() {
-        let mut sidecar = TerminalSidecar::new(120, 8, 10_000).unwrap();
-        sidecar.write(
+        let mut headless_terminal = HeadlessTerminal::new(120, 8, 10_000).unwrap();
+        headless_terminal.write(
             concat!(
                 "● You mentioned \"pizza\" again.\r\n",
                 "◎ Thinking (Esc to cancel · 230 B)\r\n",
@@ -695,7 +709,7 @@ mod tests {
         );
 
         assert_eq!(
-            sidecar
+            headless_terminal
                 .visible_status(Some(AgentProvider::Copilot))
                 .unwrap(),
             Some(SessionStatus::Busy)
@@ -704,8 +718,8 @@ mod tests {
 
     #[test]
     fn copilot_idle_detects_empty_prompt_below_worktree_path_with_help_footer() {
-        let mut sidecar = TerminalSidecar::new(120, 8, 10_000).unwrap();
-        sidecar.write(
+        let mut headless_terminal = HeadlessTerminal::new(120, 8, 10_000).unwrap();
+        headless_terminal.write(
             concat!(
                 "● You mentioned \"pizza\" again.\r\n",
                 "~/.kanna/repos/foobar-11/.kanna-worktrees/task-5b6a4e5e [⎇ task-5b6a4e5e%] GPT-4.1\r\n",
@@ -718,7 +732,7 @@ mod tests {
         );
 
         assert_eq!(
-            sidecar
+            headless_terminal
                 .visible_status(Some(AgentProvider::Copilot))
                 .unwrap(),
             Some(SessionStatus::Idle)
@@ -727,11 +741,11 @@ mod tests {
 
     #[test]
     fn debug_lines_returns_last_non_empty_rendered_rows() {
-        let mut sidecar = TerminalSidecar::new(20, 6, 10_000).unwrap();
-        sidecar.write("Header\r\n\r\nThinking hard\r\n(Esc to cancel)\r\n".as_bytes());
+        let mut headless_terminal = HeadlessTerminal::new(20, 6, 10_000).unwrap();
+        headless_terminal.write("Header\r\n\r\nThinking hard\r\n(Esc to cancel)\r\n".as_bytes());
 
         assert_eq!(
-            sidecar.debug_lines(3).unwrap(),
+            headless_terminal.debug_lines(3).unwrap(),
             vec![
                 "Header".to_string(),
                 "Thinking hard".to_string(),

@@ -130,8 +130,8 @@ async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
                         RelayMessage::Invoke { id, command, args } => {
                             log::info!("Invoke #{}: {}", id, command);
 
-                            // Special-case: attach_session needs a long-lived daemon connection
-                            if command == "attach_session" {
+                            // Special-case: observe_session needs a long-lived daemon connection
+                            if command == "observe_session" {
                                 let session_id =
                                     match args.get("session_id").and_then(|v| v.as_str()) {
                                         Some(s) => s.to_string(),
@@ -190,7 +190,8 @@ async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
                                         // Send success response
                                         send_response(&sink, id, Ok(serde_json::Value::Null)).await;
 
-                                        // Spawn background task to forward daemon events
+                                        // Spawn background task to replay the current snapshot and
+                                        // forward later daemon events.
                                         let sink_clone = Arc::clone(&sink);
                                         let sid = session_id.clone();
                                         let handle = tokio::spawn(async move {
@@ -226,8 +227,8 @@ async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
                                 continue;
                             }
 
-                            // Special-case: detach_session just aborts the observer task
-                            if command == "detach_session" {
+                            // Special-case: unobserve_session just aborts the observer task
+                            if command == "unobserve_session" {
                                 let session_id =
                                     match args.get("session_id").and_then(|v| v.as_str()) {
                                         Some(s) => s.to_string(),
@@ -384,6 +385,137 @@ async fn send_response(
     }
 }
 
+fn relay_snapshot_event(
+    session_id: &str,
+    snapshot: kanna_daemon::protocol::TerminalSnapshot,
+) -> RelayMessage {
+    RelayMessage::Event {
+        name: "terminal_snapshot".to_string(),
+        payload: serde_json::json!({
+            "session_id": session_id,
+            "snapshot": snapshot,
+        }),
+    }
+}
+
+fn relay_output_event(session_id: &str, data: Vec<u8>) -> RelayMessage {
+    use base64::Engine;
+
+    RelayMessage::Event {
+        name: "terminal_output".to_string(),
+        payload: serde_json::json!({
+            "session_id": session_id,
+            "data_b64": base64::engine::general_purpose::STANDARD.encode(&data),
+        }),
+    }
+}
+
+fn relay_exit_event(session_id: &str, code: i32) -> RelayMessage {
+    RelayMessage::Event {
+        name: "session_exit".to_string(),
+        payload: serde_json::json!({
+            "session_id": session_id,
+            "code": code,
+        }),
+    }
+}
+
+fn relay_error_event(session_id: &str, message: String) -> RelayMessage {
+    RelayMessage::Event {
+        name: "terminal_error".to_string(),
+        payload: serde_json::json!({
+            "session_id": session_id,
+            "message": message,
+        }),
+    }
+}
+
+async fn send_relay_event(sink: &Arc<Mutex<relay_client::WsSink>>, event: RelayMessage) -> bool {
+    match serde_json::to_string(&event) {
+        Ok(json) => sink
+            .lock()
+            .await
+            .send(Message::Text(json.into()))
+            .await
+            .is_ok(),
+        Err(error) => {
+            log::error!("Failed to serialize relay event: {}", error);
+            true
+        }
+    }
+}
+
+enum ObserverStart {
+    Continue,
+    Stop,
+}
+
+async fn send_initial_snapshot_event(
+    daemon: &mut daemon_client::DaemonClient,
+    session_id: &str,
+    sink: &Arc<Mutex<relay_client::WsSink>>,
+) -> Option<ObserverStart> {
+    use kanna_daemon::protocol::{Command as DaemonCommand, ErrorCode, Event as DaemonEvent};
+
+    let snapshot_result = daemon
+        .send_command(&DaemonCommand::Snapshot {
+            session_id: session_id.to_string(),
+        })
+        .await
+        .map_err(|error| format!("daemon snapshot error: {}", error));
+    let mut event = match snapshot_result {
+        Ok(event) => event,
+        Err(message) => {
+            return send_relay_event(sink, relay_error_event(session_id, message))
+                .await
+                .then_some(ObserverStart::Stop);
+        }
+    };
+
+    loop {
+        match event {
+            DaemonEvent::Snapshot { snapshot, .. } => {
+                return send_relay_event(sink, relay_snapshot_event(session_id, snapshot))
+                    .await
+                    .then_some(ObserverStart::Continue);
+            }
+            DaemonEvent::Exit {
+                session_id: sid,
+                code,
+                ..
+            } => {
+                return send_relay_event(sink, relay_exit_event(&sid, code))
+                    .await
+                    .then_some(ObserverStart::Stop);
+            }
+            DaemonEvent::Error {
+                code: Some(ErrorCode::SessionNotFound),
+                ..
+            } => return Some(ObserverStart::Continue),
+            DaemonEvent::Error { message, .. } => {
+                return send_relay_event(sink, relay_error_event(session_id, message))
+                    .await
+                    .then_some(ObserverStart::Stop);
+            }
+            DaemonEvent::Output { .. } | DaemonEvent::StatusChanged { .. } => {}
+            _ => {}
+        }
+
+        let read_result = daemon
+            .read_event()
+            .await
+            .map_err(|error| format!("daemon snapshot error: {}", error));
+        event = match read_result {
+            Ok(event) => event,
+            Err(message) => {
+                return send_relay_event(sink, relay_error_event(session_id, message))
+                    .await
+                    .then_some(ObserverStart::Stop);
+            }
+        };
+    }
+}
+
 /// Background task that reads daemon events from an Observe connection
 /// and forwards them as relay Event messages through the WebSocket.
 async fn observer_loop(
@@ -391,56 +523,43 @@ async fn observer_loop(
     session_id: &str,
     sink: Arc<Mutex<relay_client::WsSink>>,
 ) {
-    use base64::Engine;
     use kanna_daemon::protocol::Event as DaemonEvent;
+
+    match send_initial_snapshot_event(&mut daemon, session_id, &sink).await {
+        Some(ObserverStart::Continue) => {}
+        Some(ObserverStart::Stop) => return,
+        None => {
+            log::info!(
+                "WebSocket closed while sending initial snapshot for {}",
+                session_id
+            );
+            return;
+        }
+    }
 
     // We process daemon events in a two-phase pattern: first extract data
     // from the non-Send Result (no awaits), then send over the WebSocket.
     // This avoids holding Box<dyn Error> across await points.
     enum Action {
-        SendOutput { json: String },
-        SendExitAndStop { json: String },
+        Send { event: RelayMessage },
+        SendAndStop { event: RelayMessage },
         Stop,
         Continue,
     }
 
     loop {
         let action = match daemon.read_event().await {
-            Ok(DaemonEvent::Output { session_id, data }) => {
-                let evt = RelayMessage::Event {
-                    name: "terminal_output".to_string(),
-                    payload: serde_json::json!({
-                        "session_id": session_id,
-                        "data_b64": base64::engine::general_purpose::STANDARD.encode(&data),
-                    }),
-                };
-                match serde_json::to_string(&evt) {
-                    Ok(j) => Action::SendOutput { json: j },
-                    Err(e) => {
-                        log::error!("Failed to serialize output event: {}", e);
-                        Action::Continue
-                    }
-                }
-            }
+            Ok(DaemonEvent::Output { session_id, data }) => Action::Send {
+                event: relay_output_event(&session_id, data),
+            },
             Ok(DaemonEvent::Exit {
                 session_id: sid,
                 code,
                 ..
             }) => {
                 log::info!("Session {} exited with code {}", sid, code);
-                let evt = RelayMessage::Event {
-                    name: "session_exit".to_string(),
-                    payload: serde_json::json!({
-                        "session_id": sid,
-                        "code": code,
-                    }),
-                };
-                match serde_json::to_string(&evt) {
-                    Ok(j) => Action::SendExitAndStop { json: j },
-                    Err(e) => {
-                        log::error!("Failed to serialize exit event: {}", e);
-                        Action::Stop
-                    }
+                Action::SendAndStop {
+                    event: relay_exit_event(&sid, code),
                 }
             }
             Err(e) => {
@@ -451,24 +570,65 @@ async fn observer_loop(
         };
 
         match action {
-            Action::SendOutput { json } => {
-                if sink
-                    .lock()
-                    .await
-                    .send(Message::Text(json.into()))
-                    .await
-                    .is_err()
-                {
+            Action::Send { event } => {
+                if !send_relay_event(&sink, event).await {
                     log::info!("WebSocket closed, stopping observer for {}", session_id);
                     break;
                 }
             }
-            Action::SendExitAndStop { json } => {
-                let _ = sink.lock().await.send(Message::Text(json.into())).await;
+            Action::SendAndStop { event } => {
+                let _ = send_relay_event(&sink, event).await;
                 break;
             }
             Action::Stop => break,
             Action::Continue => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kanna_daemon::protocol::TerminalSnapshot;
+
+    #[test]
+    fn relay_snapshot_event_preserves_terminal_snapshot_payload() {
+        let snapshot = TerminalSnapshot {
+            version: 1,
+            rows: 24,
+            cols: 80,
+            cursor_row: 2,
+            cursor_col: 3,
+            cursor_visible: true,
+            saved_at: 0,
+            sequence: 0,
+            vt: "restored".to_string(),
+        };
+
+        let event = relay_snapshot_event("task-1", snapshot);
+
+        match event {
+            RelayMessage::Event { name, payload } => {
+                assert_eq!(name, "terminal_snapshot");
+                assert_eq!(payload["session_id"], "task-1");
+                assert_eq!(payload["snapshot"]["vt"], "restored");
+                assert_eq!(payload["snapshot"]["cursor_row"], 2);
+            }
+            other => panic!("expected terminal_snapshot relay event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn relay_output_event_keeps_live_output_as_base64() {
+        let event = relay_output_event("task-1", b"live".to_vec());
+
+        match event {
+            RelayMessage::Event { name, payload } => {
+                assert_eq!(name, "terminal_output");
+                assert_eq!(payload["session_id"], "task-1");
+                assert_eq!(payload["data_b64"], "bGl2ZQ==");
+            }
+            other => panic!("expected terminal_output relay event, got {other:?}"),
         }
     }
 }

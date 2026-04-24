@@ -10,10 +10,12 @@ kanna-daemon manages persistent PTY sessions for Claude CLI agents. It runs as a
 2. **Always handoff.** When a new daemon starts and an old one is running, the new daemon takes over all live sessions via fd transfer. The old daemon exits.
 3. **Always spawn on first startup. Reconnect (don't spawn) on daemon restart. Spawn again only if reconnect backoff is exhausted (daemon crash recovery).**
 4. **Sessions survive upgrades.** Child processes (Claude CLI) are unaware of daemon restarts. Their PTY connections are preserved through fd transfer.
-5. **One reader per session.** Each PTY session has exactly one `stream_output` task. It is created on the first `Attach` and runs for the session's lifetime. Still one reader per session, but output is broadcast to all attached writers.
-6. **Multiple clients per session.** Attach adds to writer list. All attached clients receive output via broadcast. Smallest terminal dimensions are used for the PTY.
-7. **Always broadcast.** Before exiting during handoff, the old daemon broadcasts `ShuttingDown` to all subscribers.
-8. **Always reconnect.** Apps detect daemon restart (via `ShuttingDown` or EOF) and automatically reconnect + re-attach all tracked sessions.
+5. **One reader per session.** Each PTY session has exactly one `stream_output` task. Newly spawned sessions start it immediately so detached output is captured by the headless terminal. Adopted handoff sessions start it on first `AttachSnapshot`.
+6. **Headless terminal is authoritative while detached.** PTY bytes are always consumed by `stream_output` and applied to the per-session headless terminal. There is no raw pre-attach byte replay buffer.
+7. **AttachSnapshot is the only frontend attach path.** It atomically sends the current headless terminal snapshot, adds the connection to the live writer list, and then streams future output.
+8. **Multiple clients per session.** Attached clients receive output via broadcast. Smallest terminal dimensions are used for the PTY.
+9. **Always broadcast.** Before exiting during handoff, the old daemon broadcasts `ShuttingDown` to all subscribers.
+10. **Always reconnect.** Apps detect daemon restart (via `ShuttingDown` or EOF) and automatically reconnect + re-attach all tracked sessions.
 
 ## Startup Sequence
 
@@ -40,11 +42,16 @@ If handoff fails at any step, the new daemon kills the old one and starts fresh.
              App creates task
                     │
                     ▼
-    Spawn ──► PTY created, session stored
+    Spawn ──► PTY created, session stored, stream_output starts
                     │
                     ▼
-    Attach ──► first: clone reader, start stream_output, add to writer list
-               reattach: add writer to list, send resize (SIGWINCH)
+    PTY output ──► stream_output ──► headless terminal + live writers
+                    │
+                    ▼
+    AttachSnapshot ──► send headless snapshot, add writer to list
+                    │
+                    ▼
+              Resize updates effective PTY dimensions
                     │
                     ▼
               Output flows: PTY → stream_output → broadcast → all clients
@@ -60,21 +67,20 @@ If handoff fails at any step, the new daemon kills the old one and starts fresh.
     Tab switch back
               │
               ▼
-    Attach (reattach) ──► add writer to list, resize → Claude redraws
+    AttachSnapshot (reattach) ──► snapshot + live stream
 ```
 
 ## Reconnection
 
-The daemon does **not** buffer scrollback. Reconnection relies on Claude CLI's TUI redrawing on SIGWINCH:
+The daemon does **not** buffer raw scrollback. Reconnection uses the headless terminal snapshot:
 
-1. Client sends `Attach` (reattach path — session already has a reader)
-2. Daemon adds the new connection to the session's writer broadcast list
-3. Client sends `Resize` with current terminal dimensions
-4. Daemon calls `ioctl(TIOCSWINSZ)` which delivers SIGWINCH to the child
-5. Claude CLI (ink/React) re-renders its entire component tree
-6. Client sees the full, correct terminal state
+1. Client sends `AttachSnapshot`
+2. Daemon ensures the session has one `stream_output` reader
+3. Daemon snapshots the headless terminal and adds the client to the writer broadcast list
+4. Client hydrates xterm.js from the snapshot and sends `Resize`
+5. Future PTY output streams live to the client
 
-**Why no scrollback buffer:** Claude's TUI uses absolute cursor positioning and full-screen rendering. Raw byte replay produces garbled output. A resize-triggered redraw produces perfect output. The trade-off is a brief blank terminal (~50-100ms) between attach and redraw.
+**Why no raw scrollback buffer:** Claude's TUI uses absolute cursor positioning and full-screen rendering. Raw byte replay can resurrect overwritten output and garble state. The headless terminal is the single detached-state copy; xterm.js is hydrated from that state on attach.
 
 ## Handoff Protocol
 
@@ -116,7 +122,7 @@ Adopted sessions differ from spawned sessions:
 - The daemon did **not** fork the child process, so `waitpid()` won't work
 - Liveness is checked via `kill(pid, 0)` (returns 0 if alive)
 - The master fd was received via SCM_RIGHTS, wrapped in `OwnedFd`
-- No `stream_output` task is running — it starts on first `Attach`
+- No `stream_output` task is running — it starts on first `AttachSnapshot`
 
 ## Protocol Reference
 
@@ -127,7 +133,7 @@ Line-delimited JSON over Unix domain socket. Each message is one JSON object + `
 | Command | Fields | Description |
 |---------|--------|-------------|
 | `Spawn` | session_id, executable, args, cwd, env, cols, rows | Create PTY session |
-| `Attach` | session_id | Start/resume receiving output |
+| `AttachSnapshot` | session_id, emulate_terminal | Snapshot current headless terminal and start/resume live output |
 | `Detach` | session_id | Stop receiving output |
 | `Input` | session_id, data (byte array) | Send keystrokes to PTY |
 | `Resize` | session_id, cols, rows | Update terminal dimensions |

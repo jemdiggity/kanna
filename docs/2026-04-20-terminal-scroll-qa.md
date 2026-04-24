@@ -21,7 +21,7 @@ The intended behavior after the fix:
 The PTY-to-xterm path is sane as a layered design:
 
 1. PTY child process writes bytes to the daemon-managed PTY.
-2. `crates/daemon` reads PTY output, mirrors it into the daemon-side `TerminalSidecar`, and broadcasts output events.
+2. `crates/daemon` reads PTY output, mirrors it into the daemon-side `HeadlessTerminal`, and broadcasts output events.
 3. `apps/desktop/src-tauri/src/lib.rs` subscribes to daemon events and emits `terminal_output` into the frontend.
 4. `apps/desktop/src/composables/useTerminal.ts` receives those events and writes the bytes into xterm.js.
 

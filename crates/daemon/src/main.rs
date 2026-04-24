@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod bench;
 mod fd_transfer;
+mod headless_terminal;
 mod pty;
 mod session;
-mod sidecar;
 mod socket;
 
 use std::collections::{HashMap, HashSet};
@@ -32,17 +32,12 @@ type SessionWriter = Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>;
 type SessionWriters = Arc<Mutex<HashMap<String, Vec<SessionWriter>>>>;
 type TerminalEmulatorClients = Arc<Mutex<HashMap<String, HashSet<usize>>>>;
 
-/// Pre-attach buffer: collects output between Spawn and first Attach.
-/// Flushed to the client on Attach, then set to None.
-type PreAttachBuffer = Arc<Mutex<Option<Vec<u8>>>>;
-type PreAttachBuffers = Arc<Mutex<HashMap<String, PreAttachBuffer>>>;
-
 /// Per-session size registry: maps client pointer → (cols, rows).
 /// Used to compute min(cols) x min(rows) across all attached clients.
 type SessionSizes = Arc<Mutex<HashMap<String, HashMap<usize, (u16, u16)>>>>;
 
 /// Map of session_id → list of passive observer writers.
-/// Observers receive Output/Exit events but don't claim the Attach writer.
+/// Observers receive Output/Exit events but don't join the live terminal writer list.
 type SessionObservers =
     Arc<Mutex<HashMap<String, Vec<Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>>>>>;
 type LostHandoffSessions = Arc<Mutex<HashMap<String, String>>>;
@@ -254,33 +249,10 @@ async fn unregister_terminal_emulator_client(
     }
 }
 
-async fn take_pre_attach_output(
-    pre_attach_buffers: &PreAttachBuffers,
-    session_id: &str,
-) -> Option<Vec<u8>> {
-    let buffer = pre_attach_buffers.lock().await.remove(session_id)?;
-    let data = buffer.lock().await.take();
-    match data {
-        Some(data) if data.is_empty() => {
-            log::info!("[attach] pre-attach buffer empty for {}", session_id);
-            None
-        }
-        Some(data) => Some(data),
-        None => {
-            log::info!(
-                "[attach] no buffered pre-attach output remained for {}",
-                session_id
-            );
-            None
-        }
-    }
-}
-
 async fn finish_attach_cutover(
     writer: &SessionWriter,
     session_writers: &SessionWriters,
     terminal_emulator_clients: &TerminalEmulatorClients,
-    pre_attach_buffers: &PreAttachBuffers,
     session_id: &str,
     emulate_terminal: bool,
     initial_event: &Event,
@@ -297,24 +269,7 @@ async fn finish_attach_cutover(
         register_terminal_emulator_client(terminal_emulator_clients, session_id, writer).await;
     }
 
-    let buffered_output = take_pre_attach_output(pre_attach_buffers, session_id).await;
-
     let _ = write_event(&mut *writer_guard, initial_event).await;
-
-    if let Some(data) = buffered_output {
-        log::info!(
-            "[attach] flushing {} bytes of pre-attach output for {}",
-            data.len(),
-            session_id
-        );
-        let evt = Event::Output {
-            session_id: session_id.to_string(),
-            data,
-        };
-        let _ = write_event(&mut *writer_guard, &evt).await;
-    } else {
-        log::info!("[attach] no pre-attach buffer found for {}", session_id);
-    }
 }
 
 async fn request_handoff(
@@ -404,7 +359,6 @@ async fn main() {
     let sessions: Arc<Mutex<SessionManager>> = Arc::new(Mutex::new(SessionManager::new()));
     let session_writers: SessionWriters = Arc::new(Mutex::new(HashMap::new()));
     let terminal_emulator_clients: TerminalEmulatorClients = Arc::new(Mutex::new(HashMap::new()));
-    let pre_attach_buffers: PreAttachBuffers = Arc::new(Mutex::new(HashMap::new()));
     let session_sizes: SessionSizes = Arc::new(Mutex::new(HashMap::new()));
     let session_observers: SessionObservers = Arc::new(Mutex::new(HashMap::new()));
     let lost_handoff_sessions: LostHandoffSessions = Arc::new(Mutex::new(handoff_result.lost));
@@ -415,7 +369,7 @@ async fn main() {
     if !handoff_result.adopted.is_empty() {
         let mut mgr = sessions.lock().await;
         for (session_id, pty_session, handoff) in handoff_result.adopted {
-            let mut sidecar = match handoff.snapshot.as_ref() {
+            let mut headless_terminal = match handoff.snapshot.as_ref() {
                 Some(snapshot) => {
                     log::info!(
                         "[handoff] adopted session {} (pid={}) snapshot rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
@@ -445,13 +399,13 @@ async fn main() {
                             error
                         );
                     }
-                    sidecar::TerminalSidecar::from_handoff(
+                    headless_terminal::HeadlessTerminal::from_handoff(
                         Some(snapshot),
                         handoff.cols,
                         handoff.rows,
                         10_000,
                     )
-                    .expect("failed to create terminal sidecar for adopted session")
+                    .expect("failed to create headless terminal for adopted session")
                 }
                 None => {
                     log::info!(
@@ -461,18 +415,25 @@ async fn main() {
                         handoff.rows,
                         handoff.cols
                     );
-                    sidecar::TerminalSidecar::from_handoff(None, handoff.cols, handoff.rows, 10_000)
-                        .expect("failed to create terminal sidecar for adopted session")
+                    headless_terminal::HeadlessTerminal::from_handoff(
+                        None,
+                        handoff.cols,
+                        handoff.rows,
+                        10_000,
+                    )
+                    .expect("failed to create headless terminal for adopted session")
                 }
             };
-            let status_observed =
-                matches!(sidecar.visible_status(handoff.agent_provider), Ok(Some(_)))
-                    || handoff.status != sidecar::initial_session_status(handoff.agent_provider);
+            let status_observed = matches!(
+                headless_terminal.visible_status(handoff.agent_provider),
+                Ok(Some(_))
+            ) || handoff.status
+                != headless_terminal::initial_session_status(handoff.agent_provider);
             mgr.insert(
                 session_id,
                 SessionRecord {
                     pty: pty_session,
-                    sidecar,
+                    headless_terminal,
                     stream_control: None,
                     agent_provider: handoff.agent_provider,
                     status: handoff.status,
@@ -480,7 +441,7 @@ async fn main() {
                     last_status_check_at: None,
                 },
             );
-            // Note: no stream_output started — client must Attach to start streaming
+            // Note: no stream_output started — client must AttachSnapshot to start streaming.
         }
     }
 
@@ -524,7 +485,6 @@ async fn main() {
                 let broadcast_tx_clone = broadcast_tx.clone();
                 let writers_clone = session_writers.clone();
                 let terminal_clients_clone = terminal_emulator_clients.clone();
-                let buffers_clone = pre_attach_buffers.clone();
                 let sizes_clone = session_sizes.clone();
                 let observers_clone = session_observers.clone();
                 let lost_handoff_clone = lost_handoff_sessions.clone();
@@ -536,7 +496,6 @@ async fn main() {
                         broadcast_tx_clone,
                         writers_clone,
                         terminal_clients_clone,
-                        buffers_clone,
                         sizes_clone,
                         observers_clone,
                         lost_handoff_clone,
@@ -714,7 +673,6 @@ async fn handle_connection(
     broadcast_tx: broadcast::Sender<String>,
     session_writers: SessionWriters,
     terminal_emulator_clients: TerminalEmulatorClients,
-    pre_attach_buffers: PreAttachBuffers,
     session_sizes: SessionSizes,
     session_observers: SessionObservers,
     lost_handoff_sessions: LostHandoffSessions,
@@ -802,7 +760,6 @@ async fn handle_connection(
                     broadcast_tx.clone(),
                     session_writers.clone(),
                     terminal_emulator_clients.clone(),
-                    pre_attach_buffers.clone(),
                     session_sizes.clone(),
                     session_observers.clone(),
                     lost_handoff_sessions.clone(),
@@ -836,7 +793,6 @@ async fn handle_command(
     broadcast_tx: broadcast::Sender<String>,
     session_writers: SessionWriters,
     terminal_emulator_clients: TerminalEmulatorClients,
-    pre_attach_buffers: PreAttachBuffers,
     session_sizes: SessionSizes,
     session_observers: SessionObservers,
     lost_handoff_sessions: LostHandoffSessions,
@@ -878,25 +834,26 @@ async fn handle_command(
                 Ok(pty_session) => {
                     let pty_reader = pty_session.try_clone_reader();
                     let stream_control = StreamControl::new();
-                    let sidecar = match sidecar::TerminalSidecar::new(cols, rows, 10_000) {
-                        Ok(sidecar) => sidecar,
-                        Err(e) => {
-                            let evt = error_event(
-                                Some(protocol::ErrorCode::SidecarInitFailed),
-                                format!("failed to create terminal sidecar: {}", e),
-                            );
-                            let _ = write_event(&mut *writer.lock().await, &evt).await;
-                            return;
-                        }
-                    };
+                    let headless_terminal =
+                        match headless_terminal::HeadlessTerminal::new(cols, rows, 10_000) {
+                            Ok(headless_terminal) => headless_terminal,
+                            Err(e) => {
+                                let evt = error_event(
+                                    Some(protocol::ErrorCode::HeadlessTerminalInitFailed),
+                                    format!("failed to create headless terminal: {}", e),
+                                );
+                                let _ = write_event(&mut *writer.lock().await, &evt).await;
+                                return;
+                            }
+                        };
                     mgr.insert(
                         session_id.clone(),
                         SessionRecord {
                             pty: pty_session,
-                            sidecar,
+                            headless_terminal,
                             stream_control: Some(stream_control.clone()),
                             agent_provider,
-                            status: sidecar::initial_session_status(agent_provider),
+                            status: headless_terminal::initial_session_status(agent_provider),
                             status_observed: false,
                             last_status_check_at: None,
                         },
@@ -922,12 +879,6 @@ async fn handle_command(
                             .await
                             .insert(session_id.clone(), Vec::new());
 
-                        let buffer: PreAttachBuffer = Arc::new(Mutex::new(Some(Vec::new())));
-                        pre_attach_buffers
-                            .lock()
-                            .await
-                            .insert(session_id.clone(), buffer.clone());
-
                         let sid = session_id.clone();
                         let sessions_exit = sessions.clone();
                         let writers_for_stream = session_writers.clone();
@@ -943,7 +894,6 @@ async fn handle_command(
                                 broadcast_tx.clone(),
                                 writers_for_stream,
                                 terminal_clients_for_stream,
-                                buffer,
                                 sessions_exit,
                                 sizes_for_stream,
                                 observers_for_stream,
@@ -964,154 +914,6 @@ async fn handle_command(
                     );
                     let _ = write_event(&mut *writer.lock().await, &evt).await;
                 }
-            }
-        }
-
-        Command::Attach {
-            session_id,
-            emulate_terminal,
-        } => {
-            log::info!("[attach] session={}", session_id);
-            let mut mgr = sessions.lock().await;
-            if !mgr.contains(&session_id) {
-                let lost_message = lost_handoff_sessions.lock().await.get(&session_id).cloned();
-                let evt = error_event(
-                    Some(if lost_message.is_some() {
-                        protocol::ErrorCode::HandoffLost
-                    } else {
-                        protocol::ErrorCode::SessionNotFound
-                    }),
-                    lost_message.unwrap_or_else(|| format!("session not found: {}", session_id)),
-                );
-                drop(mgr);
-                let _ = write_event(&mut *writer.lock().await, &evt).await;
-                return;
-            }
-
-            let is_streaming = session_writers.lock().await.contains_key(&session_id);
-            let has_pre_attach_buffer = pre_attach_buffers.lock().await.contains_key(&session_id);
-            log::info!(
-                "[attach] state session={} is_streaming={} has_pre_attach_buffer={}",
-                session_id,
-                is_streaming,
-                has_pre_attach_buffer
-            );
-            if is_streaming {
-                // stream_output already running (started at Spawn) — push writer to broadcast list
-                let current_status = mgr.sessions.get(&session_id).map(|session| session.status);
-                drop(mgr);
-                finish_attach_cutover(
-                    &writer,
-                    &session_writers,
-                    &terminal_emulator_clients,
-                    &pre_attach_buffers,
-                    &session_id,
-                    emulate_terminal,
-                    &Event::Ok,
-                )
-                .await;
-
-                if let Some(status) = current_status {
-                    replay_current_status(&writer, &session_id, status).await;
-                }
-            } else {
-                log::info!(
-                    "[attach] starting stream_output on first attach for adopted/non-streaming session {}",
-                    session_id
-                );
-                // No stream_output yet (adopted session from handoff) — start it now
-                let (pty_reader, stream_control, recovery_cols, recovery_rows) =
-                    match mgr.sessions.get_mut(&session_id) {
-                        Some(session) => match session.pty.try_clone_reader() {
-                            Ok(reader) => {
-                                let stream_control = StreamControl::new();
-                                let recovery_cols = session.pty.cols();
-                                let recovery_rows = session.pty.rows();
-                                session.stream_control = Some(stream_control.clone());
-                                (reader, stream_control, recovery_cols, recovery_rows)
-                            }
-                            Err(e) => {
-                                let evt = error_event(
-                                    Some(protocol::ErrorCode::PtyCloneFailed),
-                                    format!("failed to clone PTY reader: {}", e),
-                                );
-                                drop(mgr);
-                                let _ = write_event(&mut *writer.lock().await, &evt).await;
-                                return;
-                            }
-                        },
-                        None => {
-                            let evt = error_event(
-                                Some(protocol::ErrorCode::SessionNotFound),
-                                format!("session not found: {}", session_id),
-                            );
-                            drop(mgr);
-                            let _ = write_event(&mut *writer.lock().await, &evt).await;
-                            return;
-                        }
-                    };
-                drop(mgr);
-
-                let resume_from_disk = recovery_manager.has_persisted_snapshot(&session_id);
-                if let Err(error) = recovery_manager
-                    .start_session(&session_id, recovery_cols, recovery_rows, resume_from_disk)
-                    .await
-                {
-                    log::warn!(
-                        "[recovery] failed to start mirrored adopted session {} (resume_from_disk={}): {}",
-                        session_id,
-                        resume_from_disk,
-                        error
-                    );
-                }
-
-                session_writers
-                    .lock()
-                    .await
-                    .insert(session_id.clone(), vec![writer.clone()]);
-                if emulate_terminal {
-                    register_terminal_emulator_client(
-                        &terminal_emulator_clients,
-                        &session_id,
-                        &writer,
-                    )
-                    .await
-                }
-
-                let _ = write_event(&mut *writer.lock().await, &Event::Ok).await;
-                let current_status = sessions
-                    .lock()
-                    .await
-                    .sessions
-                    .get(&session_id)
-                    .map(|session| session.status);
-                if let Some(status) = current_status {
-                    replay_current_status(&writer, &session_id, status).await;
-                }
-
-                let sid = session_id.clone();
-                let sessions_exit = sessions.clone();
-                let writers_for_stream = session_writers.clone();
-                let terminal_clients_for_stream = terminal_emulator_clients.clone();
-                let sizes_for_stream = session_sizes.clone();
-                let observers_for_stream = session_observers.clone();
-                let recovery_for_stream = recovery_manager.clone();
-                let no_buffer: PreAttachBuffer = Arc::new(Mutex::new(None));
-                tokio::task::spawn_blocking(move || {
-                    stream_output(
-                        sid,
-                        pty_reader,
-                        stream_control,
-                        broadcast_tx.clone(),
-                        writers_for_stream,
-                        terminal_clients_for_stream,
-                        no_buffer,
-                        sessions_exit,
-                        sizes_for_stream,
-                        observers_for_stream,
-                        recovery_for_stream,
-                    );
-                });
             }
         }
 
@@ -1271,7 +1073,6 @@ async fn handle_command(
                 let sizes_for_stream = session_sizes.clone();
                 let observers_for_stream = session_observers.clone();
                 let recovery_for_stream = recovery_manager.clone();
-                let no_buffer: PreAttachBuffer = Arc::new(Mutex::new(None));
                 let sessions_for_stream = sessions.clone();
                 let session_id_for_stream = session_id.clone();
                 tokio::task::spawn_blocking(move || {
@@ -1282,7 +1083,6 @@ async fn handle_command(
                         broadcast_tx.clone(),
                         writers_for_stream,
                         terminal_clients_for_stream,
-                        no_buffer,
                         sessions_for_stream,
                         sizes_for_stream,
                         observers_for_stream,
@@ -1294,7 +1094,7 @@ async fn handle_command(
             }
 
             let snapshot = match mgr.sessions.get_mut(&session_id) {
-                Some(session) => match session.sidecar.snapshot() {
+                Some(session) => match session.headless_terminal.snapshot() {
                     Ok(snapshot) => snapshot,
                     Err(error) => {
                         log::warn!(
@@ -1324,7 +1124,6 @@ async fn handle_command(
                 &writer,
                 &session_writers,
                 &terminal_emulator_clients,
-                &pre_attach_buffers,
                 &session_id,
                 emulate_terminal,
                 &snapshot_event,
@@ -1442,14 +1241,14 @@ async fn handle_command(
             let live_snapshot = {
                 let mut mgr = sessions.lock().await;
                 match mgr.get_mut(&session_id) {
-                    Some(session) => Some(session.sidecar.snapshot()),
+                    Some(session) => Some(session.headless_terminal.snapshot()),
                     None => None,
                 }
             };
             let evt = match live_snapshot {
                 Some(Ok(snapshot)) => {
                     log::info!(
-                        "[snapshot] session={} served from live sidecar rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
+                        "[snapshot] session={} served from live headless terminal rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
                         session_id,
                         snapshot.rows,
                         snapshot.cols,
@@ -1615,7 +1414,7 @@ async fn handle_handoff(
                     pid,
                     cwd
                 );
-                let snapshot = match session.sidecar.snapshot() {
+                let snapshot = match session.headless_terminal.snapshot() {
                     Ok(snapshot) => {
                         log::info!(
                             "[handoff] snapshot session={} rows={} cols={} cursor=({}, {}) visible={} vt_len={}",
@@ -1773,9 +1572,6 @@ async fn handle_handoff(
     tokio::time::sleep(std::time::Duration::from_millis(600)).await;
 }
 
-/// Maximum pre-attach buffer size (64 KB). Output before client attaches is
-/// buffered so kitty keyboard mode pushes reach xterm.js on first attach.
-const MAX_PRE_ATTACH_BUFFER: usize = 64 * 1024;
 const STATUS_IDLE_FLUSH_MS: u64 = STATUS_DETECTION_THROTTLE_MS;
 
 fn spawn_periodic_status_refresh_thread(
@@ -1821,8 +1617,6 @@ fn spawn_periodic_status_refresh_thread(
 /// Runs in a blocking thread for the entire lifetime of a session.
 /// ONE reader per session — never duplicated. Output is broadcast to all
 /// currently attached clients via the SessionWriters map.
-/// Buffers output before first Attach so startup sequences (like kitty
-/// keyboard mode push) are replayed to xterm.js on connect.
 #[allow(clippy::too_many_arguments)]
 fn stream_output(
     session_id: String,
@@ -1831,7 +1625,6 @@ fn stream_output(
     broadcast_tx: broadcast::Sender<String>,
     session_writers: SessionWriters,
     terminal_emulator_clients: TerminalEmulatorClients,
-    pre_attach_buffer: PreAttachBuffer,
     sessions: Arc<Mutex<SessionManager>>,
     session_sizes: SessionSizes,
     session_observers: SessionObservers,
@@ -1899,10 +1692,10 @@ fn stream_output(
                         .get(&session_id)
                         .is_none_or(|client_ids| client_ids.is_empty())
                 });
-                let allow_sidecar_replies = !has_live_terminal_client;
+                let allow_terminal_replies = !has_live_terminal_client;
                 match rt.block_on(async {
                     let mut mgr = sessions.lock().await;
-                    mgr.mirror_output(&session_id, &data, allow_sidecar_replies)
+                    mgr.mirror_output(&session_id, &data, allow_terminal_replies)
                 }) {
                     Ok(Some(status)) => {
                         log_status_observation(&rt, &sessions, &session_id, "mirror_output");
@@ -1913,7 +1706,7 @@ fn stream_output(
                     }
                     Err(error) => {
                         log::error!(
-                            "failed to mirror PTY output into sidecar for session {}: {}",
+                            "failed to mirror PTY output into headless terminal for session {}: {}",
                             session_id,
                             error
                         );
@@ -1926,31 +1719,6 @@ fn stream_output(
                             .write_output(&session_id, &data, sequence)
                             .await;
                     });
-                }
-
-                // If pre-attach buffer is active (Some), append to it
-                let buffered = rt.block_on(async {
-                    let mut guard = pre_attach_buffer.lock().await;
-                    if let Some(ref mut buffer) = *guard {
-                        if buffer.len() + data.len() <= MAX_PRE_ATTACH_BUFFER {
-                            buffer.extend_from_slice(&data);
-                        }
-                        if chunk_count <= 5 {
-                            log::info!(
-                                "[stream] buffered session={} bytes={} total_buffered={}",
-                                session_id,
-                                data.len(),
-                                buffer.len()
-                            );
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                });
-                // Buffer is active — Attach handler will flush it
-                if buffered {
-                    continue;
                 }
 
                 // Check if observers exist before cloning data (avoids clone on hot path with zero observers)
@@ -2180,7 +1948,7 @@ fn format_status_observation_log(
     };
 
     format!(
-        "[sidecar-debug] session={} source={} provider={} detected={} lines={:?}",
+        "[headless-terminal-debug] session={} source={} provider={} detected={} lines={:?}",
         session_id, source, provider, detected, lines
     )
 }
@@ -2216,7 +1984,7 @@ fn log_status_observation(
         Ok(Some(_)) | Ok(None) => {}
         Err(error) => {
             log::warn!(
-                "[sidecar-debug] failed to collect status observation for session {} from {}: {}",
+                "[headless-terminal-debug] failed to collect status observation for session {} from {}: {}",
                 session_id,
                 source,
                 error

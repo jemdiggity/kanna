@@ -105,7 +105,7 @@ const mockState = vi.hoisted(() => {
       case "create_agent_session":
       case "kill_session":
       case "detach_session":
-      case "attach_session":
+      case "attach_session_with_snapshot":
       case "send_input":
       case "run_script":
         return undefined;

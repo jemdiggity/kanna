@@ -773,7 +773,7 @@ export function createTasksApi(
           cols: 120,
           rows: 30,
         });
-        await invoke("attach_session", { sessionId: tdSessionId, agentProvider: "claude" });
+        await invoke("attach_session_with_snapshot", { sessionId: tdSessionId });
       }
 
       await updatePipelineItemStage(context.requireDb(), item.id, TEARDOWN_STAGE);

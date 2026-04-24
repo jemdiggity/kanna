@@ -18,7 +18,7 @@ ghostty-xterm-compat-serialize = { git = "https://github.com/jemdiggity/ghostty-
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
-name = "sidecar_status"
+name = "headless_terminal_status"
 harness = false
 
 [[bench]]

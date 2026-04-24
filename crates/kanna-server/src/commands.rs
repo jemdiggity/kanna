@@ -146,7 +146,7 @@ pub async fn handle_invoke(
             let new_task_id = task_creator::run_merge_agent(db, daemon, config, task_id).await?;
             Ok(serde_json::json!({ "task_id": new_task_id }))
         }
-        // Note: attach_session and detach_session are handled directly in main.rs
+        // Note: observe_session and unobserve_session are handled directly in main.rs
         // because they require long-lived daemon connections for streaming.
         "db_select" => {
             let query = args
