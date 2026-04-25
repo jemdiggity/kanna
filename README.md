@@ -102,14 +102,12 @@ For notarization, export either:
 
 Then run the `--config=notarize` build from that shell so Bazel forwards the credentials into the notarization actions.
 
-The release script now uses the Bazel graph too:
+The release script uses the Bazel graph too:
 
 ```sh
 ./scripts/ship.sh --dry-run
 ./scripts/ship.sh --release
 ```
-
-GitHub Actions now validates the unsigned Bazel release apps on macOS and also analyzes the signed DMG graph on every PR and `main` push via [.github/workflows/release-bazel.yml](.github/workflows/release-bazel.yml).
 
 ## License
 
