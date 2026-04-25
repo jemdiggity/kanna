@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { inflateSync } from "node:zlib";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,6 +10,163 @@ const defaultTauriIconSha256 =
 
 function sha256(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
+}
+
+interface DecodedPng {
+  width: number;
+  height: number;
+  rgba: Buffer;
+}
+
+interface AlphaBounds {
+  width: number;
+  height: number;
+}
+
+interface TauriConfig {
+  bundle: {
+    icon?: string[];
+  };
+}
+
+const pngSignature = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
+function paethPredictor(left: number, above: number, upperLeft: number): number {
+  const estimate = left + above - upperLeft;
+  const leftDistance = Math.abs(estimate - left);
+  const aboveDistance = Math.abs(estimate - above);
+  const upperLeftDistance = Math.abs(estimate - upperLeft);
+
+  if (leftDistance <= aboveDistance && leftDistance <= upperLeftDistance) {
+    return left;
+  }
+  if (aboveDistance <= upperLeftDistance) {
+    return above;
+  }
+  return upperLeft;
+}
+
+function extractPngsFromIcns(icns: Buffer): Buffer[] {
+  expect(icns.subarray(0, 4).toString("ascii")).toBe("icns");
+
+  const pngs: Buffer[] = [];
+  let offset = 8;
+  while (offset + 8 <= icns.length) {
+    const entryLength = icns.readUInt32BE(offset + 4);
+    const entryDataStart = offset + 8;
+    const entryDataEnd = offset + entryLength;
+    const entryData = icns.subarray(entryDataStart, entryDataEnd);
+    if (entryData.subarray(0, pngSignature.length).equals(pngSignature)) {
+      pngs.push(entryData);
+    }
+    offset = entryDataEnd;
+  }
+
+  return pngs;
+}
+
+function decodeRgbaPng(png: Buffer): DecodedPng {
+  expect(png.subarray(0, pngSignature.length).equals(pngSignature)).toBe(true);
+
+  let width = 0;
+  let height = 0;
+  const idatChunks: Buffer[] = [];
+  let offset = pngSignature.length;
+  while (offset + 12 <= png.length) {
+    const chunkLength = png.readUInt32BE(offset);
+    const chunkType = png.subarray(offset + 4, offset + 8).toString("ascii");
+    const chunkDataStart = offset + 8;
+    const chunkDataEnd = chunkDataStart + chunkLength;
+    const chunkData = png.subarray(chunkDataStart, chunkDataEnd);
+
+    if (chunkType === "IHDR") {
+      width = chunkData.readUInt32BE(0);
+      height = chunkData.readUInt32BE(4);
+      const bitDepth = chunkData[8];
+      const colorType = chunkData[9];
+      expect(bitDepth).toBe(8);
+      expect(colorType).toBe(6);
+    } else if (chunkType === "IDAT") {
+      idatChunks.push(chunkData);
+    } else if (chunkType === "IEND") {
+      break;
+    }
+
+    offset = chunkDataEnd + 4;
+  }
+
+  const bytesPerPixel = 4;
+  const rowLength = width * bytesPerPixel;
+  const inflated = inflateSync(Buffer.concat(idatChunks));
+  const rgba = Buffer.alloc(width * height * bytesPerPixel);
+
+  for (let y = 0; y < height; y += 1) {
+    const inputOffset = y * (rowLength + 1);
+    const filter = inflated[inputOffset];
+    const rowStart = inputOffset + 1;
+    const outputOffset = y * rowLength;
+
+    for (let x = 0; x < rowLength; x += 1) {
+      const raw = inflated[rowStart + x];
+      const left = x >= bytesPerPixel ? rgba[outputOffset + x - bytesPerPixel] : 0;
+      const above = y > 0 ? rgba[outputOffset + x - rowLength] : 0;
+      const upperLeft =
+        y > 0 && x >= bytesPerPixel
+          ? rgba[outputOffset + x - rowLength - bytesPerPixel]
+          : 0;
+
+      let value: number;
+      switch (filter) {
+        case 0:
+          value = raw;
+          break;
+        case 1:
+          value = raw + left;
+          break;
+        case 2:
+          value = raw + above;
+          break;
+        case 3:
+          value = raw + Math.floor((left + above) / 2);
+          break;
+        case 4:
+          value = raw + paethPredictor(left, above, upperLeft);
+          break;
+        default:
+          throw new Error(`unsupported PNG filter ${filter}`);
+      }
+      rgba[outputOffset + x] = value & 0xff;
+    }
+  }
+
+  return { width, height, rgba };
+}
+
+function alphaBounds(png: DecodedPng): AlphaBounds {
+  let minX = png.width;
+  let minY = png.height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < png.height; y += 1) {
+    for (let x = 0; x < png.width; x += 1) {
+      const alpha = png.rgba[(y * png.width + x) * 4 + 3];
+      if (alpha === 0) {
+        continue;
+      }
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  return {
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
 }
 
 describe("ship script release retry behavior", () => {
@@ -135,10 +293,11 @@ describe("release bundle naming", () => {
       resolve(repoRoot, "BUILD.bazel"),
       "utf8",
     );
-    const tauriConfig = readFileSync(
+    const tauriConfigRaw = readFileSync(
       resolve(repoRoot, "apps/desktop/src-tauri/tauri.conf.json"),
       "utf8",
     );
+    const tauriConfig = JSON.parse(tauriConfigRaw) as TauriConfig;
     const macosIcon = readFileSync(
       resolve(repoRoot, "apps/desktop/src-tauri/icons/icon.icns"),
     );
@@ -147,8 +306,45 @@ describe("release bundle naming", () => {
       'srcs = ["//apps/desktop/src-tauri:icons/icon.icns"]',
     );
     expect(rootBuild).toContain('volume_icon = ":desktop_macos_icon"');
-    expect(tauriConfig).toContain('"icons/icon.icns"');
+    expect(tauriConfig.bundle.icon).toEqual(["icons/icon.icns"]);
     expect(sha256(macosIcon)).not.toBe(defaultTauriIconSha256);
+  });
+
+  it("keeps the macOS app icon artwork inside a taskbar-safe margin", () => {
+    const macosIcon = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/icons/icon.icns"),
+    );
+    const largestPng = extractPngsFromIcns(macosIcon)
+      .map(decodeRgbaPng)
+      .sort((first, second) => second.width - first.width)[0];
+
+    expect(largestPng.width).toBe(256);
+    expect(largestPng.height).toBe(256);
+    expect(alphaBounds(largestPng)).toEqual({
+      width: 210,
+      height: 210,
+    });
+  });
+
+  it("keeps runtime PNG app icons visually aligned with the macOS bundle icon", () => {
+    const iconDir = resolve(repoRoot, "apps/desktop/src-tauri/icons");
+
+    expect(alphaBounds(decodeRgbaPng(readFileSync(resolve(iconDir, "128x128@2x.png"))))).toEqual({
+      width: 210,
+      height: 210,
+    });
+    expect(alphaBounds(decodeRgbaPng(readFileSync(resolve(iconDir, "128x128.png"))))).toEqual({
+      width: 105,
+      height: 105,
+    });
+    expect(alphaBounds(decodeRgbaPng(readFileSync(resolve(iconDir, "32x32.png"))))).toEqual({
+      width: 26,
+      height: 26,
+    });
+    expect(alphaBounds(decodeRgbaPng(readFileSync(resolve(iconDir, "icon.png"))))).toEqual({
+      width: 422,
+      height: 422,
+    });
   });
 });
 
