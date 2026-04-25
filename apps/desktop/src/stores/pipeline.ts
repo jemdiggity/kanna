@@ -150,7 +150,8 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     }
 
     const shouldFollowTask = nextStage.follow_task !== false;
-    const preservedSelectionId = shouldFollowTask ? null : computeNextVisibleItemId(item.id);
+    const sourceTaskIsSelected = context.state.selectedItemId.value === item.id;
+    const fallbackSelectionId = computeNextVisibleItemId(item.id);
 
     let stagePrompt = "";
     let agentOpts: Record<string, unknown> = { agentProvider: item.agent_provider };
@@ -189,6 +190,10 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       }
     }
 
+    if (sourceTaskIsSelected) {
+      await restoreStageAdvanceSelection(fallbackSelectionId);
+    }
+
     await requireService(context.services.closeTask, "closeTask")(item.id, { selectNext: false });
     await requireService(context.services.createItem, "createItem")(repo.id, repo.path, stagePrompt, "pty", {
       baseBranch: item.branch,
@@ -198,8 +203,8 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       ...agentOpts,
     });
 
-    if (!shouldFollowTask) {
-      await restoreStageAdvanceSelection(preservedSelectionId);
+    if (!shouldFollowTask && !sourceTaskIsSelected) {
+      await restoreStageAdvanceSelection(fallbackSelectionId);
     }
   }
 
