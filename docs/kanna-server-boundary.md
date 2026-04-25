@@ -20,6 +20,8 @@ Mobile clients and future CLI tools should talk to `kanna-server`, not directly 
 - `POST /v1/tasks`
 - `GET /v1/tasks/{task_id}/terminal`
 - `POST /v1/tasks/{task_id}/input`
+- `POST /v1/tasks/{task_id}/actions/complete-stage`
+- `POST /v1/tasks/{task_id}/actions/request-revision`
 - `POST /v1/tasks/{task_id}/actions/close`
 - `POST /v1/tasks/{task_id}/actions/advance-stage`
 - `POST /v1/tasks/{task_id}/actions/run-merge-agent`
@@ -29,4 +31,5 @@ Mobile clients and future CLI tools should talk to `kanna-server`, not directly 
 
 The desktop app starts `kanna-server` and supplies its config.
 Local mobile development points the React Native client at the LAN URL exposed by `kanna-server`.
-Future consumers such as `kanna-cli` should target the same route surface so product behavior stays consistent across clients.
+Consumers such as `kanna-cli` and `kanna-cli mcp serve` target the same route surface so product behavior stays consistent across clients.
+The CLI remains the shell/script interface; MCP is the structured agent-tool interface.

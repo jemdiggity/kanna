@@ -26,6 +26,7 @@ describe("buildTaskRuntimeEnv", () => {
         dbName: "kanna-wt-task-123.db",
         appDataDir: "/Users/test/Library/Application Support/com.kanna.app",
         socketPath: "/tmp/kanna.sock",
+        serverBaseUrl: "http://127.0.0.1:48120",
         portEnv: {
           KANNA_DEV_PORT: "1421",
           API_PORT: "3001",
@@ -40,6 +41,7 @@ describe("buildTaskRuntimeEnv", () => {
       KANNA_TASK_ID: "task-123",
       KANNA_CLI_DB_PATH: "/Users/test/Library/Application Support/com.kanna.app/kanna-wt-task-123.db",
       KANNA_SOCKET_PATH: "/tmp/kanna.sock",
+      KANNA_SERVER_BASE_URL: "http://127.0.0.1:48120",
     });
   });
 });

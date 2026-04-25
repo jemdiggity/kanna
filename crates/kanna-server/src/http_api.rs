@@ -28,6 +28,10 @@ pub struct AppState {
     #[cfg(test)]
     stage_advancer: Option<TestStageAdvancer>,
     #[cfg(test)]
+    stage_completer: Option<TestStageCompleter>,
+    #[cfg(test)]
+    revision_requester: Option<TestRevisionRequester>,
+    #[cfg(test)]
     task_terminal_streamer: Option<TestTaskTerminalStreamer>,
 }
 
@@ -53,6 +57,26 @@ type TestTaskCloser = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
 #[cfg(test)]
 type TestStageAdvancer =
     Arc<dyn Fn(String) -> Result<crate::mobile_api::TaskActionResponse, String> + Send + Sync>;
+
+#[cfg(test)]
+type TestStageCompleter = Arc<
+    dyn Fn(
+            String,
+            crate::mobile_api::CompleteStageRequest,
+        ) -> Result<crate::mobile_api::TaskActionResponse, String>
+        + Send
+        + Sync,
+>;
+
+#[cfg(test)]
+type TestRevisionRequester = Arc<
+    dyn Fn(
+            String,
+            crate::mobile_api::RequestRevisionRequest,
+        ) -> Result<crate::mobile_api::TaskActionResponse, String>
+        + Send
+        + Sync,
+>;
 
 #[cfg(test)]
 type TestTaskTerminalStreamer =
@@ -91,6 +115,10 @@ impl AppState {
             #[cfg(test)]
             stage_advancer: None,
             #[cfg(test)]
+            stage_completer: None,
+            #[cfg(test)]
+            revision_requester: None,
+            #[cfg(test)]
             task_terminal_streamer: None,
         }
     }
@@ -127,6 +155,20 @@ impl AppState {
     fn with_stage_advancer(config: Config, stage_advancer: TestStageAdvancer) -> Self {
         let mut state = Self::new(config);
         state.stage_advancer = Some(stage_advancer);
+        state
+    }
+
+    #[cfg(test)]
+    fn with_stage_completer(config: Config, stage_completer: TestStageCompleter) -> Self {
+        let mut state = Self::new(config);
+        state.stage_completer = Some(stage_completer);
+        state
+    }
+
+    #[cfg(test)]
+    fn with_revision_requester(config: Config, revision_requester: TestRevisionRequester) -> Self {
+        let mut state = Self::new(config);
+        state.revision_requester = Some(revision_requester);
         state
     }
 
@@ -473,6 +515,177 @@ async fn advance_stage(
         crate::task_creator::prepare_advance_stage_for_api(&db, &state.config, &task_id)
             .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?
     };
+    let mut daemon = crate::daemon_client::DaemonClient::connect(&state.config.daemon_dir)
+        .await
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("daemon error: {}", e),
+            )
+        })?;
+    let created = crate::task_creator::spawn_prepared_task_for_api(&mut daemon, prepared)
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let db = Db::open(&state.config.db_path).map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("db error: {}", e),
+        )
+    })?;
+    db.close_pipeline_item(&task_id).map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("db error: {}", e),
+        )
+    })?;
+
+    Ok(Json(crate::mobile_api::TaskActionResponse {
+        task_id: created.task_id,
+    }))
+}
+
+async fn complete_stage(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(task_id): axum::extract::Path<String>,
+    Json(payload): Json<crate::mobile_api::CompleteStageRequest>,
+) -> Result<Json<crate::mobile_api::TaskActionResponse>, (axum::http::StatusCode, String)> {
+    #[cfg(test)]
+    if let Some(stage_completer) = state.stage_completer.clone() {
+        return stage_completer(task_id, payload)
+            .map(Json)
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e));
+    }
+
+    if payload.status != "success" && payload.status != "failure" {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "status must be success or failure".to_string(),
+        ));
+    }
+    let should_auto_advance = payload.status == "success";
+
+    let stage_result = serde_json::to_string(&serde_json::json!({
+        "status": payload.status,
+        "summary": payload.summary,
+        "metadata": payload.metadata,
+    }))
+    .map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("invalid stage result: {}", e),
+        )
+    })?;
+
+    {
+        let db = Db::open(&state.config.db_path).map_err(|e| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("db error: {}", e),
+            )
+        })?;
+        db.update_pipeline_item_stage_result(&task_id, &stage_result)
+            .map_err(|e| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("db error: {}", e),
+                )
+            })?;
+    }
+
+    if !should_auto_advance {
+        return Ok(Json(crate::mobile_api::TaskActionResponse { task_id }));
+    }
+
+    let prepared = {
+        let db = Db::open(&state.config.db_path).map_err(|e| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("db error: {}", e),
+            )
+        })?;
+        crate::task_creator::prepare_auto_stage_completion_for_api(&db, &state.config, &task_id)
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?
+    };
+    let Some(prepared) = prepared else {
+        return Ok(Json(crate::mobile_api::TaskActionResponse { task_id }));
+    };
+
+    let mut daemon = crate::daemon_client::DaemonClient::connect(&state.config.daemon_dir)
+        .await
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("daemon error: {}", e),
+            )
+        })?;
+    let created = crate::task_creator::spawn_prepared_task_for_api(&mut daemon, prepared)
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let db = Db::open(&state.config.db_path).map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("db error: {}", e),
+        )
+    })?;
+    db.close_pipeline_item(&task_id).map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("db error: {}", e),
+        )
+    })?;
+
+    Ok(Json(crate::mobile_api::TaskActionResponse {
+        task_id: created.task_id,
+    }))
+}
+
+async fn request_revision(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(task_id): axum::extract::Path<String>,
+    Json(payload): Json<crate::mobile_api::RequestRevisionRequest>,
+) -> Result<Json<crate::mobile_api::TaskActionResponse>, (axum::http::StatusCode, String)> {
+    #[cfg(test)]
+    if let Some(revision_requester) = state.revision_requester.clone() {
+        return revision_requester(task_id, payload)
+            .map(Json)
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e));
+    }
+
+    let stage_result = serde_json::to_string(&serde_json::json!({
+        "status": "failure",
+        "summary": payload.summary,
+        "metadata": payload.metadata,
+    }))
+    .map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("invalid revision result: {}", e),
+        )
+    })?;
+    let prepared = {
+        let db = Db::open(&state.config.db_path).map_err(|e| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("db error: {}", e),
+            )
+        })?;
+        db.update_pipeline_item_stage_result(&task_id, &stage_result)
+            .map_err(|e| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("db error: {}", e),
+                )
+            })?;
+        crate::task_creator::prepare_revision_task_for_api(
+            &db,
+            &state.config,
+            &task_id,
+            &payload.target_stage,
+            &payload.prompt,
+        )
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?
+    };
+
     let mut daemon = crate::daemon_client::DaemonClient::connect(&state.config.daemon_dir)
         .await
         .map_err(|e| {
@@ -858,6 +1071,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/tasks/{task_id}/actions/advance-stage",
             post(advance_stage),
         )
+        .route(
+            "/v1/tasks/{task_id}/actions/complete-stage",
+            post(complete_stage),
+        )
+        .route(
+            "/v1/tasks/{task_id}/actions/request-revision",
+            post(request_revision),
+        )
         .route("/v1/tasks/{task_id}/actions/close", post(close_task))
         .route(
             "/v1/tasks/{task_id}/actions/run-merge-agent",
@@ -1088,6 +1309,72 @@ fn test_router_with_stage_advancer(
     router(Arc::new(AppState::with_stage_advancer(
         config,
         stage_advancer,
+    )))
+}
+
+#[cfg(test)]
+fn test_router_with_stage_completer(
+    desktop_id: &str,
+    desktop_name: &str,
+    stage_completer: TestStageCompleter,
+) -> Router {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEST_DB_ID: AtomicUsize = AtomicUsize::new(29_000);
+    let test_db_id = NEXT_TEST_DB_ID.fetch_add(1, Ordering::Relaxed);
+    let config = Config {
+        relay_url: "wss://relay.example".to_string(),
+        device_token: "device-token".to_string(),
+        cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+        firebase_project_id: "kanna-local".to_string(),
+        firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+        firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+        daemon_dir: "/tmp/kanna-daemon".to_string(),
+        db_path: Db::test_db_path(&format!("http-api-{desktop_id}-{test_db_id}")),
+        desktop_id: desktop_id.to_string(),
+        desktop_secret: Some("desktop-secret".to_string()),
+        desktop_name: desktop_name.to_string(),
+        lan_host: "0.0.0.0".to_string(),
+        lan_port: 48120,
+        pairing_store_path: format!("/tmp/kanna-pairings-{desktop_id}-{test_db_id}.json"),
+    };
+    let _ = Db::open_for_tests(&config.db_path).expect("open test db");
+    router(Arc::new(AppState::with_stage_completer(
+        config,
+        stage_completer,
+    )))
+}
+
+#[cfg(test)]
+fn test_router_with_revision_requester(
+    desktop_id: &str,
+    desktop_name: &str,
+    revision_requester: TestRevisionRequester,
+) -> Router {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEST_DB_ID: AtomicUsize = AtomicUsize::new(29_500);
+    let test_db_id = NEXT_TEST_DB_ID.fetch_add(1, Ordering::Relaxed);
+    let config = Config {
+        relay_url: "wss://relay.example".to_string(),
+        device_token: "device-token".to_string(),
+        cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+        firebase_project_id: "kanna-local".to_string(),
+        firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+        firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+        daemon_dir: "/tmp/kanna-daemon".to_string(),
+        db_path: Db::test_db_path(&format!("http-api-{desktop_id}-{test_db_id}")),
+        desktop_id: desktop_id.to_string(),
+        desktop_secret: Some("desktop-secret".to_string()),
+        desktop_name: desktop_name.to_string(),
+        lan_host: "0.0.0.0".to_string(),
+        lan_port: 48120,
+        pairing_store_path: format!("/tmp/kanna-pairings-{desktop_id}-{test_db_id}.json"),
+    };
+    let _ = Db::open_for_tests(&config.db_path).expect("open test db");
+    router(Arc::new(AppState::with_revision_requester(
+        config,
+        revision_requester,
     )))
 }
 
@@ -1590,6 +1877,91 @@ mod tests {
             .unwrap();
         let created: TaskActionResponse = from_slice(&body).unwrap();
         assert_eq!(created.task_id, "task-2");
+    }
+
+    #[tokio::test]
+    async fn complete_stage_route_uses_stage_completer() {
+        let app = super::test_router_with_stage_completer(
+            "desktop-1",
+            "Studio Mac",
+            Arc::new(|task_id, payload| {
+                assert_eq!(task_id, "task-1");
+                assert_eq!(payload.status, "success");
+                assert_eq!(payload.summary, "review passed");
+                assert_eq!(
+                    payload.metadata,
+                    Some(serde_json::json!({ "coverage": "sufficient" }))
+                );
+                Ok(TaskActionResponse {
+                    task_id: "task-2".to_string(),
+                })
+            }),
+        );
+
+        let response = app
+            .oneshot(
+                Request::post("/v1/tasks/task-1/actions/complete-stage")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "status": "success",
+                            "summary": "review passed",
+                            "metadata": { "coverage": "sufficient" }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created: TaskActionResponse = from_slice(&body).unwrap();
+        assert_eq!(created.task_id, "task-2");
+    }
+
+    #[tokio::test]
+    async fn request_revision_route_uses_revision_requester() {
+        let app = super::test_router_with_revision_requester(
+            "desktop-1",
+            "Studio Mac",
+            Arc::new(|task_id, payload| {
+                assert_eq!(task_id, "review-task");
+                assert_eq!(payload.target_stage, "in progress");
+                assert_eq!(payload.summary, "missing e2e coverage");
+                assert_eq!(payload.prompt, "Add e2e coverage for task creation.");
+                Ok(TaskActionResponse {
+                    task_id: "revision-task".to_string(),
+                })
+            }),
+        );
+
+        let response = app
+            .oneshot(
+                Request::post("/v1/tasks/review-task/actions/request-revision")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "targetStage": "in progress",
+                            "summary": "missing e2e coverage",
+                            "prompt": "Add e2e coverage for task creation."
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created: TaskActionResponse = from_slice(&body).unwrap();
+        assert_eq!(created.task_id, "revision-task");
     }
 
     #[tokio::test]

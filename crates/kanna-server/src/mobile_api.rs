@@ -68,6 +68,23 @@ pub struct CreateTaskResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CompleteStageRequest {
+    pub status: String,
+    pub summary: String,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestRevisionRequest {
+    pub target_stage: String,
+    pub summary: String,
+    pub prompt: String,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskActionResponse {
     pub task_id: String,
 }
