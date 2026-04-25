@@ -126,6 +126,117 @@ describe("diff view", () => {
     expect(String(patch)).toContain("# diff test marker");
   });
 
+  it("keeps the sticky diff file header flush with the diff scroller", async () => {
+    const branch = await client.executeSync<string | null>(
+      `const ctx = window.__KANNA_E2E__.setupState;
+       const item = ctx.selectedItem();
+       return item ? (item.branch?.value || item.branch) : null;`
+    );
+    if (!branch) {
+      throw new Error("expected selected task to have a worktree branch");
+    }
+
+    const worktreePath = `${testRepoPath}/.kanna-worktrees/${branch}`;
+
+    await tauriInvoke(client, "run_script", {
+      script: "for i in $(seq 1 120); do printf '# sticky visual e2e %03d\\n' \"$i\"; done >> VERSION",
+      cwd: worktreePath,
+      env: {},
+    });
+
+    await client.executeSync(
+      "window.__KANNA_E2E__.setupState.showDiffModal = false;"
+    );
+    await sleep(250);
+    await client.executeSync(
+      "window.__KANNA_E2E__.setupState.showDiffModal = true;"
+    );
+
+    const result = await client.executeAsync<{
+      containerTop: number;
+      headerTop: number;
+      headerBottom: number;
+      scrollTop: number;
+      stickyTop: string;
+      headerCount?: number;
+      renderedHeaderCount?: number;
+      headerLabels?: string[];
+      wrapperHeight?: number;
+      timedOut?: boolean;
+    }>(
+      `const cb = arguments[arguments.length - 1];
+       let done = false;
+       const finish = (value) => {
+         if (done) return;
+         done = true;
+         clearInterval(interval);
+         clearTimeout(timeout);
+         cb(value);
+       };
+       const measure = () => {
+         const container = document.querySelector(".diff-container");
+         const wrappers = Array.from(document.querySelectorAll(".diff-file"));
+         const renderedWrappers = wrappers.filter((element) =>
+           element.querySelector(".diff-file-header") &&
+           element.querySelector("diffs-container") &&
+           element.getBoundingClientRect().height > 140
+         );
+         const wrapper = renderedWrappers[0];
+         const header = wrapper?.querySelector(".diff-file-header");
+         if (!(container instanceof HTMLElement) || !(wrapper instanceof HTMLElement) || !(header instanceof HTMLElement)) return;
+
+         container.scrollTop = wrapper.offsetTop + 40;
+         requestAnimationFrame(() => {
+           requestAnimationFrame(() => {
+             const containerRect = container.getBoundingClientRect();
+             const headerRect = header.getBoundingClientRect();
+             const headers = Array.from(document.querySelectorAll(".diff-file-header"));
+             finish({
+               containerTop: containerRect.top,
+               headerTop: headerRect.top,
+               headerBottom: headerRect.bottom,
+               scrollTop: container.scrollTop,
+               stickyTop: getComputedStyle(header).top,
+               headerCount: headers.length,
+               renderedHeaderCount: renderedWrappers.length,
+               wrapperHeight: wrapper.getBoundingClientRect().height,
+             });
+           });
+         });
+       };
+       const interval = setInterval(measure, 25);
+       const timeout = setTimeout(() => {
+         finish({
+           timedOut: true,
+           containerTop: 0,
+           headerTop: 0,
+           headerBottom: 0,
+           scrollTop: 0,
+           stickyTop: "",
+           headerCount: document.querySelectorAll(".diff-file-header").length,
+           renderedHeaderCount: Array.from(document.querySelectorAll(".diff-file"))
+             .filter((element) =>
+               element.querySelector(".diff-file-header") &&
+               element.querySelector("diffs-container") &&
+               element.getBoundingClientRect().height > 140
+             ).length,
+           headerLabels: Array.from(document.querySelectorAll(".diff-file-header"))
+             .map((element) => element.getAttribute("title") || element.textContent || ""),
+         });
+       }, 10000);
+       measure();`
+    );
+
+    if (result.timedOut) {
+      throw new Error(`timed out waiting for rendered sticky diff header: ${JSON.stringify(result)}`);
+    }
+
+    expect(result.scrollTop).toBeGreaterThan(0);
+    expect(result.stickyTop).toBe("-1px");
+    expect(result.headerTop).toBeLessThan(result.containerTop);
+    expect(result.headerBottom).toBeGreaterThan(result.containerTop);
+  });
+
   it("shows first diff content before rendering an entire broad diff", async () => {
     const branch = await client.executeSync<string | null>(
       `const ctx = window.__KANNA_E2E__.setupState;
