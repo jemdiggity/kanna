@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from "vue";
+import { ref, computed, onMounted, nextTick, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { invoke } from "../invoke";
 import { useLessScroll } from "../composables/useLessScroll";
 import { registerContextShortcuts } from "../composables/useShortcutContext";
+import { macOsTextInputAttrs } from "../utils/textInput";
 import {
   layoutCommitGraph,
   type GraphResult,
   type GraphLayout,
   type CurveDef,
 } from "../utils/commitGraph";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   repoPath: string;
@@ -36,6 +40,10 @@ const layout = ref<GraphLayout>({
 });
 const headCommit = ref<string | null>(null);
 const mode = ref<"auto" | "all">("auto");
+const searchInputRef = ref<HTMLInputElement | null>(null);
+const isSearching = ref(false);
+const searchQuery = ref("");
+const currentMatch = ref(1);
 
 const scrollTop = ref(0);
 const viewportHeight = ref(600);
@@ -87,6 +95,41 @@ const visibleCurves = computed(() => {
   );
 });
 
+const searchableCommits = computed(() =>
+  layout.value.commits.map((commit) => ({
+    hash: commit.hash,
+    text: [
+      commit.message,
+      commit.hash,
+      commit.short_hash,
+      commit.author,
+      ...commit.refs,
+    ].join("\n").toLowerCase(),
+  }))
+);
+
+const searchMatches = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase();
+  if (!query) return [];
+  return searchableCommits.value.filter((commit) => commit.text.includes(query));
+});
+
+const matchedHashes = computed(
+  () => new Set(searchMatches.value.map((match) => match.hash))
+);
+
+const activeMatchHash = computed(() => {
+  if (!searchMatches.value.length) return null;
+  const index = Math.max(1, Math.min(currentMatch.value, searchMatches.value.length)) - 1;
+  return searchMatches.value[index]?.hash ?? null;
+});
+
+const searchCountLabel = computed(() => {
+  if (!searchQuery.value) return "";
+  if (!searchMatches.value.length) return t("commitGraph.searchNoMatches");
+  return `${currentMatch.value}/${searchMatches.value.length}`;
+});
+
 function px(col: number): number {
   return GRAPH_PADDING + col * BRANCH_SPACING;
 }
@@ -135,13 +178,58 @@ function onScroll() {
   }
 }
 
+function openSearch() {
+  isSearching.value = true;
+}
+
+function closeSearch() {
+  isSearching.value = false;
+  searchQuery.value = "";
+  currentMatch.value = 1;
+}
+
+function dismiss(): boolean {
+  if (isSearching.value) {
+    closeSearch();
+    return false;
+  }
+
+  return true;
+}
+
+function scrollToCommit(hash: string) {
+  if (!scrollRef.value) return;
+  const row = layout.value.commits.find((commit) => commit.hash === hash);
+  if (!row) return;
+  const targetY = py(row.y) - scrollRef.value.clientHeight / 2;
+  scrollRef.value.scrollTop = Math.max(0, targetY);
+}
+
+function activateCurrentMatch() {
+  if (!searchMatches.value.length) return;
+  const index = Math.max(1, Math.min(currentMatch.value, searchMatches.value.length)) - 1;
+  const match = searchMatches.value[index];
+  if (!match) return;
+  scrollToCommit(match.hash);
+}
+
+function nextMatch() {
+  if (!searchMatches.value.length) return;
+  currentMatch.value =
+    currentMatch.value >= searchMatches.value.length ? 1 : currentMatch.value + 1;
+  activateCurrentMatch();
+}
+
+function prevMatch() {
+  if (!searchMatches.value.length) return;
+  currentMatch.value =
+    currentMatch.value <= 1 ? searchMatches.value.length : currentMatch.value - 1;
+  activateCurrentMatch();
+}
+
 function scrollToHead() {
   if (!headCommit.value || !scrollRef.value) return;
-  const row = layout.value.commits.find((c) => c.hash === headCommit.value);
-  if (row) {
-    const targetY = py(row.y) - scrollRef.value.clientHeight / 2;
-    scrollRef.value.scrollTop = Math.max(0, targetY);
-  }
+  scrollToCommit(headCommit.value);
 }
 
 function toggleMode() {
@@ -149,9 +237,70 @@ function toggleMode() {
   loadGraph();
 }
 
+function handleSearchInputKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeSearch();
+    nextTick(() => scrollRef.value?.focus());
+    return;
+  }
+
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (e.shiftKey) {
+      prevMatch();
+    } else {
+      nextMatch();
+    }
+    nextTick(() => scrollRef.value?.focus());
+  }
+}
+
+watch(searchMatches, (matches) => {
+  currentMatch.value = 1;
+  if (matches.length > 0) {
+    nextTick(() => activateCurrentMatch());
+  }
+});
+
+watch(isSearching, (searching) => {
+  if (searching) {
+    nextTick(() => searchInputRef.value?.focus());
+  }
+});
+
+defineExpose({ dismiss });
+
 useLessScroll(scrollRef, {
   extraHandler: (e: KeyboardEvent) => {
-    if (e.key === " " && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+    const noMods = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+    const meta = e.metaKey || e.ctrlKey;
+
+    if (e.key === "/" && noMods) {
+      e.preventDefault();
+      openSearch();
+      return true;
+    }
+
+    if (meta && e.key === "f" && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      openSearch();
+      return true;
+    }
+
+    if (e.key === "n" && noMods && isSearching.value) {
+      e.preventDefault();
+      nextMatch();
+      return true;
+    }
+
+    if (e.key === "N" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && isSearching.value) {
+      e.preventDefault();
+      prevMatch();
+      return true;
+    }
+
+    if (e.key === " " && noMods) {
       e.preventDefault();
       toggleMode();
       return true;
@@ -162,12 +311,15 @@ useLessScroll(scrollRef, {
 });
 
 registerContextShortcuts("graph", [
-  { label: "Scroll ↓/↑", display: "j / k", groupKey: "shortcuts.groupNavigation" },
-  { label: "Page ↓/↑", display: "f / b", groupKey: "shortcuts.groupNavigation" },
-  { label: "Half-page ↓/↑", display: "d / u", groupKey: "shortcuts.groupNavigation" },
-  { label: "Top / Bottom", display: "g / G", groupKey: "shortcuts.groupNavigation" },
-  { label: "Toggle auto / all", display: "Space", groupKey: "shortcuts.groupViews" },
-  { label: "Close", display: "q", groupKey: "shortcuts.groupActions" },
+  { label: t("commitGraph.shortcutSearch"), display: "/", groupKey: "shortcuts.groupSearch" },
+  { label: t("commitGraph.shortcutSearchAlt"), display: "⌘F", groupKey: "shortcuts.groupSearch" },
+  { label: t("commitGraph.shortcutNextPrevMatch"), display: "n / N", groupKey: "shortcuts.groupSearch" },
+  { label: t("commitGraph.shortcutLineUpDown"), display: "j / k", groupKey: "shortcuts.groupNavigation" },
+  { label: t("commitGraph.shortcutPageUpDown"), display: "f / b", groupKey: "shortcuts.groupNavigation" },
+  { label: t("commitGraph.shortcutHalfUpDown"), display: "d / u", groupKey: "shortcuts.groupNavigation" },
+  { label: t("commitGraph.shortcutTopBottom"), display: "g / G", groupKey: "shortcuts.groupNavigation" },
+  { label: t("commitGraph.shortcutToggleMode"), display: "Space", groupKey: "shortcuts.groupViews" },
+  { label: t("commitGraph.shortcutClose"), display: "q", groupKey: "shortcuts.groupActions" },
 ]);
 
 async function loadGraph() {
@@ -260,6 +412,10 @@ onMounted(() => {
             v-for="commit in visibleCommits"
             :key="'t' + commit.hash"
             class="commit-row"
+            :class="{
+              'is-search-match': matchedHashes.has(commit.hash),
+              'is-search-active': activeMatchHash === commit.hash,
+            }"
             :style="{ top: py(commit.y) - 8 + 'px' }"
           >
             <span
@@ -282,6 +438,18 @@ onMounted(() => {
     </template>
   </div>
   <div class="mode-indicator">{{ mode.toUpperCase() }}</div>
+  <div v-if="isSearching" class="search-bar">
+    <span class="search-prefix">/</span>
+    <input
+      ref="searchInputRef"
+      v-model="searchQuery"
+      v-bind="macOsTextInputAttrs"
+      class="search-input"
+      :placeholder="t('commitGraph.searchPlaceholder')"
+      @keydown="handleSearchInputKeydown"
+    />
+    <span v-if="searchQuery" class="search-count">{{ searchCountLabel }}</span>
+  </div>
   </div>
 </template>
 
@@ -312,6 +480,47 @@ onMounted(() => {
   letter-spacing: 0.05em;
   z-index: 1;
   pointer-events: none;
+}
+
+.search-bar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(88, 166, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.96);
+  z-index: 2;
+}
+
+.search-prefix {
+  color: #58a6ff;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 12px;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: #e5e7eb;
+  font-size: 12px;
+  outline: none;
+}
+
+.search-input::placeholder {
+  color: #6b7280;
+}
+
+.search-count {
+  color: #9ca3af;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .graph-status {
@@ -350,6 +559,16 @@ onMounted(() => {
   height: 16px;
   font-size: 12px;
   line-height: 16px;
+}
+
+.commit-row.is-search-match {
+  background: rgba(88, 166, 255, 0.08);
+  border-radius: 4px;
+}
+
+.commit-row.is-search-active {
+  background: rgba(88, 166, 255, 0.18);
+  box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.35);
 }
 
 .ref-pill {

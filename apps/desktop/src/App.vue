@@ -790,7 +790,13 @@ const keyboardActions = {
     if (showShellModal.value) { return; }
     if (showDiffModal.value) { showDiffModal.value = false; maximizedModal.value = null; return true; }
     if (showAnalyticsModal.value) { showAnalyticsModal.value = false; return true; }
-    if (showCommitGraphModal.value) { showCommitGraphModal.value = false; return true; }
+    if (showCommitGraphModal.value) {
+      const shouldCloseCommitGraph = commitGraphModalRef.value?.dismiss() ?? true;
+      if (shouldCloseCommitGraph) {
+        showCommitGraphModal.value = false;
+      }
+      return true;
+    }
     if (showTreeExplorer.value) { closeTreeExplorer(); return true; }
     if (showNewTaskModal.value) { showNewTaskModal.value = false; return true; }
     if (showAddRepoModal.value) { showAddRepoModal.value = false; return true; }

@@ -236,6 +236,19 @@
     "searchNoMatches": "一致なし",
     "searchPlaceholder": "検索..."
   },
+  "commitGraph": {
+    "searchPlaceholder": "コミット、ハッシュ、作者、参照を検索",
+    "searchNoMatches": "一致なし",
+    "shortcutSearch": "検索",
+    "shortcutSearchAlt": "検索（代替）",
+    "shortcutNextPrevMatch": "次 / 前の一致",
+    "shortcutLineUpDown": "行 ↓/↑",
+    "shortcutPageUpDown": "ページ ↓/↑",
+    "shortcutHalfUpDown": "半ページ ↓/↑",
+    "shortcutTopBottom": "先頭 / 末尾",
+    "shortcutToggleMode": "auto / all 切替",
+    "shortcutClose": "閉じる"
+  },
   "mainPanel": {
     "taskBlocked": "タスクがブロック中",
     "taskBlockedHint": "すべてのブロッカーが完了すると、このタスクは自動的に開始されます。",

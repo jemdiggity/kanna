@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { computed, defineComponent, nextTick, ref } from "vue";
+import { computed, defineComponent, h, nextTick, ref } from "vue";
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeyboardActions } from "./composables/useKeyboardShortcuts";
@@ -1104,6 +1104,38 @@ describe("App", () => {
     expect(handled).toBe(true);
     expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+  });
+
+  it("dismiss closes commit graph search before closing the commit graph modal", async () => {
+    const dismissMock = vi.fn(() => false);
+    const CommitGraphModalTestStub = defineComponent({
+      setup(_props, { expose }) {
+        expose({
+          dismiss: dismissMock,
+          zIndex: 1,
+          bringToFront: vi.fn(),
+        });
+        return () => h("div", { "data-testid": "commit-graph-modal" });
+      },
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommitGraphModal: CommitGraphModalTestStub,
+    });
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.showCommitGraph();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="commit-graph-modal"]').exists()).toBe(true);
+
+    const handled = capturedKeyboardActions?.dismiss();
+    await flushPromises();
+
+    expect(handled).toBe(true);
+    expect(dismissMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-testid="commit-graph-modal"]').exists()).toBe(true);
   });
 
   it("passes maximize state through to the tree explorer modal", async () => {

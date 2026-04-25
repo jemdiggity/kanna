@@ -236,6 +236,19 @@
     "searchNoMatches": "No matches",
     "searchPlaceholder": "Search..."
   },
+  "commitGraph": {
+    "searchPlaceholder": "Search commits, hashes, authors, and refs",
+    "searchNoMatches": "No matches",
+    "shortcutSearch": "Search",
+    "shortcutSearchAlt": "Search (alt)",
+    "shortcutNextPrevMatch": "Next / Prev match",
+    "shortcutLineUpDown": "Line ↓/↑",
+    "shortcutPageUpDown": "Page ↓/↑",
+    "shortcutHalfUpDown": "Half ↓/↑",
+    "shortcutTopBottom": "Top / Bottom",
+    "shortcutToggleMode": "Toggle auto / all",
+    "shortcutClose": "Close"
+  },
   "mainPanel": {
     "taskBlocked": "Task Blocked",
     "taskBlockedHint": "This task will start automatically when all blockers complete.",

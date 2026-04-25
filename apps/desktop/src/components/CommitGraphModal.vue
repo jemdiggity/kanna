@@ -5,7 +5,13 @@ import { useShortcutContext } from "../composables/useShortcutContext";
 import { useModalZIndex } from "../composables/useModalZIndex";
 useShortcutContext("graph");
 const { zIndex, bringToFront } = useModalZIndex();
-defineExpose({ zIndex, bringToFront });
+const graphViewRef = ref<InstanceType<typeof CommitGraphView> | null>(null);
+
+function dismiss(): boolean {
+  return graphViewRef.value?.dismiss() ?? true;
+}
+
+defineExpose({ zIndex, bringToFront, dismiss });
 
 const modalRef = ref<HTMLElement | null>(null);
 
@@ -27,6 +33,7 @@ onMounted(() => {
   <div class="modal-overlay" :style="{ zIndex }" @click.self="emit('close')">
     <div ref="modalRef" class="graph-modal" tabindex="-1">
       <CommitGraphView
+        ref="graphViewRef"
         :repo-path="repoPath"
         :worktree-path="worktreePath"
         @close="emit('close')"
