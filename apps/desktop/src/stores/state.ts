@@ -118,6 +118,7 @@ export interface StoreServices {
   getStageOrder?: (repoId: string) => readonly string[];
   selectRepo?: (repoId: string) => Promise<void>;
   selectItem?: (itemId: string) => Promise<void>;
+  selectReplacementAfterItemRemoval?: (removedItem: PipelineItem) => Promise<string | null>;
   restoreSelection?: (itemId: string) => void;
   goBack?: () => void;
   goForward?: () => void;

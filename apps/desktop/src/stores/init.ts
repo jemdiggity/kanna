@@ -186,6 +186,12 @@ export function createInitApi(
           invoke("kill_session", { sessionId: `shell-wt-${item.id}` }).catch((error: unknown) =>
             reportCloseSessionError("[store] kill shell session failed:", error)),
         ]);
+        if (context.state.selectedItemId.value === item.id) {
+          await requireService(
+            context.services.selectReplacementAfterItemRemoval,
+            "selectReplacementAfterItemRemoval",
+          )(item);
+        }
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
         await tasks.checkUnblocked(item.id);
         await requireService(context.services.reloadSnapshot, "reloadSnapshot")();

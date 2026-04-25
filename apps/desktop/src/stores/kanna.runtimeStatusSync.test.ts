@@ -120,6 +120,9 @@ const mockState = vi.hoisted(() => {
     get repos() {
       return repos;
     },
+    set repos(value: Repo[]) {
+      repos = value;
+    },
     get pipelineItems() {
       return pipelineItems;
     },
@@ -140,6 +143,26 @@ const mockState = vi.hoisted(() => {
     reset,
   };
 });
+
+const cleanupMocks = vi.hoisted(() => ({
+  closePipelineItemAndClearCachedTerminalState: vi.fn(async (
+    itemId: string,
+    closePipelineItem: (itemId: string) => Promise<unknown>,
+  ) => {
+    await closePipelineItem(itemId);
+  }),
+  getTaskIdFromTeardownSessionId: vi.fn((sessionId: string) =>
+    sessionId.startsWith("td-") ? sessionId.slice(3) || null : null,
+  ),
+  isTeardownSessionId: vi.fn((sessionId: string) => sessionId.startsWith("td-")),
+  reportCloseSessionError: vi.fn(),
+  reportPrewarmSessionError: vi.fn(),
+  shouldAutoCloseTaskAfterTeardownExit: vi.fn(({ exitCode, lingerEnabled }: { exitCode: number | null; lingerEnabled: boolean }) =>
+    exitCode === 0 && !lingerEnabled,
+  ),
+  shouldAutoCloseTaskImmediatelyAfterEnteringTeardown: vi.fn(() => false),
+  shouldClearCachedTerminalStateOnSessionExit: vi.fn(() => false),
+}));
 
 vi.mock("../invoke", () => ({
   invoke: mockState.invokeMock,
@@ -195,14 +218,7 @@ vi.mock("../composables/terminalStateCache", () => ({
 }));
 
 vi.mock("./kannaCleanup", () => ({
-  closePipelineItemAndClearCachedTerminalState: vi.fn(async () => {}),
-  getTaskIdFromTeardownSessionId: vi.fn(() => null),
-  isTeardownSessionId: vi.fn(() => false),
-  reportCloseSessionError: vi.fn(),
-  reportPrewarmSessionError: vi.fn(),
-  shouldAutoCloseTaskAfterTeardownExit: vi.fn(() => false),
-  shouldAutoCloseTaskImmediatelyAfterEnteringTeardown: vi.fn(() => false),
-  shouldClearCachedTerminalStateOnSessionExit: vi.fn(() => false),
+  ...cleanupMocks,
 }));
 
 vi.mock("./agent-provider", () => ({
@@ -273,7 +289,14 @@ vi.mock("@kanna/db", () => ({
   reorderPinnedItems: vi.fn(async () => {}),
   updatePipelineItemDisplayName: vi.fn(async () => {}),
   clearPipelineItemStageResult: vi.fn(async () => {}),
-  closePipelineItem: vi.fn(async () => {}),
+  closePipelineItem: vi.fn(async (_db: DbHandle, itemId: string) => {
+    const item = mockState.pipelineItems.find((candidate) => candidate.id === itemId);
+    if (!item) return;
+    item.previous_stage = item.previous_stage ?? item.stage;
+    item.stage = "done";
+    item.closed_at = "2026-04-16T00:00:00.000Z";
+    item.updated_at = "2026-04-16T00:00:00.000Z";
+  }),
   reopenPipelineItem: vi.fn(async () => {}),
   getRepo: vi.fn(async (_db: DbHandle, repoId: string) =>
     mockState.repos.find((repo) => repo.id === repoId) ?? null,
@@ -331,6 +354,14 @@ describe("kanna runtime status reconciliation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockState.reset();
+    cleanupMocks.closePipelineItemAndClearCachedTerminalState.mockClear();
+    cleanupMocks.getTaskIdFromTeardownSessionId.mockClear();
+    cleanupMocks.isTeardownSessionId.mockClear();
+    cleanupMocks.reportCloseSessionError.mockClear();
+    cleanupMocks.reportPrewarmSessionError.mockClear();
+    cleanupMocks.shouldAutoCloseTaskAfterTeardownExit.mockClear();
+    cleanupMocks.shouldAutoCloseTaskImmediatelyAfterEnteringTeardown.mockClear();
+    cleanupMocks.shouldClearCachedTerminalStateOnSessionExit.mockClear();
     mockState.updateAgentSessionIdMock.mockClear();
   });
 
@@ -405,5 +436,110 @@ describe("kanna runtime status reconciliation", () => {
       "task-1",
       "019d99a5-aa94-7c73-b786-644cc095c037",
     );
+  });
+
+  it("selects the next task in the same repo when the selected teardown task auto-closes", async () => {
+    mockState.repos = [
+      {
+        ...mockState.repos[0]!,
+        id: "repo-1",
+        path: "/tmp/repo-1",
+        name: "repo-1",
+      },
+      {
+        ...mockState.repos[0]!,
+        id: "repo-2",
+        path: "/tmp/repo-2",
+        name: "repo-2",
+      },
+    ];
+    mockState.pipelineItems = [
+      {
+        ...mockState.pipelineItems[0]!,
+        id: "task-closing",
+        repo_id: "repo-1",
+        stage: "teardown",
+        created_at: "2026-04-16T00:03:00.000Z",
+      },
+      {
+        ...mockState.pipelineItems[0]!,
+        id: "task-next",
+        repo_id: "repo-1",
+        stage: "in progress",
+        created_at: "2026-04-16T00:02:00.000Z",
+      },
+      {
+        ...mockState.pipelineItems[0]!,
+        id: "task-other-repo",
+        repo_id: "repo-2",
+        stage: "in progress",
+        created_at: "2026-04-16T00:01:00.000Z",
+      },
+    ];
+
+    const store = await createStore();
+    await store.selectRepo("repo-1");
+    await store.selectItem("task-closing");
+    await flushStore();
+
+    mockState.emit("session_exit", {
+      session_id: "td-task-closing",
+      code: 0,
+    });
+
+    await flushStore();
+
+    expect(store.selectedRepoId).toBe("repo-1");
+    expect(store.selectedItemId).toBe("task-next");
+    expect(store.currentItem?.id).toBe("task-next");
+  });
+
+  it("falls back to another repo when the selected teardown task leaves its repo empty", async () => {
+    mockState.repos = [
+      {
+        ...mockState.repos[0]!,
+        id: "repo-1",
+        path: "/tmp/repo-1",
+        name: "repo-1",
+      },
+      {
+        ...mockState.repos[0]!,
+        id: "repo-2",
+        path: "/tmp/repo-2",
+        name: "repo-2",
+      },
+    ];
+    mockState.pipelineItems = [
+      {
+        ...mockState.pipelineItems[0]!,
+        id: "task-closing",
+        repo_id: "repo-1",
+        stage: "teardown",
+        created_at: "2026-04-16T00:02:00.000Z",
+      },
+      {
+        ...mockState.pipelineItems[0]!,
+        id: "task-other-repo",
+        repo_id: "repo-2",
+        stage: "in progress",
+        created_at: "2026-04-16T00:01:00.000Z",
+      },
+    ];
+
+    const store = await createStore();
+    await store.selectRepo("repo-1");
+    await store.selectItem("task-closing");
+    await flushStore();
+
+    mockState.emit("session_exit", {
+      session_id: "td-task-closing",
+      code: 0,
+    });
+
+    await flushStore();
+
+    expect(store.selectedRepoId).toBe("repo-2");
+    expect(store.selectedItemId).toBe("task-other-repo");
+    expect(store.currentItem?.id).toBe("task-other-repo");
   });
 });
