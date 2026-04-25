@@ -226,6 +226,7 @@ export const useKannaStore = defineStore("kanna", () => {
   services.getStageOrder = selection.getStageOrder;
   services.selectRepo = selection.selectRepo;
   services.selectItem = selection.selectItem;
+  services.selectReplacementAfterItemRemoval = selection.selectReplacementAfterItemRemoval;
   services.restoreSelection = selection.restoreSelection;
   services.goBack = selection.goBack;
   services.goForward = selection.goForward;

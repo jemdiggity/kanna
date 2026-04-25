@@ -16,6 +16,7 @@ export interface SelectionApi {
   getStageOrder: (repoId: string) => readonly string[];
   selectRepo: (repoId: string) => Promise<void>;
   selectItem: (itemId: string) => Promise<void>;
+  selectReplacementAfterItemRemoval: (removedItem: PipelineItem) => Promise<string | null>;
   restoreSelection: (itemId: string) => void;
   goBack: () => void;
   goForward: () => void;
@@ -131,6 +132,53 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     emitTaskSelected(itemId);
   }
 
+  function findReplacementAfterItemRemoval(removedItem: PipelineItem): PipelineItem | null {
+    const sameRepoSorted = sortItemsForRepo(removedItem.repo_id);
+    const sameRepoIndex = sameRepoSorted.findIndex((item) => item.id === removedItem.id);
+    const sameRepoRemaining = sameRepoSorted.filter((item) => item.id !== removedItem.id);
+    if (sameRepoRemaining.length > 0) {
+      const nextIndex = sameRepoIndex >= 0
+        ? Math.min(sameRepoIndex, sameRepoRemaining.length - 1)
+        : 0;
+      return sameRepoRemaining[nextIndex] ?? null;
+    }
+
+    const allSorted = context.state.repos.value.flatMap((repo) => sortItemsForRepo(repo.id));
+    const globalIndex = allSorted.findIndex((item) => item.id === removedItem.id);
+    const globalRemaining = allSorted.filter((item) => item.id !== removedItem.id);
+    if (globalRemaining.length === 0) return null;
+
+    const nextIndex = globalIndex >= 0
+      ? Math.min(globalIndex, globalRemaining.length - 1)
+      : 0;
+    return globalRemaining[nextIndex] ?? null;
+  }
+
+  async function selectReplacementAfterItemRemoval(removedItem: PipelineItem): Promise<string | null> {
+    const replacement = findReplacementAfterItemRemoval(removedItem);
+    if (!replacement) {
+      context.state.selectedItemId.value = null;
+      return null;
+    }
+
+    if (context.state.selectedRepoId.value !== replacement.repo_id) {
+      context.state.selectedRepoId.value = replacement.repo_id;
+      await setSetting(context.requireDb(), "selected_repo_id", replacement.repo_id);
+    }
+
+    if (context.state.selectedItemId.value !== replacement.id) {
+      nav.select(replacement.id, context.state.selectedItemId.value);
+    }
+    context.state.selectedItemId.value = replacement.id;
+    context.state.lastSelectedItemByRepo.value[replacement.repo_id] = replacement.id;
+    if (replacement.agent_type === "pty") {
+      beginTaskSwitch(replacement.id);
+    }
+    await setSetting(context.requireDb(), "selected_item_id", replacement.id);
+    emitTaskSelected(replacement.id);
+    return replacement.id;
+  }
+
   function restoreSelection(itemId: string) {
     context.state.selectedItemId.value = itemId;
     const item = context.state.items.value.find((candidate) => candidate.id === itemId);
@@ -193,6 +241,7 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     getStageOrder,
     selectRepo,
     selectItem,
+    selectReplacementAfterItemRemoval,
     restoreSelection,
     goBack,
     goForward,

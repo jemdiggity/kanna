@@ -140,21 +140,12 @@ export function createTasksApi(
   const withOptimisticItemOverlay = <T>(input: Parameters<NonNullable<StoreContext["services"]["withOptimisticItemOverlay"]>>[0]) =>
     requireService(context.services.withOptimisticItemOverlay, "withOptimisticItemOverlay")(input) as Promise<T>;
 
-  function computeNextItemId(closingId: string): string | null {
-    const sorted = requireService(context.services.sortedItemsForCurrentRepo, "sortedItemsForCurrentRepo").value;
-    const idx = sorted.findIndex((item) => item.id === closingId);
-    const remaining = sorted.filter((item) => item.id !== closingId);
-    const nextIdx = idx >= remaining.length ? remaining.length - 1 : idx;
-    return remaining[nextIdx]?.id || null;
-  }
-
-  function selectNextItem(nextId: string | null) {
-    if (nextId) {
-      if (context.state.selectedItemId.value === nextId) return;
-      void requireService(context.services.selectItem, "selectItem")(nextId);
-    } else if (context.state.selectedItemId.value !== null) {
-      context.state.selectedItemId.value = null;
-    }
+  async function selectReplacementAfterTaskRemoval(item: PipelineItem): Promise<void> {
+    if (context.state.selectedItemId.value !== item.id) return;
+    await requireService(
+      context.services.selectReplacementAfterItemRemoval,
+      "selectReplacementAfterItemRemoval",
+    )(item);
   }
 
   function hasLiveTaskResources(item: PipelineItem): boolean {
@@ -675,8 +666,6 @@ export function createTasksApi(
     if (!item || !repo) return;
 
     try {
-      const nextId = opts?.selectNext !== false ? computeNextItemId(item.id) : null;
-
       await context.requireDb().execute(
         "UPDATE pipeline_item SET previous_stage = stage, updated_at = datetime('now') WHERE id = ? AND previous_stage IS NULL",
         [item.id],
@@ -710,7 +699,7 @@ export function createTasksApi(
         }
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
 
-        if (opts?.selectNext !== false) selectNextItem(nextId);
+        if (opts?.selectNext !== false) await selectReplacementAfterTaskRemoval(item);
         await checkUnblocked(item.id);
         await reloadSnapshot();
         return;
@@ -720,7 +709,7 @@ export function createTasksApi(
         await removeAllBlockersForItem(context.requireDb(), item.id);
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
 
-        if (opts?.selectNext !== false) selectNextItem(nextId);
+        if (opts?.selectNext !== false) await selectReplacementAfterTaskRemoval(item);
         await reloadSnapshot();
         void detachSessionsBeforeIntentionalKill([item.id]).then(() =>
           invoke("kill_session", { sessionId: item.id }).catch((error: unknown) =>
@@ -746,7 +735,7 @@ export function createTasksApi(
           previousStage: item.stage,
           nextStage: "done",
         })) {
-          selectNextItem(nextId);
+          await selectReplacementAfterTaskRemoval(item);
         }
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
         await checkUnblocked(item.id);
@@ -783,7 +772,7 @@ export function createTasksApi(
         previousStage: item.stage,
         nextStage: TEARDOWN_STAGE,
       })) {
-        selectNextItem(nextId);
+        await selectReplacementAfterTaskRemoval(item);
       }
       await reloadSnapshot();
 
