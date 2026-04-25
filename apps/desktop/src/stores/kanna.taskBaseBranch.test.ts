@@ -74,6 +74,7 @@ const mockState = vi.hoisted(() => {
   let blockCleanupGate: Promise<void> | null = null;
   const listBlockersForItemMock = vi.fn(async () => [] as PipelineItem[]);
   const listBlockedByItemMock = vi.fn(async () => [] as PipelineItem[]);
+  const setSettingMock = vi.fn(async () => {});
   const updatePipelineItemTagsMock = vi.fn(async (_db: DbHandle, itemId: string, tags: string[]) => {
     const item = pipelineItems.find((candidate) => candidate.id === itemId);
     if (item) {
@@ -200,6 +201,7 @@ const mockState = vi.hoisted(() => {
     closePipelineItemMock.mockClear();
     listBlockersForItemMock.mockClear();
     listBlockedByItemMock.mockClear();
+    setSettingMock.mockClear();
     updatePipelineItemTagsMock.mockClear();
     listBlockersForItemMock.mockResolvedValue([]);
     listBlockedByItemMock.mockResolvedValue([]);
@@ -264,6 +266,7 @@ const mockState = vi.hoisted(() => {
     defer,
     listBlockersForItemMock,
     listBlockedByItemMock,
+    setSettingMock,
     updatePipelineItemTagsMock,
     get blockCleanupGate() {
       return blockCleanupGate;
@@ -451,7 +454,7 @@ vi.mock("@kanna/db", () => ({
     mockState.repos.find((repo) => repo.id === repoId) ?? null
   ),
   getSetting: vi.fn(async () => null),
-  setSetting: vi.fn(async () => {}),
+  setSetting: mockState.setSettingMock,
   insertTaskBlocker: vi.fn(async () => {}),
   removeTaskBlocker: vi.fn(async () => {}),
   removeAllBlockersForItem: vi.fn(async () => {}),
@@ -1214,6 +1217,47 @@ describe("kanna store task base branch integration", () => {
     await flushStore();
 
     expect(store.selectedItemId).toBe("item-next");
+  });
+
+  it("selects the next visible item before closing the promoted task", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "review", transition: "manual" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        created_at: "2026-04-14T00:02:00.000Z",
+        updated_at: "2026-04-14T00:02:00.000Z",
+      }),
+      mockState.makeItem({
+        id: "item-next",
+        branch: "task-next",
+        stage: "in progress",
+        created_at: "2026-04-14T00:01:00.000Z",
+        updated_at: "2026-04-14T00:01:00.000Z",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-source");
+    await flushStore();
+
+    await store.advanceStage("item-source");
+
+    const selectNextOrder = mockState.setSettingMock.mock.calls.findIndex(
+      ([, key, value]) => key === "selected_item_id" && value === "item-next",
+    );
+    const selectNextInvocationOrder = mockState.setSettingMock.mock.invocationCallOrder[selectNextOrder];
+    const closeInvocationOrder = mockState.closePipelineItemMock.mock.invocationCallOrder[0];
+
+    expect(selectNextOrder).toBeGreaterThanOrEqual(0);
+    expect(selectNextInvocationOrder).toBeLessThan(closeInvocationOrder);
   });
 
   it("still follows the spawned task when follow_task is omitted", async () => {
