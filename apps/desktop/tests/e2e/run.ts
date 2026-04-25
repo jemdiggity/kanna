@@ -5,20 +5,12 @@ import { dirname, basename, join, posix, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { buildRealE2eAgentEnv } from "./runEnv";
+import { createInstanceConfig, type InstanceConfig } from "./runConfig";
 import { pauseBeforeTestTarget, pauseForAppReady } from "./helpers/runSlowMode";
 
 interface CommandOptions {
   cwd: string;
   env: Record<string, string>;
-}
-
-interface InstanceConfig {
-  baseUrl: string;
-  daemonDir: string;
-  env: Record<string, string>;
-  startCommand: string[];
-  stopCommand: string[];
-  webDriverPort: number;
 }
 
 interface RunningInstances {
@@ -191,7 +183,7 @@ function isRealTestTarget(testTarget: string): boolean {
   return testTarget.includes("/real/");
 }
 
-function createInstanceConfig(input: {
+function buildInstanceConfig(input: {
   daemonDir: string;
   dbName: string;
   devPortEnvValue: number;
@@ -211,24 +203,16 @@ function createInstanceConfig(input: {
     ...input.envOverrides,
   });
 
-  return {
-    baseUrl: `http://127.0.0.1:${input.effectiveWebDriverPort}`,
+  return createInstanceConfig({
     daemonDir: input.daemonDir,
+    dbName: input.dbName,
+    devPortEnvValue: input.devPortEnvValue,
+    effectiveWebDriverPort: input.effectiveWebDriverPort,
     env,
-    startCommand: [
-      "./scripts/dev.sh",
-      "start",
-      "--db",
-      input.dbName,
-      "--delete-db",
-      "--daemon-dir",
-      input.daemonDir,
-      "--transfer-root",
-      join(input.daemonDir, "transfer-root"),
-    ],
-    stopCommand: ["./scripts/dev.sh", "stop", "--kill-daemon"],
-    webDriverPort: input.effectiveWebDriverPort,
-  };
+    sessionName: input.sessionName,
+    transferPortEnvValue: input.transferPortEnvValue,
+    webDriverPortEnvValue: input.webDriverPortEnvValue,
+  });
 }
 
 async function main(): Promise<void> {
@@ -253,7 +237,7 @@ async function main(): Promise<void> {
   const primaryTransferPort = await findFreePort();
   const primaryDbName = `test-${worktreeName}-primary.db`;
   const primaryDaemonDir = join(repoRoot, ".kanna-daemon-e2e", runSuffix);
-  const primary = createInstanceConfig({
+  const primary = buildInstanceConfig({
     daemonDir: primaryDaemonDir,
     dbName: primaryDbName,
     devPortEnvValue: primaryDevPort,
@@ -282,7 +266,7 @@ async function main(): Promise<void> {
     secondaryTransferPort !== null &&
     secondaryDbName !== null &&
     secondaryDaemonDir !== null
-    ? createInstanceConfig({
+    ? buildInstanceConfig({
         daemonDir: secondaryDaemonDir,
         dbName: secondaryDbName,
         devPortEnvValue: secondaryDevPort,
