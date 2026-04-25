@@ -1,0 +1,28 @@
+{
+  "name": "qa",
+  "description": "Implementation -> QA review -> PR flow with automatic revision requests for weak testing",
+  "stages": [
+    {
+      "name": "in progress",
+      "description": "Agent implements the task",
+      "agent": "implement",
+      "prompt": "$TASK_PROMPT",
+      "transition": "manual"
+    },
+    {
+      "name": "review",
+      "description": "QA agent checks whether sufficient tests exist before PR creation",
+      "agent": "review",
+      "prompt": "Review branch $BRANCH for task quality and test coverage. Original task: $TASK_PROMPT. Previous result: $PREV_RESULT",
+      "transition": "auto"
+    },
+    {
+      "name": "pr",
+      "description": "Agent creates a GitHub PR after QA passes",
+      "agent": "pr",
+      "prompt": "Create a PR for the QA-approved work on branch $BRANCH. QA result: $PREV_RESULT",
+      "transition": "manual",
+      "follow_task": false
+    }
+  ]
+}

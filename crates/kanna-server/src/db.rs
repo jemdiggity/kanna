@@ -477,6 +477,21 @@ impl Db {
         Ok(())
     }
 
+    pub fn update_pipeline_item_stage_result(
+        &self,
+        id: &str,
+        stage_result: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let rows_affected = self.conn.execute(
+            "UPDATE pipeline_item SET stage_result = ?, updated_at = datetime('now') WHERE id = ?",
+            (stage_result, id),
+        )?;
+        if rows_affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
     pub fn list_task_ports(&self) -> Result<Vec<i64>, rusqlite::Error> {
         let mut stmt = self
             .conn

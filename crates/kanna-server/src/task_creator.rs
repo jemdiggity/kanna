@@ -30,6 +30,7 @@ struct PipelineStage {
     agent: Option<String>,
     prompt: Option<String>,
     agent_provider: Option<String>,
+    transition: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -125,20 +126,13 @@ pub(crate) fn prepare_advance_stage_for_api(
         .get(current_stage_index + 1)
         .ok_or_else(|| format!("task already at final stage: {}", current_stage_name))?;
 
-    let task_prompt = if let Some(agent_name) = next_stage.agent.as_deref() {
-        let agent = read_agent_definition(&repo.path, agent_name)?;
-        build_stage_prompt(
-            &agent.prompt,
-            next_stage.prompt.as_deref(),
-            &PromptContext {
-                task_prompt: source_task.prompt.as_deref(),
-                prev_result: source_task.stage_result.as_deref(),
-                branch: source_task.branch.as_deref(),
-            },
-        )
-    } else {
-        String::new()
-    };
+    let task_prompt = build_target_stage_prompt(
+        &repo.path,
+        next_stage,
+        source_task.prompt.as_deref().unwrap_or(""),
+        source_task.stage_result.as_deref(),
+        source_task.branch.as_deref(),
+    )?;
     let explicit_provider = if next_stage.agent.is_some() {
         None
     } else {
@@ -154,6 +148,130 @@ pub(crate) fn prepare_advance_stage_for_api(
             pipeline_name: Some(pipeline_name),
             base_ref: source_task.branch,
             stage_override: Some(next_stage.name.clone()),
+            explicit_provider,
+            model: None,
+            permission_mode: None,
+            allowed_tools: Vec::new(),
+        },
+    )
+}
+
+pub(crate) fn prepare_auto_stage_completion_for_api(
+    db: &Db,
+    config: &Config,
+    source_task_id: &str,
+) -> Result<Option<PreparedTaskSpawn>, String> {
+    let source_task = db
+        .get_task_stage_source(source_task_id)
+        .map_err(|e| format!("db error: {}", e))?
+        .ok_or_else(|| format!("task not found: {}", source_task_id))?;
+    let repo = db
+        .get_repo(&source_task.repo_id)
+        .map_err(|e| format!("db error: {}", e))?
+        .ok_or_else(|| format!("repo not found for task: {}", source_task_id))?;
+
+    let pipeline_name = source_task
+        .pipeline
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    let current_stage_name = source_task
+        .stage
+        .clone()
+        .ok_or_else(|| format!("task has no stage: {}", source_task_id))?;
+    let pipeline = read_pipeline_definition(&repo.path, &pipeline_name)?;
+    let current_stage_index = pipeline
+        .stages
+        .iter()
+        .position(|stage| stage.name == current_stage_name)
+        .ok_or_else(|| format!("stage not found in pipeline: {}", current_stage_name))?;
+    let current_stage = &pipeline.stages[current_stage_index];
+    if current_stage.transition.as_deref() != Some("auto") {
+        return Ok(None);
+    }
+    let Some(next_stage) = pipeline.stages.get(current_stage_index + 1) else {
+        return Ok(None);
+    };
+
+    let task_prompt = build_target_stage_prompt(
+        &repo.path,
+        next_stage,
+        source_task.prompt.as_deref().unwrap_or(""),
+        source_task.stage_result.as_deref(),
+        source_task.branch.as_deref(),
+    )?;
+    let explicit_provider = if next_stage.agent.is_some() {
+        None
+    } else {
+        source_task.agent_provider
+    };
+
+    prepare_task_spawn(
+        db,
+        config,
+        &repo,
+        TaskCreationRequest {
+            task_prompt,
+            pipeline_name: Some(pipeline_name),
+            base_ref: source_task.branch,
+            stage_override: Some(next_stage.name.clone()),
+            explicit_provider,
+            model: None,
+            permission_mode: None,
+            allowed_tools: Vec::new(),
+        },
+    )
+    .map(Some)
+}
+
+pub(crate) fn prepare_revision_task_for_api(
+    db: &Db,
+    config: &Config,
+    source_task_id: &str,
+    target_stage_name: &str,
+    revision_prompt: &str,
+) -> Result<PreparedTaskSpawn, String> {
+    let source_task = db
+        .get_task_stage_source(source_task_id)
+        .map_err(|e| format!("db error: {}", e))?
+        .ok_or_else(|| format!("task not found: {}", source_task_id))?;
+    let repo = db
+        .get_repo(&source_task.repo_id)
+        .map_err(|e| format!("db error: {}", e))?
+        .ok_or_else(|| format!("repo not found for task: {}", source_task_id))?;
+
+    let pipeline_name = source_task
+        .pipeline
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    let pipeline = read_pipeline_definition(&repo.path, &pipeline_name)?;
+    let target_stage = pipeline
+        .stages
+        .iter()
+        .find(|stage| stage.name == target_stage_name)
+        .ok_or_else(|| format!("stage not found in pipeline: {}", target_stage_name))?;
+
+    let task_prompt = build_target_stage_prompt(
+        &repo.path,
+        target_stage,
+        revision_prompt,
+        source_task.stage_result.as_deref(),
+        source_task.branch.as_deref(),
+    )?;
+    let explicit_provider = if target_stage.agent.is_some() {
+        None
+    } else {
+        source_task.agent_provider
+    };
+
+    prepare_task_spawn(
+        db,
+        config,
+        &repo,
+        TaskCreationRequest {
+            task_prompt,
+            pipeline_name: Some(pipeline_name),
+            base_ref: source_task.branch,
+            stage_override: Some(target_stage.name.clone()),
             explicit_provider,
             model: None,
             permission_mode: None,
@@ -333,7 +451,10 @@ fn prepare_task_spawn(
     db.update_pipeline_item_ports(&task_id, first_port, port_env_json.as_deref())
         .map_err(|e| format!("db error: {}", e))?;
 
-    let start_point = fetch_start_point(&repo.path, repo.default_branch.as_deref());
+    let start_point = request
+        .base_ref
+        .clone()
+        .or_else(|| fetch_start_point(&repo.path, repo.default_branch.as_deref()));
     create_worktree(&repo.path, &branch, &worktree_path, start_point.as_deref())?;
     let worktree_repo_config = read_repo_config(&worktree_path)?;
     let spawn_env = build_spawn_env(config, &task_id, &port_env)?;
@@ -441,6 +562,29 @@ fn read_agent_definition(repo_path: &str, agent_name: &str) -> Result<AgentDefin
         Err(_) => read_builtin_resource(&format!(".kanna/agents/{agent_name}/AGENT.md"))?,
     };
     parse_agent_definition(&content)
+}
+
+fn build_target_stage_prompt(
+    repo_path: &str,
+    stage: &PipelineStage,
+    task_prompt: &str,
+    prev_result: Option<&str>,
+    branch: Option<&str>,
+) -> Result<String, String> {
+    if let Some(agent_name) = stage.agent.as_deref() {
+        let agent = read_agent_definition(repo_path, agent_name)?;
+        return Ok(build_stage_prompt(
+            &agent.prompt,
+            stage.prompt.as_deref(),
+            &PromptContext {
+                task_prompt: Some(task_prompt),
+                prev_result,
+                branch,
+            },
+        ));
+    }
+
+    Ok(task_prompt.to_string())
 }
 
 fn read_builtin_resource(relative_path: &str) -> Result<String, String> {
@@ -761,6 +905,10 @@ fn build_spawn_env(
             "KANNA_SOCKET_PATH".to_string(),
             pipeline_socket_path(&config.daemon_dir),
         ),
+        (
+            "KANNA_SERVER_BASE_URL".to_string(),
+            format!("http://127.0.0.1:{}", config.lan_port),
+        ),
     ]);
     env.extend(port_env.clone());
     if let Some(path) = which_binary("kanna-cli")? {
@@ -905,7 +1053,7 @@ fn short_socket_path(dir: &PathBuf) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::prepare_advance_stage_for_api;
+    use super::{prepare_advance_stage_for_api, prepare_revision_task_for_api};
     use crate::config::Config;
     use crate::db::Db;
     use std::process::Command;
@@ -977,6 +1125,12 @@ mod tests {
             .status()
             .unwrap()
             .success());
+        assert!(Command::new("git")
+            .args(["branch", "task-old-branch"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
 
         let config = Config {
             relay_url: "wss://relay.example".to_string(),
@@ -1022,6 +1176,124 @@ mod tests {
         assert_eq!(
             prepared.created_task.title,
             "Review task: Fix the mobile shell\n\nReview branch task-old-branch with result {\"status\":\"success\"}"
+        );
+        assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
+    }
+
+    #[test]
+    fn prepare_revision_task_builds_target_stage_task_from_reviewed_branch() {
+        let repo_root =
+            std::env::temp_dir().join(format!("kanna-stage-revision-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&repo_root);
+        std::fs::create_dir_all(repo_root.join(".kanna/pipelines")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna/agents/implement")).unwrap();
+        std::fs::write(repo_root.join("README.md"), "test repo").unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(
+            repo_root.join(".kanna/pipelines/qa.json"),
+            r#"{
+  "stages": [
+    { "name": "in progress", "transition": "manual", "agent": "implement", "prompt": "$TASK_PROMPT" },
+    { "name": "review", "transition": "auto" },
+    { "name": "pr", "transition": "manual" }
+  ]
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/agents/implement/AGENT.md"),
+            "---\nagent_provider: claude\n---\nImplement revision:\n$TASK_PROMPT",
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .args(["add", "README.md", ".kanna"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "task-reviewed-branch"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: "/tmp/kanna-daemon".to_string(),
+            db_path: Db::test_db_path("revision-stage-helper"),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "0.0.0.0".to_string(),
+            lan_port: 48120,
+            pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.insert_test_pipeline_item(
+            "review-task",
+            "repo-1",
+            "Fix the mobile shell",
+            Some("Mobile shell"),
+            "review",
+            "2026-04-17 07:00:00",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_stage_context(
+            "review-task",
+            "task-reviewed-branch",
+            "qa",
+            Some("{\"status\":\"failure\",\"summary\":\"missing e2e\"}"),
+            "copilot",
+        )
+        .unwrap();
+
+        let prepared = prepare_revision_task_for_api(
+            &db,
+            &config,
+            "review-task",
+            "in progress",
+            "Add e2e coverage for task creation.",
+        )
+        .unwrap();
+
+        assert_eq!(prepared.created_task.repo_id, "repo-1");
+        assert_eq!(prepared.created_task.stage, "in progress");
+        assert_eq!(
+            prepared.created_task.title,
+            "Implement revision:\nAdd e2e coverage for task creation.\n\nAdd e2e coverage for task creation."
         );
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
     }
