@@ -86,6 +86,13 @@ const store = {
   renameItem: vi.fn(async () => {}),
   hideRepo: vi.fn(async () => {}),
   spawnPtySession: vi.fn(async () => {}),
+  loadAgent: vi.fn(async () => ({
+    prompt: "Use https://schemas.kanna.build/config.schema.json when writing .kanna/config.json.",
+    agent_provider: ["codex", "claude"],
+    model: undefined,
+    permission_mode: "default",
+    allowed_tools: undefined,
+  })),
 };
 const toastInfoMock = vi.fn();
 const toastWarningMock = vi.fn();
@@ -414,6 +421,7 @@ describe("App", () => {
     store.approveIncomingTransfer.mockClear();
     store.rejectIncomingTransfer.mockClear();
     store.handleOutgoingTransferCommitted.mockClear();
+    store.loadAgent.mockClear();
     store.repos = [{ id: "repo-1", path: "/tmp/repo", name: "repo" }];
     store.selectedRepoId = "repo-1";
     store.selectedRepo = { id: "repo-1", path: "/tmp/repo", name: "repo" };
@@ -870,6 +878,67 @@ describe("App", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="command-palette"]').text()).toContain("taskTransfer.pairPeer");
+  });
+
+  it("adds Create Config to command palette commands and launches a config-factory task", async () => {
+    store.currentItem = null;
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      template: `
+        <div data-testid="command-palette">
+          <button
+            v-for="command in dynamicCommands"
+            :key="command.id"
+            type="button"
+            :data-command-id="command.id"
+            :data-command-description="command.description"
+            @click="command.execute()"
+          >
+            {{ command.label }}
+          </button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    const createConfigButton = wrapper.get('[data-command-id="create-config"]');
+    expect(createConfigButton.text()).toBe("Create Config");
+    expect(createConfigButton.attributes("data-command-description")).toBe("Create or update .kanna/config.json");
+
+    await createConfigButton.trigger("click");
+    await flushPromises();
+
+    expect(store.loadAgent).toHaveBeenCalledWith("/tmp/repo", "config-factory");
+    expect(store.createItem).toHaveBeenCalledWith(
+      "repo-1",
+      "/tmp/repo",
+      "Help me create or update the .kanna/config.json for this repository.",
+      "pty",
+      expect.objectContaining({
+        agentProvider: "codex",
+        customTask: expect.objectContaining({
+          agent: "config-factory",
+          name: "Create Config",
+          prompt: expect.stringContaining("https://schemas.kanna.build/config.schema.json"),
+        }),
+      }),
+    );
   });
 
   it("keeps loading transfer peers until discovery has had time to warm up", async () => {

@@ -59,6 +59,13 @@ function hasTag(item: { tags: string }, tag: string): boolean {
   catch { return false; }
 }
 
+function firstSupportedAgentProvider(agentProvider: AgentProvider | AgentProvider[] | string | string[] | undefined): AgentProvider | undefined {
+  const providers = Array.isArray(agentProvider) ? agentProvider : [agentProvider];
+  return providers.find((provider): provider is AgentProvider =>
+    provider === "claude" || provider === "copilot" || provider === "codex"
+  );
+}
+
 const store = useKannaStore();
 const toast = useToast();
 const { t } = useI18n();
@@ -361,10 +368,7 @@ async function handleLaunchCustomTask(task: CustomTaskConfig) {
 
     if (task.agent) {
       const agent = await store.loadAgent(repo.path, task.agent);
-      const firstProvider = (Array.isArray(agent.agent_provider) ? agent.agent_provider : [agent.agent_provider])
-        .find((provider): provider is AgentProvider =>
-          provider === "claude" || provider === "copilot" || provider === "codex"
-        );
+      const firstProvider = firstSupportedAgentProvider(agent.agent_provider);
 
       resolvedTask = {
         ...task,
@@ -444,6 +448,42 @@ async function handleCreatePipeline() {
   }
 }
 
+async function handleCreateConfig() {
+  if (!store.selectedRepoId) {
+    if (store.repos.length === 1) {
+      store.selectedRepoId = store.repos[0].id;
+    } else {
+      alert(t('app.selectRepoFirst'));
+      return;
+    }
+  }
+  const repo = store.repos.find((r) => r.id === store.selectedRepoId);
+  if (!repo) return;
+  try {
+    const agent = await store.loadAgent(repo.path, "config-factory");
+    await store.createItem(
+      store.selectedRepoId,
+      repo.path,
+      "Help me create or update the .kanna/config.json for this repository.",
+      "pty",
+      {
+        agentProvider: firstSupportedAgentProvider(agent.agent_provider),
+        customTask: {
+          name: "Create Config",
+          agent: "config-factory",
+          prompt: agent.prompt,
+          model: agent.model,
+          permissionMode: agent.permission_mode,
+          allowedTools: agent.allowed_tools,
+        },
+      },
+    );
+  } catch (e: unknown) {
+    console.error("[App] create config task failed:", e);
+    alert(`Failed to create config task: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
   const cmds: DynamicCommand[] = [];
   // Rename task (only when a task is selected)
@@ -478,6 +518,12 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
     label: "Create Pipeline",
     description: "Create a new pipeline definition",
     execute: () => { handleCreatePipeline().catch((e) => console.error("[App] create pipeline failed:", e)); },
+  });
+  cmds.push({
+    id: "create-config",
+    label: "Create Config",
+    description: "Create or update .kanna/config.json",
+    execute: () => { handleCreateConfig().catch((e) => console.error("[App] create config failed:", e)); },
   });
   // Always include "New Custom Task" option
   cmds.push({
