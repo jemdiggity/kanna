@@ -236,6 +236,19 @@
     "searchNoMatches": "일치 없음",
     "searchPlaceholder": "검색..."
   },
+  "commitGraph": {
+    "searchPlaceholder": "커밋, 해시, 작성자, 참조 검색",
+    "searchNoMatches": "일치 없음",
+    "shortcutSearch": "검색",
+    "shortcutSearchAlt": "검색 (대체)",
+    "shortcutNextPrevMatch": "다음 / 이전 일치",
+    "shortcutLineUpDown": "줄 ↓/↑",
+    "shortcutPageUpDown": "페이지 ↓/↑",
+    "shortcutHalfUpDown": "반 페이지 ↓/↑",
+    "shortcutTopBottom": "처음 / 끝",
+    "shortcutToggleMode": "auto / all 전환",
+    "shortcutClose": "닫기"
+  },
   "mainPanel": {
     "taskBlocked": "작업 차단됨",
     "taskBlockedHint": "모든 차단 요소가 완료되면 이 작업이 자동으로 시작됩니다.",
