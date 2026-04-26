@@ -22,6 +22,7 @@ import {
   pinPipelineItem,
   unpinPipelineItem,
   reorderPinnedItems,
+  reorderRepos,
   insertTrustedPeer,
   listTrustedPeers,
   revokeTrustedPeer,
@@ -86,6 +87,7 @@ function createMockDb(): DbHandle & {
           name,
           default_branch,
           hidden: 0,
+          sort_order: tables.repo.length,
           created_at: new Date().toISOString(),
           last_opened_at: new Date().toISOString(),
         });
@@ -100,6 +102,10 @@ function createMockDb(): DbHandle & {
         const [id] = bindValues as [string];
         const repo = tables.repo.find((r) => r.id === id);
         if (repo) repo.hidden = 0;
+      } else if (q.startsWith("UPDATE REPO SET SORT_ORDER")) {
+        const [sortOrder, id] = bindValues as [number, string];
+        const repo = tables.repo.find((r) => r.id === id);
+        if (repo) repo.sort_order = sortOrder;
       } else if (q.startsWith("INSERT INTO PIPELINE_ITEM")) {
         const [id, repo_id, issue_number, issue_title, prompt, pipeline, stage, tagsJson, pr_number, pr_url, branch, agent_type, agent_provider, port_offset, port_env, activity] =
           bindValues as unknown[];
@@ -314,14 +320,16 @@ function createMockDb(): DbHandle & {
       } else if (q.startsWith("SELECT * FROM REPO WHERE HIDDEN")) {
         return tables.repo.filter((r) => r.hidden === 0).sort(
           (a, b) =>
+            a.sort_order - b.sort_order ||
             new Date(a.created_at).getTime() -
-            new Date(b.created_at).getTime()
+              new Date(b.created_at).getTime()
         ) as unknown as T[];
       } else if (q.startsWith("SELECT * FROM REPO")) {
         return [...tables.repo].sort(
           (a, b) =>
+            a.sort_order - b.sort_order ||
             new Date(a.created_at).getTime() -
-            new Date(b.created_at).getTime()
+              new Date(b.created_at).getTime()
         ) as unknown as T[];
       } else if (q.startsWith("SELECT * FROM PIPELINE_ITEM WHERE REPO_ID") && q.includes("STAGE != 'DONE'")) {
         const [repoId] = bindValues as string[];
@@ -424,6 +432,32 @@ describe("repo queries", () => {
     const repos = await listRepos(db);
 
     expect(repos.map((repo) => repo.id)).toEqual(["r1", "r2"]);
+  });
+
+  it("reorderRepos persists a custom repository order", async () => {
+    await insertRepo(db, {
+      id: "r1",
+      path: "/home/user/project-a",
+      name: "project-a",
+      default_branch: "main",
+    });
+    await insertRepo(db, {
+      id: "r2",
+      path: "/home/user/project-b",
+      name: "project-b",
+      default_branch: "main",
+    });
+    await insertRepo(db, {
+      id: "r3",
+      path: "/home/user/project-c",
+      name: "project-c",
+      default_branch: "main",
+    });
+
+    await reorderRepos(db, ["r3", "r1", "r2"]);
+
+    const repos = await listRepos(db);
+    expect(repos.map((repo) => repo.id)).toEqual(["r3", "r1", "r2"]);
   });
 
   it("getRepo returns the correct repo", async () => {

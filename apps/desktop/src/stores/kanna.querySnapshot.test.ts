@@ -16,6 +16,7 @@ const mockState = vi.hoisted(() => {
       name: overrides.name ?? id,
       default_branch: "main",
       hidden: 0,
+      sort_order: 0,
       created_at: now,
       last_opened_at: now,
       ...overrides,

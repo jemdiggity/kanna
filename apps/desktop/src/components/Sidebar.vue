@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Repo, PipelineItem } from "@kanna/db";
-import { computed, ref, nextTick, watch } from "vue";
+import { computed, ref, nextTick, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
 import { taskSearchMatch } from "../utils/taskSearch";
@@ -35,15 +35,29 @@ const emit = defineEmits<{
   (e: "pin-item", itemId: string, position: number): void;
   (e: "unpin-item", itemId: string): void;
   (e: "reorder-pinned", repoId: string, orderedIds: string[]): void;
+  (e: "reorder-repos", orderedIds: string[]): void;
   (e: "rename-item", itemId: string, displayName: string | null): void;
   (e: "hide-repo", repoId: string): void;
   (e: "rename-done"): void;
 }>();
 
+interface DraggableChange<T extends { id: string }> {
+  added?: {
+    element: T;
+    newIndex: number;
+  };
+  moved?: {
+    oldIndex: number;
+    newIndex: number;
+  };
+}
+
 const collapsedRepos = ref<Set<string>>(new Set());
 const searchQuery = ref("");
 const searchInputRef = ref<HTMLInputElement | null>(null);
 const preSearchCollapsed = ref<Set<string> | null>(null);
+const repoDrag = ref<{ repoId: string; startY: number; active: boolean; overRepoId: string | null } | null>(null);
+const suppressNextRepoClick = ref(false);
 const trimmedSearchQuery = computed(() => searchQuery.value.trim());
 const hasActiveSearch = computed(() => trimmedSearchQuery.value.length > 0);
 
@@ -196,6 +210,7 @@ function preventFocusSteal(e: MouseEvent) {
 }
 
 function handleSelectRepo(repoId: string) {
+  if (suppressNextRepoClick.value) return;
   emit("select-repo", repoId);
 }
 
@@ -212,8 +227,76 @@ function toggleRepo(repoId: string) {
   }
 }
 
-// Drag handlers — vuedraggable's @change provides { added, removed, moved }
-function onPinnedChange(repoId: string, evt: any) {
+function reorderIds<T extends { id: string }>(items: readonly T[], oldIndex: number, newIndex: number): string[] {
+  const ids = items.map((item) => item.id);
+  const [moved] = ids.splice(oldIndex, 1);
+  if (!moved) return ids;
+  ids.splice(newIndex, 0, moved);
+  return ids;
+}
+
+function reorderedRepoIds(sourceRepoId: string, targetRepoId: string): string[] | null {
+  const ids = props.repos.map((repo) => repo.id);
+  const oldIndex = ids.indexOf(sourceRepoId);
+  const newIndex = ids.indexOf(targetRepoId);
+  if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return null;
+  const [moved] = ids.splice(oldIndex, 1);
+  if (!moved) return null;
+  ids.splice(newIndex, 0, moved);
+  return ids;
+}
+
+function emitRepoReorder(sourceRepoId: string, targetRepoId: string) {
+  if (isSearchActive()) return;
+  const orderedIds = reorderedRepoIds(sourceRepoId, targetRepoId);
+  if (!orderedIds) return;
+  emit("reorder-repos", orderedIds);
+}
+
+function getRepoIdAtPoint(x: number, y: number): string | null {
+  const element = document.elementFromPoint(x, y);
+  if (!(element instanceof HTMLElement)) return null;
+  return element.closest<HTMLElement>(".repo-section[data-repo-id]")?.dataset.repoId ?? null;
+}
+
+function stopRepoDragListeners() {
+  document.removeEventListener("mousemove", handleRepoDragMove);
+  document.removeEventListener("mouseup", handleRepoDragEnd);
+}
+
+function handleRepoDragMove(event: MouseEvent) {
+  const drag = repoDrag.value;
+  if (!drag) return;
+  if (!drag.active && Math.abs(event.clientY - drag.startY) < 4) return;
+  drag.active = true;
+  const overRepoId = getRepoIdAtPoint(event.clientX, event.clientY);
+  drag.overRepoId = overRepoId && overRepoId !== drag.repoId ? overRepoId : null;
+  event.preventDefault();
+}
+
+function handleRepoDragEnd(event: MouseEvent) {
+  stopRepoDragListeners();
+  const drag = repoDrag.value;
+  repoDrag.value = null;
+  if (!drag?.active) return;
+  suppressNextRepoClick.value = true;
+  setTimeout(() => {
+    suppressNextRepoClick.value = false;
+  }, 0);
+  const targetRepoId = getRepoIdAtPoint(event.clientX, event.clientY) ?? drag.overRepoId;
+  if (!targetRepoId || targetRepoId === drag.repoId) return;
+  emitRepoReorder(drag.repoId, targetRepoId);
+}
+
+function startRepoDrag(repoId: string, event: MouseEvent) {
+  if (isSearchActive() || event.button !== 0) return;
+  if (event.target instanceof HTMLElement && event.target.closest(".collapse-btn,.btn-icon")) return;
+  repoDrag.value = { repoId, startY: event.clientY, active: false, overRepoId: null };
+  document.addEventListener("mousemove", handleRepoDragMove);
+  document.addEventListener("mouseup", handleRepoDragEnd);
+}
+
+function onPinnedChange(repoId: string, evt: DraggableChange<PipelineItem>) {
   if (isSearchActive()) return;
   if (evt.added) {
     // Item dragged from unpinned to pinned zone
@@ -225,21 +308,19 @@ function onPinnedChange(repoId: string, evt: any) {
   }
   if (evt.moved) {
     // Item reordered within pinned zone
-    const ids = sortedPinned(repoId).map((i) => i.id);
-    const [moved] = ids.splice(evt.moved.oldIndex, 1);
-    ids.splice(evt.moved.newIndex, 0, moved);
-    emit("reorder-pinned", repoId, ids);
+    emit("reorder-pinned", repoId, reorderIds(sortedPinned(repoId), evt.moved.oldIndex, evt.moved.newIndex));
   }
 }
 
-function onUnpinnedChange(repoId: string, evt: any) {
+function onUnpinnedChange(repoId: string, evt: DraggableChange<PipelineItem>) {
   if (isSearchActive()) return;
-  if (evt.added) {
+  const added = evt.added;
+  if (added) {
     // Item dragged from pinned to unpinned zone — unpin it
-    emit("unpin-item", evt.added.element.id);
+    emit("unpin-item", added.element.id);
     // Reorder remaining pinned items
     const remainingIds = sortedPinned(repoId)
-      .filter((i) => i.id !== evt.added.element.id)
+      .filter((i) => i.id !== added.element.id)
       .map((i) => i.id);
     if (remainingIds.length > 0) {
       emit("reorder-pinned", repoId, remainingIds);
@@ -271,7 +352,9 @@ function focusSearch() {
   searchInputRef.value?.focus();
 }
 
-defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
+onBeforeUnmount(stopRepoDragListeners);
+
+defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch, emitRepoReorder });
 </script>
 
 <template>
@@ -282,33 +365,45 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
         {{ $t('sidebar.noReposHint', { shortcut: '⌘I' }) }}
       </div>
 
-      <div v-for="repo in repos" :key="repo.id" v-show="!hasActiveSearch || itemsForRepo(repo.id).length > 0" class="repo-section">
+      <div class="repo-list">
         <div
-          class="repo-header"
-          :class="{ selected: selectedRepoId === repo.id }"
-          @click="handleSelectRepo(repo.id)"
+          v-for="repo in repos"
+          :key="repo.id"
+          v-show="!hasActiveSearch || itemsForRepo(repo.id).length > 0"
+          class="repo-section"
+          :class="{
+            'repo-dragging': repoDrag?.repoId === repo.id && repoDrag.active,
+            'repo-drag-over': repoDrag?.overRepoId === repo.id,
+          }"
+          :data-repo-id="repo.id"
         >
-          <button
-            class="collapse-btn"
-            @click.stop="toggleRepo(repo.id)"
+          <div
+            class="repo-header"
+            :class="{ selected: selectedRepoId === repo.id }"
+            @mousedown="startRepoDrag(repo.id, $event)"
+            @click="handleSelectRepo(repo.id)"
           >
-            {{ collapsedRepos.has(repo.id) ? ">" : "v" }}
-          </button>
-          <span class="repo-name" :class="{ 'filtered-label': hasActiveSearch }">{{ repo.name }}</span>
-          <span class="repo-count">{{ repoCountLabel(repo.id) }}</span>
-          <button
-            class="btn-icon btn-add-task"
-            :title="$t('sidebar.newTaskTooltip')"
-            @click.stop="emit('new-task', repo.id)"
-          >+</button>
-          <button
-            class="btn-icon btn-hide-repo"
-            :title="$t('sidebar.removeRepoTooltip')"
-            @click.stop="emit('hide-repo', repo.id)"
-          >&times;</button>
-        </div>
+            <button
+              class="collapse-btn"
+              @click.stop="toggleRepo(repo.id)"
+            >
+              {{ collapsedRepos.has(repo.id) ? ">" : "v" }}
+            </button>
+            <span class="repo-name" :class="{ 'filtered-label': hasActiveSearch }">{{ repo.name }}</span>
+            <span class="repo-count">{{ repoCountLabel(repo.id) }}</span>
+            <button
+              class="btn-icon btn-add-task"
+              :title="$t('sidebar.newTaskTooltip')"
+              @click.stop="emit('new-task', repo.id)"
+            >+</button>
+            <button
+              class="btn-icon btn-hide-repo"
+              :title="$t('sidebar.removeRepoTooltip')"
+              @click.stop="emit('hide-repo', repo.id)"
+            >&times;</button>
+          </div>
 
-        <div v-if="!collapsedRepos.has(repo.id)" class="pipeline-list">
+          <div v-if="!collapsedRepos.has(repo.id)" class="pipeline-list">
           <!-- Pinned tasks (draggable, sortable) -->
           <draggable
             :model-value="sortedPinned(repo.id)"
@@ -321,7 +416,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
             chosen-class="sortable-chosen"
             fallback-class="sortable-fallback"
             class="pinned-zone"
-            @change="(evt: any) => onPinnedChange(repo.id, evt)"
+            @change="(evt) => onPinnedChange(repo.id, evt)"
           >
             <template #item="{ element }">
               <div
@@ -374,7 +469,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
               chosen-class="sortable-chosen"
               fallback-class="sortable-fallback"
               class="type-zone"
-              @change="(evt: any) => onUnpinnedChange(repo.id, evt)"
+              @change="(evt) => onUnpinnedChange(repo.id, evt)"
             >
               <template #item="{ element }">
                 <div
@@ -453,6 +548,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
             }}
           </div>
         </div>
+      </div>
       </div>
     </div>
 
@@ -544,7 +640,7 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
   align-items: center;
   gap: 6px;
   padding: 6px 14px;
-  cursor: pointer;
+  cursor: grab;
   color: #ccc;
   font-size: 13px;
   font-weight: 500;
@@ -556,6 +652,19 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch });
 
 .repo-header.selected {
   background: #2a2a2a;
+}
+
+.repo-dragging .repo-header {
+  opacity: 0.65;
+  cursor: grabbing;
+}
+
+.repo-drag-over .repo-header {
+  box-shadow: inset 0 2px 0 #3b8eea;
+}
+
+.sidebar.is-filtering .repo-header {
+  cursor: pointer;
 }
 
 .collapse-btn {

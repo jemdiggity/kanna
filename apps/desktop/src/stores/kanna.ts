@@ -886,6 +886,7 @@ export const useKannaStore = defineStore("kanna", () => {
     createRepo: tasks.createRepo,
     cloneAndImportRepo: tasks.cloneAndImportRepo,
     hideRepo: tasks.hideRepo,
+    reorderRepos: tasks.reorderRepos,
 
     createItem: tasks.createItem,
     spawnPtySession: sessions.spawnPtySession,

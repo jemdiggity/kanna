@@ -51,4 +51,54 @@ describe("WebDriverClient.createSession", () => {
 
     expect(dismissStartupShortcutsModal).not.toHaveBeenCalled();
   });
+
+  it("drags one element to the upper half of another element with active mouse movement", async () => {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) as unknown : undefined;
+      requests.push({ url, method, body });
+
+      if (url.endsWith("/session") && method === "POST") {
+        return {
+          json: async () => ({ value: { sessionId: "session-3" } }),
+        } as Response;
+      }
+      if (url.endsWith("/element/source/rect") && method === "GET") {
+        return {
+          json: async () => ({ value: { x: 20, y: 100, width: 200, height: 24 } }),
+        } as Response;
+      }
+      if (url.endsWith("/element/target/rect") && method === "GET") {
+        return {
+          json: async () => ({ value: { x: 20, y: 40, width: 200, height: 24 } }),
+        } as Response;
+      }
+      if (url.endsWith("/execute/async") && method === "POST") {
+        return {
+          json: async () => ({ value: null }),
+        } as Response;
+      }
+      throw new Error(`Unexpected fetch: ${url} ${method}`);
+    }));
+
+    const client = new WebDriverClient();
+    vi.spyOn(client, "waitForAppReady").mockResolvedValue();
+    await client.createSession({ dismissStartupShortcuts: false });
+
+    await client.dragElementToElement("source", "target");
+
+    const executeRequest = requests.find(
+      (request) => request.url.endsWith("/execute/async") && request.method === "POST",
+    );
+    expect(executeRequest?.body).toMatchObject({
+      script: expect.stringContaining("new MouseEvent"),
+    });
+    const script = (executeRequest?.body as { script?: string } | undefined)?.script ?? "";
+    expect(script).toContain('"start":{"x":120,"y":112}');
+    expect(script).toContain('"middle":{"x":120,"y":78}');
+    expect(script).toContain('"end":{"x":120,"y":44}');
+    expect(script).toContain('fire("mousemove", points.middle, 1)');
+  });
 });

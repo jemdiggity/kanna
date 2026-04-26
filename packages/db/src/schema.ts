@@ -6,6 +6,7 @@ export interface Repo {
   name: string;
   default_branch: string;
   hidden: number;       // 0 = visible, 1 = hidden
+  sort_order: number;
   created_at: string;
   last_opened_at: string;
 }
