@@ -233,6 +233,7 @@ describe("DiffView", () => {
     expect(header.text()).toBe("src/sticky.ts");
     expect(header.classes()).toContain("diff-file-header");
     expect((header.element as HTMLElement).style.position).toBe("sticky");
+    expect((header.element as HTMLElement).style.top).toBe("-1px");
 
     wrapper.unmount();
   });

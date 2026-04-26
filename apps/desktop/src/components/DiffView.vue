@@ -479,7 +479,7 @@ function createDiffFileWrapper(entry: { id: string; displayPath: string }): HTML
   header.textContent = entry.displayPath;
   header.title = entry.displayPath;
   header.style.position = "sticky";
-  header.style.top = "0";
+  header.style.top = "-1px";
   header.style.zIndex = "2";
   header.style.padding = "7px 12px";
   header.style.borderBottom = "1px solid #30363d";
