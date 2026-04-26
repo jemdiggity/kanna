@@ -4,7 +4,7 @@
  * Usage:
  *   import { seedDatabase, SEED } from "./seed";
  *   await seedDatabase(client);
- *   // reference items by ID: SEED.repos.kanna.id, SEED.tasks.authRefactor.id, etc.
+ *   // reference items by ID: SEED.repos.app.id, SEED.tasks.authRefactor.id, etc.
  */
 import { WebDriverClient } from "./webdriver";
 import { execDb } from "./vue";
@@ -12,7 +12,7 @@ import { resetDatabase } from "./reset";
 
 // ── Deterministic IDs ───────────────────────────────────────────────────────
 
-const REPO_KANNA = "repo-seed-kanna";
+const REPO_APP = "repo-seed-app";
 const REPO_API = "repo-seed-api";
 
 const TASK_AUTH = "task-seed-auth-refactor";
@@ -41,8 +41,8 @@ const AR_FAILED = "ar-seed-failed";
 
 export const SEED = {
   repos: {
-    kanna: { id: REPO_KANNA, name: "kanna-tauri", path: "/Users/test/kanna-tauri" },
-    api: { id: REPO_API, name: "kanna-api", path: "/Users/test/kanna-api" },
+    app: { id: REPO_APP, name: "example-app", path: "/Users/test/example-app" },
+    api: { id: REPO_API, name: "example-api", path: "/Users/test/example-api" },
   },
   tasks: {
     authRefactor: { id: TASK_AUTH },
@@ -96,13 +96,13 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
     client,
     `INSERT INTO repo (id, path, name, default_branch, hidden, created_at, last_opened_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [REPO_KANNA, "/Users/test/kanna-tauri", "kanna-tauri", "main", 0, daysAgo(30), hoursAgo(1)]
+    [REPO_APP, "/Users/test/example-app", "example-app", "main", 0, daysAgo(30), hoursAgo(1)]
   );
   await execDb(
     client,
     `INSERT INTO repo (id, path, name, default_branch, hidden, created_at, last_opened_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [REPO_API, "/Users/test/kanna-api", "kanna-api", "main", 1, daysAgo(60), daysAgo(14)]
+    [REPO_API, "/Users/test/example-api", "example-api", "main", 1, daysAgo(60), daysAgo(14)]
   );
 
   // ── Pipeline items ──────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
         port_offset, port_env, base_ref, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      TASK_AUTH, REPO_KANNA, 42, "Refactor auth middleware",
+      TASK_AUTH, REPO_APP, 42, "Refactor auth middleware",
       "Refactor the auth middleware to use the new token validation library",
       "in_progress", '["in progress"]', "task-seed-auth-refactor",
       "claude", "working", hoursAgo(0.5), 1, 1,
@@ -133,7 +133,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
         port_offset, port_env, base_ref, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      TASK_DASH, REPO_KANNA, 51, "Analytics dashboard",
+      TASK_DASH, REPO_APP, 51, "Analytics dashboard",
       "Build the operator analytics dashboard with time-series charts",
       "in_progress", '["in progress"]', "task-seed-dashboard",
       "claude", "idle", hoursAgo(6), 1, 2,
@@ -150,7 +150,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
         created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      TASK_ONBOARD, REPO_KANNA, 55, "First-run onboarding",
+      TASK_ONBOARD, REPO_APP, 55, "First-run onboarding",
       "Create a first-run onboarding flow that walks users through importing a repo",
       "in_progress", '["in progress"]', "task-seed-onboarding",
       "claude", "unread", hoursAgo(2), hoursAgo(2), "origin/main",
@@ -167,10 +167,10 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
         created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      TASK_PERF, REPO_KANNA, 38, "Performance audit",
+      TASK_PERF, REPO_APP, 38, "Performance audit",
       "Audit frontend rendering performance and fix the top 3 bottlenecks",
       "pr", '["pr"]', "task-seed-perf-audit",
-      "claude", "idle", 67, "https://github.com/test/kanna-tauri/pull/67", "origin/main",
+      "claude", "idle", 67, "https://github.com/test/example-app/pull/67", "origin/main",
       daysAgo(7), daysAgo(1),
     ]
   );
@@ -217,10 +217,10 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
         created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      TASK_NOTIF, REPO_KANNA, 30, "Desktop notifications",
+      TASK_NOTIF, REPO_APP, 30, "Desktop notifications",
       "Add native desktop notifications when agent runs complete",
       "done", '["done","merge"]', "task-seed-notifications",
-      "claude", "idle", 52, "https://github.com/test/kanna-tauri/pull/52", daysAgo(2), "origin/main",
+      "claude", "idle", 52, "https://github.com/test/example-app/pull/52", daysAgo(2), "origin/main",
       daysAgo(10), daysAgo(2),
     ]
   );
@@ -234,7 +234,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
         created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      TASK_BLOCKED, REPO_KANNA, 60, "DB schema migration v3",
+      TASK_BLOCKED, REPO_APP, 60, "DB schema migration v3",
       "Run the v3 schema migration after auth refactor lands",
       "in_progress", '["in progress","blocked"]', "task-seed-blocked-migration",
       "claude", "idle", "Schema migration (blocked)",
@@ -251,7 +251,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
         created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      TASK_DONE, REPO_KANNA, "Remove deprecated helpers",
+      TASK_DONE, REPO_APP, "Remove deprecated helpers",
       "Clean up unused helper functions from the utils module",
       "done", '["done"]',
       "claude", "idle", daysAgo(5),
@@ -264,17 +264,17 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
   await execDb(
     client,
     `INSERT INTO worktree (id, pipeline_item_id, path, branch, created_at) VALUES (?, ?, ?, ?, ?)`,
-    [WT_AUTH, TASK_AUTH, "/Users/test/kanna-tauri/.kanna-worktrees/task-seed-auth-refactor", "task-seed-auth-refactor", daysAgo(3)]
+    [WT_AUTH, TASK_AUTH, "/Users/test/example-app/.kanna-worktrees/task-seed-auth-refactor", "task-seed-auth-refactor", daysAgo(3)]
   );
   await execDb(
     client,
     `INSERT INTO worktree (id, pipeline_item_id, path, branch, created_at) VALUES (?, ?, ?, ?, ?)`,
-    [WT_DASH, TASK_DASH, "/Users/test/kanna-tauri/.kanna-worktrees/task-seed-dashboard", "task-seed-dashboard", daysAgo(5)]
+    [WT_DASH, TASK_DASH, "/Users/test/example-app/.kanna-worktrees/task-seed-dashboard", "task-seed-dashboard", daysAgo(5)]
   );
   await execDb(
     client,
     `INSERT INTO worktree (id, pipeline_item_id, path, branch, created_at) VALUES (?, ?, ?, ?, ?)`,
-    [WT_SEARCH, TASK_SEARCH, "/Users/test/kanna-api/.kanna-worktrees/task-seed-search", "task-seed-search", daysAgo(4)]
+    [WT_SEARCH, TASK_SEARCH, "/Users/test/example-api/.kanna-worktrees/task-seed-search", "task-seed-search", daysAgo(4)]
   );
 
   // ── Terminal sessions ───────────────────────────────────────────────────
@@ -283,19 +283,19 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
     client,
     `INSERT INTO terminal_session (id, repo_id, pipeline_item_id, label, cwd, daemon_session_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [TS_AUTH, REPO_KANNA, TASK_AUTH, "claude", "/Users/test/kanna-tauri/.kanna-worktrees/task-seed-auth-refactor", "daemon-sess-1", daysAgo(3)]
+    [TS_AUTH, REPO_APP, TASK_AUTH, "claude", "/Users/test/example-app/.kanna-worktrees/task-seed-auth-refactor", "daemon-sess-1", daysAgo(3)]
   );
   await execDb(
     client,
     `INSERT INTO terminal_session (id, repo_id, pipeline_item_id, label, cwd, daemon_session_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [TS_DASH, REPO_KANNA, TASK_DASH, "claude", "/Users/test/kanna-tauri/.kanna-worktrees/task-seed-dashboard", "daemon-sess-2", daysAgo(5)]
+    [TS_DASH, REPO_APP, TASK_DASH, "claude", "/Users/test/example-app/.kanna-worktrees/task-seed-dashboard", "daemon-sess-2", daysAgo(5)]
   );
   await execDb(
     client,
     `INSERT INTO terminal_session (id, repo_id, pipeline_item_id, label, cwd, daemon_session_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [TS_SEARCH, REPO_API, TASK_SEARCH, "claude", "/Users/test/kanna-api/.kanna-worktrees/task-seed-search", "daemon-sess-3", daysAgo(4)]
+    [TS_SEARCH, REPO_API, TASK_SEARCH, "claude", "/Users/test/example-api/.kanna-worktrees/task-seed-search", "daemon-sess-3", daysAgo(4)]
   );
 
   // ── Agent runs ──────────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
     client,
     `INSERT INTO agent_run (id, repo_id, agent_type, issue_number, status, started_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [AR_AUTH, REPO_KANNA, "claude", 42, "running", hoursAgo(0.5)]
+    [AR_AUTH, REPO_APP, "claude", 42, "running", hoursAgo(0.5)]
   );
 
   // Running (older)
@@ -313,7 +313,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
     client,
     `INSERT INTO agent_run (id, repo_id, agent_type, issue_number, status, started_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [AR_DASH, REPO_KANNA, "claude", 51, "running", hoursAgo(6)]
+    [AR_DASH, REPO_APP, "claude", 51, "running", hoursAgo(6)]
   );
 
   // Completed
@@ -321,7 +321,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
     client,
     `INSERT INTO agent_run (id, repo_id, agent_type, issue_number, pr_number, status, started_at, finished_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [AR_DONE, REPO_KANNA, "claude", 30, 52, "completed", daysAgo(10), daysAgo(9)]
+    [AR_DONE, REPO_APP, "claude", 30, 52, "completed", daysAgo(10), daysAgo(9)]
   );
 
   // Failed
@@ -329,7 +329,7 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
     client,
     `INSERT INTO agent_run (id, repo_id, agent_type, issue_number, status, started_at, finished_at, error)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [AR_FAILED, REPO_KANNA, "claude", 38, "failed", daysAgo(8), daysAgo(8), "Claude CLI exited with code 1: context window exceeded"]
+    [AR_FAILED, REPO_APP, "claude", 38, "failed", daysAgo(8), daysAgo(8), "Claude CLI exited with code 1: context window exceeded"]
   );
 
   // ── Task blockers ─────────────────────────────────────────────────────
@@ -398,21 +398,21 @@ export async function seedDatabase(client: WebDriverClient): Promise<void> {
   await execDb(
     client,
     `INSERT INTO operator_event (event_type, pipeline_item_id, repo_id, created_at) VALUES (?, ?, ?, ?)`,
-    ["task_selected", TASK_AUTH, REPO_KANNA, hoursAgo(1)]
+    ["task_selected", TASK_AUTH, REPO_APP, hoursAgo(1)]
   );
   await execDb(
     client,
     `INSERT INTO operator_event (event_type, pipeline_item_id, repo_id, created_at) VALUES (?, ?, ?, ?)`,
-    ["app_blur", null, REPO_KANNA, hoursAgo(0.75)]
+    ["app_blur", null, REPO_APP, hoursAgo(0.75)]
   );
   await execDb(
     client,
     `INSERT INTO operator_event (event_type, pipeline_item_id, repo_id, created_at) VALUES (?, ?, ?, ?)`,
-    ["app_focus", null, REPO_KANNA, hoursAgo(0.5)]
+    ["app_focus", null, REPO_APP, hoursAgo(0.5)]
   );
   await execDb(
     client,
     `INSERT INTO operator_event (event_type, pipeline_item_id, repo_id, created_at) VALUES (?, ?, ?, ?)`,
-    ["task_selected", TASK_DASH, REPO_KANNA, daysAgo(1)]
+    ["task_selected", TASK_DASH, REPO_APP, daysAgo(1)]
   );
 }

@@ -14,6 +14,13 @@ interface CreateSessionOptions {
   dismissStartupShortcuts?: boolean;
 }
 
+interface ElementRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export class WebDriverClient {
   private baseUrl: string;
   private sessionId: string | null = null;
@@ -90,6 +97,77 @@ export class WebDriverClient {
         },
       ],
     });
+  }
+
+  async getElementRect(elementId: string): Promise<ElementRect> {
+    const res = await this.get(`/session/${this.sid}/element/${elementId}/rect`);
+    return res.value as ElementRect;
+  }
+
+  async dragElementToElement(sourceElementId: string, targetElementId: string): Promise<void> {
+    const source = await this.getElementRect(sourceElementId);
+    const target = await this.getElementRect(targetElementId);
+    const start = {
+      x: Math.round(source.x + source.width / 2),
+      y: Math.round(source.y + source.height / 2),
+    };
+    const end = {
+      x: Math.round(target.x + target.width / 2),
+      y: Math.round(target.y + 4),
+    };
+    const middle = {
+      x: end.x,
+      y: Math.round((start.y + end.y) / 2),
+    };
+    const points = JSON.stringify({ start, middle, end });
+
+    await this.executeAsync<boolean>(
+      `const cb = arguments[arguments.length - 1];
+       const points = ${points};
+       function fire(type, point, buttons) {
+         const element = document.elementFromPoint(point.x, point.y) || document.body;
+         const event = new MouseEvent(type, {
+           view: window,
+           bubbles: true,
+           cancelable: true,
+           clientX: point.x,
+           clientY: point.y,
+           screenX: point.x,
+           screenY: point.y,
+           button: 0,
+           buttons,
+         });
+         element.dispatchEvent(event);
+         if (type !== "mousedown") {
+           document.dispatchEvent(new MouseEvent(type, {
+             view: window,
+             bubbles: true,
+             cancelable: true,
+             clientX: point.x,
+             clientY: point.y,
+             screenX: point.x,
+             screenY: point.y,
+             button: 0,
+             buttons,
+           }));
+         }
+       }
+       fire("mousemove", points.start, 0);
+       fire("mousedown", points.start, 1);
+       setTimeout(() => {
+         fire("mousemove", { x: points.start.x, y: points.start.y - 8 }, 1);
+         setTimeout(() => {
+           fire("mousemove", points.middle, 1);
+           setTimeout(() => {
+             fire("mousemove", points.end, 1);
+             setTimeout(() => {
+               fire("mouseup", points.end, 0);
+               cb(true);
+             }, 100);
+           }, 100);
+         }, 100);
+       }, 100);`,
+    );
   }
 
   // ── JavaScript execution ──────────────────────────────────────────

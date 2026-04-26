@@ -21,6 +21,7 @@ import {
   updatePipelineItemStage,
   updatePipelineItemTags,
   pinPipelineItem,
+  reorderRepos as reorderReposQuery,
   unpinPipelineItem,
   type AgentProvider,
   type PipelineItem,
@@ -78,6 +79,7 @@ export interface TasksApi {
   createRepo: (name: string, path: string) => Promise<void>;
   cloneAndImportRepo: (url: string, destination: string) => Promise<void>;
   hideRepo: (repoId: string) => Promise<void>;
+  reorderRepos: (orderedIds: string[]) => Promise<void>;
   createItem: (
     repoId: string,
     repoPath: string,
@@ -241,6 +243,11 @@ export function createTasksApi(
     await hideRepoQuery(context.requireDb(), repoId);
     if (context.state.selectedRepoId.value === repoId) context.state.selectedRepoId.value = null;
     context.state.lastHiddenRepoId.value = repoId;
+    await reloadSnapshot();
+  }
+
+  async function reorderRepos(orderedIds: string[]) {
+    await reorderReposQuery(context.requireDb(), orderedIds);
     await reloadSnapshot();
   }
 
@@ -1102,6 +1109,7 @@ export function createTasksApi(
     createRepo,
     cloneAndImportRepo,
     hideRepo,
+    reorderRepos,
     createItem,
     closeTask,
     undoClose,

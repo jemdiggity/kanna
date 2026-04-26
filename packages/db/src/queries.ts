@@ -19,7 +19,7 @@ export type DbHandle = {
 // ---------------------------------------------------------------------------
 
 export async function listRepos(db: DbHandle): Promise<Repo[]> {
-  return db.select<Repo>("SELECT * FROM repo WHERE hidden = 0 ORDER BY created_at ASC");
+  return db.select<Repo>("SELECT * FROM repo WHERE hidden = 0 ORDER BY sort_order ASC, created_at ASC");
 }
 
 export async function getRepo(db: DbHandle, id: string): Promise<Repo | null> {
@@ -29,10 +29,11 @@ export async function getRepo(db: DbHandle, id: string): Promise<Repo | null> {
 
 export async function insertRepo(
   db: DbHandle,
-  repo: Omit<Repo, "created_at" | "last_opened_at" | "hidden">
+  repo: Omit<Repo, "created_at" | "last_opened_at" | "hidden" | "sort_order">
 ): Promise<void> {
   await db.execute(
-    `INSERT INTO repo (id, path, name, default_branch) VALUES (?, ?, ?, ?)`,
+    `INSERT INTO repo (id, path, name, default_branch, sort_order)
+     VALUES (?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM repo), 0))`,
     [repo.id, repo.path, repo.name, repo.default_branch]
   );
 }
@@ -47,6 +48,12 @@ export async function hideRepo(db: DbHandle, id: string): Promise<void> {
 
 export async function unhideRepo(db: DbHandle, id: string): Promise<void> {
   await db.execute("UPDATE repo SET hidden = 0 WHERE id = ?", [id]);
+}
+
+export async function reorderRepos(db: DbHandle, orderedIds: string[]): Promise<void> {
+  for (const [index, id] of orderedIds.entries()) {
+    await db.execute("UPDATE repo SET sort_order = ? WHERE id = ?", [index, id]);
+  }
 }
 
 /** Includes hidden repos — callers must check `existing.hidden`. */

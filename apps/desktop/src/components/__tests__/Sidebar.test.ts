@@ -32,9 +32,10 @@ vi.mock("vue-i18n", () => ({
 
 const draggableStub = {
   props: ["modelValue", "class", "disabled"],
+  emits: ["change"],
   setup(
-    props: { modelValue: PipelineItem[]; class?: string; disabled?: boolean },
-    { slots }: { slots: { item?: (scope: { element: PipelineItem }) => unknown } },
+    props: { modelValue: Array<PipelineItem | Repo>; class?: string; disabled?: boolean },
+    { slots }: { slots: { item?: (scope: { element: PipelineItem | Repo }) => unknown } },
   ) {
     return () => h(
       "div",
@@ -54,6 +55,7 @@ const repo: Repo = {
   name: "kanna-v2",
   default_branch: "main",
   hidden: 0,
+  sort_order: 0,
   created_at: "2026-01-01T00:00:00.000Z",
   last_opened_at: "2026-01-01T00:00:00.000Z",
 };
@@ -102,6 +104,36 @@ function mountSidebar(pipelineItems: PipelineItem[], selectedItemId: string | nu
       repos: [repo],
       pipelineItems,
       selectedRepoId: repo.id,
+      selectedItemId,
+      blockerNames: {},
+    },
+    global: {
+      stubs: {
+        transition: {
+          template: "<div><slot /></div>",
+        },
+        "transition-group": {
+          template: "<div><slot /></div>",
+        },
+        draggable: draggableStub,
+      },
+      mocks: {
+        $t: translate,
+      },
+    },
+  });
+}
+
+function mountSidebarWithRepos(
+  repos: Repo[],
+  pipelineItems: PipelineItem[],
+  selectedItemId: string | null = "task-1",
+) {
+  return mount(Sidebar, {
+    props: {
+      repos,
+      pipelineItems,
+      selectedRepoId: repos[0]?.id ?? null,
       selectedItemId,
       blockerNames: {},
     },
@@ -266,5 +298,61 @@ describe("Sidebar", () => {
     vm.onPinnedChange(repo.id, { moved: { oldIndex: 0, newIndex: 0 } });
 
     expect(wrapper.emitted("reorder-pinned")).toBeUndefined();
+  });
+
+  it("emits repository order when repo drag completes over another repo", async () => {
+    const repos = [
+      repo,
+      {
+        ...repo,
+        id: "repo-2",
+        path: "/repo-2",
+        name: "second",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        ...repo,
+        id: "repo-3",
+        path: "/repo-3",
+        name: "third",
+        created_at: "2026-01-03T00:00:00.000Z",
+      },
+    ];
+    const wrapper = mountSidebarWithRepos(repos, [], null);
+    const vm = wrapper.vm as {
+      emitRepoReorder(sourceRepoId: string, targetRepoId: string): void;
+    };
+
+    vm.emitRepoReorder(repos[2]!.id, repos[0]!.id);
+
+    expect(wrapper.emitted("reorder-repos")).toEqual([[["repo-3", "repo-1", "repo-2"]]]);
+  });
+
+  it("does not reorder repositories while search is active", async () => {
+    const repos = [
+      repo,
+      {
+        ...repo,
+        id: "repo-2",
+        path: "/repo-2",
+        name: "second",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+    ];
+    const wrapper = mountSidebarWithRepos(repos, [
+      item("task-1", {
+        display_name: "Task checklist",
+      }),
+    ]);
+    const vm = wrapper.vm as {
+      emitRepoReorder(sourceRepoId: string, targetRepoId: string): void;
+    };
+
+    await wrapper.get(".search-input").setValue("task");
+    await nextTick();
+
+    vm.emitRepoReorder(repos[1]!.id, repos[0]!.id);
+
+    expect(wrapper.emitted("reorder-repos")).toBeUndefined();
   });
 });

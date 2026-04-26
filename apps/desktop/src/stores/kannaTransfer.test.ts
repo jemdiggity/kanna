@@ -46,6 +46,7 @@ function buildRepo(): Repo {
     name: "repo-1",
     default_branch: "main",
     hidden: 0,
+    sort_order: 0,
     created_at: "2026-01-01T00:00:00.000Z",
     last_opened_at: "2026-01-01T00:00:00.000Z",
   };
@@ -159,6 +160,7 @@ function createTransferDb(initial: {
           name,
           default_branch: defaultBranch,
           hidden: 0,
+          sort_order: tables.repo.length,
           created_at: new Date().toISOString(),
           last_opened_at: new Date().toISOString(),
         });

@@ -54,6 +54,7 @@ export async function runMigrations(db: DbHandle): Promise<void> {
   await db.execute(`CREATE TABLE IF NOT EXISTS repo (
     id TEXT PRIMARY KEY, path TEXT NOT NULL, name TEXT NOT NULL,
     default_branch TEXT NOT NULL DEFAULT 'main',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -133,6 +134,7 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     await addColumn("pipeline_item", "display_name", "TEXT");
     await addColumn("pipeline_item", "unread_at", "TEXT");
     await addColumn("repo", "hidden", "INTEGER NOT NULL DEFAULT 0");
+    await addColumn("repo", "sort_order", "INTEGER NOT NULL DEFAULT 0");
     await addColumn("pipeline_item", "closed_at", "TEXT");
     await addColumn("pipeline_item", "agent_session_id", "TEXT");
     await addColumn("pipeline_item", "tags", "TEXT NOT NULL DEFAULT '[]'");
@@ -290,6 +292,14 @@ export async function runMigrations(db: DbHandle): Promise<void> {
       );
     } catch (e) {
       console.debug("[db] agent_session_id backfill:", e);
+    }
+  });
+
+  await runMigration("015_repo_sort_order", async () => {
+    await addColumn("repo", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+    const repos = await db.select<{ id: string }>("SELECT id FROM repo ORDER BY created_at ASC");
+    for (const [index, repo] of repos.entries()) {
+      await db.execute("UPDATE repo SET sort_order = ? WHERE id = ?", [index, repo.id]);
     }
   });
 }
