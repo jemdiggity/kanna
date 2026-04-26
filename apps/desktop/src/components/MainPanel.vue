@@ -232,6 +232,7 @@ function dismissCommandHint() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: #1a1a1a;
 }
 

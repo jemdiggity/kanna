@@ -138,6 +138,7 @@ onUnmounted(() => {
 <style scoped>
 .terminal-wrapper {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   background: #1e1e1e;
   padding: 8px 12px;
