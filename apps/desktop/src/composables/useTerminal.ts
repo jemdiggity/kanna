@@ -111,6 +111,11 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     return disposed ? null : terminal.value
   }
 
+  function isScrolledToBottom(term: Terminal) {
+    const activeBuffer = term.buffer.active
+    return activeBuffer.viewportY >= activeBuffer.baseY
+  }
+
   function handleLinkActivate(_event: MouseEvent, uri: string) {
     if (isTauri) {
       openUrl(uri).catch((e) => console.error("[terminal] Failed to open URL:", e))
@@ -1111,7 +1116,12 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
   function fit() {
     if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) return
+    const liveTerminal = terminal.value
+    const wasAtBottom = liveTerminal ? isScrolledToBottom(liveTerminal) : false
     fitAddon.fit()
+    if (liveTerminal && wasAtBottom) {
+      liveTerminal.scrollToBottom()
+    }
   }
 
   /** Debounced fit — coalesces multiple resize events into a single rAF frame. */

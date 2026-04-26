@@ -49,6 +49,7 @@ class FakeTerminal {
   rows = 24;
   buffer = {
     active: {
+      baseY: 0,
       viewportY: 0,
       getLine: () => null,
     },
@@ -66,6 +67,7 @@ class FakeTerminal {
   registerLinkProvider = vi.fn();
   getSelection = vi.fn(() => "");
   scrollToLine = vi.fn();
+  scrollToBottom = vi.fn();
   dispose = vi.fn();
   write = vi.fn((data: string | Uint8Array, callback?: () => void) => {
     if (typeof data === "string") {
@@ -2005,6 +2007,62 @@ describe("useTerminal", () => {
     });
 
     expect(terminal.scrollToLine).not.toHaveBeenCalled();
+  });
+
+  it("keeps the prompt visible when resizing from the bottom of scrollback", async () => {
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, fit } = useTerminal("session-1");
+        return { init, fit };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    wrapper.vm.init(terminalElement);
+
+    const terminal = terminals[0];
+    terminal.buffer.active.baseY = 12;
+    terminal.buffer.active.viewportY = 12;
+
+    wrapper.vm.fit();
+
+    expect(terminal.scrollToBottom).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not jump to the bottom when resizing after manual scrollback", async () => {
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, fit } = useTerminal("session-1");
+        return { init, fit };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    wrapper.vm.init(terminalElement);
+
+    const terminal = terminals[0];
+    terminal.buffer.active.baseY = 12;
+    terminal.buffer.active.viewportY = 8;
+
+    wrapper.vm.fit();
+
+    expect(terminal.scrollToBottom).not.toHaveBeenCalled();
   });
 
   it("marks the first live output once per selected terminal session", async () => {
