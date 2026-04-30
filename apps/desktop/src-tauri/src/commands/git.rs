@@ -291,9 +291,37 @@ pub fn git_list_base_branches(repo_path: String) -> Result<Vec<String>, String> 
     Ok(refs.into_iter().collect())
 }
 
+#[tauri::command]
+pub fn git_branch_upstream(repo_path: String) -> Result<Option<String>, String> {
+    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+    let head = repo.head().map_err(|e| e.to_string())?;
+    let branch_name = head
+        .shorthand()
+        .ok_or_else(|| "HEAD is not on a named branch".to_string())?;
+    let branch = repo
+        .find_branch(branch_name, git2::BranchType::Local)
+        .map_err(|e| e.to_string())?;
+    let upstream = match branch.upstream() {
+        Ok(upstream) => upstream,
+        Err(_) => return Ok(None),
+    };
+    let upstream_name = match upstream.name().map_err(|e| e.to_string())? {
+        Some(name) => name.to_string(),
+        None => return Ok(None),
+    };
+
+    // After `git push -u origin <task-branch>`, the upstream is the task branch's
+    // remote copy. That is not a useful diff base, so keep the persisted base_ref.
+    if upstream_name == branch_name || upstream_name.rsplit('/').next() == Some(branch_name) {
+        return Ok(None);
+    }
+
+    Ok(Some(upstream_name))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{format_git_command_failure, git_list_base_branches};
+    use super::{format_git_command_failure, git_branch_upstream, git_list_base_branches};
     use git2::{Repository, Signature};
     use std::{
         fs,
@@ -392,6 +420,72 @@ mod tests {
                 "origin/release/x".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn git_branch_upstream_returns_non_task_tracking_branch() {
+        let temp_repo = TempRepo::new("upstream-base");
+        let repo = Repository::init(&temp_repo.path).expect("repo should initialize");
+        let commit_id = create_commit(&repo, &temp_repo.path);
+        let commit = repo
+            .find_commit(commit_id)
+            .expect("commit should be readable");
+
+        repo.branch("task-123", &commit, false)
+            .expect("task branch should exist");
+        repo.reference(
+            "refs/remotes/origin/release",
+            commit_id,
+            true,
+            "create origin release tracking ref",
+        )
+        .expect("origin/release should exist");
+        repo.remote("origin", "https://example.com/repo.git")
+            .expect("origin remote should exist");
+        repo.find_branch("task-123", git2::BranchType::Local)
+            .expect("task branch should be readable")
+            .set_upstream(Some("origin/release"))
+            .expect("task branch upstream should be set");
+        repo.set_head("refs/heads/task-123")
+            .expect("HEAD should point at task branch");
+
+        let upstream = git_branch_upstream(temp_repo.path.to_string_lossy().into_owned())
+            .expect("upstream lookup should succeed");
+
+        assert_eq!(upstream, Some("origin/release".to_string()));
+    }
+
+    #[test]
+    fn git_branch_upstream_ignores_task_branch_remote_copy() {
+        let temp_repo = TempRepo::new("upstream-task-copy");
+        let repo = Repository::init(&temp_repo.path).expect("repo should initialize");
+        let commit_id = create_commit(&repo, &temp_repo.path);
+        let commit = repo
+            .find_commit(commit_id)
+            .expect("commit should be readable");
+
+        repo.branch("task-123", &commit, false)
+            .expect("task branch should exist");
+        repo.reference(
+            "refs/remotes/origin/task-123",
+            commit_id,
+            true,
+            "create origin task tracking ref",
+        )
+        .expect("origin/task-123 should exist");
+        repo.remote("origin", "https://example.com/repo.git")
+            .expect("origin remote should exist");
+        repo.find_branch("task-123", git2::BranchType::Local)
+            .expect("task branch should be readable")
+            .set_upstream(Some("origin/task-123"))
+            .expect("task branch upstream should be set");
+        repo.set_head("refs/heads/task-123")
+            .expect("HEAD should point at task branch");
+
+        let upstream = git_branch_upstream(temp_repo.path.to_string_lossy().into_owned())
+            .expect("upstream lookup should succeed");
+
+        assert_eq!(upstream, None);
     }
 
     #[test]

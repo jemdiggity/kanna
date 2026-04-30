@@ -240,6 +240,7 @@ const invokeHandlers: Record<string, (...args: any[]) => any> = {
   git_diff: () => "",
   git_default_branch: () => "main",
   git_list_base_branches: () => ["origin/main", "main"],
+  git_branch_upstream: () => null,
   git_remote_url: () => "https://github.com/example/repo.git",
   git_clone: () => ({}),
   git_init: () => ({}),
