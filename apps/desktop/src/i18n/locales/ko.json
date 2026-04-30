@@ -196,7 +196,7 @@
     "scopeBranch": "브랜치",
     "scopeWorking": "작업 중",
     "noChanges": "변경 없음",
-    "filterAll": "전체",
+    "filterAll": "스테이지+미스테이지",
     "filterUnstaged": "미스테이지",
     "filterStaged": "스테이지",
     "searchPlaceholder": "검색...",

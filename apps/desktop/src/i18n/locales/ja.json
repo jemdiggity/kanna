@@ -196,7 +196,7 @@
     "scopeBranch": "ブランチ",
     "scopeWorking": "ワーキング",
     "noChanges": "変更なし",
-    "filterAll": "すべて",
+    "filterAll": "ステージ済み+未ステージ",
     "filterUnstaged": "未ステージ",
     "filterStaged": "ステージ済み",
     "searchPlaceholder": "検索...",
