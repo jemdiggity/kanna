@@ -85,6 +85,10 @@ impl TransferSidecarClient {
 
     pub async fn start_peer_pairing(&mut self, peer_id: String) -> Result<Value, String> {
         let request_id = self.next_request_id("pair");
+        eprintln!(
+            "[transfer-sidecar] sending start_pairing request_id={} peer_id={}",
+            request_id, peer_id
+        );
         let response = self
             .send_request(
                 json!({
@@ -95,6 +99,10 @@ impl TransferSidecarClient {
                 &request_id,
             )
             .await?;
+        eprintln!(
+            "[transfer-sidecar] received start_pairing response request_id={} peer_id={} response={}",
+            request_id, peer_id, response
+        );
 
         Ok(json!({
             "peer": response

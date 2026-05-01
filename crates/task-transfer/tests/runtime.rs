@@ -100,7 +100,7 @@ async fn start_pairing_times_out_when_peer_accepts_without_replying() {
     let error = primary.start_pairing("peer-target").await.unwrap_err();
     let message = error.to_string();
     assert!(
-        message.contains("timed out waiting for peer peer-target"),
+        message.contains("peer request to peer-target timed out"),
         "unexpected error: {message}",
     );
 
