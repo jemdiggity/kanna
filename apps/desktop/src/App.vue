@@ -1461,7 +1461,7 @@ onBeforeUnmount(() => {
       :action-label="peerPickerMode === 'pair' ? $t('taskTransfer.pairPeer') : $t('taskTransfer.pushToMachine')"
       :require-trusted="peerPickerMode !== 'pair'"
       @cancel="closePeerPicker"
-      @select="peerPickerMode === 'pair' ? handlePairPeer : handlePeerSelected"
+      @select="(peerId) => peerPickerMode === 'pair' ? handlePairPeer(peerId) : handlePeerSelected(peerId)"
     />
     <PreferencesPanel
       v-if="showPreferencesPanel"
