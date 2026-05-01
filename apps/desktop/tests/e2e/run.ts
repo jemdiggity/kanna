@@ -22,6 +22,14 @@ function sanitizeSuffix(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
+function agentCliVersionFixtureEnv(): Record<string, string> {
+  return {
+    KANNA_E2E_AGENT_CLI_VERSION_CLAUDE: "2.1.118 (Claude Code)\n",
+    KANNA_E2E_AGENT_CLI_VERSION_COPILOT: "GitHub Copilot CLI 1.0.32.\nRun 'copilot update' to check for updates.\n",
+    KANNA_E2E_AGENT_CLI_VERSION_CODEX: "codex-cli 0.125.0-beta.1+20260429\n",
+  };
+}
+
 async function findFreePort(): Promise<number> {
   return await new Promise<number>((resolvePort, reject) => {
     const server = createServer();
@@ -237,6 +245,7 @@ async function main(): Promise<void> {
   const primaryTransferPort = await findFreePort();
   const primaryDbName = `test-${worktreeName}-primary.db`;
   const primaryDaemonDir = join(repoRoot, ".kanna-daemon-e2e", runSuffix);
+  const agentCliFixtureEnv = agentCliVersionFixtureEnv();
   const primary = buildInstanceConfig({
     daemonDir: primaryDaemonDir,
     dbName: primaryDbName,
@@ -303,11 +312,15 @@ async function main(): Promise<void> {
     });
   }
 
-  async function startInstances(withSecondary: boolean): Promise<RunningInstances> {
-    await runCommand(primary.startCommand, { cwd: repoRoot, env: primary.env });
+  async function startInstances(withSecondary: boolean, useAgentCliFixtures: boolean): Promise<RunningInstances> {
+    const fixtureEnv = useAgentCliFixtures ? agentCliFixtureEnv : {};
+    await runCommand(primary.startCommand, { cwd: repoRoot, env: { ...primary.env, ...fixtureEnv } });
     const secondaryInstance = withSecondary ? secondary : null;
     if (secondaryInstance) {
-      await runCommand(secondaryInstance.startCommand, { cwd: repoRoot, env: secondaryInstance.env });
+      await runCommand(secondaryInstance.startCommand, {
+        cwd: repoRoot,
+        env: { ...secondaryInstance.env, ...fixtureEnv },
+      });
     }
     console.log(`[e2e] waiting for primary app at ${primary.baseUrl}`);
     await waitForApp(primary.baseUrl, 10 * 60_000);
@@ -342,7 +355,7 @@ async function main(): Promise<void> {
   let lastTargetWasReal = false;
 
   try {
-    runningInstances = await startInstances(false);
+    runningInstances = await startInstances(false, !isRealTestTarget(testTargets[0] ?? ""));
 
     for (const testTarget of testTargets) {
       const targetIsReal = isRealTestTarget(testTarget);
@@ -354,10 +367,10 @@ async function main(): Promise<void> {
           console.log("\n[e2e] restarting app instances between real tests\n");
         }
         await stopInstances(runningInstances);
-        runningInstances = await startInstances(needsSecondaryForTarget);
+        runningInstances = await startInstances(needsSecondaryForTarget, false);
       } else if (runningInstances?.secondary && !needsSecondaryForTarget) {
         await stopInstances(runningInstances);
-        runningInstances = await startInstances(false);
+        runningInstances = await startInstances(false, !targetIsReal);
       }
       await pauseBeforeTestTarget(testTarget);
       console.log(`\n[e2e] running ${testTarget}\n`);

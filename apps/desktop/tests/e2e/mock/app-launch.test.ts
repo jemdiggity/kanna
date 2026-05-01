@@ -40,6 +40,17 @@ describe("app launch", () => {
     expect(el).toBeTruthy();
   });
 
+  it("shows detected agent CLI versions", async () => {
+    await client.waitForText(".main-panel", "v0.125.0-beta.1+20260429");
+    const bodyText = await client.executeSync<string>("return document.body.innerText;");
+    expect(bodyText).toContain("Claude Code");
+    expect(bodyText).toContain("v2.1.118");
+    expect(bodyText).toContain("GitHub Copilot");
+    expect(bodyText).toContain("v1.0.32");
+    expect(bodyText).toContain("Codex");
+    expect(bodyText).toContain("v0.125.0-beta.1+20260429");
+  });
+
   it("shows repo creation shortcut hint", async () => {
     await pauseForSlowMode("before repo creation hint assertion");
     const bodyText = await client.executeSync<string>("return document.body.innerText;");

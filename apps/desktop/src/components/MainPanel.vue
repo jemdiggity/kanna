@@ -47,11 +47,26 @@ const INSTALL_COMMANDS: Record<string, string> = {
 };
 
 function parseSemver(output: string): string | undefined {
-  const match = output.match(/(\d+\.\d+\.\d+)/);
+  const match = output.match(/\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\b/);
   return match?.[1];
 }
 
+async function readE2eCliVersion(name: string): Promise<string | undefined> {
+  if (!import.meta.env.DEV) return undefined;
+  const envName = `KANNA_E2E_AGENT_CLI_VERSION_${name.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}`;
+  try {
+    return await invoke<string>("read_env_var", { name: envName });
+  } catch {
+    return undefined;
+  }
+}
+
 async function checkCli(name: string): Promise<AgentCliStatus> {
+  const e2eVersionOutput = await readE2eCliVersion(name);
+  if (e2eVersionOutput !== undefined) {
+    return { installed: true, version: parseSemver(e2eVersionOutput) };
+  }
+
   try {
     await invoke("which_binary", { name });
   } catch {
