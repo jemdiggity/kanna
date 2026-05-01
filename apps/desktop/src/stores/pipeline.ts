@@ -50,11 +50,21 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       const item = context.state.items.value.find((candidate) => candidate.id === itemId);
       const isItemHidden = requireService(context.services.isItemHidden, "isItemHidden");
       if (item && !isItemHidden(item) && item.repo_id === context.state.selectedRepoId.value) {
+        console.log("[pipeline:advanceStage] restoring selection", {
+          targetItemId: itemId,
+          targetStage: item.stage,
+          targetBranch: item.branch,
+          selectedBefore: context.state.selectedItemId.value,
+        });
         await requireService(context.services.selectItem, "selectItem")(itemId);
         return;
       }
     }
 
+    console.log("[pipeline:advanceStage] clearing selection during restore", {
+      requestedItemId: itemId,
+      selectedBefore: context.state.selectedItemId.value,
+    });
     context.state.selectedItemId.value = null;
   }
 
@@ -152,6 +162,16 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     const shouldFollowTask = nextStage.follow_task !== false;
     const sourceTaskIsSelected = context.state.selectedItemId.value === item.id;
     const fallbackSelectionId = computeNextVisibleItemId(item.id);
+    console.log("[pipeline:advanceStage] selection policy", {
+      taskId,
+      currentStage: item.stage,
+      nextStage: nextStage.name,
+      followTask: nextStage.follow_task,
+      shouldFollowTask,
+      sourceTaskIsSelected,
+      fallbackSelectionId,
+      selectedBefore: context.state.selectedItemId.value,
+    });
 
     let stagePrompt = "";
     let agentOpts: Record<string, unknown> = { agentProvider: item.agent_provider };
@@ -194,13 +214,30 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       await restoreStageAdvanceSelection(fallbackSelectionId);
     }
 
+    console.log("[pipeline:advanceStage] closing source task", {
+      taskId: item.id,
+      selectedBeforeClose: context.state.selectedItemId.value,
+    });
     await requireService(context.services.closeTask, "closeTask")(item.id, { selectNext: false });
-    await requireService(context.services.createItem, "createItem")(repo.id, repo.path, stagePrompt, "pty", {
+    console.log("[pipeline:advanceStage] creating next-stage task", {
+      taskId: item.id,
+      nextStage: nextStage.name,
+      selectOnCreate: shouldFollowTask,
+      selectedBeforeCreate: context.state.selectedItemId.value,
+    });
+    const createdItemId = await requireService(context.services.createItem, "createItem")(repo.id, repo.path, stagePrompt, "pty", {
       baseBranch: item.branch,
       pipelineName: item.pipeline,
       stage: nextStage.name,
       selectOnCreate: shouldFollowTask,
       ...agentOpts,
+    });
+    console.log("[pipeline:advanceStage] created next-stage task", {
+      taskId: item.id,
+      createdItemId,
+      nextStage: nextStage.name,
+      selectOnCreate: shouldFollowTask,
+      selectedAfterCreate: context.state.selectedItemId.value,
     });
 
     if (!shouldFollowTask && !sourceTaskIsSelected) {

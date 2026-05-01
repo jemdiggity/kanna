@@ -448,9 +448,20 @@ export function createTasksApi(
       console.log(`[perf:setup] spawnSession: ${(performance.now() - s1).toFixed(1)}ms`);
 
       s1 = performance.now();
+      console.log("[tasks:createItem] setup selection policy", {
+        taskId: id,
+        stage: opts?.stage,
+        selectOnCreate: opts?.selectOnCreate,
+        selectedBeforeSetupSelect: context.state.selectedItemId.value,
+      });
       if (opts?.selectOnCreate !== false) {
         await requireService(context.services.selectItem, "selectItem")(id);
         console.log(`[perf:setup] selectItem: ${(performance.now() - s1).toFixed(1)}ms`);
+      } else {
+        console.log("[tasks:createItem] skipped setup auto-select", {
+          taskId: id,
+          selectedAfterSkip: context.state.selectedItemId.value,
+        });
       }
       console.log(`[perf:setup] TOTAL (background): ${(performance.now() - s0).toFixed(1)}ms`);
     } finally {
@@ -475,6 +486,15 @@ export function createTasksApi(
     const requestedAgentProviders = opts?.customTask?.agentProvider ?? opts?.agentProvider;
     const requestedModel = opts?.customTask?.model ?? opts?.model;
     const displayName = opts?.customTask?.name ?? opts?.displayName ?? null;
+    console.log("[tasks:createItem] start", {
+      taskId: id,
+      repoId,
+      agentType: effectiveAgentType,
+      requestedStage: opts?.stage,
+      requestedPipeline: opts?.pipelineName,
+      selectOnCreate: opts?.selectOnCreate,
+      selectedAtStart: context.state.selectedItemId.value,
+    });
     const realE2eAgentOverride = await resolveRealE2eAgentOverride({
       agentType: effectiveAgentType,
       explicitAgentProvider: requestedAgentProviders,
@@ -639,6 +659,12 @@ export function createTasksApi(
           await reloadSnapshot();
           console.log(`[perf:createItem] reload -> waiting for items refresh (id=${id})`);
           console.log(`[perf:createItem] TOTAL (modal → reload): ${(performance.now() - t0).toFixed(1)}ms`);
+          console.log("[tasks:createItem] inserted and reloaded", {
+            taskId: id,
+            stage: firstStageName,
+            selectOnCreate: opts?.selectOnCreate,
+            selectedAfterReload: context.state.selectedItemId.value,
+          });
 
           void setupWorktreeAndSpawn(
             id,
@@ -660,6 +686,11 @@ export function createTasksApi(
       removePendingPlaceholder();
       throw error;
     }
+    console.log("[tasks:createItem] returning", {
+      taskId: id,
+      selectOnCreate: opts?.selectOnCreate,
+      selectedBeforeReturn: context.state.selectedItemId.value,
+    });
     return id;
   }
 
