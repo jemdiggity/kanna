@@ -1,4 +1,4 @@
-import { computed, getCurrentInstance, onBeforeUnmount, ref } from "vue";
+import { computed, getCurrentInstance, onBeforeUnmount, ref, shallowRef } from "vue";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { invoke } from "../invoke";
@@ -20,7 +20,7 @@ interface UpdateHandle {
 
 export function useAppUpdate() {
   const status = ref<UpdateStatus>("idle");
-  const updateRef = ref<UpdateHandle | null>(null);
+  const updateRef = shallowRef<UpdateHandle | null>(null);
   const updateVersion = ref<string | null>(null);
   const releaseNotes = ref<string | null>(null);
   const publishedAt = ref<string | null>(null);
