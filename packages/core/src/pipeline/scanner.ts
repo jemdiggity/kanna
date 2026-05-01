@@ -58,7 +58,7 @@ export async function scanAgentsAndPipelines(
   }
 
   for (const file of pipelineFiles) {
-    if (!file.endsWith(".json")) continue;
+    if (!file.endsWith(".json") || file === "schema.json") continue;
 
     const filePath = `${pipelinesDir}/${file}`;
     let content: string;

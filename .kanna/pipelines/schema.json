@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.kanna.build/pipeline.schema.json",
+  "title": "Kanna Pipeline Definition",
+  "description": "Schema for .kanna/pipelines/*.json pipeline definitions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "stages"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "environments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "setup": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "teardown": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "transition"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "agent_provider": {
+            "oneOf": [
+              {
+                "enum": ["codex", "claude", "copilot"]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "enum": ["codex", "claude", "copilot"]
+                },
+                "minItems": 1
+              }
+            ]
+          },
+          "environment": {
+            "type": "string"
+          },
+          "transition": {
+            "enum": ["manual", "auto"]
+          },
+          "follow_task": {
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": ["new_task", "continue"]
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "$schema": "./schema.json",
+      "name": "default",
+      "description": "Standard in progress -> commit -> PR flow",
+      "stages": [
+        {
+          "name": "in progress",
+          "agent": "implement",
+          "prompt": "$TASK_PROMPT",
+          "transition": "manual"
+        },
+        {
+          "name": "commit",
+          "agent": "commit",
+          "prompt": "Commit the relevant work for this task. Original task: $TASK_PROMPT",
+          "transition": "auto",
+          "mode": "continue"
+        },
+        {
+          "name": "pr",
+          "agent": "pr",
+          "prompt": "Create a PR for the work on branch $BRANCH. Previous result: $PREV_RESULT",
+          "transition": "manual",
+          "follow_task": false
+        }
+      ]
+    }
+  ]
+}

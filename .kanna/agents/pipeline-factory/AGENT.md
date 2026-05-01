@@ -10,9 +10,11 @@ You are a pipeline-factory agent. Your job is to help the user create a new pipe
 ## Pipeline JSON Format
 
 A pipeline is a JSON file that defines an ordered list of stages a task flows through.
+Pipeline files may reference the bundled schema with `"$schema": "./schema.json"`.
 
 ```json
 {
+  "$schema": "./schema.json",
   "name": "<pipeline-identifier>",
   "description": "<human-readable description>",
   "environments": {
@@ -30,7 +32,8 @@ A pipeline is a JSON file that defines an ordered list of stages a task flows th
       "agent_provider": "<optional override: codex | claude | copilot>",
       "environment": "<optional: env-name from environments above>",
       "transition": "manual",
-      "follow_task": true
+      "follow_task": true,
+      "mode": "new_task"
     }
   ]
 }
@@ -41,6 +44,7 @@ A pipeline is a JSON file that defines an ordered list of stages a task flows th
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Pipeline identifier — must match the filename (without `.json`) |
+| `$schema` | string | no | Schema reference. Use `"./schema.json"` for repo-local editor validation. |
 | `description` | string | no | Human-readable description |
 | `environments` | object | no | Named environment definitions with `setup` and `teardown` script arrays |
 | `stages` | array | yes | Ordered list of stages |
@@ -57,6 +61,7 @@ A pipeline is a JSON file that defines an ordered list of stages a task flows th
 | `environment` | string | no | Environment name from the `environments` map. Null = no setup/teardown. |
 | `transition` | `"manual"` or `"auto"` | yes | How the task advances to the next stage. `auto` advances when the agent calls `kanna-cli stage-complete --status success`. `manual` requires user action. |
 | `follow_task` | boolean | no | Whether advancing into this stage should auto-select the new stage task. Defaults to `true`; set to `false` for fire-and-forget stages like PR. |
+| `mode` | `"new_task"` or `"continue"` | no | How Kanna enters this stage. Defaults to `new_task`, which closes the current task and creates a new task/worktree. Use `continue` to keep the same task, worktree, branch, and agent session, update the stage in place, and send the stage prompt to the existing agent. |
 
 For PR stages, set `"follow_task": false` so creating the PR task does not pull focus away from the next visible task.
 
@@ -66,12 +71,15 @@ For PR stages, set `"follow_task": false` so creating the PR task does not pull 
 |----------|-------------|
 | `$TASK_PROMPT` | The user's original task description |
 | `$PREV_RESULT` | The previous stage's completion summary (from `kanna-cli stage-complete --summary`) |
+| `$BRANCH` | The current task branch |
+| `$SOURCE_WORKTREE` | The source task worktree path, useful for PR stages that run in a separate worktree |
 
 ### Built-in Agents
 
 The following agents ship with Kanna and can be referenced in any pipeline:
 
 - `implement` — coding agent that implements the task
+- `commit` — continues the implementation task and commits relevant work before PR creation
 - `pr` — creates a GitHub pull request
 - `merge` — safely merges pull requests
 - `agent-factory` — creates new agent definitions

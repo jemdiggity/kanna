@@ -1,4 +1,5 @@
 {
+  "$schema": "./schema.json",
   "name": "default",
   "description": "Standard in progress -> commit -> PR flow",
   "stages": [
