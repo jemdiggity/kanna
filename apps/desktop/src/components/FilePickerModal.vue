@@ -5,7 +5,8 @@ import { fuzzyMatch, type FuzzyResult } from "../utils/fuzzyMatch";
 import { useModalZIndex } from "../composables/useModalZIndex";
 import { useToast } from "../composables/useToast";
 import { macOsTextInputAttrs } from "../utils/textInput";
-const { zIndex } = useModalZIndex();
+const { zIndex, bringToFront } = useModalZIndex();
+defineExpose({ zIndex, bringToFront });
 
 const props = defineProps<{
   worktreePath: string;

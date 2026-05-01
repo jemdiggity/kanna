@@ -1,5 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { getShortcutGroups, isAppShortcut } from "./useKeyboardShortcuts";
+// @vitest-environment happy-dom
+
+import { defineComponent } from "vue";
+import { mount } from "@vue/test-utils";
+import { describe, expect, it, vi } from "vitest";
+import {
+  getShortcutGroups,
+  isAppShortcut,
+  useKeyboardShortcuts,
+  type ActionName,
+  type KeyboardActions,
+} from "./useKeyboardShortcuts";
+import type { ShortcutContext } from "./useShortcutContext";
 
 function identityTranslate(key: string): string {
   return key;
@@ -111,5 +122,112 @@ describe("isAppShortcut", () => {
       metaKey: true,
       shiftKey: true,
     }))).toBe(true);
+  });
+});
+
+describe("useKeyboardShortcuts", () => {
+  const actionNames: ActionName[] = [
+    "newTask",
+    "newWindow",
+    "openFile",
+    "advanceStage",
+    "closeTask",
+    "undoClose",
+    "navigateUp",
+    "navigateDown",
+    "navigateRepoUp",
+    "navigateRepoDown",
+    "dismiss",
+    "openInIDE",
+    "openShell",
+    "showDiff",
+    "showCommitGraph",
+    "toggleMaximize",
+    "showShortcuts",
+    "showAllShortcuts",
+    "toggleSidebar",
+    "commandPalette",
+    "showAnalytics",
+    "goBack",
+    "goForward",
+    "createRepo",
+    "importRepo",
+    "blockTask",
+    "editBlockedTask",
+    "toggleTreeExplorer",
+    "openPreferences",
+    "openShellRepoRoot",
+    "prevTab",
+    "nextTab",
+    "focusSearch",
+    "goToOldestUnread",
+    "goToNewestUnread",
+    "goToOldestRead",
+    "goToNewestRead",
+  ];
+
+  function buildActions(): KeyboardActions {
+    return Object.fromEntries(actionNames.map((name) => [name, vi.fn()])) as KeyboardActions;
+  }
+
+  function mountShortcutHarness(actions: KeyboardActions, context: () => ShortcutContext) {
+    const Harness = defineComponent({
+      setup() {
+        useKeyboardShortcuts(actions, { context });
+        return () => null;
+      },
+    });
+
+    return mount(Harness);
+  }
+
+  it("allows opening the file picker from the diff modal context", () => {
+    const actions = buildActions();
+    const wrapper = mountShortcutHarness(actions, () => "diff");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "p",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    expect(actions.openFile).toHaveBeenCalledTimes(1);
+    expect(actions.newTask).not.toHaveBeenCalled();
+
+    wrapper.unmount();
+  });
+
+  it("allows preview modal shortcuts from every preview modal context", () => {
+    const previewContexts: ShortcutContext[] = ["diff", "file", "shell", "tree", "graph"];
+    const previewShortcuts: Array<{
+      action: ActionName;
+      event: { key: string; meta?: boolean; shift?: boolean };
+    }> = [
+      { action: "openFile", event: { key: "p", meta: true } },
+      { action: "showDiff", event: { key: "d", meta: true } },
+      { action: "showCommitGraph", event: { key: "g", meta: true } },
+      { action: "openShell", event: { key: "j", meta: true } },
+      { action: "openShellRepoRoot", event: { key: "J", meta: true, shift: true } },
+      { action: "toggleTreeExplorer", event: { key: "E", meta: true, shift: true } },
+    ];
+
+    for (const context of previewContexts) {
+      for (const shortcut of previewShortcuts) {
+        const actions = buildActions();
+        const wrapper = mountShortcutHarness(actions, () => context);
+
+        window.dispatchEvent(new KeyboardEvent("keydown", {
+          key: shortcut.event.key,
+          metaKey: shortcut.event.meta ?? false,
+          shiftKey: shortcut.event.shift ?? false,
+          bubbles: true,
+          cancelable: true,
+        }));
+
+        expect(actions[shortcut.action], `${shortcut.action} in ${context}`).toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+      }
+    }
   });
 });

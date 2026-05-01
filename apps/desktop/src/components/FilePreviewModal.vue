@@ -10,7 +10,7 @@ import { macOsTextInputAttrs } from "../utils/textInput";
 import { getSyntaxLanguageForPath } from "../utils/syntaxLanguage";
 
 const { t } = useI18n();
-const { zIndex } = useModalZIndex();
+const { zIndex, bringToFront } = useModalZIndex();
 
 const props = defineProps<{
   filePath: string;
@@ -317,7 +317,7 @@ function dismiss(): boolean {
   return true;
 }
 
-defineExpose({ dismiss });
+defineExpose({ zIndex, bringToFront, dismiss });
 
 onMounted(() => {
   loadFile();
