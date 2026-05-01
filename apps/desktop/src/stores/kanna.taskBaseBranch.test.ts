@@ -1215,7 +1215,9 @@ describe("kanna store task base branch integration", () => {
     await flushStore();
 
     await store.advanceStage("item-source");
-    await flushStore();
+    await vi.waitFor(() => {
+      expect(mockState.pipelineItems.some((item) => item.stage === "pr" && item.id !== "item-source")).toBe(true);
+    });
 
     expect(store.selectedItemId).toBe("item-next");
   });
