@@ -77,8 +77,8 @@ describe("KeyboardShortcutsModal", () => {
     expect(Number(helpSection?.attributes("data-row"))).toBeGreaterThan(6);
     expect(entries.some((entry) => entry.text().includes("shortcuts.keyboardShortcuts"))).toBe(true);
     expect(entries.some((entry) => entry.text().includes("filePreview.shortcutSearch"))).toBe(true);
-    expect(entries.some((entry) => entry.text().includes("shortcuts.shellTerminal"))).toBe(false);
-    expect(entries.some((entry) => entry.text().includes("shortcuts.viewDiff"))).toBe(false);
+    expect(entries.some((entry) => entry.text().includes("shortcuts.shellTerminal"))).toBe(true);
+    expect(entries.some((entry) => entry.text().includes("shortcuts.viewDiff"))).toBe(true);
   });
 
   it("keeps diff search first and merged views beneath it in column 1", () => {

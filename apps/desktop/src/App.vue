@@ -552,14 +552,15 @@ interface ModalShortcutContextEntry {
 }
 
 function topPreviewModalContext(): ShortcutContext | null {
-  const entries: ModalShortcutContextEntry[] = [
+  const modalContexts: ModalShortcutContextEntry[] = [
     { context: "diff", visible: showDiffModal.value, zIndex: diffModalRef.value?.zIndex ?? 0 },
     { context: "graph", visible: showCommitGraphModal.value, zIndex: commitGraphModalRef.value?.zIndex ?? 0 },
     { context: "file", visible: showFilePickerModal.value, zIndex: filePickerRef.value?.zIndex ?? 0 },
     { context: "file", visible: showFilePreviewModal.value, zIndex: filePreviewRef.value?.zIndex ?? 0 },
     { context: "tree", visible: showTreeExplorer.value, zIndex: treeExplorerRef.value?.zIndex ?? 0 },
     { context: "shell", visible: showShellModal.value, zIndex: shellModalRef.value?.zIndex ?? 0 },
-  ].filter((entry) => entry.visible);
+  ];
+  const entries = modalContexts.filter((entry) => entry.visible);
 
   entries.sort((a, b) => b.zIndex - a.zIndex);
   return entries[0]?.context ?? null;
