@@ -260,6 +260,7 @@ async function main(): Promise<void> {
     effectiveWebDriverPort: primaryWebDriverPort,
     envOverrides: {
       ...realE2eAgentEnv,
+      KANNA_TRANSFER_DISCOVERY: "registry",
       KANNA_TRANSFER_DISPLAY_NAME: "Primary",
       KANNA_TRANSFER_PEER_ID: "peer-primary",
       KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,
@@ -289,6 +290,7 @@ async function main(): Promise<void> {
         effectiveWebDriverPort: secondaryWebDriverPort,
         envOverrides: {
           ...realE2eAgentEnv,
+          KANNA_TRANSFER_DISCOVERY: "registry",
           KANNA_TRANSFER_DISPLAY_NAME: "Secondary",
           KANNA_TRANSFER_PEER_ID: "peer-secondary",
           KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,

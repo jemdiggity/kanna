@@ -40,6 +40,7 @@ pub struct RuntimeConfig {
     pub listen_port: u16,
     discovery_mode: DiscoveryMode,
     pending_transfer_ttl: Duration,
+    peer_request_timeout: Duration,
 }
 
 impl RuntimeConfig {
@@ -56,6 +57,7 @@ impl RuntimeConfig {
             listen_port,
             discovery_mode: DiscoveryMode::Registry,
             pending_transfer_ttl: Duration::from_secs(300),
+            peer_request_timeout: Duration::from_secs(15),
         }
     }
 
@@ -66,6 +68,11 @@ impl RuntimeConfig {
 
     pub fn with_pending_transfer_ttl(mut self, pending_transfer_ttl: Duration) -> Self {
         self.pending_transfer_ttl = pending_transfer_ttl;
+        self
+    }
+
+    pub fn with_peer_request_timeout(mut self, peer_request_timeout: Duration) -> Self {
+        self.peer_request_timeout = peer_request_timeout;
         self
     }
 
@@ -113,6 +120,7 @@ impl RuntimeConfig {
             listen_port,
             discovery_mode,
             pending_transfer_ttl: Duration::from_secs(300),
+            peer_request_timeout: Duration::from_secs(15),
         })
     }
 
@@ -1061,21 +1069,30 @@ impl TransferRuntime {
         peer: &PeerRegistryEntry,
         request: PeerRequest,
     ) -> Result<PeerResponse, RuntimeError> {
-        let mut stream = TcpStream::connect(&peer.endpoint).await?;
-        write_json_line(&mut stream, &request).await?;
+        tokio::time::timeout(self.config.peer_request_timeout, async {
+            let mut stream = TcpStream::connect(&peer.endpoint).await?;
+            write_json_line(&mut stream, &request).await?;
 
-        let mut response_line = String::new();
-        let mut reader = BufReader::new(stream);
-        let read = reader.read_line(&mut response_line).await?;
-        if read == 0 {
-            return Err(RuntimeError::Protocol(format!(
-                "peer {} closed the connection without a response",
-                peer.peer_id
-            )));
-        }
+            let mut response_line = String::new();
+            let mut reader = BufReader::new(stream);
+            let read = reader.read_line(&mut response_line).await?;
+            if read == 0 {
+                return Err(RuntimeError::Protocol(format!(
+                    "peer {} closed the connection without a response",
+                    peer.peer_id
+                )));
+            }
 
-        let response = serde_json::from_str::<PeerResponse>(response_line.trim())?;
-        Ok(response)
+            let response = serde_json::from_str::<PeerResponse>(response_line.trim())?;
+            Ok(response)
+        })
+        .await
+        .map_err(|_| {
+            RuntimeError::Protocol(format!(
+                "timed out waiting for peer {} after {:?}",
+                peer.peer_id, self.config.peer_request_timeout
+            ))
+        })?
     }
 
     fn next_request_id(&self, prefix: &str) -> String {

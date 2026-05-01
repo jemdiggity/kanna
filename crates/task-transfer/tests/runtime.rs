@@ -63,6 +63,50 @@ async fn peers_become_trusted_after_explicit_pairing() {
     assert!(secondary_peers[0].trusted);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_pairing_times_out_when_peer_accepts_without_replying() {
+    let temp = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let target_identity = TransferIdentity::generate();
+    PeerRegistry::new(temp.path().to_path_buf())
+        .write_entry(&PeerRegistryEntry {
+            peer_id: "peer-target".into(),
+            display_name: "Target".into(),
+            endpoint: format!("127.0.0.1:{port}"),
+            pid: std::process::id(),
+            public_key: public_key_to_string(&target_identity.public_key),
+            protocol_version: 1,
+            accepting_transfers: true,
+        })
+        .unwrap();
+
+    let primary = TransferRuntime::spawn(
+        RuntimeConfig::for_tests("peer-primary", "Primary", temp.path(), 0)
+            .with_peer_request_timeout(Duration::from_millis(50)),
+    )
+    .await
+    .unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert!(line.contains("\"start_pairing\""));
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    });
+
+    let error = primary.start_pairing("peer-target").await.unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("timed out waiting for peer peer-target"),
+        "unexpected error: {message}",
+    );
+
+    server.abort();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mdns_peers_can_discover_pair_and_transfer() {
     let temp = tempfile::tempdir().unwrap();

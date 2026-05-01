@@ -492,10 +492,19 @@ fn build_transfer_sidecar_env_from_resolved(
                     .into_owned()
             }),
     );
-    env.insert("KANNA_TRANSFER_PEER_ID".to_string(), resolved.peer_id);
+    env.insert(
+        "KANNA_TRANSFER_PEER_ID".to_string(),
+        std::env::var("KANNA_TRANSFER_PEER_ID")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(resolved.peer_id),
+    );
     env.insert(
         "KANNA_TRANSFER_DISPLAY_NAME".to_string(),
-        resolved.display_name,
+        std::env::var("KANNA_TRANSFER_DISPLAY_NAME")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(resolved.display_name),
     );
     Ok(env)
 }
