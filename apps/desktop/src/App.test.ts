@@ -450,6 +450,7 @@ describe("App", () => {
     store.rejectIncomingTransfer.mockClear();
     store.handleOutgoingTransferCommitted.mockClear();
     store.loadAgent.mockClear();
+    store.selectItem.mockClear();
     store.repos = [{ id: "repo-1", path: "/tmp/repo", name: "repo" }];
     store.selectedRepoId = "repo-1";
     store.selectedRepo = { id: "repo-1", path: "/tmp/repo", name: "repo" };
@@ -691,6 +692,19 @@ describe("App", () => {
     await handler?.({});
 
     expect(mockWindowWorkspace.closeWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips teardown tasks when navigating to unread tasks", async () => {
+    store.sortedItemsForCurrentRepo = [
+      { id: "teardown-unread", activity: "unread", created_at: "2026-03-31T00:00:00.000Z", tags: "[]", stage: "teardown" },
+      { id: "normal-unread", activity: "unread", created_at: "2026-03-31T01:00:00.000Z", tags: "[]", stage: "in progress" },
+    ];
+
+    await mountApp(SidebarWithRepoStub);
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.goToOldestUnread();
+    expect(store.selectItem).toHaveBeenCalledWith("normal-unread");
   });
 
   it("reopens the diff modal with the last saved diff view state", async () => {
