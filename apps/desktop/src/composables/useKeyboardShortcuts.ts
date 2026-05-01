@@ -5,6 +5,7 @@ export type ActionName =
   | "newTask"
   | "newWindow"
   | "openFile"
+  | "toggleFilePreview"
   | "advanceStage"
   | "closeTask"
   | "undoClose"
@@ -50,6 +51,8 @@ interface ShortcutDef {
   groupKey: string;
   /** Key(s) that trigger this shortcut (matched against KeyboardEvent.key). Array = any match. */
   key: string | string[];
+  /** Physical key code(s), useful when Option changes KeyboardEvent.key on macOS. */
+  code?: string | string[];
   meta?: boolean;
   shift?: boolean;
   alt?: boolean;
@@ -84,6 +87,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "navigateRepoDown", labelKey: "shortcuts.nextRepo",       groupKey: "shortcuts.groupMoveAround", key: "ArrowDown",                 meta: true, shift: true,  display: "⇧⌘↓",     context: ["main"] },
   // Tools — open task and repo tools
   { action: "openFile",       labelKey: "shortcuts.filePicker",     groupKey: "shortcuts.groupOpenInspect", key: "p",                         meta: true,               display: "⌘P",       context: PREVIEW_MODAL_CONTEXTS },
+  { action: "toggleFilePreview", labelKey: "shortcuts.filePreview", groupKey: "shortcuts.groupOpenInspect", key: "p", code: "KeyP",            meta: true, alt: true,    display: "⌥⌘P",      context: ["main", "file"] },
   { action: "commandPalette", labelKey: "shortcuts.commandPalette", groupKey: "shortcuts.groupOpenInspect", key: ["P", "p"],                  meta: true, shift: true,  display: "⇧⌘P",     context: ["main"] },
   { action: "showDiff",       labelKey: "shortcuts.viewDiff",       groupKey: "shortcuts.groupOpenInspect", key: "d",                         meta: true, display: "⌘D",                       context: PREVIEW_MODAL_CONTEXTS },
   { action: "showCommitGraph", labelKey: "shortcuts.commitGraph", groupKey: "shortcuts.groupOpenInspect", key: "g", meta: true, display: "⌘G", context: PREVIEW_MODAL_CONTEXTS },
@@ -122,7 +126,8 @@ function matches(def: ShortcutDef, e: KeyboardEvent): boolean {
   if (e.altKey !== (def.alt ?? false)) return false;
   if (e.ctrlKey !== (def.ctrl ?? false)) return false;
   const keys = Array.isArray(def.key) ? def.key : [def.key];
-  return keys.includes(e.key);
+  const codes = def.code ? (Array.isArray(def.code) ? def.code : [def.code]) : [];
+  return keys.includes(e.key) || codes.includes(e.code);
 }
 
 /**

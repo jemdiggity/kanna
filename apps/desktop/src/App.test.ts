@@ -1106,6 +1106,120 @@ describe("App", () => {
     expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
   });
 
+  it("recalls the last previewed file with the file preview shortcut after dismissal", async () => {
+    vi.stubGlobal("__KANNA_MOBILE__", false);
+    const { default: App } = await import("./App.vue");
+    const wrapper = mount(App, {
+      global: {
+        provide: {
+          db: dbMock,
+          dbName: "test.db",
+        },
+        mocks: {
+          $t: (key: string) => key,
+        },
+        stubs: {
+          Sidebar: SidebarWithRepoStub,
+          MainPanel: true,
+          AddRepoModal: true,
+          KeyboardShortcutsModal: true,
+          FilePickerModal: FilePickerModalTestStub,
+          FilePreviewModal: FilePreviewModalTestStub,
+          TreeExplorerModal: true,
+          DiffModal: true,
+          CommitGraphModal: true,
+          ShellModal: true,
+          CommandPaletteModal: true,
+          AnalyticsModal: true,
+          BlockerSelectModal: true,
+          PreferencesPanel: true,
+          ToastContainer: true,
+          KeepAlive: false,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    await wrapper.get('[data-testid="file-picker-select"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+
+    capturedKeyboardActions?.dismiss();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+
+    capturedKeyboardActions?.toggleFilePreview();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+  });
+
+  it("opens the file picker over the file preview and dismisses the picker first", async () => {
+    vi.stubGlobal("__KANNA_MOBILE__", false);
+    const { default: App } = await import("./App.vue");
+    const wrapper = mount(App, {
+      global: {
+        provide: {
+          db: dbMock,
+          dbName: "test.db",
+        },
+        mocks: {
+          $t: (key: string) => key,
+        },
+        stubs: {
+          Sidebar: SidebarWithRepoStub,
+          MainPanel: true,
+          AddRepoModal: true,
+          KeyboardShortcutsModal: true,
+          FilePickerModal: FilePickerModalTestStub,
+          FilePreviewModal: FilePreviewModalTestStub,
+          TreeExplorerModal: true,
+          DiffModal: true,
+          CommitGraphModal: true,
+          ShellModal: true,
+          CommandPaletteModal: true,
+          AnalyticsModal: true,
+          BlockerSelectModal: true,
+          PreferencesPanel: true,
+          ToastContainer: true,
+          KeepAlive: false,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    await wrapper.get('[data-testid="file-picker-select"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(true);
+
+    const handled = capturedKeyboardActions?.dismiss();
+    await flushPromises();
+
+    expect(handled).toBe(true);
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+  });
+
   it("dismiss closes commit graph search before closing the commit graph modal", async () => {
     const dismissMock = vi.fn(() => false);
     const CommitGraphModalTestStub = defineComponent({
