@@ -196,6 +196,44 @@ describe("DiffView", () => {
     wrapper.unmount();
   });
 
+  it("uses the current branch upstream as the branch diff base when it differs from the stored base ref", async () => {
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === "git_branch_upstream") return "origin/release";
+      if (command === "git_merge_base") {
+        expect(args?.refA).toBe("origin/release");
+        return "release-base";
+      }
+      if (command === "git_diff_range") return "diff --git a/rebased.txt b/rebased.txt";
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const wrapper = mount(DiffView, {
+      props: {
+        repoPath: "/repo",
+        initialScope: "branch",
+        baseRef: "origin/main",
+      },
+      attachTo: document.body,
+      global: {
+        mocks: {
+          $t: (key: string) => key,
+        },
+      },
+    });
+
+    await flushPromises();
+    await flushPromises();
+
+    expect(invokeMock).toHaveBeenCalledWith("git_branch_upstream", { repoPath: "/repo" });
+    expect(invokeMock).toHaveBeenCalledWith("git_merge_base", {
+      repoPath: "/repo",
+      refA: "origin/release",
+      refB: "HEAD",
+    });
+
+    wrapper.unmount();
+  });
+
   it("renders a sticky filename header for each diff file", async () => {
     diffMocks.parsePatchFilesMock.mockReturnValueOnce([
       {
@@ -286,6 +324,7 @@ describe("DiffView", () => {
     expect(container.scrollTop).toBe(240);
 
     await branchButton.trigger("click");
+    await flushPromises();
     await flushPromises();
     await flushPromises();
 

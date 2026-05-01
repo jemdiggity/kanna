@@ -372,17 +372,17 @@ async function loadDiff(options: { preserveCurrentScroll?: boolean } = {}) {
     } else {
       // "branch" scope — diff from merge base
       const baseRefStartedAt = performance.now();
-      const baseRef = props.baseRef || await detectBaseRef(path);
+      const resolvedBase = await resolveBranchBaseRef(path);
       logDiffPerf(loadId, "base_ref:done", {
         durationMs: roundDuration(performance.now() - baseRefStartedAt),
-        baseRef,
-        source: props.baseRef ? "prop" : "detected",
+        baseRef: resolvedBase.ref,
+        source: resolvedBase.source,
       });
 
       const mergeBaseStartedAt = performance.now();
       const mergeBase = await invoke<string>("git_merge_base", {
         repoPath: path,
-        refA: baseRef,
+        refA: resolvedBase.ref,
         refB: "HEAD",
       });
       logDiffPerf(loadId, "merge_base:done", {
@@ -442,6 +442,26 @@ async function loadDiff(options: { preserveCurrentScroll?: boolean } = {}) {
       loading.value = false;
     }
   }
+}
+
+interface ResolvedBranchBaseRef {
+  ref: string;
+  source: "upstream" | "prop" | "detected";
+}
+
+async function resolveBranchBaseRef(path: string): Promise<ResolvedBranchBaseRef> {
+  const upstream = await invoke<string | null>("git_branch_upstream", { repoPath: path })
+    .catch((e: unknown) => {
+      console.warn("[DiffView] branch upstream unavailable, using stored base ref:", e);
+      return null;
+    });
+  if (upstream) {
+    return { ref: upstream, source: "upstream" };
+  }
+  if (props.baseRef) {
+    return { ref: props.baseRef, source: "prop" };
+  }
+  return { ref: await detectBaseRef(path), source: "detected" };
 }
 
 async function detectBaseRef(path: string): Promise<string> {

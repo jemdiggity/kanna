@@ -43,7 +43,7 @@ pub(crate) fn load_or_create_transfer_identity_for_root(
 }
 
 fn load_or_create_transfer_identity_at_path(path: &Path) -> Result<TransferIdentityRecord, String> {
-    match std::fs::read_to_string(&path) {
+    match std::fs::read_to_string(path) {
         Ok(contents) => {
             serde_json::from_str::<TransferIdentityRecord>(&contents).map_err(|error| {
                 format!(
@@ -58,7 +58,7 @@ fn load_or_create_transfer_identity_at_path(path: &Path) -> Result<TransferIdent
                 peer_id: generate_peer_id(),
                 nickname: None,
             };
-            write_transfer_identity(&path, &identity)?;
+            write_transfer_identity(path, &identity)?;
             Ok(identity)
         }
         Err(error) => Err(format!(
