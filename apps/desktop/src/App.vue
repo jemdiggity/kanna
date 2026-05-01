@@ -210,10 +210,11 @@ function navigateItems(direction: -1 | 1) {
   }
   const nextItem = visibleItems[nextIndex];
   if (nextItem.id !== store.selectedItemId) {
+    const previousItemId = store.selectedItemId;
     if (nextItem.repo_id !== store.selectedRepoId) {
       store.selectRepo(nextItem.repo_id);
     }
-    store.selectItem(nextItem.id);
+    store.selectItem(nextItem.id, { previousItemId });
   }
 }
 
@@ -230,6 +231,7 @@ function navigateRepos(direction: -1 | 1) {
   }
   const nextRepo = visibleRepos[nextIndex];
   if (nextRepo.id === store.selectedRepoId) return;
+  const previousItemId = store.selectedItemId;
   store.selectRepo(nextRepo.id);
 
   // Restore last-selected task for this repo, or fall back to first task
@@ -238,11 +240,11 @@ function navigateRepos(direction: -1 | 1) {
     ? store.items.find((i) => i.id === lastItemId && i.repo_id === nextRepo.id && i.stage !== "done")
     : undefined;
   if (lastItem) {
-    store.selectItem(lastItem.id);
+    store.selectItem(lastItem.id, { previousItemId });
   } else {
     const sorted = store.sortedItemsAllRepos.filter((i) => i.repo_id === nextRepo.id);
     if (sorted.length > 0) {
-      store.selectItem(sorted[0].id);
+      store.selectItem(sorted[0].id, { previousItemId });
     }
   }
 }

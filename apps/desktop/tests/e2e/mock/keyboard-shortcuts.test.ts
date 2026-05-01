@@ -5,14 +5,16 @@ import { buildGlobalKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
 import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
-import { getVueState } from "../helpers/vue";
+import { execDb, getVueState } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 const CTX_SCRIPT = 'window.__KANNA_E2E__.setupState';
 
 describe("keyboard shortcuts", () => {
   const client = new WebDriverClient();
   let fixtureRepoRoot = "";
+  let secondFixtureRepoRoot = "";
   let testRepoPath = "";
+  let secondTestRepoPath = "";
   let repoImported = false;
 
   beforeAll(async () => {
@@ -23,20 +25,48 @@ describe("keyboard shortcuts", () => {
     await dismissStartupShortcutsModal(client);
     fixtureRepoRoot = await createFixtureRepo("keyboard-test");
     testRepoPath = join(fixtureRepoRoot, "apps");
+    secondFixtureRepoRoot = await createFixtureRepo("keyboard-test-secondary");
+    secondTestRepoPath = join(secondFixtureRepoRoot, "packages");
   });
 
   afterAll(async () => {
-    await cleanupFixtureRepos(fixtureRepoRoot ? [fixtureRepoRoot] : []);
+    await cleanupFixtureRepos([fixtureRepoRoot, secondFixtureRepoRoot].filter(Boolean));
     await client.deleteSession();
   });
 
-  async function pressKey(key: string, opts: { meta?: boolean; shift?: boolean; alt?: boolean } = {}) {
+  async function pressKey(key: string, opts: { meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean } = {}) {
     await client.executeSync(buildGlobalKeydownScript({
       key,
       meta: opts.meta,
       shift: opts.shift,
       alt: opts.alt,
+      ctrl: opts.ctrl,
     }));
+  }
+
+  async function waitForSelection(
+    expected: { repoId?: string; itemId?: string },
+    timeoutMs = 3000,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let lastSelection: { repoId: string | null; itemId: string | null } | null = null;
+    while (Date.now() < deadline) {
+      lastSelection = await client.executeSync<{ repoId: string | null; itemId: string | null }>(
+        `const ctx = ${CTX_SCRIPT};
+         const unwrap = (value) => value && value.__v_isRef ? value.value : value;
+         return {
+           repoId: unwrap(ctx.store?.selectedRepoId ?? ctx.selectedRepoId) ?? null,
+           itemId: unwrap(ctx.store?.selectedItemId ?? ctx.selectedItemId) ?? null,
+         };`,
+      );
+      const repoMatches = expected.repoId === undefined || lastSelection.repoId === expected.repoId;
+      const itemMatches = expected.itemId === undefined || lastSelection.itemId === expected.itemId;
+      if (repoMatches && itemMatches) return;
+      await sleep(100);
+    }
+    throw new Error(
+      `Timed out waiting for selection ${JSON.stringify(expected)}; last selection was ${JSON.stringify(lastSelection)}`,
+    );
   }
 
   async function ensureRepoImported() {
@@ -77,42 +107,123 @@ describe("keyboard shortcuts", () => {
     }
   });
 
-  it("navigation changes selected item", async () => {
-    await ensureRepoImported();
-    // Insert tasks directly into DB without spawning Claude
-    const repoId = await getVueState(client, "selectedRepoId") as string;
-    await client.executeAsync<string>(
-      `const cb = arguments[arguments.length - 1];
-       const ctx = window.__KANNA_E2E__.setupState;
-       const db = ctx.db.value || ctx.db;
-       var id1 = crypto.randomUUID();
-       var id2 = crypto.randomUUID();
-       db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)", [id1, "${repoId}", "Task A", "in progress", "sdk"])
-         .then(function() { return db.execute("INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)", [id2, "${repoId}", "Task B", "in progress", "sdk"]); })
-         .then(function() { return ctx.loadItems("${repoId}"); })
-         .then(function() { ctx.selectedItemId.value = id2; cb("ok"); })
-         .catch(function(e) { cb("err:" + e); });`
-    );
-    await sleep(500);
+  it("uses shortcuts to navigate tasks and repos while preserving back-forward history", async () => {
+    await resetDatabase(client);
+    await client.executeSync("location.reload()");
+    await client.waitForAppReady();
+    await dismissStartupShortcutsModal(client);
 
-    const items = (await getVueState(client, "items")) as Array<{ id: string }>;
-    if (!items || items.length < 2) {
-      console.warn("Need at least 2 tasks for navigation test, got", items?.length);
-      return;
+    const repoOneId = await importTestRepo(client, testRepoPath, "keyboard-history-one");
+    const repoTwoId = await importTestRepo(client, secondTestRepoPath, "keyboard-history-two");
+    repoImported = true;
+
+    await execDb(client, "UPDATE repo SET sort_order = 0 WHERE id = ?", [repoOneId]);
+    await execDb(client, "UPDATE repo SET sort_order = 1 WHERE id = ?", [repoTwoId]);
+
+    const repoOneIssueOne = "e2e-repo-one-issue-one";
+    const repoOneIssueTwo = "e2e-repo-one-issue-two";
+    const repoTwoIssueOne = "e2e-repo-two-issue-one";
+    const repoTwoIssueTwo = "e2e-repo-two-issue-two";
+    const taskRows = [
+      [repoOneIssueOne, repoOneId, 101, "Repo One Issue One", "2026-04-17T10:00:00.000Z"],
+      [repoOneIssueTwo, repoOneId, 102, "Repo One Issue Two", "2026-04-17T10:01:00.000Z"],
+      [repoTwoIssueOne, repoTwoId, 201, "Repo Two Issue One", "2026-04-17T10:00:00.000Z"],
+      [repoTwoIssueTwo, repoTwoId, 202, "Repo Two Issue Two", "2026-04-17T10:01:00.000Z"],
+    ] as const;
+
+    for (const [id, repoId, issueNumber, issueTitle, createdAt] of taskRows) {
+      await execDb(
+        client,
+        `INSERT INTO pipeline_item
+           (id, repo_id, issue_number, issue_title, prompt, stage, tags, branch, agent_type, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          repoId,
+          issueNumber,
+          issueTitle,
+          `Prompt for ${issueTitle}`,
+          "in progress",
+          "[]",
+          null,
+          "sdk",
+          createdAt,
+          createdAt,
+        ],
+      );
     }
 
-    const firstSelected = await getVueState(client, "selectedItemId");
-
-    // Call navigateItems directly
     await client.executeSync(
-      `window.__KANNA_E2E__.setupState.navigateItems(1);`
+      `${CTX_SCRIPT}.showNewTaskModal = false;
+       ${CTX_SCRIPT}.showAddRepoModal = false;
+       ${CTX_SCRIPT}.showShortcutsModal = false;
+       ${CTX_SCRIPT}.showFilePickerModal = false;
+       ${CTX_SCRIPT}.showFilePreviewModal = false;
+       ${CTX_SCRIPT}.showDiffModal = false;
+       ${CTX_SCRIPT}.showTreeExplorer = false;
+       ${CTX_SCRIPT}.showShellModal = false;
+       ${CTX_SCRIPT}.showAnalyticsModal = false;
+       ${CTX_SCRIPT}.showBlockerSelect = false;
+       ${CTX_SCRIPT}.showPreferencesPanel = false;
+       ${CTX_SCRIPT}.showCommitGraphModal = false;
+       ${CTX_SCRIPT}.showPeerPicker = false;`,
     );
-    await sleep(200);
-    const afterDown = await getVueState(client, "selectedItemId");
-    expect(afterDown).not.toBe(firstSelected);
 
-    // Navigate down worked — that's the key assertion.
-    // Navigate up may not change if we're already at the boundary or sort order differs.
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = ${CTX_SCRIPT};
+       ctx.refreshAllItems().then(function() { cb("ok"); }).catch(function(e) { cb("err:" + e); });`,
+    );
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = ${CTX_SCRIPT};
+       Promise.resolve(ctx.store.selectRepo(${JSON.stringify(repoOneId)}))
+         .then(function() { return ctx.store.selectItem(${JSON.stringify(repoOneIssueTwo)}); })
+         .then(function() { cb("ok"); })
+         .catch(function(e) { cb("err:" + e); });`,
+    );
+    await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueTwo });
+    await sleep(1100);
+
+    await pressKey("ArrowDown", { meta: true, alt: true });
+    await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueOne });
+    await sleep(1100);
+
+    await pressKey("ArrowDown", { meta: true, shift: true });
+    await waitForSelection({ repoId: repoTwoId, itemId: repoTwoIssueTwo });
+    await sleep(1100);
+
+    await pressKey("ArrowDown", { meta: true, alt: true });
+    await waitForSelection({ repoId: repoTwoId, itemId: repoTwoIssueOne });
+    await sleep(1100);
+
+    await pressKey("-", { ctrl: true });
+    await waitForSelection({ repoId: repoTwoId, itemId: repoTwoIssueTwo });
+
+    await pressKey("-", { ctrl: true });
+    await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueOne });
+
+    await pressKey("-", { ctrl: true });
+    await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueTwo });
+
+    await pressKey("-", { ctrl: true, shift: true });
+    await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueOne });
+
+    await pressKey("-", { ctrl: true, shift: true });
+    await waitForSelection({ repoId: repoTwoId, itemId: repoTwoIssueTwo });
+
+    await pressKey("-", { ctrl: true, shift: true });
+    await waitForSelection({ repoId: repoTwoId, itemId: repoTwoIssueOne });
+
+    await sleep(1100);
+    await pressKey("ArrowUp", { meta: true, shift: true });
+    await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueOne });
+
+    await pressKey("-", { ctrl: true });
+    await waitForSelection({ repoId: repoTwoId, itemId: repoTwoIssueOne });
+
+    await pressKey("-", { ctrl: true, shift: true });
+    await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueOne });
   });
 
   it("Shift+Cmd+Enter maximizes the tree explorer", async () => {

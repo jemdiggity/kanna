@@ -117,7 +117,7 @@ export interface StoreServices {
   isItemHidden?: (item: PipelineItem) => boolean;
   getStageOrder?: (repoId: string) => readonly string[];
   selectRepo?: (repoId: string) => Promise<void>;
-  selectItem?: (itemId: string) => Promise<void>;
+  selectItem?: (itemId: string, options?: { previousItemId?: string | null }) => Promise<void>;
   selectReplacementAfterItemRemoval?: (removedItem: PipelineItem) => Promise<string | null>;
   restoreSelection?: (itemId: string) => void;
   goBack?: () => void;

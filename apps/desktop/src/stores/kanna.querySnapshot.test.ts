@@ -390,6 +390,30 @@ describe("kanna query snapshot regressions", () => {
     expect(store.currentItem?.id).toBe("item-1");
   });
 
+  it("records cross-repo task selection history when the previous task is provided explicitly", async () => {
+    const store = await createStore();
+
+    await store.selectRepo("repo-1");
+    await store.selectItem("item-1");
+    await vi.advanceTimersByTimeAsync(1001);
+
+    await store.selectRepo("repo-2");
+    await store.selectItem("item-2", { previousItemId: "item-1" });
+    await flushStore();
+
+    store.goBack();
+    await flushStore();
+
+    expect(store.selectedRepo?.id).toBe("repo-1");
+    expect(store.currentItem?.id).toBe("item-1");
+
+    store.goForward();
+    await flushStore();
+
+    expect(store.selectedRepo?.id).toBe("repo-2");
+    expect(store.currentItem?.id).toBe("item-2");
+  });
+
   it("begins a task-switch perf record when selecting a PTY task", async () => {
     const store = await createStore();
 
