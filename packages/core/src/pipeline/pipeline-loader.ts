@@ -33,6 +33,16 @@ export function validatePipeline(def: PipelineDefinition): string[] {
       );
     }
 
+    if (
+      stage.mode !== undefined &&
+      stage.mode !== "new_task" &&
+      stage.mode !== "continue"
+    ) {
+      errors.push(
+        `Stage "${stage.name ?? "(unnamed)"}" has invalid mode "${stage.mode as string}"; must be "new_task" or "continue"`
+      );
+    }
+
     if (stage.environment !== undefined) {
       const envMap = def.environments ?? {};
       if (!Object.prototype.hasOwnProperty.call(envMap, stage.environment)) {
@@ -122,6 +132,9 @@ function extractStages(obj: Record<string, unknown>): PipelineStage[] {
     }
     if (typeof s["follow_task"] === "boolean") {
       stage.follow_task = s["follow_task"];
+    }
+    if (typeof s["mode"] === "string") {
+      stage.mode = s["mode"] as PipelineStage["mode"];
     }
 
     return stage;

@@ -12,6 +12,7 @@ export interface PipelineStage {
   environment?: string;
   transition: "manual" | "auto";
   follow_task?: boolean;
+  mode?: "new_task" | "continue";
 }
 
 export interface PipelineDefinition {

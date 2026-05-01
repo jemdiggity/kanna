@@ -118,6 +118,28 @@ describe("parsePipelineJson", () => {
 
     expect(result.stages[0].follow_task).toBeUndefined();
   });
+
+  it("parses continue mode when explicitly set", () => {
+    const json = JSON.stringify({
+      name: "My Pipeline",
+      stages: [{ name: "Commit", transition: "auto", mode: "continue" }],
+    });
+
+    const result = parsePipelineJson(json);
+
+    expect(result.stages[0].mode).toBe("continue");
+  });
+
+  it("ignores non-string mode values", () => {
+    const json = JSON.stringify({
+      name: "My Pipeline",
+      stages: [{ name: "Commit", transition: "auto", mode: true }],
+    });
+
+    const result = parsePipelineJson(json);
+
+    expect(result.stages[0].mode).toBeUndefined();
+  });
 });
 
 describe("validatePipeline", () => {
@@ -169,6 +191,17 @@ describe("validatePipeline", () => {
     };
     const errors = validatePipeline(pipeline);
     expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("returns error for invalid mode", () => {
+    const pipeline = {
+      name: "Pipeline",
+      stages: [{ name: "Commit", transition: "auto" as const, mode: "sideways" as "continue" }],
+    };
+
+    const errors = validatePipeline(pipeline);
+
+    expect(errors.some((error) => error.includes("mode"))).toBe(true);
   });
 
   it("returns error for undefined environment reference", () => {
