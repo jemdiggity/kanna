@@ -51,6 +51,7 @@ import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
+import type { WindowWorkspaceController } from "./windowWorkspace";
 
 const isMobile = __KANNA_MOBILE__;
 
@@ -71,10 +72,12 @@ const toast = useToast();
 const { t } = useI18n();
 const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
+const windowWorkspace = inject<WindowWorkspaceController>("windowWorkspace")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
 const appUpdate = useAppUpdate();
 const appUnlisteners: Array<() => void> = [];
 useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
+store.attachWindowWorkspace(windowWorkspace);
 
 // UI state
 const showNewTaskModal = ref(false);
@@ -754,14 +757,10 @@ const keyboardActions = {
     openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e));
   },
   newWindow: async () => {
-    if (isTauri) {
-      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      new WebviewWindow(`window-${Date.now()}`, {
-        url: "/", title: "", width: 1200, height: 800, minWidth: 800, minHeight: 600,
-      });
-    } else {
-      window.open(window.location.href, "_blank");
-    }
+    await windowWorkspace.openWindow({
+      selectedRepoId: store.selectedRepoId,
+      selectedItemId: store.selectedItemId,
+    });
   },
   openFile: () => {
     if (showFilePickerModal.value) {

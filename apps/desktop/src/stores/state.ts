@@ -7,6 +7,7 @@ import { invoke } from "../invoke";
 import i18n from "../i18n";
 import { useToast } from "../composables/useToast";
 import { getAppErrorMessage } from "../appError";
+import type { WindowBootstrap, WindowWorkspaceController } from "../windowWorkspace";
 
 /** Generate an 8-char hex ID (32 bits of randomness). */
 export function generateId(): string {
@@ -84,6 +85,7 @@ export interface StoreState {
   db: Ref<DbHandle | null>;
   repos: Ref<Repo[]>;
   items: Ref<PipelineItem[]>;
+  initialWindowBootstrap: Ref<WindowBootstrap | null>;
   selectedRepoId: Ref<string | null>;
   selectedItemId: Ref<string | null>;
   lastSelectedItemByRepo: Ref<Record<string, string>>;
@@ -102,6 +104,7 @@ export interface StoreState {
 }
 
 export interface StoreServices {
+  windowWorkspace?: WindowWorkspaceController;
   loadInitialData?: () => Promise<void>;
   reloadSnapshot?: () => Promise<void>;
   withOptimisticItemOverlay?: <T>(input: {
@@ -119,6 +122,7 @@ export interface StoreServices {
   selectRepo?: (repoId: string) => Promise<void>;
   selectItem?: (itemId: string, options?: { previousItemId?: string | null }) => Promise<void>;
   selectReplacementAfterItemRemoval?: (removedItem: PipelineItem) => Promise<string | null>;
+  reconcileSelection?: () => void;
   restoreSelection?: (itemId: string) => void;
   goBack?: () => void;
   goForward?: () => void;
@@ -229,6 +233,7 @@ export function createStoreState(): StoreState {
   const db = ref<DbHandle | null>(null);
   const repos = ref<Repo[]>([]);
   const items = ref<PipelineItem[]>([]);
+  const initialWindowBootstrap = ref<WindowBootstrap | null>(null);
   const selectedRepoId = ref<string | null>(null);
   const selectedItemId = ref<string | null>(null);
   const lastSelectedItemByRepo = ref<Record<string, string>>({});
@@ -249,6 +254,7 @@ export function createStoreState(): StoreState {
     db,
     repos,
     items,
+    initialWindowBootstrap,
     selectedRepoId,
     selectedItemId,
     lastSelectedItemByRepo,

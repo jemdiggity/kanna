@@ -94,8 +94,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "openShell",      labelKey: "shortcuts.shellTerminal",  groupKey: "shortcuts.groupOpenInspect", key: "j",                         meta: true,               display: "⌘J",       context: PREVIEW_MODAL_CONTEXTS },
   { action: "openShellRepoRoot", labelKey: "shortcuts.shellRepoRoot", groupKey: "shortcuts.groupOpenInspect", key: ["J", "j"],                  meta: true, shift: true,  display: "⇧⌘J",     context: PREVIEW_MODAL_CONTEXTS },
   { action: "openInIDE",      labelKey: "shortcuts.openInIDE",      groupKey: "shortcuts.groupOpenInspect", key: "o",                         meta: true,               display: "⌘O",       context: ["main"] },
-  // Window — disabled until #24 (new window state sharing)
-  // { action: "newWindow",  labelKey: "shortcuts.newWindow", groupKey: "shortcuts.groupWindow", key: ["N", "n"],                     meta: true, shift: true,  display: "⇧⌘N" },
+  { action: "newWindow",    labelKey: "shortcuts.newWindow",    groupKey: "shortcuts.groupWorkspace", key: "n",                            meta: true,               display: "⌘N",       context: ["main"] },
   // Views — layout and framing controls
   { action: "toggleSidebar", labelKey: "shortcuts.toggleSidebar", groupKey: "shortcuts.groupWorkspace", key: "b",                            meta: true,               display: "⌘B",       context: ["main"] },
   { action: "toggleMaximize", labelKey: "shortcuts.maximize",       groupKey: "shortcuts.groupWorkspace", key: "Enter",                     meta: true, shift: true,  display: "⇧⌘Enter", context: ["main", "diff", "file", "shell", "tree"] },

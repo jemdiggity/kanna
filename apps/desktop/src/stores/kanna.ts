@@ -33,6 +33,7 @@ import { createSessionsApi } from "./sessions";
 import { createPipelineApi } from "./pipeline";
 import { createTasksApi } from "./tasks";
 import { createInitApi } from "./init";
+import type { WindowWorkspaceController } from "../windowWorkspace";
 
 export { readRepoConfig } from "./state";
 export { collectTeardownCommands } from "./tasks";
@@ -227,6 +228,7 @@ export const useKannaStore = defineStore("kanna", () => {
   services.selectRepo = selection.selectRepo;
   services.selectItem = selection.selectItem;
   services.selectReplacementAfterItemRemoval = selection.selectReplacementAfterItemRemoval;
+  services.reconcileSelection = selection.reconcileSelection;
   services.restoreSelection = selection.restoreSelection;
   services.goBack = selection.goBack;
   services.goForward = selection.goForward;
@@ -865,6 +867,11 @@ Use this branch as the default when the user does not specify a target branch. B
     await queries.reloadSnapshot();
   }
 
+  function attachWindowWorkspace(windowWorkspace: WindowWorkspaceController): void {
+    services.windowWorkspace = windowWorkspace;
+    state.initialWindowBootstrap.value = windowWorkspace.bootstrap;
+  }
+
   return {
     repos: state.repos,
     items: state.items,
@@ -886,6 +893,7 @@ Use this branch as the default when the user does not specify a target branch. B
     getStageOrder: selection.getStageOrder,
 
     init: initApi.init,
+    attachWindowWorkspace,
     selectRepo: selection.selectRepo,
     selectItem: selection.selectItem,
     goBack: selection.goBack,

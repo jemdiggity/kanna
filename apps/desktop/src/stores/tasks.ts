@@ -139,6 +139,9 @@ export function createTasksApi(
   ports: import("./ports").PortsStore,
 ): TasksApi {
   const reloadSnapshot = () => requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+  const invalidateWindowWorkspace = async (reason: string): Promise<void> => {
+    await context.services.windowWorkspace?.invalidateSharedData(reason);
+  };
   const withOptimisticItemOverlay = <T>(input: Parameters<NonNullable<StoreContext["services"]["withOptimisticItemOverlay"]>>[0]) =>
     requireService(context.services.withOptimisticItemOverlay, "withOptimisticItemOverlay")(input) as Promise<T>;
 
@@ -187,6 +190,7 @@ export function createTasksApi(
       if (existing.hidden) {
         await unhideRepoQuery(context.requireDb(), existing.id);
         await reloadSnapshot();
+        await invalidateWindowWorkspace("importRepo");
         context.state.selectedRepoId.value = existing.id;
       }
       return existing.id;
@@ -194,6 +198,7 @@ export function createTasksApi(
     const id = crypto.randomUUID().slice(0, 8);
     await insertRepo(context.requireDb(), { id, path, name, default_branch: defaultBranch });
     await reloadSnapshot();
+    await invalidateWindowWorkspace("importRepo");
     context.state.selectedRepoId.value = id;
     if (isTauri) {
       requireService(context.services.spawnShellSession, "spawnShellSession")(`shell-repo-${id}`, path, null, false)
@@ -208,6 +213,7 @@ export function createTasksApi(
       if (existing.hidden) {
         await unhideRepoQuery(context.requireDb(), existing.id);
         await reloadSnapshot();
+        await invalidateWindowWorkspace("createRepo");
         context.state.selectedRepoId.value = existing.id;
       }
       return;
@@ -218,6 +224,7 @@ export function createTasksApi(
     const id = crypto.randomUUID().slice(0, 8);
     await insertRepo(context.requireDb(), { id, path, name, default_branch: defaultBranch });
     await reloadSnapshot();
+    await invalidateWindowWorkspace("createRepo");
     context.state.selectedRepoId.value = id;
     if (isTauri) {
       requireService(context.services.spawnShellSession, "spawnShellSession")(`shell-repo-${id}`, path, null, false)
@@ -232,6 +239,7 @@ export function createTasksApi(
     const id = crypto.randomUUID().slice(0, 8);
     await insertRepo(context.requireDb(), { id, path: destination, name, default_branch: defaultBranch });
     await reloadSnapshot();
+    await invalidateWindowWorkspace("cloneAndImportRepo");
     context.state.selectedRepoId.value = id;
     if (isTauri) {
       requireService(context.services.spawnShellSession, "spawnShellSession")(`shell-repo-${id}`, destination, null, false)
@@ -244,11 +252,13 @@ export function createTasksApi(
     if (context.state.selectedRepoId.value === repoId) context.state.selectedRepoId.value = null;
     context.state.lastHiddenRepoId.value = repoId;
     await reloadSnapshot();
+    await invalidateWindowWorkspace("hideRepo");
   }
 
   async function reorderRepos(orderedIds: string[]) {
     await reorderReposQuery(context.requireDb(), orderedIds);
     await reloadSnapshot();
+    await invalidateWindowWorkspace("reorderRepos");
   }
 
   async function createWorktree(
@@ -691,6 +701,7 @@ export function createTasksApi(
       selectOnCreate: opts?.selectOnCreate,
       selectedBeforeReturn: context.state.selectedItemId.value,
     });
+    await invalidateWindowWorkspace("createItem");
     return id;
   }
 
@@ -740,6 +751,7 @@ export function createTasksApi(
         if (opts?.selectNext !== false) await selectReplacementAfterTaskRemoval(item);
         await checkUnblocked(item.id);
         await reloadSnapshot();
+        await invalidateWindowWorkspace("closeTask");
         return;
       }
 
@@ -749,6 +761,7 @@ export function createTasksApi(
 
         if (opts?.selectNext !== false) await selectReplacementAfterTaskRemoval(item);
         await reloadSnapshot();
+        await invalidateWindowWorkspace("closeTask");
         void detachSessionsBeforeIntentionalKill([item.id]).then(() =>
           invoke("kill_session", { sessionId: item.id }).catch((error: unknown) =>
             reportCloseSessionError("[store] kill_session failed:", error)),
@@ -778,6 +791,7 @@ export function createTasksApi(
         await ports.closeTaskAndReleasePorts(item.id, (id) => closePipelineItem(context.requireDb(), id));
         await checkUnblocked(item.id);
         await reloadSnapshot();
+        await invalidateWindowWorkspace("closeTask");
         return;
       }
 
@@ -813,6 +827,7 @@ export function createTasksApi(
         await selectReplacementAfterTaskRemoval(item);
       }
       await reloadSnapshot();
+      await invalidateWindowWorkspace("closeTask");
 
       void teardownExit;
     } catch (error) {
@@ -827,6 +842,7 @@ export function createTasksApi(
       context.state.lastHiddenRepoId.value = null;
       await unhideRepoQuery(context.requireDb(), repoId);
       await reloadSnapshot();
+      await invalidateWindowWorkspace("undoClose");
       return;
     }
 
@@ -862,6 +878,7 @@ export function createTasksApi(
 
       await requireService(context.services.selectItem, "selectItem")(item.id);
       await reloadSnapshot();
+      await invalidateWindowWorkspace("undoClose");
 
       if (item.branch && !portAllocationFailed) {
         try {
@@ -1069,6 +1086,7 @@ export function createTasksApi(
     await updatePipelineItemTags(context.requireDb(), item.id, nextTags);
     await updatePipelineItemActivity(context.requireDb(), item.id, "idle");
     await reloadSnapshot();
+    await invalidateWindowWorkspace("blockTask");
     await requireService(context.services.selectItem, "selectItem")(item.id);
   }
 
@@ -1100,6 +1118,7 @@ export function createTasksApi(
     }
 
     await reloadSnapshot();
+    await invalidateWindowWorkspace("editBlockedTask");
 
     const updatedBlockers = await listBlockersForItem(context.requireDb(), itemId);
     const allClear = updatedBlockers.length === 0 || updatedBlockers.every(
@@ -1118,21 +1137,25 @@ export function createTasksApi(
   async function pinItem(itemId: string, position: number) {
     await pinPipelineItem(context.requireDb(), itemId, position);
     await reloadSnapshot();
+    await invalidateWindowWorkspace("pinItem");
   }
 
   async function unpinItem(itemId: string) {
     await unpinPipelineItem(context.requireDb(), itemId);
     await reloadSnapshot();
+    await invalidateWindowWorkspace("unpinItem");
   }
 
   async function reorderPinned(repoId: string, orderedIds: string[]) {
     await reorderPinnedItems(context.requireDb(), repoId, orderedIds);
     await reloadSnapshot();
+    await invalidateWindowWorkspace("reorderPinned");
   }
 
   async function renameItem(itemId: string, displayName: string | null) {
     await updatePipelineItemDisplayName(context.requireDb(), itemId, displayName);
     await reloadSnapshot();
+    await invalidateWindowWorkspace("renameItem");
   }
 
   return {

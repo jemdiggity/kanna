@@ -90,6 +90,7 @@ describe("getShortcutGroups", () => {
     ].sort());
 
     expect(groupMap["shortcuts.groupWorkspace"]).toEqual([
+      "shortcuts.newWindow",
       "shortcuts.toggleSidebar",
       "shortcuts.maximize",
     ]);
@@ -142,6 +143,13 @@ describe("isAppShortcut", () => {
       code: "KeyP",
       metaKey: true,
       altKey: true,
+    }))).toBe(true);
+  });
+
+  it("matches the new window shortcut", () => {
+    expect(isAppShortcut(new KeyboardEvent("keydown", {
+      key: "n",
+      metaKey: true,
     }))).toBe(true);
   });
 });

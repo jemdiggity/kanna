@@ -76,6 +76,7 @@ const store = {
   importRepo: vi.fn(async () => {}),
   cloneAndImportRepo: vi.fn(async () => {}),
   savePreference: vi.fn(async () => {}),
+  attachWindowWorkspace: vi.fn(),
   selectRepo: vi.fn(),
   selectItem: vi.fn(),
   closeTask: vi.fn(async () => {}),
@@ -96,6 +97,20 @@ const store = {
 };
 const toastInfoMock = vi.fn();
 const toastWarningMock = vi.fn();
+const mockWindowWorkspace = {
+  bootstrap: {
+    windowId: "main",
+    selectedRepoId: null,
+    selectedItemId: null,
+  },
+  loadSnapshot: vi.fn(async () => ({ windows: [] })),
+  saveSnapshot: vi.fn(async () => {}),
+  openWindow: vi.fn(async () => {}),
+  persistSelection: vi.fn(async () => {}),
+  persistSidebarHidden: vi.fn(async () => {}),
+  invalidateSharedData: vi.fn(async () => {}),
+  restoreAdditionalWindows: vi.fn(async () => {}),
+};
 
 let capturedKeyboardActions: KeyboardActions | null = null;
 
@@ -345,6 +360,7 @@ async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof Sidebar
       provide: {
         db: dbMock,
         dbName: "test.db",
+        windowWorkspace: mockWindowWorkspace,
       },
       mocks: {
         $t: (key: string) => key,
@@ -382,6 +398,7 @@ async function mountAppWithOverrides(
       provide: {
         db: dbMock,
         dbName: "test.db",
+        windowWorkspace: mockWindowWorkspace,
       },
       mocks: {
         $t: (key: string) => key,
@@ -429,6 +446,13 @@ describe("App", () => {
     store.sortedItemsAllRepos = [];
     listenHandlers.clear();
     capturedKeyboardActions = null;
+    mockWindowWorkspace.loadSnapshot.mockClear();
+    mockWindowWorkspace.saveSnapshot.mockClear();
+    mockWindowWorkspace.openWindow.mockClear();
+    mockWindowWorkspace.persistSelection.mockClear();
+    mockWindowWorkspace.persistSidebarHidden.mockClear();
+    mockWindowWorkspace.invalidateSharedData.mockClear();
+    mockWindowWorkspace.restoreAdditionalWindows.mockClear();
     dbSelectMock.mockReset();
     dbSelectMock.mockResolvedValue([]);
     invokeMock.mockClear();
@@ -605,6 +629,21 @@ describe("App", () => {
     store.selectItem.mockClear();
     capturedKeyboardActions?.goToNewestRead();
     expect(store.selectItem).toHaveBeenCalledWith("read-newest");
+  });
+
+  it("opens a new window through the workspace controller using the current selection", async () => {
+    store.selectedRepoId = "repo-1";
+    store.selectedItemId = "task-1";
+
+    await mountApp(SidebarWithRepoStub);
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    await capturedKeyboardActions?.newWindow();
+
+    expect(mockWindowWorkspace.openWindow).toHaveBeenCalledWith({
+      selectedRepoId: "repo-1",
+      selectedItemId: "task-1",
+    });
   });
 
   it("reopens the diff modal with the last saved diff view state", async () => {

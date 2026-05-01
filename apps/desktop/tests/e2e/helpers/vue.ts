@@ -13,7 +13,8 @@ export async function getVueState(
 ): Promise<unknown> {
   return client.executeSync(
     `const ctx = ${CTX};
-     const val = ctx.${prop} ?? (ctx.store ? ctx.store[${JSON.stringify(prop)}] : undefined);
+     const storeVal = ctx.store ? ctx.store[${JSON.stringify(prop)}] : undefined;
+     const val = storeVal !== undefined ? storeVal : ctx.${prop};
      const unwrapped = val && val.__v_isRef ? val.value : val;
      // JSON round-trip to strip Vue reactive proxies
      try { return JSON.parse(JSON.stringify(unwrapped)); } catch { return unwrapped; }`
@@ -49,7 +50,9 @@ export async function callVueMethod(
        return;
      }
      Promise.resolve(target(...${argsJson}))
-       .then(r => cb(r))
+       .then(r => {
+         try { cb(JSON.parse(JSON.stringify(r))); } catch { cb(r ?? null); }
+       })
        .catch(e => cb({ __error: e.message || String(e) }));`
   );
 }

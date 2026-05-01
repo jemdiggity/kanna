@@ -89,15 +89,23 @@ export function createInitApi(
 
     await requireService(context.services.loadInitialData, "loadInitialData")();
 
-    const savedRepo = await getSetting(context.requireDb(), "selected_repo_id");
-    const savedItem = await getSetting(context.requireDb(), "selected_item_id");
-    if (savedRepo && eagerRepos.some((repo) => repo.id === savedRepo)) {
-      context.state.selectedRepoId.value = savedRepo;
-      if (savedItem && eagerItems.some((item) => item.id === savedItem && item.stage !== "done")) {
-        requireService(context.services.restoreSelection, "restoreSelection")(savedItem);
-      }
-    } else if (eagerRepos.length === 1) {
+    const bootstrap = context.state.initialWindowBootstrap.value;
+    const bootstrapRepoId = bootstrap?.selectedRepoId ?? null;
+    const bootstrapItemId = bootstrap?.selectedItemId ?? null;
+    if (bootstrapRepoId && eagerRepos.some((repo) => repo.id === bootstrapRepoId)) {
+      context.state.selectedRepoId.value = bootstrapRepoId;
+    } else if (eagerRepos.length > 0) {
       context.state.selectedRepoId.value = eagerRepos[0].id;
+    }
+
+    if (
+      bootstrapItemId
+      && eagerItems.some((item) =>
+        item.id === bootstrapItemId
+        && item.stage !== "done"
+        && item.repo_id === context.state.selectedRepoId.value)
+    ) {
+      requireService(context.services.restoreSelection, "restoreSelection")(bootstrapItemId);
     }
 
     if (isTauri) {
@@ -141,6 +149,11 @@ export function createInitApi(
           .catch((error) => reportPrewarmSessionError("[store] repo shell pre-warm failed:", error));
       }
     }
+
+    await context.services.windowWorkspace?.onSharedInvalidation(async () => {
+      await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+      requireService(context.services.reconcileSelection, "reconcileSelection")();
+    });
 
     listen("status_changed", async (event: unknown) => {
       const payload = (event as { payload?: { session_id?: string; status?: string } }).payload ?? (event as { session_id?: string; status?: string });

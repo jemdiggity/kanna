@@ -17,6 +17,7 @@ export interface SelectionApi {
   selectRepo: (repoId: string) => Promise<void>;
   selectItem: (itemId: string, options?: SelectItemOptions) => Promise<void>;
   selectReplacementAfterItemRemoval: (removedItem: PipelineItem) => Promise<string | null>;
+  reconcileSelection: () => void;
   restoreSelection: (itemId: string) => void;
   goBack: () => void;
   goForward: () => void;
@@ -36,6 +37,13 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
       to,
       selectedRepoId: context.state.selectedRepoId.value,
       ...details,
+    });
+  }
+
+  async function persistWindowSelection(): Promise<void> {
+    await context.services.windowWorkspace?.persistSelection({
+      selectedRepoId: context.state.selectedRepoId.value,
+      selectedItemId: context.state.selectedItemId.value,
     });
   }
 
@@ -131,6 +139,7 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     context.state.selectedItemId.value = context.state.lastSelectedItemByRepo.value[repoId] ?? null;
     logSelection("selectRepo", previousItemId, context.state.selectedItemId.value, { repoId });
     await setSetting(context.requireDb(), "selected_repo_id", repoId);
+    await persistWindowSelection();
   }
 
   async function selectItem(itemId: string, options: SelectItemOptions = {}) {
@@ -150,7 +159,7 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     if (item) {
       context.state.lastSelectedItemByRepo.value[item.repo_id] = itemId;
     }
-    await setSetting(context.requireDb(), "selected_item_id", itemId);
+    await persistWindowSelection();
     emitTaskSelected(itemId);
   }
 
@@ -183,12 +192,12 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
         removedItemId: removedItem.id,
       });
       context.state.selectedItemId.value = null;
+      await persistWindowSelection();
       return null;
     }
 
     if (context.state.selectedRepoId.value !== replacement.repo_id) {
       context.state.selectedRepoId.value = replacement.repo_id;
-      await setSetting(context.requireDb(), "selected_repo_id", replacement.repo_id);
     }
 
     if (context.state.selectedItemId.value !== replacement.id) {
@@ -205,7 +214,7 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     if (replacement.agent_type === "pty") {
       beginTaskSwitch(replacement.id);
     }
-    await setSetting(context.requireDb(), "selected_item_id", replacement.id);
+    await persistWindowSelection();
     emitTaskSelected(replacement.id);
     return replacement.id;
   }
@@ -223,6 +232,44 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     }
   }
 
+  function reconcileSelection() {
+    const selectedRepoExists = context.state.selectedRepoId.value
+      && context.state.repos.value.some((repo) => repo.id === context.state.selectedRepoId.value);
+    if (!selectedRepoExists) {
+      context.state.selectedRepoId.value = context.state.repos.value[0]?.id ?? null;
+    }
+
+    const selectedItem = context.state.selectedItemId.value
+      ? context.state.items.value.find((candidate) => candidate.id === context.state.selectedItemId.value)
+      : null;
+    const selectedItemValid = selectedItem
+      && !isItemHidden(selectedItem)
+      && selectedItem.repo_id === context.state.selectedRepoId.value;
+    if (selectedItemValid) {
+      return;
+    }
+
+    const repoId = context.state.selectedRepoId.value;
+    if (!repoId) {
+      context.state.selectedItemId.value = null;
+      return;
+    }
+
+    const rememberedItemId = context.state.lastSelectedItemByRepo.value[repoId];
+    const rememberedItem = rememberedItemId
+      ? context.state.items.value.find((candidate) =>
+        candidate.id === rememberedItemId
+        && candidate.repo_id === repoId
+        && !isItemHidden(candidate))
+      : null;
+    if (rememberedItem) {
+      context.state.selectedItemId.value = rememberedItem.id;
+      return;
+    }
+
+    context.state.selectedItemId.value = sortItemsForRepo(repoId)[0]?.id ?? null;
+  }
+
   function goBack() {
     if (!context.state.selectedItemId.value) return;
     const validIds = new Set(
@@ -235,13 +282,12 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     if (item) {
       if (item.repo_id !== context.state.selectedRepoId.value) {
         context.state.selectedRepoId.value = item.repo_id;
-        void setSetting(context.requireDb(), "selected_repo_id", item.repo_id);
       }
       context.state.lastSelectedItemByRepo.value[item.repo_id] = taskId;
     }
 
     context.state.selectedItemId.value = taskId;
-    void setSetting(context.requireDb(), "selected_item_id", taskId);
+    void persistWindowSelection();
     emitTaskSelected(taskId);
   }
 
@@ -257,13 +303,12 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     if (item) {
       if (item.repo_id !== context.state.selectedRepoId.value) {
         context.state.selectedRepoId.value = item.repo_id;
-        void setSetting(context.requireDb(), "selected_repo_id", item.repo_id);
       }
       context.state.lastSelectedItemByRepo.value[item.repo_id] = taskId;
     }
 
     context.state.selectedItemId.value = taskId;
-    void setSetting(context.requireDb(), "selected_item_id", taskId);
+    void persistWindowSelection();
     emitTaskSelected(taskId);
   }
 
@@ -278,6 +323,7 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     selectRepo,
     selectItem,
     selectReplacementAfterItemRemoval,
+    reconcileSelection,
     restoreSelection,
     goBack,
     goForward,

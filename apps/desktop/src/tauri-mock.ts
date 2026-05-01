@@ -382,6 +382,10 @@ export function mockListen(event: string, handler: (event: any) => void): Promis
   });
 }
 
+export async function mockEmit(event: string, payload?: unknown): Promise<void> {
+  emitMockEvent(event, typeof payload === "object" && payload !== null ? payload as MockTauriEventPayload : {});
+}
+
 // Mock dialog open — prompts via browser prompt()
 export async function mockDialogOpen(_opts?: any): Promise<string | null> {
   return window.prompt("Enter directory path (browser mock):", "/Users/jeremyhale/Documents/work/jemdiggity/kanna");
