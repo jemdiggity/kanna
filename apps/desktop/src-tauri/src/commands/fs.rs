@@ -181,9 +181,15 @@ pub struct DirEntry {
 }
 
 #[tauri::command]
-pub fn read_dir_entries(path: String, repo_root: String) -> Result<Vec<DirEntry>, String> {
+pub fn read_dir_entries(
+    path: String,
+    repo_root: String,
+    show_all_files: Option<bool>,
+) -> Result<Vec<DirEntry>, String> {
     use ignore::gitignore::GitignoreBuilder;
     use std::path::Path;
+
+    let show_all_files = show_all_files.unwrap_or(false);
 
     let dir = Path::new(&path);
     if !dir.is_dir() {
@@ -247,7 +253,7 @@ pub fn read_dir_entries(path: String, repo_root: String) -> Result<Vec<DirEntry>
         // into them; checking ancestors would incorrectly hide all worktree
         // contents when the worktree sits under a gitignored path.
         let matched = gitignore.matched(&entry_path, is_dir);
-        if matched.is_ignore() {
+        if !show_all_files && matched.is_ignore() {
             continue;
         }
 

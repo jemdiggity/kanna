@@ -35,6 +35,7 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
   const error = ref<string | null>(null);
   const slideDirection = shallowRef<"left" | "right" | null>(null);
   const pendingG = ref(false);
+  const showAllFiles = ref(false);
   let pendingGTimer: ReturnType<typeof setTimeout> | null = null;
   let slideTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -54,12 +55,14 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
   });
 
   // ── Fetcher ────────────────────────────────────────────────────
-  async function fetchDir(dirPath: string): Promise<TreeNode[]> {
-    if (cache.has(dirPath)) return cache.get(dirPath)!;
+  async function fetchDir(dirPath: string, showAll = false): Promise<TreeNode[]> {
+    const cacheKey = `${showAll ? "all" : "visible"}:${dirPath}`;
+    if (cache.has(cacheKey)) return cache.get(cacheKey)!;
 
     const entries = await invoke<DirEntryResponse[]>("read_dir_entries", {
       path: dirPath,
       repoRoot: repoRoot.value,
+      showAllFiles: showAll,
     });
 
     const root = effectiveRoot.value;
@@ -70,7 +73,7 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
       return { name: e.name, isDir: e.is_dir, path: rel };
     });
 
-    cache.set(dirPath, nodes);
+    cache.set(cacheKey, nodes);
     return nodes;
   }
 
@@ -86,7 +89,8 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
       const dir = currentDirAbs.value;
       if (!dir) return [];
       try {
-        return await fetchDir(dir);
+        const includeIgnored = showAllFiles.value;
+        return await fetchDir(dir, includeIgnored);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         const rr = repoRoot.value;
@@ -110,7 +114,8 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
       const dir = parentDirAbs.value;
       if (!dir) return [];
       try {
-        return await fetchDir(dir);
+        const includeIgnored = showAllFiles.value;
+        return await fetchDir(dir, includeIgnored);
       } catch {
         return [];
       }
@@ -140,7 +145,8 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
       const entry = previewEntry.value;
       if (!entry?.isDir) return [];
       try {
-        return await fetchDir(absolutePath(entry.path));
+        const includeIgnored = showAllFiles.value;
+        return await fetchDir(absolutePath(entry.path), includeIgnored);
       } catch {
         return [];
       }
@@ -167,6 +173,7 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
   // ── Reset on root change ───────────────────────────────────────
   watch(rootPath, () => {
     breadcrumb.value = [];
+    showAllFiles.value = false;
     requestedCursor.value = 0;
     filterText.value = "";
     filtering.value = false;
@@ -381,10 +388,18 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
     slideDirection.value = null;
     pendingG.value = false;
     error.value = null;
+    showAllFiles.value = false;
+  }
+
+  function toggleShowAllFiles() {
+    showAllFiles.value = !showAllFiles.value;
+    cache.clear();
+    error.value = null;
   }
 
   return {
     state,
+    showAllFiles,
     filterText,
     filtering,
     loading,
@@ -395,5 +410,6 @@ export function useTreeExplorer(rootPath: Ref<string>, repoRoot: Ref<string>) {
     jumpToBreadcrumb,
     reset,
     pendingG,
+    toggleShowAllFiles,
   };
 }
