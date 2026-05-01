@@ -56,6 +56,7 @@
     "previousRepo": "前のリポジトリ",
     "nextRepo": "次のリポジトリ",
     "filePicker": "ファイル検索",
+    "filePreview": "ファイルプレビュー",
     "commandPalette": "コマンドパレット",
     "viewDiff": "差分表示",
     "commitGraph": "コミットグラフ",

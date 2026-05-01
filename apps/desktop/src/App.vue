@@ -92,6 +92,8 @@ const showFilePickerModal = ref(false);
 const showFilePreviewModal = ref(false);
 const previewFilePath = ref("");
 const previewInitialLine = ref<number | undefined>(undefined);
+const lastPreviewFilePath = ref("");
+const lastPreviewInitialLine = ref<number | undefined>(undefined);
 const previewHidden = ref(false);
 const previewFromPicker = ref(false);
 const showDiffModal = ref(false);
@@ -604,6 +606,8 @@ function closeFileFlow() {
 function openFilePreview(filePath: string, initialLine: number | undefined, fromPicker: boolean) {
   previewFilePath.value = filePath;
   previewInitialLine.value = initialLine;
+  lastPreviewFilePath.value = filePath;
+  lastPreviewInitialLine.value = initialLine;
   previewFromPicker.value = fromPicker;
   previewHidden.value = false;
   showFilePreviewModal.value = true;
@@ -767,6 +771,17 @@ const keyboardActions = {
       }
     } else {
       previewHidden.value = false;
+      showFilePickerModal.value = true;
+    }
+  },
+  toggleFilePreview: () => {
+    if (showFilePreviewModal.value) {
+      showFilePreviewModal.value = false;
+      previewHidden.value = true;
+      previewFromPicker.value = false;
+    } else if (lastPreviewFilePath.value) {
+      openFilePreview(lastPreviewFilePath.value, lastPreviewInitialLine.value, false);
+    } else {
       showFilePickerModal.value = true;
     }
   },

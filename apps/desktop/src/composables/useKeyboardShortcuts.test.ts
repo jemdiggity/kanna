@@ -7,6 +7,7 @@ import {
   getShortcutGroups,
   isAppShortcut,
   useKeyboardShortcuts,
+  shortcuts,
   type ActionName,
   type KeyboardActions,
 } from "./useKeyboardShortcuts";
@@ -23,6 +24,7 @@ function englishTranslate(key: string): string {
     "shortcuts.analytics": "Analytics",
     "shortcuts.commitGraph": "Commit Graph",
     "shortcuts.filePicker": "File Picker",
+    "shortcuts.filePreview": "File Preview",
     "shortcuts.openInIDE": "Open in IDE",
     "shortcuts.shellRepoRoot": "Shell at Repo Root",
     "shortcuts.shellTerminal": "Shell Terminal",
@@ -79,6 +81,7 @@ describe("getShortcutGroups", () => {
       "shortcuts.commandPalette",
       "shortcuts.commitGraph",
       "shortcuts.filePicker",
+      "shortcuts.filePreview",
       "shortcuts.openInIDE",
       "shortcuts.shellRepoRoot",
       "shortcuts.shellTerminal",
@@ -106,6 +109,7 @@ describe("getShortcutGroups", () => {
       "Command Palette",
       "Commit Graph",
       "File Picker",
+      "File Preview",
       "Open in IDE",
       "Shell at Repo Root",
       "Shell Terminal",
@@ -123,6 +127,31 @@ describe("isAppShortcut", () => {
       shiftKey: true,
     }))).toBe(true);
   });
+
+  it("matches Option+Command+P for file preview recall", () => {
+    expect(isAppShortcut(new KeyboardEvent("keydown", {
+      key: "p",
+      metaKey: true,
+      altKey: true,
+    }))).toBe(true);
+  });
+
+  it("matches the macOS Option+Command+P character event by physical key code", () => {
+    expect(isAppShortcut(new KeyboardEvent("keydown", {
+      key: "π",
+      code: "KeyP",
+      metaKey: true,
+      altKey: true,
+    }))).toBe(true);
+  });
+});
+
+describe("shortcut contexts", () => {
+  it("allows Command+P to open the file picker from the file preview", () => {
+    const openFileShortcut = shortcuts.find((shortcut) => shortcut.action === "openFile");
+
+    expect(openFileShortcut?.context).toContain("file");
+  });
 });
 
 describe("useKeyboardShortcuts", () => {
@@ -130,6 +159,7 @@ describe("useKeyboardShortcuts", () => {
     "newTask",
     "newWindow",
     "openFile",
+    "toggleFilePreview",
     "advanceStage",
     "closeTask",
     "undoClose",

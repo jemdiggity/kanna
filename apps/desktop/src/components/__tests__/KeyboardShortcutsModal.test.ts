@@ -35,7 +35,8 @@ describe("KeyboardShortcutsModal", () => {
     expect(entryAt("1", "11")).toBe("shortcuts.toggleSidebar⌘B");
     expect(entryAt("1", "15")).toBe("shortcuts.preferences⌘,");
     expect(entryAt("2", "10")).toBe("shortcuts.oldestRead⌘R");
-    expect(entryAt("3", "10")).toBe("shortcuts.viewDiff⌘D");
+    expect(entryAt("3", "10")).toBe("shortcuts.treeExplorer⇧⌘E");
+    expect(entryAt("3", "11")).toBe("shortcuts.viewDiff⌘D");
   });
 
   it("renders context-mode shortcuts in the shared multi-column grid", () => {

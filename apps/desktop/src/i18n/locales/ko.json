@@ -56,6 +56,7 @@
     "previousRepo": "이전 리포지토리",
     "nextRepo": "다음 리포지토리",
     "filePicker": "파일 검색",
+    "filePreview": "파일 미리보기",
     "commandPalette": "명령 팔레트",
     "viewDiff": "차이 보기",
     "commitGraph": "커밋 그래프",

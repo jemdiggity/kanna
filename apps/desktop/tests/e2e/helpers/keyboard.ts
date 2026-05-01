@@ -1,5 +1,6 @@
 interface KeydownScriptOptions {
   key: string;
+  code?: string;
   meta?: boolean;
   shift?: boolean;
   alt?: boolean;
@@ -9,6 +10,7 @@ interface KeydownScriptOptions {
 function buildKeyboardEventInit(options: KeydownScriptOptions): string {
   return [
     `key: ${JSON.stringify(options.key)}`,
+    `code: ${JSON.stringify(options.code ?? "")}`,
     `metaKey: ${options.meta ?? false}`,
     `shiftKey: ${options.shift ?? false}`,
     `altKey: ${options.alt ?? false}`,
