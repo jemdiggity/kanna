@@ -1,9 +1,7 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildGlobalKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase } from "../helpers/reset";
-import { queryDb } from "../helpers/vue";
 
 describe("preferences", () => {
   const client = new WebDriverClient();
@@ -18,9 +16,7 @@ describe("preferences", () => {
   });
 
   it("opens preferences panel when settings button clicked", async () => {
-    await client.executeSync(
-      "window.__KANNA_E2E__.setupState.showPreferencesPanel = true;"
-    );
+    await client.executeSync(buildGlobalKeydownScript({ key: ",", meta: true }));
     const panel = await client.waitForElement(".prefs-panel", 2000);
     expect(panel).toBeTruthy();
   });
@@ -35,29 +31,20 @@ describe("preferences", () => {
   });
 
   it("closes preferences panel", async () => {
-    // Preferences closes via Escape or clicking the overlay
     await client.executeSync(buildGlobalKeydownScript({ key: "Escape" }));
-    await sleep(500);
-    // If still open, close via Vue state
-    try {
-      await client.findElement(".prefs-panel");
-      await client.executeSync(
-        `window.__KANNA_E2E__.setupState.showPreferencesPanel = false;`
-      );
-      await sleep(300);
-    } catch {
-      // Already closed
-    }
+    await client.waitForNoElement(".prefs-panel", 2_000);
   });
 
-  it("default settings are in DB", async () => {
-    const rows = (await queryDb(
-      client,
-      "SELECT key, value FROM settings ORDER BY key"
-    )) as Array<{ key: string; value: string }>;
+  it("shows default settings in the UI", async () => {
+    await client.executeSync(buildGlobalKeydownScript({ key: ",", meta: true }));
+    const panel = await client.waitForElement(".prefs-panel", 2_000);
+    expect(panel).toBeTruthy();
 
-    const keys = rows.map((r) => r.key);
-    expect(keys).toContain("suspendAfterMinutes");
-    expect(keys).toContain("killAfterMinutes");
+    const values = await client.executeSync<string[]>(
+      `return Array.from(document.querySelectorAll(".prefs-panel input, .prefs-panel select"))
+        .map((element) => element.value);`
+    );
+    expect(values).toContain("5");
+    expect(values).toContain("30");
   });
 });

@@ -4,7 +4,8 @@ import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo"
 import { cleanupWorktrees, importTestRepo, resetDatabase } from "../helpers/reset";
 import { pauseForSlowMode } from "../helpers/slowMode";
 import { createPrimaryAndSecondaryClients } from "../helpers/twoInstance";
-import { callVueMethod, getVueState, queryDb, tauriInvoke } from "../helpers/vue";
+import { pairWithPeerThroughUi, pushSelectedTaskToPeerThroughUi } from "../helpers/transferFlow";
+import { callVueMethod, queryDb, tauriInvoke } from "../helpers/vue";
 
 interface TransferPeer {
   peer_id?: string;
@@ -72,17 +73,7 @@ async function waitForPeer(
 }
 
 async function waitForIncomingTransferVisible(timeoutMs = 20_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const visible = await getVueState(secondary, "showIncomingTransfer");
-    if (visible === true) {
-      return;
-    }
-    await sleep(250);
-  }
-
-  throw new Error("timed out waiting for incoming transfer modal");
+  await secondary.waitForText(".modal-card", "Primary", timeoutMs);
 }
 
 async function deleteSessionIfRunning(client: { deleteSession(): Promise<void> }): Promise<void> {
@@ -116,7 +107,10 @@ describe("local transfer first milestone", () => {
     expect(peers.some((peer) => readPeerId(peer) === "peer-secondary")).toBe(true);
     expect(peers.some((peer) => readPeerDisplayName(peer) === "Secondary")).toBe(true);
     await pauseForSlowMode("secondary peer discovered");
+    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary");
 
+    // Direct task creation is setup-only: the product has no UI path for creating an inert
+    // transfer fixture task without also launching a real agent session.
     const createResult = await callVueMethod(primary, "store.createItem", repoId, testRepoPath, "Say OK", "sdk");
     if (isVueCallError(createResult)) {
       throw new Error(createResult.__error);
@@ -131,14 +125,10 @@ describe("local transfer first milestone", () => {
     expect(taskId).toBeTruthy();
     await pauseForSlowMode("task created on primary");
 
-    const pushResult = await callVueMethod(primary, "store.pushTaskToPeer", taskId, "peer-secondary");
-    if (isVueCallError(pushResult)) {
-      throw new Error(pushResult.__error);
-    }
+    await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
     await pauseForSlowMode("task pushed to secondary");
 
     await waitForIncomingTransferVisible();
-    expect(await getVueState(secondary, "incomingTransferSourceName")).toBe("Primary");
     await secondary.waitForText(".modal-card", "Primary");
     await pauseForSlowMode("incoming transfer modal visible on secondary");
 

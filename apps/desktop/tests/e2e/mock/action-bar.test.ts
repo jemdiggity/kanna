@@ -5,6 +5,7 @@ import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
 import { getVueState } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
+import { buildGlobalKeydownScript } from "../helpers/keyboard";
 
 describe("action bar", () => {
   const client = new WebDriverClient();
@@ -17,7 +18,8 @@ describe("action bar", () => {
     fixtureRepoRoot = await createFixtureRepo("action-test");
     testRepoPath = join(fixtureRepoRoot, "apps");
     await importTestRepo(client, testRepoPath, "action-test");
-    // Insert task directly into DB — no Claude session needed for action bar tests
+    // Internal setup only: the UI creates live agent tasks, but this test needs
+    // an inert task row so the action-bar behavior is isolated.
     const repoId = await getVueState(client, "selectedRepoId") as string;
     await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
@@ -45,18 +47,11 @@ describe("action bar", () => {
   });
 
   it("hides the task after it is marked done", async () => {
-    // Transition to done
-    await client.executeAsync<string>(
-      `const cb = arguments[arguments.length - 1];
-       const ctx = window.__KANNA_E2E__.setupState;
-       const db = ctx.db.value || ctx.db;
-       const item = ctx.selectedItem();
-       db.execute("UPDATE pipeline_item SET stage = 'done' WHERE id = ?", [item.id])
-         .then(function() { return ctx.loadItems(ctx.selectedRepoId.value); })
-         .then(function() { return ctx.refreshAllItems(); })
-         .then(function() { cb("ok"); })
-         .catch(function(e) { cb("err:" + e); });`
-    );
+    await client.executeSync(buildGlobalKeydownScript({
+      key: "Delete",
+      meta: true,
+      shift: true,
+    }));
     await sleep(300);
     const sidebarText = await client.executeSync<string>(
       `return document.querySelector(".sidebar")?.textContent || "";`

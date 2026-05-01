@@ -4,7 +4,8 @@ import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo"
 import { cleanupWorktrees, importTestRepo, resetDatabase } from "../helpers/reset";
 import { pauseForSlowMode } from "../helpers/slowMode";
 import { createPrimaryAndSecondaryClients } from "../helpers/twoInstance";
-import { callVueMethod, getVueState, queryDb, tauriInvoke } from "../helpers/vue";
+import { pairWithPeerThroughUi, pushSelectedTaskToPeerThroughUi } from "../helpers/transferFlow";
+import { callVueMethod, queryDb, tauriInvoke } from "../helpers/vue";
 
 interface TransferPeer {
   peer_id?: string;
@@ -69,31 +70,11 @@ async function waitForPeer(peerId: string, timeoutMs = 20_000): Promise<void> {
 }
 
 async function waitForIncomingTransferVisible(timeoutMs = 20_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const visible = await getVueState(secondary, "showIncomingTransfer");
-    if (visible === true) {
-      return;
-    }
-    await sleep(250);
-  }
-
-  throw new Error("timed out waiting for incoming transfer modal");
+  await secondary.waitForText(".modal-card", "Primary", timeoutMs);
 }
 
 async function waitForIncomingTransferHidden(timeoutMs = 20_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const visible = await getVueState(secondary, "showIncomingTransfer");
-    if (visible !== true) {
-      return;
-    }
-    await sleep(250);
-  }
-
-  throw new Error("timed out waiting for incoming transfer modal to close");
+  await secondary.waitForNoElement(".modal-card", timeoutMs);
 }
 
 async function waitForLatestTransfer(
@@ -149,6 +130,8 @@ async function deleteSessionIfRunning(client: { deleteSession(): Promise<void> }
 }
 
 async function createSourceTask(repoId: string, repoPath: string, prompt: string): Promise<string> {
+  // Direct task creation is setup-only: the product has no UI path for creating an inert
+  // transfer fixture task without also launching a real agent session.
   const createResult = await callVueMethod(primary, "store.createItem", repoId, repoPath, prompt, "sdk");
   if (isVueCallError(createResult)) {
     throw new Error(createResult.__error);
@@ -167,10 +150,7 @@ async function createSourceTask(repoId: string, repoPath: string, prompt: string
 }
 
 async function pushAndApproveTransfer(sourceTaskId: string): Promise<TransferRow> {
-  const pushResult = await callVueMethod(primary, "store.pushTaskToPeer", sourceTaskId, "peer-secondary");
-  if (isVueCallError(pushResult)) {
-    throw new Error(pushResult.__error);
-  }
+  await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
 
   await waitForIncomingTransferVisible();
   const approveButton = await secondary.findElement(".btn-primary");
@@ -190,6 +170,7 @@ describe("local transfer repo acquisition", () => {
     await resetDatabase(primary);
     await resetDatabase(secondary);
     await waitForPeer("peer-secondary");
+    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary");
   });
 
   afterEach(async () => {
@@ -259,10 +240,7 @@ describe("local transfer repo acquisition", () => {
     await pauseForSlowMode("bundle fixture imported into primary");
 
     const sourceTaskId = await createSourceTask(repoId, testRepoPath, "Bundle repo on destination");
-    const pushResult = await callVueMethod(primary, "store.pushTaskToPeer", sourceTaskId, "peer-secondary");
-    if (isVueCallError(pushResult)) {
-      throw new Error(pushResult.__error);
-    }
+    await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
 
     await waitForIncomingTransferVisible();
     const pendingOutgoing = await waitForLatestTransfer(primary, "outgoing", sourceTaskId, "pending");

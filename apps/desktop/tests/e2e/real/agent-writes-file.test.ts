@@ -31,6 +31,8 @@ async function nudgeTrustPromptViaUi(client: WebDriverClient): Promise<void> {
 }
 
 async function captureTaskCreateDiagnostics(client: WebDriverClient) {
+  // Diagnostics only: this internal snapshot is used after a failed UI task
+  // creation flow to explain what state the visible UI got stuck in.
   const ui = await client.executeSync<{
     pendingSetupIds: string[];
     selectedRepoId: string | null;
