@@ -15,12 +15,16 @@ export interface SelectionApi {
   canGoForward: ComputedRef<boolean>;
   getStageOrder: (repoId: string) => readonly string[];
   selectRepo: (repoId: string) => Promise<void>;
-  selectItem: (itemId: string) => Promise<void>;
+  selectItem: (itemId: string, options?: SelectItemOptions) => Promise<void>;
   selectReplacementAfterItemRemoval: (removedItem: PipelineItem) => Promise<string | null>;
   restoreSelection: (itemId: string) => void;
   goBack: () => void;
   goForward: () => void;
   isItemHidden: (item: PipelineItem) => boolean;
+}
+
+export interface SelectItemOptions {
+  previousItemId?: string | null;
 }
 
 export function createSelectionApi(context: StoreContext): SelectionApi {
@@ -118,8 +122,11 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     await setSetting(context.requireDb(), "selected_repo_id", repoId);
   }
 
-  async function selectItem(itemId: string) {
-    nav.select(itemId, context.state.selectedItemId.value);
+  async function selectItem(itemId: string, options: SelectItemOptions = {}) {
+    const previousItemId = options.previousItemId !== undefined
+      ? options.previousItemId
+      : context.state.selectedItemId.value;
+    nav.select(itemId, previousItemId);
     context.state.selectedItemId.value = itemId;
     const item = context.state.items.value.find((candidate) => candidate.id === itemId);
     if (item?.agent_type === "pty") {
