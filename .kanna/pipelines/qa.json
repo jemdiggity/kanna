@@ -1,6 +1,6 @@
 {
   "name": "qa",
-  "description": "Implementation -> QA review -> PR flow with automatic revision requests for weak testing",
+  "description": "Implementation -> commit -> QA review -> PR flow with automatic revision requests for weak testing",
   "stages": [
     {
       "name": "in progress",
@@ -8,6 +8,14 @@
       "agent": "implement",
       "prompt": "$TASK_PROMPT",
       "transition": "manual"
+    },
+    {
+      "name": "commit",
+      "description": "Implementation agent commits the relevant work before review",
+      "agent": "commit",
+      "prompt": "Commit the relevant work for this task before QA review. Original task: $TASK_PROMPT",
+      "transition": "auto",
+      "mode": "continue"
     },
     {
       "name": "review",

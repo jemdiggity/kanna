@@ -1,6 +1,6 @@
 {
   "name": "default",
-  "description": "Standard in progress -> PR flow",
+  "description": "Standard in progress -> commit -> PR flow",
   "stages": [
     {
       "name": "in progress",
@@ -8,6 +8,14 @@
       "agent": "implement",
       "prompt": "$TASK_PROMPT",
       "transition": "manual"
+    },
+    {
+      "name": "commit",
+      "description": "Implementation agent commits the relevant work",
+      "agent": "commit",
+      "prompt": "Commit the relevant work for this task. Original task: $TASK_PROMPT",
+      "transition": "auto",
+      "mode": "continue"
     },
     {
       "name": "pr",
