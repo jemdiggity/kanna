@@ -196,7 +196,7 @@
     "scopeBranch": "Branch",
     "scopeWorking": "Working",
     "noChanges": "No changes",
-    "filterAll": "All",
+    "filterAll": "Staged+Unstaged",
     "filterUnstaged": "Unstaged",
     "filterStaged": "Staged",
     "searchPlaceholder": "Search...",

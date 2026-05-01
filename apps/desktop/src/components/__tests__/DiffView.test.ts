@@ -5,6 +5,7 @@ import { nextTick } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DiffView from "../DiffView.vue";
 import { clearContextShortcuts, resetContext } from "../../composables/useShortcutContext";
+import en from "../../i18n/locales/en.json";
 
 const invokeMock = vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>();
 const setLanguageOverrideMock = vi.fn((fileMeta: { [key: string]: unknown }, lang: string) => ({
@@ -36,7 +37,12 @@ vi.mock("../../invoke", () => ({
 
 vi.mock("vue-i18n", () => ({
   useI18n: () => ({
-    t: (key: string) => key,
+    t: (key: string) => key.split(".").reduce<unknown>((value, part) => {
+      if (typeof value === "object" && value !== null && part in value) {
+        return (value as Record<string, unknown>)[part];
+      }
+      return undefined;
+    }, en) ?? key,
   }),
 }));
 
@@ -100,6 +106,33 @@ describe("DiffView", () => {
     clearContextShortcuts("diff");
     resetContext();
     document.body.innerHTML = "";
+  });
+
+  it("labels the combined working diff filter as staged plus unstaged", async () => {
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "git_diff") return "diff --git a/example.txt b/example.txt";
+      return "";
+    });
+
+    const wrapper = mount(DiffView, {
+      props: {
+        repoPath: "/repo",
+        initialScope: "working",
+      },
+      attachTo: document.body,
+      global: {
+        mocks: {
+          $t: (key: string) => key,
+        },
+      },
+    });
+
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.get(".staged-toggle").text()).toBe("Staged+Unstaged");
+
+    wrapper.unmount();
   });
 
   it("forces Bazel diffs to use python highlighting", async () => {
