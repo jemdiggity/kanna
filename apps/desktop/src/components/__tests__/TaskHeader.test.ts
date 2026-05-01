@@ -3,11 +3,20 @@
 import type { PipelineItem } from "@kanna/db";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 vi.mock("vue-i18n", () => ({
   useI18n: () => ({
     t: (key: string, fallback?: string) => fallback ?? key,
   }),
+}));
+
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: vi.fn(),
+}));
+
+vi.mock("../../tauri-mock", () => ({
+  isTauri: true,
 }));
 
 function makeItem(overrides: Partial<PipelineItem> = {}): PipelineItem {
@@ -64,5 +73,23 @@ describe("TaskHeader", () => {
     expect(
       wrapper.findAll(".meta-item.port").map((node) => node.text().trim()),
     ).toEqual([":1421", ":3001"]);
+  });
+
+  it("opens localhost for a port badge on double click", async () => {
+    const { default: TaskHeader } = await import("../TaskHeader.vue");
+    const wrapper = mount(TaskHeader, {
+      props: {
+        item: makeItem(),
+      },
+      global: {
+        mocks: {
+          $t: (key: string, fallback?: string) => fallback ?? key,
+        },
+      },
+    });
+
+    await wrapper.find(".meta-item.port").trigger("dblclick");
+
+    expect(openUrl).toHaveBeenCalledWith("http://localhost:1421");
   });
 });
