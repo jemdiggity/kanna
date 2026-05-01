@@ -12,6 +12,7 @@ registerContextShortcuts("tree", [
   { label: "Enter dir / Open file", display: "l", groupKey: "shortcuts.groupNavigation" },
   { label: "Go to parent", display: "h", groupKey: "shortcuts.groupNavigation" },
   { label: "Top / Bottom", display: "g g / G", groupKey: "shortcuts.groupNavigation" },
+  { label: "Toggle show all files", display: "a", groupKey: "shortcuts.groupActions" },
   { label: "Yank path", display: "y", groupKey: "shortcuts.groupActions" },
   { label: "Close", display: "Esc", groupKey: "shortcuts.groupActions" },
 ]);
@@ -43,6 +44,7 @@ const currentColRef = ref<HTMLElement | null>(null);
 
 const {
   state,
+  showAllFiles,
   filterText,
   filtering,
   loading,
@@ -51,6 +53,7 @@ const {
   handleKey,
   currentFilePath,
   jumpToBreadcrumb,
+  toggleShowAllFiles,
   reset,
 } = useTreeExplorer(
   toRef(props, "worktreePath"),
@@ -76,6 +79,12 @@ async function onKeydown(e: KeyboardEvent) {
       await navigator.clipboard.writeText(currentFilePath.value);
       return;
     }
+  }
+
+  if (e.key === "a" && !filtering.value) {
+    e.preventDefault();
+    toggleShowAllFiles();
+    return;
   }
 
   const filePath = handleKey(e);
@@ -213,15 +222,27 @@ function isDimmed(entry: TreeNode): boolean {
 
       <!-- Filter bar -->
       <div class="filter-bar" :class="{ 'filter-active': filtering }">
-        <span v-if="filtering" class="filter-text">
-          /{{ filterText }}<span class="filter-caret">|</span>
-          <span class="filter-hint">(Enter confirm &middot; Esc cancel)</span>
+        <div class="filter-text">
+          <span v-if="filtering">
+            /{{ filterText }}<span class="filter-caret">|</span>
+            <span class="filter-hint"> (Enter confirm &middot; Esc cancel)</span>
+          </span>
+          <span v-else-if="filterText">
+            filter: <strong>{{ filterText }}</strong>
+            <span class="filter-hint"> (/ to edit &middot; Esc to close)</span>
+          </span>
+          <span v-else class="filter-hint">/ filter &middot; Esc close</span>
+        </div>
+        <span class="filter-actions">
+          <button
+            type="button"
+            class="show-all-toggle"
+            :class="{ active: showAllFiles }"
+            @click.prevent="toggleShowAllFiles"
+          >
+            {{ showAllFiles ? "showing all" : "showing visible" }}
+          </button>
         </span>
-        <span v-else-if="filterText" class="filter-text">
-          filter: <strong>{{ filterText }}</strong>
-          <span class="filter-hint">(/ to edit &middot; Esc to close)</span>
-        </span>
-        <span v-else class="filter-hint">/ filter &middot; Esc close</span>
       </div>
     </div>
   </div>
@@ -433,6 +454,10 @@ function isDimmed(entry: TreeNode): boolean {
   font-family: "JetBrains Mono", monospace;
   font-size: 11px;
   color: #888;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .filter-text {
@@ -460,5 +485,33 @@ function isDimmed(entry: TreeNode): boolean {
 .filter-hint {
   color: #555;
   margin-left: 4px;
+}
+
+.filter-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 8px;
+  color: #ccc;
+}
+
+.show-all-toggle {
+  border: 1px solid #444;
+  background: #222;
+  color: #ddd;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.show-all-toggle:hover {
+  background: #2d2d2d;
+}
+
+.show-all-toggle.active {
+  border-color: #ffcc00;
+  color: #ffcc00;
 }
 </style>
