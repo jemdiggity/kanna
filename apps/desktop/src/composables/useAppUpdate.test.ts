@@ -50,6 +50,33 @@ function makeUpdate(version: string) {
   };
 }
 
+class PrivateUpdate {
+  #resourceId = 1;
+
+  currentVersion = "0.0.38";
+  body: string;
+  date = "2026-04-15T00:00:00Z";
+
+  constructor(readonly version: string) {
+    this.body = `Notes for ${version}`;
+  }
+
+  async downloadAndInstall(onEvent?: (event: UpdateEvent) => void) {
+    if (this.#resourceId !== 1) {
+      throw new Error("unexpected resource id");
+    }
+    onEvent?.({ event: "Started", data: { contentLength: 42 } });
+    onEvent?.({ event: "Progress", data: { chunkLength: 42 } });
+    onEvent?.({ event: "Finished", data: {} });
+  }
+
+  async close() {
+    if (this.#resourceId !== 1) {
+      throw new Error("unexpected resource id");
+    }
+  }
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -84,6 +111,7 @@ describe("useAppUpdate", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
+    Reflect.deleteProperty(window, "__KANNA_E2E__");
   });
 
   it("waits for the startup delay, then checks again every 6 hours", async () => {
@@ -190,6 +218,46 @@ describe("useAppUpdate", () => {
 
     expect(updater.status.value).toBe("readyToRestart");
     expect(updater.downloadedBytes.value).toBe(42);
+  });
+
+  it("keeps class-backed update handles raw so private resource fields remain accessible", async () => {
+    checkMock.mockResolvedValue(new PrivateUpdate("0.0.39"));
+
+    const updater = useAppUpdate();
+    await updater.checkNow();
+    await updater.install();
+
+    expect(updater.status.value).toBe("readyToRestart");
+    expect(updater.downloadedBytes.value).toBe(42);
+    expect(updater.errorMessage.value).toBeNull();
+  });
+
+  it("allows dev e2e tests to inject a deterministic update handle", async () => {
+    window.__KANNA_E2E__ = {
+      ready: true,
+      setupState: null,
+      dbName: "test.db",
+      taskSwitchPerf: {
+        getLatest: () => null,
+        getAll: () => [],
+        clear: () => {},
+      },
+    };
+
+    const updater = useAppUpdate();
+    updater.__e2eInjectUpdate({
+      version: "0.0.50",
+      body: "E2E notes",
+      contentLength: 84,
+      chunks: [20, 64],
+    });
+    await updater.install();
+
+    expect(updater.status.value).toBe("readyToRestart");
+    expect(updater.updateVersion.value).toBe("0.0.50");
+    expect(updater.releaseNotes.value).toBe("E2E notes");
+    expect(updater.downloadedBytes.value).toBe(84);
+    expect(updater.errorMessage.value).toBeNull();
   });
 
   it("closes the previous update when a newer one replaces it", async () => {

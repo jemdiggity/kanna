@@ -18,6 +18,23 @@ interface UpdateHandle {
   close(): Promise<void>;
 }
 
+interface E2eUpdateInjectionOptions {
+  version: string;
+  currentVersion?: string;
+  date?: string;
+  body?: string;
+  contentLength?: number;
+  chunks?: number[];
+  delayMs?: number;
+  failInstall?: boolean;
+  failInstallAttempts?: number;
+  failMessage?: string;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function useAppUpdate() {
   const status = ref<UpdateStatus>("idle");
   const updateRef = shallowRef<UpdateHandle | null>(null);
@@ -194,6 +211,49 @@ export function useAppUpdate() {
     await relaunch();
   }
 
+  function __e2eInjectUpdate(options: E2eUpdateInjectionOptions) {
+    if (!import.meta.env.DEV || !window.__KANNA_E2E__) {
+      throw new Error("E2E updater injection is only available in dev E2E runs.");
+    }
+
+    const chunks = options.chunks ?? (options.contentLength ? [options.contentLength] : []);
+    const totalContentLength =
+      options.contentLength ??
+      chunks.reduce((total, chunkLength) => total + chunkLength, 0);
+    const waitMs = Math.max(0, options.delayMs ?? 0);
+    let remainingFailures =
+      options.failInstallAttempts ??
+      (options.failInstall ? Number.POSITIVE_INFINITY : 0);
+
+    updateRef.value = {
+      currentVersion: options.currentVersion ?? "0.0.0-e2e",
+      version: options.version,
+      date: options.date ?? "2026-04-29T00:00:00Z",
+      body: options.body ?? "",
+      async downloadAndInstall(onEvent?: (progress: DownloadEvent) => void) {
+        if (remainingFailures > 0) {
+          remainingFailures -= 1;
+          throw new Error(options.failMessage ?? "E2E update install failed");
+        }
+
+        onEvent?.({ event: "Started", data: { contentLength: totalContentLength } });
+        for (const chunkLength of chunks) {
+          if (waitMs > 0) await delay(waitMs);
+          onEvent?.({ event: "Progress", data: { chunkLength } });
+        }
+        onEvent?.({ event: "Finished" });
+      },
+      async close() {},
+    };
+    updateVersion.value = options.version;
+    releaseNotes.value = options.body ?? "";
+    publishedAt.value = options.date ?? "2026-04-29T00:00:00Z";
+    downloadedBytes.value = 0;
+    contentLength.value = null;
+    errorMessage.value = null;
+    status.value = "available";
+  }
+
   function dispose() {
     disposed = true;
     started = false;
@@ -223,6 +283,7 @@ export function useAppUpdate() {
     dismiss,
     install,
     restartNow,
+    __e2eInjectUpdate,
     dispose,
   };
 }
