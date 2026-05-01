@@ -3,7 +3,7 @@ import { parsePipelineJson } from "../../../../packages/core/src/pipeline/pipeli
 import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-builder";
 import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { AgentDefinition, PipelineDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
-import { clearPipelineItemStageResult, getRepo } from "@kanna/db";
+import { clearPipelineItemStageResult, getRepo, updatePipelineItemStage } from "@kanna/db";
 import { invoke } from "../invoke";
 import { buildTaskRuntimeEnv } from "./kannaCliEnv";
 import {
@@ -21,6 +21,11 @@ export interface PipelineApi {
 }
 
 export function createPipelineApi(context: StoreContext): PipelineApi {
+  interface DaemonSessionInfo {
+    session_id?: string;
+    state?: unknown;
+  }
+
   function buildWorktreePath(repoPath: string, branch: string): string {
     return `${repoPath}/.kanna-worktrees/${branch}`;
   }
@@ -66,6 +71,47 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       selectedBefore: context.state.selectedItemId.value,
     });
     context.state.selectedItemId.value = null;
+  }
+
+  async function hasLiveDaemonSession(taskId: string): Promise<boolean> {
+    const sessions = await invoke<DaemonSessionInfo[]>("list_sessions");
+    return sessions.some((session) => {
+      if (session.session_id !== taskId) return false;
+      return session.state === "Active" || session.state === "Suspended";
+    });
+  }
+
+  async function continueStageInPlace(
+    taskId: string,
+    previousStageName: string,
+    nextStageName: string,
+    stagePrompt: string,
+  ): Promise<void> {
+    let hasLiveSession = false;
+    try {
+      hasLiveSession = await hasLiveDaemonSession(taskId);
+    } catch (error) {
+      console.error("[store] continueStageInPlace: failed to list daemon sessions:", error);
+    }
+
+    if (!hasLiveSession) {
+      context.toast.error(context.tt("toasts.agentStartFailed"));
+      return;
+    }
+
+    try {
+      await updatePipelineItemStage(context.requireDb(), taskId, nextStageName);
+      await clearPipelineItemStageResult(context.requireDb(), taskId);
+      await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+      await invoke("send_input", {
+        sessionId: taskId,
+        input: `${stagePrompt}\n`,
+      });
+    } catch (error) {
+      await updatePipelineItemStage(context.requireDb(), taskId, previousStageName);
+      await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+      context.toast.error(`${context.tt("toasts.agentStartFailed")}: ${error instanceof Error ? error.message : error}`);
+    }
   }
 
   async function loadPipeline(repoPath: string, pipelineName: string): Promise<PipelineDefinition> {
@@ -208,6 +254,11 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
         context.toast.error(`${context.tt("toasts.agentStartFailed")}: ${error instanceof Error ? error.message : error}`);
         return;
       }
+    }
+
+    if (nextStage.mode === "continue") {
+      await continueStageInPlace(item.id, item.stage, nextStage.name, stagePrompt);
+      return;
     }
 
     if (sourceTaskIsSelected) {

@@ -111,6 +111,13 @@ const mockState = vi.hoisted(() => {
       case "send_input":
       case "run_script":
         return undefined;
+      case "list_sessions":
+        return pipelineItems
+          .filter((item) => item.closed_at === null && item.agent_type === "pty")
+          .map((item) => ({
+            session_id: item.id,
+            state: "Active",
+          }));
       case "file_exists":
         return false;
       case "list_dir":
@@ -173,6 +180,14 @@ const mockState = vi.hoisted(() => {
     }
   });
 
+  const clearPipelineItemStageResultMock = vi.fn(async (_db: DbHandle, itemId: string) => {
+    const item = pipelineItems.find((candidate) => candidate.id === itemId);
+    if (item) {
+      item.stage_result = null;
+      item.updated_at = now;
+    }
+  });
+
   const closePipelineItemMock = vi.fn(async (_db: DbHandle, itemId: string) => {
     const item = pipelineItems.find((candidate) => candidate.id === itemId);
     if (item) {
@@ -199,6 +214,7 @@ const mockState = vi.hoisted(() => {
     insertPipelineItemMock.mockClear();
     updatePipelineItemStageMock.mockClear();
     updatePipelineItemActivityMock.mockClear();
+    clearPipelineItemStageResultMock.mockClear();
     closePipelineItemMock.mockClear();
     listBlockersForItemMock.mockClear();
     listBlockedByItemMock.mockClear();
@@ -261,6 +277,7 @@ const mockState = vi.hoisted(() => {
     insertPipelineItemMock,
     updatePipelineItemStageMock,
     updatePipelineItemActivityMock,
+    clearPipelineItemStageResultMock,
     closePipelineItemMock,
     makeItem,
     makeRepo,
@@ -443,7 +460,7 @@ vi.mock("@kanna/db", () => ({
   unpinPipelineItem: vi.fn(async () => {}),
   reorderPinnedItems: vi.fn(async () => {}),
   updatePipelineItemDisplayName: vi.fn(async () => {}),
-  clearPipelineItemStageResult: vi.fn(async () => {}),
+  clearPipelineItemStageResult: mockState.clearPipelineItemStageResultMock,
   closePipelineItem: mockState.closePipelineItemMock,
   reopenPipelineItem: vi.fn(async (_db: DbHandle, itemId: string) => {
     const item = mockState.pipelineItems.find((candidate) => candidate.id === itemId);
@@ -1378,6 +1395,77 @@ describe("kanna store task base branch integration", () => {
         sourceWorktree: "/tmp/repo/.kanna-worktrees/task-source",
       }),
     );
+  });
+
+  it("continues the same task and sends the next stage prompt when stage mode is continue", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "commit", transition: "auto", mode: "continue", agent: "commit", prompt: "Commit $TASK_PROMPT" },
+        { name: "pr", transition: "manual" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        stage_result: JSON.stringify({ status: "success", summary: "implemented" }),
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source");
+
+    expect(mockState.updatePipelineItemStageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "item-source",
+      "commit",
+    );
+    expect(mockState.closePipelineItemMock).not.toHaveBeenCalled();
+    expect(mockState.insertPipelineItemMock).not.toHaveBeenCalled();
+    expect(mockState.invokeMock).not.toHaveBeenCalledWith(
+      "git_worktree_add",
+      expect.anything(),
+    );
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      input: "Stage prompt\n",
+    });
+  });
+
+  it("clears stale stage result before sending a continue stage prompt", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "commit", transition: "auto", mode: "continue", agent: "commit" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        stage_result: JSON.stringify({ status: "success", summary: "implemented" }),
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source");
+
+    const clearCallOrder = mockState.clearPipelineItemStageResultMock.mock.invocationCallOrder[0];
+    const sendInputCallIndex = mockState.invokeMock.mock.calls.findIndex(([command]) => command === "send_input");
+    const sendInputOrder = mockState.invokeMock.mock.invocationCallOrder[sendInputCallIndex];
+
+    expect(mockState.clearPipelineItemStageResultMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "item-source",
+    );
+    expect(clearCallOrder).toBeLessThan(sendInputOrder);
   });
 
   it("does not auto-select a created task when selectOnCreate is false", async () => {
