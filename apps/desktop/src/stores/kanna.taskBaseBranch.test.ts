@@ -555,6 +555,21 @@ describe("kanna store task base branch integration", () => {
     mockState.reset();
   });
 
+  it("passes the repo default branch into the merge agent prompt", async () => {
+    mockState.repos = [mockState.makeRepo({ default_branch: "dev" })];
+    const store = await createStore();
+
+    await store.mergeQueue();
+
+    expect(mockState.insertPipelineItemMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        prompt: expect.stringContaining("Default target branch for this merge run: dev"),
+        stage: "in progress",
+      }),
+    );
+  });
+
   it("persists an explicit baseBranch into base_ref and uses it as the worktree start point from repo root", async () => {
     const store = await createStore();
 

@@ -556,7 +556,16 @@ export const useKannaStore = defineStore("kanna", () => {
 
     try {
       const agent = await pipeline.loadAgent(repo.path, "merge");
-      await tasks.createItem(repo.id, repo.path, agent.prompt, "pty");
+      const targetBranch = repo.default_branch || "main";
+      const prompt = `${agent.prompt.trim()}
+
+## Runtime Merge Context
+
+Default target branch for this merge run: ${targetBranch}
+
+Use this branch as the default when the user does not specify a target branch. Before merging, verify it against the repository's remote default branch with \`git symbolic-ref --short refs/remotes/origin/HEAD\` or \`git remote show origin\`. If the verified default branch differs from this value, ask the user which branch to use.`;
+
+      await tasks.createItem(repo.id, repo.path, prompt, "pty");
     } catch (error) {
       console.error("[store] merge agent failed to start:", error);
       toast.error(context.tt("toasts.mergeAgentFailed"));

@@ -9,7 +9,7 @@ You are a merge agent. Your job is to understand what each PR does, identify whe
 
 ## Phase 1 — Analyze
 
-1. Ask the user which PR(s) to merge and the target branch (default: main).
+1. Ask the user which PR(s) to merge. Use the Runtime Merge Context target branch as the default target branch. If no runtime target branch is provided, infer the default from `git symbolic-ref --short refs/remotes/origin/HEAD` or `git remote show origin`.
 
 2. Your worktree is your staging area. Fetch and reset it to the latest origin target branch.
 
