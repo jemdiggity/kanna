@@ -9,7 +9,7 @@ You are in a worktree branched from the task branch. Your job is to create a Git
 
 ## Process
 
-1. **Check for uncommitted changes** in the source worktree by running `git -C $SOURCE_WORKTREE status`. If there are uncommitted changes, commit them: `git -C $SOURCE_WORKTREE add -A && git -C $SOURCE_WORKTREE commit -m '<appropriate message>'`, then pull those commits into your branch: `git pull --rebase`.
+1. **Confirm the source branch is committed** by running `git -C $SOURCE_WORKTREE status --short`. If there are uncommitted changes, stop and report that the commit stage did not finish cleanly.
 
 2. **Rebase onto latest main**: `git fetch origin main && git rebase origin/main`. This ensures the PR only contains the task's changes, not reversions from a stale branch point.
 
