@@ -2,6 +2,8 @@
 import { computed, ref } from "vue";
 import type { PipelineItem } from "@kanna/db";
 import { useI18n } from "vue-i18n";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { isTauri } from "../tauri-mock";
 
 const { t } = useI18n();
 
@@ -33,6 +35,15 @@ function copyBranch() {
   copied.value = true;
   setTimeout(() => { copied.value = false; }, 1500);
 }
+
+function openLocalhostPort(port: number) {
+  const url = `http://localhost:${port}`;
+  if (isTauri) {
+    openUrl(url).catch((error) => console.error("[task-header] Failed to open port:", error));
+    return;
+  }
+  window.open(url, "_blank");
+}
 </script>
 
 <template>
@@ -45,7 +56,13 @@ function copyBranch() {
       <span v-if="item.branch" class="meta-item branch" @dblclick="copyBranch">
         <span class="meta-label">{{ $t('taskHeader.branchLabel') }}</span> {{ copied ? $t('taskHeader.copied', 'Copied!') : item.branch }}
       </span>
-      <span v-for="port in ports" :key="port" class="meta-item port">
+      <span
+        v-for="port in ports"
+        :key="port"
+        class="meta-item port"
+        :title="`Open localhost:${port}`"
+        @dblclick="openLocalhostPort(port)"
+      >
         :{{ port }}
       </span>
       <a
@@ -138,6 +155,7 @@ function copyBranch() {
   padding: 1px 6px;
   border-radius: 3px;
   color: #8a8;
+  cursor: pointer;
 }
 
 .link {
