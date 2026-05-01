@@ -13,6 +13,8 @@
     "tauri:build": "tauri build",
     "test": "sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; exec vitest run src \"$@\"' --",
     "test:e2e": "tsx tests/e2e/run.ts mock/",
+    "test:e2e:app-update": "tsx tests/e2e/run.ts mock/app-update.test.ts",
+    "test:e2e:app-update:bundle": "bash ../../scripts/app-update-full-bundle-e2e.sh",
     "test:e2e:real": "tsx tests/e2e/run.ts real/",
     "test:e2e:all": "tsx tests/e2e/run.ts"
   },
