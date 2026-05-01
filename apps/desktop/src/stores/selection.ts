@@ -30,6 +30,15 @@ export interface SelectItemOptions {
 export function createSelectionApi(context: StoreContext): SelectionApi {
   const nav = createNavigationHistory();
 
+  function logSelection(source: string, from: string | null, to: string | null, details: Record<string, unknown> = {}) {
+    console.debug(`[selection] ${source}`, {
+      from,
+      to,
+      selectedRepoId: context.state.selectedRepoId.value,
+      ...details,
+    });
+  }
+
   function emitTaskSelected(itemId: string) {
     const item = context.state.items.value.find((candidate) => candidate.id === itemId);
     insertOperatorEvent(context.requireDb(), "task_selected", itemId, item?.repo_id ?? null).catch((error) =>
@@ -117,8 +126,10 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
   );
 
   async function selectRepo(repoId: string) {
+    const previousItemId = context.state.selectedItemId.value;
     context.state.selectedRepoId.value = repoId;
     context.state.selectedItemId.value = context.state.lastSelectedItemByRepo.value[repoId] ?? null;
+    logSelection("selectRepo", previousItemId, context.state.selectedItemId.value, { repoId });
     await setSetting(context.requireDb(), "selected_repo_id", repoId);
   }
 
@@ -129,6 +140,10 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     nav.select(itemId, previousItemId);
     context.state.selectedItemId.value = itemId;
     const item = context.state.items.value.find((candidate) => candidate.id === itemId);
+    logSelection("selectItem", previousItemId, itemId, {
+      itemStage: item?.stage,
+      itemBranch: item?.branch,
+    });
     if (item?.agent_type === "pty") {
       beginTaskSwitch(itemId);
     }
@@ -164,6 +179,9 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
   async function selectReplacementAfterItemRemoval(removedItem: PipelineItem): Promise<string | null> {
     const replacement = findReplacementAfterItemRemoval(removedItem);
     if (!replacement) {
+      logSelection("selectReplacementAfterItemRemoval:none", context.state.selectedItemId.value, null, {
+        removedItemId: removedItem.id,
+      });
       context.state.selectedItemId.value = null;
       return null;
     }
@@ -176,8 +194,14 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
     if (context.state.selectedItemId.value !== replacement.id) {
       nav.select(replacement.id, context.state.selectedItemId.value);
     }
+    const previousItemId = context.state.selectedItemId.value;
     context.state.selectedItemId.value = replacement.id;
     context.state.lastSelectedItemByRepo.value[replacement.repo_id] = replacement.id;
+    logSelection("selectReplacementAfterItemRemoval", previousItemId, replacement.id, {
+      removedItemId: removedItem.id,
+      replacementStage: replacement.stage,
+      replacementBranch: replacement.branch,
+    });
     if (replacement.agent_type === "pty") {
       beginTaskSwitch(replacement.id);
     }
@@ -187,8 +211,13 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
   }
 
   function restoreSelection(itemId: string) {
+    const previousItemId = context.state.selectedItemId.value;
     context.state.selectedItemId.value = itemId;
     const item = context.state.items.value.find((candidate) => candidate.id === itemId);
+    logSelection("restoreSelection", previousItemId, itemId, {
+      itemStage: item?.stage,
+      itemBranch: item?.branch,
+    });
     if (item) {
       context.state.lastSelectedItemByRepo.value[item.repo_id] = itemId;
     }

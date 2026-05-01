@@ -1215,8 +1215,16 @@ describe("kanna store task base branch integration", () => {
     await flushStore();
 
     await store.advanceStage("item-source");
+    let createdPrItem: PipelineItem | undefined;
     await vi.waitFor(() => {
-      expect(mockState.pipelineItems.some((item) => item.stage === "pr" && item.id !== "item-source")).toBe(true);
+      createdPrItem = mockState.pipelineItems.find((item) => item.stage === "pr" && item.id !== "item-source");
+      expect(createdPrItem).toBeDefined();
+    });
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "spawn_session",
+        expect.objectContaining({ sessionId: createdPrItem?.id }),
+      );
     });
 
     expect(store.selectedItemId).toBe("item-next");
@@ -1377,7 +1385,12 @@ describe("kanna store task base branch integration", () => {
       selectOnCreate: false,
     });
 
-    await flushStore();
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "create_agent_session",
+        expect.objectContaining({ prompt: "Spawn without follow" }),
+      );
+    });
 
     expect(store.selectedItemId).toBe("item-active");
   });
