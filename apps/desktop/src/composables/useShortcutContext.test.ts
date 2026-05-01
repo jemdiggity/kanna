@@ -76,13 +76,21 @@ describe("useShortcutContext", () => {
       }
     });
 
+    it("shows the file picker shortcut in inspect modal contexts", () => {
+      for (const ctx of ["diff", "shell", "tree", "graph"] as ShortcutContext[]) {
+        const result = getContextShortcuts(ctx);
+        const actions = result.map((s) => s.action);
+        expect(actions).toContain("shortcuts.filePicker");
+      }
+    });
+
     it("includes tree-specific supplementary shortcuts in tree context", () => {
       register("tree", [{ label: "Yank path", display: "y" }]);
       const result = getContextShortcuts("tree");
       const actions = result.map((s) => s.action);
       expect(actions).toContain("shortcuts.maximize");
       expect(actions).toContain("Yank path");
-      expect(actions).not.toContain("shortcuts.treeExplorer");
+      expect(actions).toContain("shortcuts.treeExplorer");
       expect(actions).toContain("shortcuts.keyboardShortcuts");
     });
 
@@ -98,16 +106,16 @@ describe("useShortcutContext", () => {
       const result = getContextShortcuts("diff");
       const actions = result.map((s) => s.action);
       expect(actions).not.toContain("shortcuts.newTask");
-      expect(actions).not.toContain("shortcuts.filePicker");
+      expect(actions).not.toContain("shortcuts.commandPalette");
     });
 
-    it("excludes cross-tool shortcuts from file context", () => {
+    it("includes cross-preview shortcuts from file context", () => {
       const result = getContextShortcuts("file");
       const actions = result.map((s) => s.action);
 
-      expect(actions).not.toContain("shortcuts.treeExplorer");
-      expect(actions).not.toContain("shortcuts.viewDiff");
-      expect(actions).not.toContain("shortcuts.shellTerminal");
+      expect(actions).toContain("shortcuts.treeExplorer");
+      expect(actions).toContain("shortcuts.viewDiff");
+      expect(actions).toContain("shortcuts.shellTerminal");
       expect(actions).toContain("shortcuts.maximize");
       expect(actions).toContain("shortcuts.keyboardShortcuts");
     });
@@ -150,6 +158,7 @@ describe("useShortcutContext", () => {
 
       expect(result.map((group) => group.key)).toEqual([
         "shortcuts.groupAppHelp",
+        "shortcuts.groupOpenInspect",
         "shortcuts.groupSearch",
         "shortcuts.groupNavigation",
         "shortcuts.groupViews",
@@ -171,6 +180,7 @@ describe("useShortcutContext", () => {
 
       expect(result.map((group) => group.key)).toEqual([
         "shortcuts.groupAppHelp",
+        "shortcuts.groupOpenInspect",
         "shortcuts.groupSearch",
         "shortcuts.groupNavigation",
         "shortcuts.groupViews",

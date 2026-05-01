@@ -62,6 +62,8 @@ interface ShortcutDef {
   hidden?: boolean;
 }
 
+const PREVIEW_MODAL_CONTEXTS: ShortcutContext[] = ["main", "diff", "file", "shell", "tree", "graph"];
+
 /**
  * Single source of truth for all app-level keyboard shortcuts.
  * Used by: keydown handler, terminal passthrough, shortcuts modal.
@@ -81,12 +83,12 @@ export const shortcuts: ShortcutDef[] = [
   { action: "navigateRepoUp",   labelKey: "shortcuts.previousRepo",   groupKey: "shortcuts.groupMoveAround", key: "ArrowUp",                   meta: true, shift: true,  display: "⇧⌘↑",     context: ["main"] },
   { action: "navigateRepoDown", labelKey: "shortcuts.nextRepo",       groupKey: "shortcuts.groupMoveAround", key: "ArrowDown",                 meta: true, shift: true,  display: "⇧⌘↓",     context: ["main"] },
   // Tools — open task and repo tools
-  { action: "openFile",       labelKey: "shortcuts.filePicker",     groupKey: "shortcuts.groupOpenInspect", key: "p",                         meta: true,               display: "⌘P",       context: ["main"] },
+  { action: "openFile",       labelKey: "shortcuts.filePicker",     groupKey: "shortcuts.groupOpenInspect", key: "p",                         meta: true,               display: "⌘P",       context: PREVIEW_MODAL_CONTEXTS },
   { action: "commandPalette", labelKey: "shortcuts.commandPalette", groupKey: "shortcuts.groupOpenInspect", key: ["P", "p"],                  meta: true, shift: true,  display: "⇧⌘P",     context: ["main"] },
-  { action: "showDiff",       labelKey: "shortcuts.viewDiff",       groupKey: "shortcuts.groupOpenInspect", key: "d",                         meta: true, display: "⌘D",                       context: ["main", "diff", "shell"] },
-  { action: "showCommitGraph", labelKey: "shortcuts.commitGraph", groupKey: "shortcuts.groupOpenInspect", key: "g", meta: true, display: "⌘G", context: ["main", "graph"] },
-  { action: "openShell",      labelKey: "shortcuts.shellTerminal",  groupKey: "shortcuts.groupOpenInspect", key: "j",                         meta: true,               display: "⌘J",       context: ["main", "diff", "shell"] },
-  { action: "openShellRepoRoot", labelKey: "shortcuts.shellRepoRoot", groupKey: "shortcuts.groupOpenInspect", key: ["J", "j"],                  meta: true, shift: true,  display: "⇧⌘J",     context: ["main", "diff", "shell"] },
+  { action: "showDiff",       labelKey: "shortcuts.viewDiff",       groupKey: "shortcuts.groupOpenInspect", key: "d",                         meta: true, display: "⌘D",                       context: PREVIEW_MODAL_CONTEXTS },
+  { action: "showCommitGraph", labelKey: "shortcuts.commitGraph", groupKey: "shortcuts.groupOpenInspect", key: "g", meta: true, display: "⌘G", context: PREVIEW_MODAL_CONTEXTS },
+  { action: "openShell",      labelKey: "shortcuts.shellTerminal",  groupKey: "shortcuts.groupOpenInspect", key: "j",                         meta: true,               display: "⌘J",       context: PREVIEW_MODAL_CONTEXTS },
+  { action: "openShellRepoRoot", labelKey: "shortcuts.shellRepoRoot", groupKey: "shortcuts.groupOpenInspect", key: ["J", "j"],                  meta: true, shift: true,  display: "⇧⌘J",     context: PREVIEW_MODAL_CONTEXTS },
   { action: "openInIDE",      labelKey: "shortcuts.openInIDE",      groupKey: "shortcuts.groupOpenInspect", key: "o",                         meta: true,               display: "⌘O",       context: ["main"] },
   // Window — disabled until #24 (new window state sharing)
   // { action: "newWindow",  labelKey: "shortcuts.newWindow", groupKey: "shortcuts.groupWindow", key: ["N", "n"],                     meta: true, shift: true,  display: "⇧⌘N" },
@@ -95,7 +97,7 @@ export const shortcuts: ShortcutDef[] = [
   { action: "toggleMaximize", labelKey: "shortcuts.maximize",       groupKey: "shortcuts.groupWorkspace", key: "Enter",                     meta: true, shift: true,  display: "⇧⌘Enter", context: ["main", "diff", "file", "shell", "tree"] },
   { action: "goBack",       labelKey: "shortcuts.goBack",         groupKey: "shortcuts.groupMoveAround", key: "-",                            ctrl: true,               display: "⌃-",       context: ["main"] },
   { action: "goForward",    labelKey: "shortcuts.goForward",      groupKey: "shortcuts.groupMoveAround", key: ["_", "-"],                     ctrl: true, shift: true,  display: "⌃⇧-",     context: ["main"] },
-  { action: "toggleTreeExplorer", labelKey: "shortcuts.treeExplorer", groupKey: "shortcuts.groupOpenInspect", key: ["E", "e"], meta: true, shift: true, display: "⇧⌘E", context: ["main", "diff", "shell", "file"] },
+  { action: "toggleTreeExplorer", labelKey: "shortcuts.treeExplorer", groupKey: "shortcuts.groupOpenInspect", key: ["E", "e"], meta: true, shift: true, display: "⇧⌘E", context: PREVIEW_MODAL_CONTEXTS },
   { action: "showAnalytics", labelKey: "shortcuts.analytics",      groupKey: "shortcuts.groupOpenInspect", key: ["A", "a"],                     meta: true, shift: true,  display: "⇧⌘A",     context: ["main"] },
   { action: "goToOldestUnread", labelKey: "shortcuts.oldestUnread", groupKey: "shortcuts.groupMoveAround", key: "u", meta: true, display: "⌘U", context: ["main"] },
   { action: "goToNewestUnread", labelKey: "shortcuts.newestUnread", groupKey: "shortcuts.groupMoveAround", key: ["U", "u"], meta: true, shift: true, display: "⇧⌘U", context: ["main"] },

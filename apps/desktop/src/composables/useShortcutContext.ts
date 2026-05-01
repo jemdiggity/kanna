@@ -89,15 +89,25 @@ function buildContextShortcutGroups(
   resolveAction: (actionKey: string, translated: boolean) => string,
 ): ContextShortcutGroup[] {
   const result = new Map<string, ContextShortcutItem[]>();
+  const previewModalActions = [
+    "openFile",
+    "showDiff",
+    "showCommitGraph",
+    "openShell",
+    "openShellRepoRoot",
+    "toggleTreeExplorer",
+    "toggleMaximize",
+    "showShortcuts",
+  ];
   const hiddenGlobalActionsByContext: Partial<Record<ShortcutContext, string[]>> = {
     newTask: ["dismiss"],
   };
   const visibleGlobalActionsByContext: Partial<Record<ShortcutContext, string[]>> = {
-    diff: ["toggleMaximize", "showShortcuts"],
-    file: ["toggleMaximize", "showShortcuts"],
-    shell: ["toggleMaximize", "showShortcuts"],
-    tree: ["toggleMaximize", "showShortcuts"],
-    graph: ["showShortcuts"],
+    diff: previewModalActions,
+    file: previewModalActions,
+    shell: previewModalActions,
+    tree: previewModalActions,
+    graph: previewModalActions.filter((action) => action !== "toggleMaximize"),
     newTask: ["showShortcuts"],
     transfer: ["showShortcuts"],
   };

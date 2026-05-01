@@ -181,6 +181,7 @@ const diffModalRef = ref<InstanceType<typeof DiffModal> | null>(null);
 const showCommitGraphModal = ref(false);
 const commitGraphModalRef = ref<InstanceType<typeof CommitGraphModal> | null>(null);
 const treeExplorerRef = ref<InstanceType<typeof TreeExplorerModal> | null>(null);
+const filePickerRef = ref<InstanceType<typeof FilePickerModal> | null>(null);
 const filePreviewRef = ref<InstanceType<typeof FilePreviewModal> | null>(null);
 const preferencesRef = ref<InstanceType<typeof PreferencesPanel> | null>(null);
 
@@ -544,6 +545,26 @@ const paletteDynamicCommands = computed<DynamicCommand[]>(() => {
   return cmds;
 });
 
+interface ModalShortcutContextEntry {
+  context: ShortcutContext;
+  visible: boolean;
+  zIndex: number;
+}
+
+function topPreviewModalContext(): ShortcutContext | null {
+  const entries: ModalShortcutContextEntry[] = [
+    { context: "diff", visible: showDiffModal.value, zIndex: diffModalRef.value?.zIndex ?? 0 },
+    { context: "graph", visible: showCommitGraphModal.value, zIndex: commitGraphModalRef.value?.zIndex ?? 0 },
+    { context: "file", visible: showFilePickerModal.value, zIndex: filePickerRef.value?.zIndex ?? 0 },
+    { context: "file", visible: showFilePreviewModal.value, zIndex: filePreviewRef.value?.zIndex ?? 0 },
+    { context: "tree", visible: showTreeExplorer.value, zIndex: treeExplorerRef.value?.zIndex ?? 0 },
+    { context: "shell", visible: showShellModal.value, zIndex: shellModalRef.value?.zIndex ?? 0 },
+  ].filter((entry) => entry.visible);
+
+  entries.sort((a, b) => b.zIndex - a.zIndex);
+  return entries[0]?.context ?? null;
+}
+
 // Derive shortcut context from visible modals (more reliable than the global singleton
 // which can be stale if a KeepAlive deactivation resets it after a modal sets it).
 const currentShortcutContext = computed<ShortcutContext>(() => {
@@ -553,11 +574,8 @@ const currentShortcutContext = computed<ShortcutContext>(() => {
   if (showShortcutsModal.value) return "main";
   if (showPeerPicker.value) return "transfer";
   if (showNewTaskModal.value) return "newTask";
-  if (showFilePreviewModal.value) return "file";
-  if (showTreeExplorer.value) return "tree";
-  if (showShellModal.value) return "shell";
-  if (showCommitGraphModal.value) return "graph";
-  if (showDiffModal.value) return "diff";
+  const topPreviewContext = topPreviewModalContext();
+  if (topPreviewContext) return topPreviewContext;
   return "main";
 });
 
@@ -580,6 +598,20 @@ function closeFileFlow() {
   maximizedModal.value = maximizedModal.value === "file" ? null : maximizedModal.value;
   previewHidden.value = false;
   previewFromPicker.value = false;
+}
+
+function openFilePreview(filePath: string, initialLine: number | undefined, fromPicker: boolean) {
+  previewFilePath.value = filePath;
+  previewInitialLine.value = initialLine;
+  previewFromPicker.value = fromPicker;
+  previewHidden.value = false;
+  showFilePreviewModal.value = true;
+  nextTick(() => filePreviewRef.value?.bringToFront?.());
+}
+
+function selectFileFromPicker(filePath: string) {
+  showFilePickerModal.value = false;
+  openFilePreview(filePath, undefined, true);
 }
 
 function closeFilePreview(reopenPicker: boolean) {
@@ -725,14 +757,16 @@ const keyboardActions = {
     }
   },
   openFile: () => {
-    if (showFilePreviewModal.value) {
-      showFilePreviewModal.value = false;
-      previewHidden.value = true;
-    } else if (previewHidden.value) {
-      showFilePreviewModal.value = true;
-      previewHidden.value = false;
+    if (showFilePickerModal.value) {
+      const z = filePickerRef.value?.zIndex ?? 0;
+      if (isTopModal(z)) {
+        showFilePickerModal.value = false;
+      } else {
+        filePickerRef.value?.bringToFront();
+      }
     } else {
-      showFilePickerModal.value = !showFilePickerModal.value;
+      previewHidden.value = false;
+      showFilePickerModal.value = true;
     }
   },
   toggleTreeExplorer: () => {
@@ -780,12 +814,12 @@ const keyboardActions = {
     if (showCommandPalette.value) { showCommandPalette.value = false; return true; }
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return true; }
     if (showPeerPicker.value) { closePeerPicker(); return true; }
+    if (showFilePickerModal.value) { showFilePickerModal.value = false; return true; }
     if (showFilePreviewModal.value) {
       const shouldCloseFileFlow = filePreviewRef.value?.dismiss() ?? true;
       if (shouldCloseFileFlow) closeFileFlow();
       return true;
     }
-    if (showFilePickerModal.value) { showFilePickerModal.value = false; return true; }
     // Shell before diff: let Escape reach the shell terminal (vim, etc.)
     if (showShellModal.value) { return; }
     if (showDiffModal.value) { showDiffModal.value = false; maximizedModal.value = null; return true; }
@@ -935,11 +969,7 @@ function suppressFileDropNavigation(event: DragEvent) {
 
 function handleFileLinkActivate(event: Event) {
   const detail = (event as CustomEvent).detail as { path: string; line?: number };
-  previewFilePath.value = detail.path;
-  previewInitialLine.value = detail.line;
-  showFilePreviewModal.value = true;
-  previewFromPicker.value = false;
-  previewHidden.value = false;
+  openFilePreview(detail.path, detail.line, false);
 }
 
 // Auto-restore focus to whatever had it before the modal opened
@@ -1361,11 +1391,12 @@ onBeforeUnmount(() => {
       @close="showCommitGraphModal = false"
     />
     <FilePickerModal
+      ref="filePickerRef"
       v-if="showFilePickerModal && !isMobile && store.selectedRepo?.path"
       :worktree-path="activeWorktreePath"
       :repo-root="store.selectedRepo?.path ?? ''"
       @close="showFilePickerModal = false"
-      @select="(f: string) => { showFilePickerModal = false; previewFilePath = f; previewInitialLine = undefined; showFilePreviewModal = true; previewFromPicker = true; previewHidden = false; }"
+      @select="selectFileFromPicker"
     />
     <TreeExplorerModal
       ref="treeExplorerRef"
@@ -1374,9 +1405,8 @@ onBeforeUnmount(() => {
       :repo-root="store.selectedRepo?.path ?? treeExplorerRoot"
       :home-path="homePath"
       :maximized="maximizedModal === 'tree'"
-      :suspended="showFilePreviewModal"
       @close="closeTreeExplorer"
-      @open-file="(f: string) => { previewFilePath = f; previewInitialLine = undefined; showFilePreviewModal = true; previewFromPicker = false; previewHidden = false; }"
+      @open-file="(f: string) => openFilePreview(f, undefined, false)"
     />
     <FilePreviewModal
       ref="filePreviewRef"
