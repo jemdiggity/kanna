@@ -29,7 +29,8 @@ A pipeline is a JSON file that defines an ordered list of stages a task flows th
       "prompt": "<stage-specific prompt, can use $TASK_PROMPT and $PREV_RESULT>",
       "agent_provider": "<optional override: codex | claude | copilot>",
       "environment": "<optional: env-name from environments above>",
-      "transition": "manual"
+      "transition": "manual",
+      "follow_task": true
     }
   ]
 }
@@ -55,6 +56,9 @@ A pipeline is a JSON file that defines an ordered list of stages a task flows th
 | `agent_provider` | string | no | Override agent provider for this stage: `codex`, `claude`, or `copilot` |
 | `environment` | string | no | Environment name from the `environments` map. Null = no setup/teardown. |
 | `transition` | `"manual"` or `"auto"` | yes | How the task advances to the next stage. `auto` advances when the agent calls `kanna-cli stage-complete --status success`. `manual` requires user action. |
+| `follow_task` | boolean | no | Whether advancing into this stage should auto-select the new stage task. Defaults to `true`; set to `false` for fire-and-forget stages like PR. |
+
+For PR stages, set `"follow_task": false` so creating the PR task does not pull focus away from the next visible task.
 
 ### Prompt Variables
 
