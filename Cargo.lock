@@ -3092,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "kanna-desktop"
-version = "0.0.43"
+version = "0.0.44"
 dependencies = [
  "arboard",
  "base64 0.22.1",
