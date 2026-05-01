@@ -200,4 +200,32 @@ Do the other task.
     expect(result.pipelines).toHaveLength(1);
     expect(result.errors).toHaveLength(0);
   });
+
+  it("ignores schema.json in pipelines directory", async () => {
+    const files: Record<string, string> = {
+      "/repo/.kanna/pipelines/pipeline.json": VALID_PIPELINE_JSON,
+      "/repo/.kanna/pipelines/schema.json": JSON.stringify({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Kanna Pipeline Definition",
+        "type": "object",
+      }),
+    };
+
+    const readFile = async (path: string): Promise<string> => {
+      if (path in files) return files[path];
+      throw new Error(`File not found: ${path}`);
+    };
+
+    const listDir = async (path: string): Promise<string[]> => {
+      if (path === "/repo/.kanna/agents") return [];
+      if (path === "/repo/.kanna/pipelines") return ["pipeline.json", "schema.json"];
+      throw new Error(`Directory not found: ${path}`);
+    };
+
+    const result = await scanAgentsAndPipelines("/repo", readFile, listDir);
+
+    expect(result.pipelines).toHaveLength(1);
+    expect(result.pipelines[0].name).toBe("Test Pipeline");
+    expect(result.errors).toHaveLength(0);
+  });
 });

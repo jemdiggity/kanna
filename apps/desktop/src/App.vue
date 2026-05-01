@@ -1033,7 +1033,7 @@ async function openNewTaskModal(repoId?: string) {
       invoke<string[]>("git_list_base_branches", { repoPath }).catch(() => [] as string[]),
     ]);
     availablePipelines.value = files
-      .filter((f) => f.endsWith(".json"))
+      .filter((f) => f.endsWith(".json") && f !== "schema.json")
       .map((f) => f.replace(/\.json$/, ""));
     if (configContent) {
       try {

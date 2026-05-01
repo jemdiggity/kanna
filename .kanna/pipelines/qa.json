@@ -1,4 +1,5 @@
 {
+  "$schema": "./schema.json",
   "name": "qa",
   "description": "Implementation -> commit -> QA review -> PR flow with automatic revision requests for weak testing",
   "stages": [
