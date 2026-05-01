@@ -1,11 +1,18 @@
 // @vitest-environment happy-dom
 
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const invokeMock = vi.fn();
+
+vi.mock("../../invoke", () => ({
+  invoke: invokeMock,
+}));
 
 describe("MainPanel", () => {
   beforeEach(() => {
     vi.resetModules();
+    invokeMock.mockReset();
     vi.stubGlobal("__KANNA_MOBILE__", false);
     localStorage.clear();
   });
@@ -52,5 +59,47 @@ describe("MainPanel", () => {
     const remounted = mountPanel();
 
     expect(remounted.find('[data-testid="command-hint"]').exists()).toBe(false);
+  });
+
+  it("shows full agent CLI version numbers from --version output", async () => {
+    invokeMock.mockImplementation((command: string, args?: { name?: string; script?: string }) => {
+      if (command === "read_env_var") return Promise.reject(new Error("env var not set"));
+      if (command === "which_binary") return Promise.resolve(`/usr/local/bin/${args?.name ?? "agent"}`);
+      if (command === "run_script") {
+        if (args?.script === "claude --version") return Promise.resolve("2.1.118 (Claude Code)\n");
+        if (args?.script === "copilot --version") {
+          return Promise.resolve("GitHub Copilot CLI 1.0.32.\nRun 'copilot update' to check for updates.\n");
+        }
+        if (args?.script === "codex --version") return Promise.resolve("codex-cli 0.125.0-beta.1+20260429\n");
+      }
+      return Promise.resolve("");
+    });
+
+    const { default: MainPanel } = await import("../MainPanel.vue");
+
+    const wrapper = mount(MainPanel, {
+      props: {
+        item: null,
+        hasRepos: false,
+      },
+      global: {
+        mocks: {
+          $t: (key: string, values?: Record<string, string>) =>
+            key === "mainPanel.agentVersion"
+              ? `Version ${values?.version ?? "?"}`
+              : key,
+        },
+        stubs: {
+          TaskHeader: { template: '<div data-testid="task-header" />' },
+          TerminalTabs: { template: '<div data-testid="terminal-tabs" />' },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Version 2.1.118");
+    expect(wrapper.text()).toContain("Version 1.0.32");
+    expect(wrapper.text()).toContain("Version 0.125.0-beta.1+20260429");
   });
 });
