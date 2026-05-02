@@ -29,11 +29,13 @@ describe("KeyboardShortcutsModal", () => {
 
     expect(entryAt("1", "1")).toBe("shortcuts.groupCreateOrganize");
     expect(entryAt("1", "10")).toBe("shortcuts.groupWorkspace");
-    expect(entryAt("1", "14")).toBe("shortcuts.groupAppHelp");
+    expect(entryAt("1", "15")).toBe("shortcuts.groupAppHelp");
     expect(entryAt("2", "1")).toBe("shortcuts.groupMoveAround");
     expect(entryAt("3", "1")).toBe("shortcuts.groupOpenInspect");
-    expect(entryAt("1", "11")).toBe("shortcuts.toggleSidebar⌘B");
-    expect(entryAt("1", "15")).toBe("shortcuts.preferences⌘,");
+    expect(entryAt("1", "11")).toBe("shortcuts.newWindow⌘N");
+    expect(entryAt("1", "12")).toBe("shortcuts.closeWindow⌘W");
+    expect(entryAt("1", "13")).toBe("shortcuts.toggleSidebar⌘B");
+    expect(entryAt("1", "16")).toBe("shortcuts.preferences⌘,");
     expect(entryAt("2", "10")).toBe("shortcuts.oldestRead⌘R");
     expect(entryAt("3", "10")).toBe("shortcuts.treeExplorer⇧⌘E");
     expect(entryAt("3", "11")).toBe("shortcuts.viewDiff⌘D");
