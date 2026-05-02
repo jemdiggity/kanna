@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  removeWindowFromWorkspaceSnapshot,
   parseWindowBootstrap,
   reconcileWorkspaceSnapshot,
   resolveWindowBootstrap,
@@ -81,6 +82,53 @@ describe("windowWorkspace", () => {
       windowId: "main",
       selectedRepoId: "repo-1",
       selectedItemId: "task-2",
+    });
+  });
+
+  it("removes a closed window and renormalizes the remaining order", () => {
+    const snapshot: WorkspaceSnapshot = {
+      windows: [
+        {
+          windowId: "main",
+          selectedRepoId: "repo-1",
+          selectedItemId: "task-1",
+          order: 0,
+          sidebarHidden: false,
+        },
+        {
+          windowId: "win-2",
+          selectedRepoId: "repo-1",
+          selectedItemId: "task-2",
+          order: 1,
+          sidebarHidden: true,
+        },
+        {
+          windowId: "win-3",
+          selectedRepoId: "repo-2",
+          selectedItemId: null,
+          order: 2,
+          sidebarHidden: false,
+        },
+      ],
+    };
+
+    expect(removeWindowFromWorkspaceSnapshot(snapshot, "win-2")).toEqual({
+      windows: [
+        {
+          windowId: "main",
+          selectedRepoId: "repo-1",
+          selectedItemId: "task-1",
+          order: 0,
+          sidebarHidden: false,
+        },
+        {
+          windowId: "win-3",
+          selectedRepoId: "repo-2",
+          selectedItemId: null,
+          order: 1,
+          sidebarHidden: false,
+        },
+      ],
     });
   });
 });

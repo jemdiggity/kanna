@@ -27,6 +27,7 @@ export interface WindowWorkspaceController {
     selectedRepoId: string | null;
     selectedItemId: string | null;
   }) => Promise<void>;
+  closeWindow: () => Promise<void>;
   persistSelection: (selection: {
     selectedRepoId: string | null;
     selectedItemId: string | null;
@@ -39,6 +40,8 @@ export interface WindowWorkspaceController {
 
 export const WINDOW_WORKSPACE_SETTINGS_KEY = "window_workspace_v1";
 export const WINDOW_WORKSPACE_INVALIDATED_EVENT = "kanna://window-workspace-invalidated";
+export const WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT = "kanna://native-new-window";
+export const WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT = "kanna://native-close-window";
 
 export function parseWindowBootstrap(search: string): WindowBootstrap {
   const params = new URLSearchParams(search);
@@ -70,6 +73,15 @@ export function reconcileWorkspaceSnapshot(
       },
     ],
   };
+}
+
+export function removeWindowFromWorkspaceSnapshot(
+  snapshot: WorkspaceSnapshot,
+  windowId: string,
+): WorkspaceSnapshot {
+  return normalizeWorkspaceSnapshot({
+    windows: snapshot.windows.filter((entry) => entry.windowId !== windowId),
+  });
 }
 
 function normalizeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
@@ -180,6 +192,16 @@ export function createWindowWorkspace(input: {
     window.open(url, "_blank");
   }
 
+  async function closeCurrentWindow(): Promise<void> {
+    if (isTauri) {
+      const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      await getCurrentWebviewWindow().close();
+      return;
+    }
+
+    window.close();
+  }
+
   async function updateCurrentWindow(
     apply: (entry: WorkspaceWindowState) => WorkspaceWindowState,
   ): Promise<void> {
@@ -210,6 +232,11 @@ export function createWindowWorkspace(input: {
         windows: [...snapshot.windows, nextWindow],
       });
       await spawnWindow(nextWindow);
+    },
+    closeWindow: async () => {
+      const snapshot = await loadSnapshot();
+      await saveSnapshot(removeWindowFromWorkspaceSnapshot(snapshot, bootstrap.windowId));
+      await closeCurrentWindow();
     },
     persistSelection: async (selection) => {
       await updateCurrentWindow((entry) => ({

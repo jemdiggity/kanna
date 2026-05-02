@@ -70,6 +70,7 @@
     "createRepo": "Create Repo",
     "importClone": "Import / Clone",
     "newWindow": "New Window",
+    "closeWindow": "Close Window",
     "goBack": "Go Back",
     "goForward": "Go Forward",
     "allShortcuts": "All Shortcuts",

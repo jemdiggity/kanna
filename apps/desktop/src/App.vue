@@ -51,7 +51,11 @@ import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
-import type { WindowWorkspaceController } from "./windowWorkspace";
+import {
+  WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+  type WindowWorkspaceController,
+} from "./windowWorkspace";
 
 const isMobile = __KANNA_MOBILE__;
 
@@ -762,6 +766,9 @@ const keyboardActions = {
       selectedItemId: store.selectedItemId,
     });
   },
+  closeWindow: async () => {
+    await windowWorkspace.closeWindow();
+  },
   openFile: () => {
     if (showFilePickerModal.value) {
       const z = filePickerRef.value?.zIndex ?? 0;
@@ -1163,6 +1170,24 @@ onMounted(async () => {
   await importPendingIncomingTransfers();
   if (import.meta.env.DEV && window.__KANNA_E2E__) {
     window.__KANNA_E2E__.ready = true;
+  }
+
+  try {
+    const unlistenNativeNewWindow = await listen(WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT, async () => {
+      await keyboardActions.newWindow();
+    });
+    appUnlisteners.push(unlistenNativeNewWindow);
+  } catch (e: unknown) {
+    console.error("[App] native new-window listener registration failed:", e);
+  }
+
+  try {
+    const unlistenNativeCloseWindow = await listen(WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT, async () => {
+      await keyboardActions.closeWindow();
+    });
+    appUnlisteners.push(unlistenNativeCloseWindow);
+  } catch (e: unknown) {
+    console.error("[App] native close-window listener registration failed:", e);
   }
 
   try {

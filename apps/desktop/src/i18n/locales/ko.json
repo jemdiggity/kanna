@@ -70,6 +70,7 @@
     "createRepo": "저장소 생성",
     "importClone": "가져오기 / 복제",
     "newWindow": "새 창",
+    "closeWindow": "창 닫기",
     "goBack": "뒤로",
     "goForward": "앞으로",
     "allShortcuts": "모든 단축키",

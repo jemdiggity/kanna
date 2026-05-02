@@ -200,4 +200,71 @@ describe("new window", () => {
     const sourceWindowCurrentItem = await getVueState(client, "currentItem") as { id: string };
     expect(sourceWindowCurrentItem.id).toBe(taskAId);
   });
+
+  it("closes the focused secondary window without changing the remaining window selection", async () => {
+    const repoId = await importTestRepo(client, testRepoPath, "new-window-close-test");
+    const taskAId = randomUUID();
+    const taskBId = randomUUID();
+
+    await execDb(
+      client,
+      "INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)",
+      [taskAId, repoId, "Task A", "in progress", "sdk"],
+    );
+    await execDb(
+      client,
+      "INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)",
+      [taskBId, repoId, "Task B", "in progress", "sdk"],
+    );
+    await callVueMethod(client, "loadItems", repoId);
+    await setSelectedItem(client, taskAId);
+    await waitForCurrentItemId(client, taskAId);
+
+    const initialHandles = await getWindowHandles(client);
+    expect(initialHandles.length).toBeGreaterThanOrEqual(1);
+    const sourceHandle = await findWindowHandleForItem(client, initialHandles, taskAId);
+    await switchToWindow(client, sourceHandle);
+
+    await client.executeAsync(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       Promise.resolve(
+         ctx.windowWorkspace.openWindow({
+           selectedRepoId: ${JSON.stringify(repoId)},
+           selectedItemId: ${JSON.stringify(taskAId)},
+         })
+       ).then(() => cb("ok"))
+        .catch((error) => cb({ __error: error?.message ?? String(error) }));`,
+    );
+
+    const handles = await waitForWindowCount(client, initialHandles.length + 1);
+    const secondHandle = handles.find((handle) => !initialHandles.includes(handle));
+    expect(secondHandle).toBeTruthy();
+
+    await switchToWindow(client, secondHandle ?? "");
+    await client.waitForAppReady();
+    await dismissStartupShortcutsModal(client);
+    await setSelectedItem(client, taskBId);
+    await waitForCurrentItemId(client, taskBId);
+
+    await client.executeAsync(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       setTimeout(() => {
+         void ctx.windowWorkspace.closeWindow();
+       }, 0);
+       cb("scheduled");`,
+    );
+
+    const remainingHandles = await waitForWindowCount(client, initialHandles.length);
+    expect(remainingHandles).toContain(sourceHandle);
+    expect(remainingHandles).not.toContain(secondHandle);
+
+    await switchToWindow(client, sourceHandle);
+    await client.waitForAppReady();
+    await waitForCurrentItemId(client, taskAId);
+
+    const sourceWindowCurrentItem = await getVueState(client, "currentItem") as { id: string };
+    expect(sourceWindowCurrentItem.id).toBe(taskAId);
+  });
 });
