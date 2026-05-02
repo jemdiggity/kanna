@@ -1,15 +1,28 @@
 // @vitest-environment happy-dom
 
 import { mount } from "@vue/test-utils";
+import { defineComponent, h, nextTick } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import KeyboardShortcutsModal from "../KeyboardShortcutsModal.vue";
 import { clearContextShortcuts, setContextShortcuts } from "../../composables/useShortcutContext";
+import { useModalZIndex } from "../../composables/useModalZIndex";
 
 vi.mock("vue-i18n", () => ({
   useI18n: () => ({
     t: (key: string) => key,
   }),
 }));
+
+const StackedModal = defineComponent({
+  setup() {
+    const { zIndex } = useModalZIndex();
+    return () => h("div", { class: "stacked-modal", style: { zIndex: zIndex.value } });
+  },
+});
+
+function styleZIndex(element: Element): number {
+  return Number((element as HTMLElement).style.zIndex);
+}
 
 describe("KeyboardShortcutsModal", () => {
   afterEach(() => {
@@ -138,5 +151,28 @@ describe("KeyboardShortcutsModal", () => {
     expect(wrapper.text()).toContain("Page ↓/↑");
     expect(wrapper.text()).toContain("Half-page ↓/↑");
     expect(wrapper.text()).toContain("shortcuts.groupViews");
+  });
+
+  it("opens above the current modal stack even after z-index values exceed the old fixed layer", async () => {
+    const wrappers = Array.from({ length: 105 }, () => mount(StackedModal));
+    await nextTick();
+    const graphLikeModal = wrappers.at(-1);
+    const wrapper = mount(KeyboardShortcutsModal, {
+      props: {
+        context: "graph",
+      },
+    });
+    await nextTick();
+
+    try {
+      const graphZIndex = styleZIndex(graphLikeModal!.get(".stacked-modal").element);
+      const shortcutsZIndex = styleZIndex(wrapper.get(".modal-overlay").element);
+
+      expect(graphZIndex).toBeGreaterThan(1100);
+      expect(shortcutsZIndex).toBeGreaterThan(graphZIndex);
+    } finally {
+      wrapper.unmount();
+      wrappers.forEach((mounted) => mounted.unmount());
+    }
   });
 });
