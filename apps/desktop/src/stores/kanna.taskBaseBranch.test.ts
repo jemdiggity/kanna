@@ -799,6 +799,35 @@ describe("kanna store task base branch integration", () => {
         }),
       );
     });
+    const createAgentCall = mockState.invokeMock.mock.calls.find(([command]) => command === "create_agent_session");
+    const env = createAgentCall?.[1]?.env as Record<string, string> | undefined;
+    expect(env).not.toHaveProperty("KANNA_SERVER_BASE_URL");
+  });
+
+  it("passes a non-default app mobile server URL to sdk agent sessions", async () => {
+    mockState.readEnvVarOverrides = {
+      ...mockState.readEnvVarOverrides,
+      KANNA_MOBILE_SERVER_PORT: "48129",
+    };
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Ship dev server env", "sdk", {
+      agentProvider: "claude",
+    });
+
+    await vi.waitFor(() => {
+      const createdItem = mockState.pipelineItems.at(-1);
+      expect(createdItem).toBeTruthy();
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "create_agent_session",
+        expect.objectContaining({
+          sessionId: createdItem?.id,
+          env: expect.objectContaining({
+            KANNA_SERVER_BASE_URL: "http://127.0.0.1:48129",
+          }),
+        }),
+      );
+    });
   });
 
   it("passes workspace env and PATH updates to sdk agent sessions", async () => {
@@ -882,6 +911,9 @@ describe("kanna store task base branch integration", () => {
         }),
       }),
     );
+    const spawnCall = mockState.invokeMock.mock.calls.find(([command]) => command === "spawn_session");
+    const env = spawnCall?.[1]?.env as Record<string, string> | undefined;
+    expect(env).not.toHaveProperty("KANNA_SERVER_BASE_URL");
   });
 
   it("uses the real E2E override for PTY task provider and model when no explicit choice is supplied", async () => {
@@ -1031,6 +1063,9 @@ describe("kanna store task base branch integration", () => {
         }),
       }),
     );
+    const runScriptCall = mockState.invokeMock.mock.calls.find(([command]) => command === "run_script");
+    const env = runScriptCall?.[1]?.env as Record<string, string> | undefined;
+    expect(env).not.toHaveProperty("KANNA_SERVER_BASE_URL");
   });
 
   it("assigns ports freshly on undo close instead of restoring the task's previous assignment", async () => {

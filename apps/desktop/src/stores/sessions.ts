@@ -4,7 +4,7 @@ import { invoke } from "../invoke";
 import { isTauri } from "../tauri-mock";
 import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
 import { resolveDbName } from "./db";
-import { buildTaskRuntimeEnv } from "./kannaCliEnv";
+import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
 import { getAgentPermissionFlags } from "./agent-permissions";
 import { buildWorktreeSessionEnv } from "./worktreeEnv";
 import {
@@ -320,6 +320,9 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
         dbName,
         appDataDir,
         socketPath,
+        serverBaseUrl: resolveKannaServerBaseUrl(
+          await invoke<string>("read_env_var", { name: "KANNA_MOBILE_SERVER_PORT" }).catch(() => null),
+        ),
         kannaCliPath: resolvedKannaCliPath,
       }));
     } catch (error) {

@@ -47,6 +47,7 @@ pub struct TaskStageSource {
     pub branch: Option<String>,
     pub pipeline: Option<String>,
     pub agent_provider: Option<String>,
+    pub closed_at: Option<String>,
 }
 
 pub struct NewPipelineItem<'a> {
@@ -416,7 +417,7 @@ impl Db {
         id: &str,
     ) -> Result<Option<TaskStageSource>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT repo_id, prompt, stage, stage_result, branch, pipeline, agent_provider
+            "SELECT repo_id, prompt, stage, stage_result, branch, pipeline, agent_provider, closed_at
              FROM pipeline_item WHERE id = ?",
         )?;
         let mut rows = stmt.query_map([id], |row| {
@@ -428,6 +429,7 @@ impl Db {
                 branch: row.get(4)?,
                 pipeline: row.get(5)?,
                 agent_provider: row.get(6)?,
+                closed_at: row.get(7)?,
             })
         })?;
         match rows.next() {

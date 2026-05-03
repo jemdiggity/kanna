@@ -165,6 +165,9 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
         .get_task_stage_source(source_task_id)
         .map_err(|e| format!("db error: {}", e))?
         .ok_or_else(|| format!("task not found: {}", source_task_id))?;
+    if source_task.closed_at.is_some() {
+        return Ok(None);
+    }
     let repo = db
         .get_repo(&source_task.repo_id)
         .map_err(|e| format!("db error: {}", e))?

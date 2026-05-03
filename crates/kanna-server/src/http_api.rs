@@ -91,6 +91,19 @@ enum TaskTerminalStreamEvent {
     Error { task_id: String, message: String },
 }
 
+fn db_write_error(message_prefix: &str, err: rusqlite::Error) -> (axum::http::StatusCode, String) {
+    match err {
+        rusqlite::Error::QueryReturnedNoRows => (
+            axum::http::StatusCode::NOT_FOUND,
+            format!("{message_prefix}: not found"),
+        ),
+        err => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{message_prefix}: {}", err),
+        ),
+    }
+}
+
 impl AppState {
     pub fn new(config: Config) -> Self {
         if let Err(err) = pairing::PairingStore::load(Path::new(&config.pairing_store_path)) {
@@ -584,12 +597,7 @@ async fn complete_stage(
             )
         })?;
         db.update_pipeline_item_stage_result(&task_id, &stage_result)
-            .map_err(|e| {
-                (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("db error: {}", e),
-                )
-            })?;
+            .map_err(|e| db_write_error("db error", e))?;
     }
 
     if !should_auto_advance {
@@ -1921,6 +1929,69 @@ mod tests {
             .unwrap();
         let created: TaskActionResponse = from_slice(&body).unwrap();
         assert_eq!(created.task_id, "task-2");
+    }
+
+    #[tokio::test]
+    async fn complete_stage_missing_task_returns_not_found() {
+        let app = super::test_router("desktop-1", "Studio Mac");
+
+        let response = app
+            .oneshot(
+                Request::post("/v1/tasks/missing-task/actions/complete-stage")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "status": "success",
+                            "summary": "done"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn complete_stage_for_already_closed_task_is_idempotent() {
+        let app = super::test_router_with_seed("desktop-1", "Studio Mac", |db| {
+            db.insert_test_repo("repo-1", "Repo One").unwrap();
+            db.insert_test_pipeline_item(
+                "task-1",
+                "repo-1",
+                "Implement it",
+                Some("Implement it"),
+                "in progress",
+                "2026-01-01T00:00:00Z",
+            )
+            .unwrap();
+            db.close_pipeline_item("task-1").unwrap();
+        });
+
+        let response = app
+            .oneshot(
+                Request::post("/v1/tasks/task-1/actions/complete-stage")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "status": "success",
+                            "summary": "done again"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let completed: TaskActionResponse = from_slice(&body).unwrap();
+        assert_eq!(completed.task_id, "task-1");
     }
 
     #[tokio::test]
