@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -127,7 +126,7 @@ describe("new window", () => {
     await client.waitForAppReady();
     await dismissStartupShortcutsModal(client);
     fixtureRepoRoot = await createFixtureRepo("new-window-test");
-    testRepoPath = join(fixtureRepoRoot, "apps");
+    testRepoPath = fixtureRepoRoot;
   });
 
   afterAll(async () => {

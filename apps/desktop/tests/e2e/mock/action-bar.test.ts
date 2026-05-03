@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
@@ -16,7 +15,7 @@ describe("action bar", () => {
     await client.createSession();
     await resetDatabase(client);
     fixtureRepoRoot = await createFixtureRepo("action-test");
-    testRepoPath = join(fixtureRepoRoot, "apps");
+    testRepoPath = fixtureRepoRoot;
     await importTestRepo(client, testRepoPath, "action-test");
     // Internal setup only: the UI creates live agent tasks, but this test needs
     // an inert task row so the action-bar behavior is isolated.

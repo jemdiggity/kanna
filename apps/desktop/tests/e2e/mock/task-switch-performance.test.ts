@@ -5,7 +5,7 @@ import { WebDriverClient } from "../helpers/webdriver";
 import { cleanupWorktrees, importTestRepo, resetDatabase } from "../helpers/reset";
 import { cleanupFixtureRepos, createSeedFixtureRepo } from "../helpers/fixture-repo";
 import { pauseForSlowMode } from "../helpers/slowMode";
-import { queryDb, tauriInvoke } from "../helpers/vue";
+import { tauriInvoke } from "../helpers/vue";
 import {
   clearTaskSwitchPerf,
   getAllTaskSwitchPerf,
@@ -31,6 +31,13 @@ function getPerfLineCount(): number {
 
 function buildSetupCommand(label: string, fill: string, lineCount: number): string {
   return `for i in $(seq 1 ${lineCount}); do printf '${label} line %05d | %s\\n' "$i" '${fill}'; done; while true; do sleep 60; done`;
+}
+
+function requireCreatedTaskId(value: string, label: string): string {
+  if (/^[0-9a-f]{8}$/.test(value)) {
+    return value;
+  }
+  throw new Error(`${label} task creation failed: ${value}`);
 }
 
 async function waitForSessions(
@@ -96,14 +103,19 @@ describe("task switch performance", () => {
        Promise.resolve(
          ctx.createItem(${JSON.stringify(repoId)}, ${JSON.stringify(testRepoPath)}, "Perf Task A", "pty", {
            selectOnCreate: false,
+           agentProvider: "claude",
            customTask: {
              executionMode: "pty",
+             agentProvider: "claude",
              setup: [setupCmd],
            },
          })
        ).then((id) => cb(id)).catch((error) => cb(String(error)));`,
     );
-    expect(typeof createTaskAResult).toBe("string");
+    const taskA = {
+      id: requireCreatedTaskId(createTaskAResult, "Perf Task A"),
+      prompt: "Perf Task A",
+    };
     await pauseForSlowMode("task-switch task A created");
 
     const createTaskBResult = await client.executeAsync<string>(
@@ -113,40 +125,35 @@ describe("task switch performance", () => {
        Promise.resolve(
          ctx.createItem(${JSON.stringify(repoId)}, ${JSON.stringify(testRepoPath)}, "Perf Task B", "pty", {
            selectOnCreate: false,
+           agentProvider: "claude",
            customTask: {
              executionMode: "pty",
+             agentProvider: "claude",
              setup: [setupCmd],
            },
          })
        ).then((id) => cb(id)).catch((error) => cb(String(error)));`,
     );
-    expect(typeof createTaskBResult).toBe("string");
+    const taskB = {
+      id: requireCreatedTaskId(createTaskBResult, "Perf Task B"),
+      prompt: "Perf Task B",
+    };
     await pauseForSlowMode("task-switch task B created");
-
-    const rows = await queryDb(
-      client,
-      "SELECT id, prompt FROM pipeline_item WHERE repo_id = ? AND prompt IN (?, ?) ORDER BY prompt ASC",
-      [repoId, "Perf Task A", "Perf Task B"],
-    ) as Array<{ id: string; prompt: string }>;
-
-    const taskA = rows.find((row) => row.prompt === "Perf Task A");
-    const taskB = rows.find((row) => row.prompt === "Perf Task B");
-    expect(taskA?.id).toBeTruthy();
-    expect(taskB?.id).toBeTruthy();
-    if (!taskA?.id || !taskB?.id) {
-      throw new Error("expected both PTY perf tasks to exist");
-    }
 
     await waitForSessions(client, [taskA.id, taskB.id]);
     await sleep(1000);
     await pauseForSlowMode("task-switch sessions spawned");
 
-    const currentTaskText = await client.executeSync<string>(
-      `return document.querySelector(".pipeline-item.selected")?.textContent?.trim() ?? "";`,
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       Promise.resolve(ctx.store.selectItem(${JSON.stringify(taskA.id)}))
+         .then(() => cb("ok"))
+         .catch((error) => cb(String(error)));`,
     );
-    const switchOrder = currentTaskText.includes("Perf Task A")
-      ? [taskB, taskA, taskB]
-      : [taskA, taskB, taskA];
+    await client.waitForText(".pipeline-item.selected", "Perf Task A");
+
+    const switchOrder = [taskB, taskA, taskB];
     const expectedLastTaskId = switchOrder.at(-1)?.id;
     if (!expectedLastTaskId) {
       throw new Error("expected task switch order to include a final target");

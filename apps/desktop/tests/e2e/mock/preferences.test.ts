@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { buildGlobalKeydownScript } from "../helpers/keyboard";
+import { buildGlobalKeydownScript, buildSelectorKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase } from "../helpers/reset";
 
@@ -31,7 +31,7 @@ describe("preferences", () => {
   });
 
   it("closes preferences panel", async () => {
-    await client.executeSync(buildGlobalKeydownScript({ key: "Escape" }));
+    await client.executeSync(buildSelectorKeydownScript(".modal-overlay", { key: "Escape" }));
     await client.waitForNoElement(".prefs-panel", 2_000);
   });
 

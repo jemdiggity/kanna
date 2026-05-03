@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildGlobalKeydownScript } from "../helpers/keyboard";
@@ -24,9 +23,9 @@ describe("keyboard shortcuts", () => {
     await client.waitForAppReady();
     await dismissStartupShortcutsModal(client);
     fixtureRepoRoot = await createFixtureRepo("keyboard-test");
-    testRepoPath = join(fixtureRepoRoot, "apps");
+    testRepoPath = fixtureRepoRoot;
     secondFixtureRepoRoot = await createFixtureRepo("keyboard-test-secondary");
-    secondTestRepoPath = join(secondFixtureRepoRoot, "packages");
+    secondTestRepoPath = secondFixtureRepoRoot;
   });
 
   afterAll(async () => {

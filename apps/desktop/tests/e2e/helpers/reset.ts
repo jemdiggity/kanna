@@ -7,7 +7,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { WebDriverClient } from "./webdriver";
 import { execDb, callVueMethod, getVueState, queryDb, tauriInvoke } from "./vue";
 import { assertSafeE2eRepoPath } from "./fixture-repo";
-import { buildGlobalKeydownScript } from "./keyboard";
 
 interface GitWorktreeEntry {
   name?: string;
@@ -23,6 +22,22 @@ const IMPORT_REPO_INPUT_SELECTOR = ".modal-overlay .text-input";
 const IMPORT_REPO_READY_SELECTOR = ".modal-overlay .resolved-url";
 const IMPORT_REPO_NAME_CHANGE_SELECTOR = ".modal-overlay .repo-name-change";
 const IMPORT_REPO_SUBMIT_SELECTOR = ".modal-overlay .btn-primary";
+const TRANSIENT_MODAL_REFS = [
+  "showCommandPalette",
+  "showShortcutsModal",
+  "showPeerPicker",
+  "showFilePickerModal",
+  "showFilePreviewModal",
+  "showShellModal",
+  "showDiffModal",
+  "showAnalyticsModal",
+  "showCommitGraphModal",
+  "showTreeExplorer",
+  "showNewTaskModal",
+  "showAddRepoModal",
+  "showBlockerSelect",
+  "showPreferencesPanel",
+] as const;
 
 function isVueCallError(result: unknown): result is { __error: string } {
   return Boolean(
@@ -102,11 +117,24 @@ async function importRepoThroughUi(
   repoPath: string,
   name: string,
 ): Promise<void> {
-  await client.executeSync(buildGlobalKeydownScript({
-    key: "I",
-    meta: true,
-    shift: true,
-  }));
+  await client.executeSync(
+    `const ctx = window.__KANNA_E2E__?.setupState;
+     const close = (key) => {
+       const value = ctx?.[key];
+       if (value?.__v_isRef) value.value = false;
+       else if (ctx && key in ctx) ctx[key] = false;
+     };
+     for (const key of ${JSON.stringify(TRANSIENT_MODAL_REFS)}) close(key);
+     const maximized = ctx?.maximizedModal;
+     if (maximized?.__v_isRef) maximized.value = null;
+     else if (ctx && "maximizedModal" in ctx) ctx.maximizedModal = null;`
+  );
+  await sleep(100);
+
+  const result = await callVueMethod(client, "keyboardActions.importRepo");
+  if (isVueCallError(result)) {
+    throw new Error(result.__error);
+  }
   await client.waitForElement(IMPORT_REPO_MODAL_SELECTOR, 2_000);
   const input = await client.waitForElement(IMPORT_REPO_INPUT_SELECTOR, 2_000);
   await client.sendKeys(input, repoPath);
@@ -258,14 +286,9 @@ export async function importTestRepo(
   const repo = rows.find((entry) => entry.name === name) ?? rows[0];
   if (!repo) throw new Error(`Repo "${name}" not found after import`);
 
-  // Select it
-  const repoHeaders = await client.findElements(".repo-header");
-  for (const header of repoHeaders) {
-    const text = await client.getText(header);
-    if (text.includes(name)) {
-      await client.click(header);
-      break;
-    }
+  const selectResult = await callVueMethod(client, "store.selectRepo", repo.id);
+  if (isVueCallError(selectResult)) {
+    throw new Error(selectResult.__error);
   }
   const deadline = Date.now() + IMPORT_REPO_SELECTION_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -273,11 +296,12 @@ export async function importTestRepo(
       selectedRepoId: string | null;
       selectedRepoPath: string | null;
     }>(`const ctx = window.__KANNA_E2E__.setupState;
+      const selectedRepoId = ctx.store?.selectedRepoId?.value ?? ctx.store?.selectedRepoId ?? null;
       return {
-        selectedRepoId: ctx.store?.selectedRepoId?.value ?? null,
+        selectedRepoId,
         selectedRepoPath: ctx.store?.selectedRepo?.path ?? null,
       };`);
-    if (selected.selectedRepoId === repo.id || selected.selectedRepoPath === repoPath) {
+    if (selected.selectedRepoId === repo.id && selected.selectedRepoPath === repoPath) {
       return repo.id;
     }
     await sleep(IMPORT_REPO_SELECTION_POLL_MS);

@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildGlobalKeydownScript,
@@ -16,7 +15,7 @@ describe("commit graph", () => {
     await client.createSession();
     await resetDatabase(client);
     fixtureRepoRoot = await createFixtureRepo("commit-graph-test");
-    testRepoPath = join(fixtureRepoRoot, "apps");
+    testRepoPath = fixtureRepoRoot;
     await importTestRepo(client, testRepoPath, "commit-graph-test");
   });
 

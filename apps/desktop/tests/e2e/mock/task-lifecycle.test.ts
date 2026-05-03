@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
@@ -17,7 +16,7 @@ describe("task lifecycle", () => {
     await client.createSession();
     await resetDatabase(client);
     fixtureRepoRoot = await createFixtureRepo("lifecycle-test");
-    testRepoPath = join(fixtureRepoRoot, "apps");
+    testRepoPath = fixtureRepoRoot;
     repoId = await importTestRepo(client, testRepoPath, "lifecycle-test");
   });
 

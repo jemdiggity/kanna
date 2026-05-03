@@ -493,8 +493,10 @@ export function createTasksApi(
     const worktreePath = `${repoPath}/.kanna-worktrees/${branch}`;
     const effectivePrompt = opts?.customTask?.prompt ?? prompt;
     const effectiveAgentType = opts?.customTask?.executionMode ?? agentType;
-    const requestedAgentProviders = opts?.customTask?.agentProvider ?? opts?.agentProvider;
-    const requestedModel = opts?.customTask?.model ?? opts?.model;
+    const customTaskAgentProvider = opts?.customTask?.agentProvider;
+    const customTaskModel = opts?.customTask?.model;
+    const requestedAgentProviders = customTaskAgentProvider ?? opts?.agentProvider;
+    const requestedModel = customTaskModel ?? opts?.model;
     const displayName = opts?.customTask?.name ?? opts?.displayName ?? null;
     console.log("[tasks:createItem] start", {
       taskId: id,
@@ -510,8 +512,8 @@ export function createTasksApi(
       explicitAgentProvider: requestedAgentProviders,
       explicitModel: requestedModel,
     });
-    const providerCandidatesExplicit = realE2eAgentOverride?.agentProvider ?? requestedAgentProviders;
-    const resolvedModel = requestedModel ?? realE2eAgentOverride?.model ?? null;
+    const providerCandidatesExplicit = customTaskAgentProvider ?? realE2eAgentOverride?.agentProvider ?? requestedAgentProviders;
+    const resolvedModel = customTaskModel ?? realE2eAgentOverride?.model ?? requestedModel ?? null;
 
     const pendingPlaceholder = buildPendingTaskPlaceholder({
       id,

@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
@@ -56,8 +55,8 @@ describe("import repo", () => {
     await resetDatabase(client);
     firstRepoRoot = await createFixtureRepo(FIRST_REPO_NAME);
     secondRepoRoot = await createFixtureRepo(SECOND_REPO_NAME);
-    firstRepoPath = join(firstRepoRoot, "apps");
-    secondRepoPath = join(secondRepoRoot, "apps");
+    firstRepoPath = firstRepoRoot;
+    secondRepoPath = secondRepoRoot;
   });
 
   afterAll(async () => {

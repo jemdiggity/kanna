@@ -3,7 +3,7 @@ import { nextTick } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DbHandle, PipelineItem, Repo, TaskPort } from "@kanna/db";
 import type { PipelineDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
-import type { RepoConfig } from "@kanna/core";
+import type { CustomTaskConfig, RepoConfig } from "@kanna/core";
 import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-builder";
 
 const mockState = vi.hoisted(() => {
@@ -940,6 +940,45 @@ describe("kanna store task base branch integration", () => {
           agentProvider: "codex",
           args: expect.arrayContaining([
             expect.stringContaining("codex -m gpt-5.4-mini"),
+          ]),
+        }),
+      );
+    });
+  });
+
+  it("keeps a custom task PTY provider ahead of the real E2E override", async () => {
+    mockState.readEnvVarOverrides = {
+      KANNA_DB_NAME: "kanna-wt-task-existing.db",
+      KANNA_E2E_REAL_AGENT_PROVIDER: "codex",
+      KANNA_E2E_REAL_AGENT_MODEL: "gpt-5.4-mini",
+    };
+    const store = await createStore();
+    const customTask: CustomTaskConfig = {
+      name: "Synthetic PTY",
+      prompt: "Synthetic PTY",
+      executionMode: "pty",
+      agentProvider: "copilot",
+      setup: ["echo synthetic"],
+    };
+
+    await store.createItem("repo-1", "/tmp/repo", "Respect custom provider", "pty", {
+      customTask,
+    });
+
+    expect(mockState.insertPipelineItemMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        agent_provider: "copilot",
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "spawn_session",
+        expect.objectContaining({
+          agentProvider: "copilot",
+          args: expect.arrayContaining([
+            expect.stringContaining("copilot"),
           ]),
         }),
       );
