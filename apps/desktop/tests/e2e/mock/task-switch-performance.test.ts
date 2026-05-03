@@ -87,6 +87,8 @@ describe("task switch performance", () => {
 
   it("records PTY task-switch markers and prints timings", async () => {
     const lineCount = getPerfLineCount();
+    // Internal setup only: perf coverage needs deterministic PTY sessions with
+    // controlled output volume, not real agent startup and model latency.
     const createTaskAResult = await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
        const ctx = window.__KANNA_E2E__.setupState;
@@ -139,15 +141,13 @@ describe("task switch performance", () => {
     await sleep(1000);
     await pauseForSlowMode("task-switch sessions spawned");
 
-    const currentTaskId = await client.executeSync<string | null>(
-      `const ctx = window.__KANNA_E2E__.setupState;
-       return ctx.selectedItem()?.id ?? null;`,
+    const currentTaskText = await client.executeSync<string>(
+      `return document.querySelector(".pipeline-item.selected")?.textContent?.trim() ?? "";`,
     );
-    const switchOrder = currentTaskId === taskA.id
-      ? [taskB.id, taskA.id, taskB.id]
-      : [taskA.id, taskB.id, taskA.id];
-    const expectedLastTaskId = switchOrder.at(-1);
-    expect(expectedLastTaskId).toBeTruthy();
+    const switchOrder = currentTaskText.includes("Perf Task A")
+      ? [taskB, taskA, taskB]
+      : [taskA, taskB, taskA];
+    const expectedLastTaskId = switchOrder.at(-1)?.id;
     if (!expectedLastTaskId) {
       throw new Error("expected task switch order to include a final target");
     }
@@ -155,17 +155,11 @@ describe("task switch performance", () => {
     await clearTaskSwitchPerf(client);
     await pauseForSlowMode("task-switch perf records cleared");
 
-    for (const [index, targetTaskId] of switchOrder.entries()) {
-      const selectResult = await client.executeAsync<string>(
-        `const cb = arguments[arguments.length - 1];
-         const ctx = window.__KANNA_E2E__.setupState;
-         Promise.resolve(ctx.store.selectItem(${JSON.stringify(targetTaskId)}))
-           .then(() => cb("ok"))
-           .catch((error) => cb(String(error)));`,
-      );
-      expect(selectResult).toBe("ok");
+    for (const [index, targetTask] of switchOrder.entries()) {
+      const taskElement = await client.waitForText(".pipeline-item", targetTask.prompt);
+      await client.click(taskElement);
       await waitForCompletedTaskSwitchPerfCount(client, index + 1);
-      await pauseForSlowMode(`task-switch selected ${targetTaskId}`);
+      await pauseForSlowMode(`task-switch selected ${targetTask.id}`);
     }
 
     const latest = await waitForCompletedTaskSwitchPerf(client);

@@ -5,6 +5,7 @@ import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { queryDb, tauriInvoke } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
+import { buildGlobalKeydownScript } from "../helpers/keyboard";
 
 describe("task lifecycle", () => {
   const client = new WebDriverClient();
@@ -29,6 +30,8 @@ describe("task lifecycle", () => {
   });
 
   it("creates a task that appears in sidebar", async () => {
+    // Internal setup only: lifecycle assertions need deterministic SDK-mode
+    // tasks so closing behavior can be tested without launching a real agent.
     const result = await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
        try {
@@ -87,16 +90,11 @@ describe("task lifecycle", () => {
       }),
     });
 
-    const result = await client.executeAsync<string>(
-      `const cb = arguments[arguments.length - 1];
-       const ctx = window.__KANNA_E2E__.setupState;
-       const item = ctx.selectedItem();
-       if (!item) { cb("no item"); return; }
-       Promise.resolve(ctx.store.closeTask(item.id))
-         .then(() => cb("ok"))
-         .catch((error) => cb("err:" + error));`
-    );
-    expect(result).toBe("ok");
+    await client.executeSync(buildGlobalKeydownScript({
+      key: "Delete",
+      meta: true,
+      shift: true,
+    }));
 
     await sleep(300);
     const stageRows = (await queryDb(
@@ -113,6 +111,8 @@ describe("task lifecycle", () => {
   });
 
   it("closes directly to done and disappears when teardown commands do not exist", async () => {
+    // Internal setup only: this creates a second inert task to isolate close
+    // behavior from terminal and agent process startup.
     const createResult = await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
        const ctx = window.__KANNA_E2E__.setupState;
@@ -141,16 +141,11 @@ describe("task lifecycle", () => {
       content: JSON.stringify({ setup: [] }),
     });
 
-    const closeResult = await client.executeAsync<string>(
-      `const cb = arguments[arguments.length - 1];
-       const ctx = window.__KANNA_E2E__.setupState;
-       const item = ctx.selectedItem();
-       if (!item) { cb("no item"); return; }
-       Promise.resolve(ctx.store.closeTask(item.id))
-         .then(() => cb("ok"))
-         .catch((error) => cb("err:" + error));`
-    );
-    expect(closeResult).toBe("ok");
+    await client.executeSync(buildGlobalKeydownScript({
+      key: "Delete",
+      meta: true,
+      shift: true,
+    }));
 
     await sleep(500);
     const stageRows = (await queryDb(

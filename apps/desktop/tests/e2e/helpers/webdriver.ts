@@ -5,6 +5,7 @@ import { writeFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { APP_READY_SCRIPT } from "./appReady";
+import { pauseForSlowMode } from "./slowMode";
 import { dismissStartupShortcutsModal } from "./startupOverlays";
 import { getWebDriverPort } from "./webdriverPort";
 
@@ -71,6 +72,7 @@ export class WebDriverClient {
 
   async click(elementId: string): Promise<void> {
     await this.post(`/session/${this.sid}/element/${elementId}/click`, {});
+    await pauseForSlowMode("webdriver click");
   }
 
   async getText(elementId: string): Promise<string> {
@@ -82,6 +84,12 @@ export class WebDriverClient {
     await this.post(`/session/${this.sid}/element/${elementId}/value`, {
       text,
     });
+    await pauseForSlowMode("webdriver send keys");
+  }
+
+  async clear(elementId: string): Promise<void> {
+    await this.post(`/session/${this.sid}/element/${elementId}/clear`, {});
+    await pauseForSlowMode("webdriver clear");
   }
 
   async pressKey(value: string): Promise<void> {
@@ -97,6 +105,7 @@ export class WebDriverClient {
         },
       ],
     });
+    await pauseForSlowMode(`webdriver press ${value}`);
   }
 
   async getElementRect(elementId: string): Promise<ElementRect> {
@@ -180,6 +189,9 @@ export class WebDriverClient {
       script,
       args,
     });
+    if (isKeyboardScript(script)) {
+      await pauseForSlowMode("webdriver keyboard shortcut");
+    }
     return res.value as T;
   }
 
@@ -191,6 +203,9 @@ export class WebDriverClient {
       script,
       args,
     });
+    if (isKeyboardScript(script)) {
+      await pauseForSlowMode("webdriver keyboard shortcut");
+    }
     return res.value as T;
   }
 
@@ -309,4 +324,8 @@ export class WebDriverClient {
   private async delete(path: string): Promise<void> {
     await fetch(`${this.baseUrl}${path}`, { method: "DELETE" });
   }
+}
+
+function isKeyboardScript(script: string): boolean {
+  return script.includes("KeyboardEvent(\"keydown\"") || script.includes("KeyboardEvent('keydown'");
 }

@@ -30,16 +30,15 @@ describe("fixture repo helpers", () => {
     );
   });
 
-  it("creates isolated cloned repos outside the live checkout", async () => {
+  it("creates isolated repos from committed fake fixture content outside the live checkout", async () => {
     const { createFixtureRepo } = await import("./fixture-repo");
 
-    const fixtureRepoPath = await createFixtureRepo("fixture-repo-test", {
-      sourceRepoPath: LIVE_REPO_ROOT,
-    });
+    const fixtureRepoPath = await createFixtureRepo("fixture-repo-test");
     createdRepoPaths.push(fixtureRepoPath);
 
     expect(fixtureRepoPath.startsWith(`${LIVE_REPO_ROOT}/`)).toBe(false);
     await expect(access(resolve(fixtureRepoPath, ".git"))).resolves.toBeUndefined();
+    await expect(access(resolve(fixtureRepoPath, "apps", "README.md"))).resolves.toBeUndefined();
 
     const { stdout } = await execFileAsync("git", [
       "-C",

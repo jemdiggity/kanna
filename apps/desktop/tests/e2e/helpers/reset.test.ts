@@ -19,6 +19,36 @@ vi.mock("./vue", () => ({
 describe("reset helpers", () => {
   const originalLiveRepoRoot = process.env.KANNA_E2E_LIVE_REPO_ROOT;
 
+  function createImportClient(selectionStates: Array<{
+    selectedRepoId: string | null;
+    selectedRepoPath: string | null;
+  }>) {
+    return {
+      clear: vi.fn().mockResolvedValue(undefined),
+      click: vi.fn().mockResolvedValue(undefined),
+      executeSync: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockImplementation(() => Promise.resolve(
+          selectionStates.shift() ?? { selectedRepoId: "repo-1", selectedRepoPath: "/repo" },
+        )),
+      findElements: vi.fn().mockImplementation((selector: string) => {
+        if (selector === ".modal-overlay .text-input") {
+          return Promise.resolve(["repo-path-input", "repo-name-input"]);
+        }
+        if (selector === ".repo-header") {
+          return Promise.resolve(["repo-header"]);
+        }
+        return Promise.resolve([]);
+      }),
+      getText: vi.fn().mockResolvedValue("test-repo"),
+      sendKeys: vi.fn().mockResolvedValue(undefined),
+      waitForElement: vi.fn().mockImplementation((selector: string) =>
+        Promise.resolve(selector === ".modal-overlay .text-input" ? "repo-path-input" : selector),
+      ),
+      waitForNoElement: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
   beforeEach(() => {
     vi.resetModules();
     mocks.callVueMethod.mockReset();
@@ -30,12 +60,7 @@ describe("reset helpers", () => {
   });
 
   it("cleans up only task worktrees created after the imported repo baseline", async () => {
-    const client = {
-      executeSync: vi.fn().mockResolvedValueOnce({
-        selectedRepoId: "repo-1",
-        selectedRepoPath: "/repo",
-      }),
-    };
+    const client = createImportClient([{ selectedRepoId: "repo-1", selectedRepoPath: "/repo" }]);
 
     mocks.tauriInvoke
       .mockResolvedValueOnce([
@@ -101,23 +126,23 @@ describe("reset helpers", () => {
     expect(mocks.tauriInvoke).not.toHaveBeenCalled();
   });
 
-  it("waits for the imported repo to become selected in Vue state instead of relying on sidebar DOM", async () => {
-    const client = {
-      executeSync: vi.fn()
-        .mockResolvedValueOnce({ selectedRepoId: null, selectedRepoPath: null })
-        .mockResolvedValueOnce({ selectedRepoId: null, selectedRepoPath: null })
-        .mockResolvedValueOnce({ selectedRepoId: "repo-1", selectedRepoPath: "/repo" }),
-    };
+  it("imports through the UI and waits for the imported repo to become selected", async () => {
+    const client = createImportClient([
+      { selectedRepoId: null, selectedRepoPath: null },
+      { selectedRepoId: null, selectedRepoPath: null },
+      { selectedRepoId: "repo-1", selectedRepoPath: "/repo" },
+    ]);
 
     mocks.tauriInvoke.mockResolvedValueOnce([]);
-    mocks.callVueMethod.mockResolvedValue(undefined);
     mocks.queryDb.mockResolvedValueOnce([{ id: "repo-1", name: "test-repo" }]);
 
     const { importTestRepo } = await import("./reset");
 
     await expect(importTestRepo(client as never, "/repo", "test-repo")).resolves.toBe("repo-1");
-    expect(mocks.callVueMethod).toHaveBeenCalledWith(client, "handleImportRepo", "/repo", "test-repo", "main");
-    expect(mocks.callVueMethod).toHaveBeenCalledWith(client, "handleSelectRepo", "repo-1");
+    expect(client.sendKeys).toHaveBeenCalledWith("repo-path-input", "/repo");
+    expect(client.clear).toHaveBeenCalledWith("repo-name-input");
+    expect(client.sendKeys).toHaveBeenCalledWith("repo-name-input", "test-repo");
+    expect(client.click).toHaveBeenCalledWith("repo-header");
     expect(client.executeSync).toHaveBeenCalled();
   });
 

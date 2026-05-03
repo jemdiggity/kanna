@@ -26,9 +26,7 @@ describe("commit graph", () => {
   });
 
   it("opens search inside the commit graph and closes search before the modal", async () => {
-    await client.executeSync(
-      "window.__KANNA_E2E__.setupState.showCommitGraphModal = true;"
-    );
+    await client.executeSync(buildGlobalKeydownScript({ key: "g", meta: true }));
 
     await client.waitForElement(".graph-modal", 5000);
     await client.waitForElement(".graph-scroll", 5000);

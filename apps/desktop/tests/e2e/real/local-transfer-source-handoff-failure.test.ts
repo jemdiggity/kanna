@@ -4,7 +4,8 @@ import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo"
 import { cleanupWorktrees, importTestRepo, resetDatabase } from "../helpers/reset";
 import { pauseForSlowMode } from "../helpers/slowMode";
 import { createPrimaryAndSecondaryClients } from "../helpers/twoInstance";
-import { callVueMethod, execDb, getVueState, queryDb, tauriInvoke } from "../helpers/vue";
+import { pairWithPeerThroughUi, pushSelectedTaskToPeerThroughUi } from "../helpers/transferFlow";
+import { callVueMethod, execDb, queryDb, tauriInvoke } from "../helpers/vue";
 
 interface TransferPeer {
   peer_id?: string;
@@ -63,31 +64,7 @@ async function waitForPeer(peerId: string, timeoutMs = 20_000): Promise<void> {
 }
 
 async function waitForIncomingTransferVisible(timeoutMs = 20_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const visible = await getVueState(secondary, "showIncomingTransfer");
-    if (visible === true) {
-      return;
-    }
-    await sleep(250);
-  }
-
-  throw new Error("timed out waiting for incoming transfer modal");
-}
-
-async function waitForIncomingTransferHidden(timeoutMs = 20_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const visible = await getVueState(secondary, "showIncomingTransfer");
-    if (visible !== true) {
-      return;
-    }
-    await sleep(250);
-  }
-
-  throw new Error("timed out waiting for incoming transfer modal to close");
+  await secondary.waitForText(".modal-card", "Primary", timeoutMs);
 }
 
 async function waitForSecondaryIncomingTransferPending(
@@ -185,7 +162,10 @@ describe("local transfer source handoff failure", () => {
   it("keeps the source task open when the destination import fails before acknowledgment", async () => {
     await waitForPeer("peer-secondary");
     await pauseForSlowMode("secondary peer discovered");
+    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary");
 
+    // Direct task creation is setup-only: the product has no UI path for creating an inert
+    // transfer fixture task without also launching a real agent session.
     const createResult = await callVueMethod(primary, "store.createItem", repoId, testRepoPath, "Keep source open", "sdk");
     if (isVueCallError(createResult)) {
       throw new Error(createResult.__error);
@@ -200,10 +180,7 @@ describe("local transfer source handoff failure", () => {
     expect(sourceTaskId).toBeTruthy();
     await pauseForSlowMode("task created on primary");
 
-    const pushResult = await callVueMethod(primary, "store.pushTaskToPeer", sourceTaskId, "peer-secondary");
-    if (isVueCallError(pushResult)) {
-      throw new Error(pushResult.__error);
-    }
+    await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
     await pauseForSlowMode("task pushed to secondary");
 
     await waitForIncomingTransferVisible();

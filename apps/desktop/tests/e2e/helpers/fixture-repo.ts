@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 interface CreateFixtureRepoOptions {
-  sourceRepoPath?: string;
+  fixtureName?: string;
   tempRoot?: string;
 }
 
@@ -35,6 +35,8 @@ const DEFAULT_SEED_FIXTURE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../fixtures/repos",
 );
+
+const DEFAULT_FIXTURE_NAME = "generic-kanna-like";
 
 function sanitizeRepoName(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, "-");
@@ -101,40 +103,19 @@ export function assertSafeE2eRepoPath(
   );
 }
 
-export async function createFixtureRepo(
-  name: string,
-  options: CreateFixtureRepoOptions = {},
-): Promise<string> {
-  // Never run E2E against the live Kanna checkout. Clone it into a disposable
-  // temp repo first so worktree cleanup cannot mutate the product repo.
-  const sourceRepoPath = resolve(options.sourceRepoPath ?? getLiveRepoRoot());
-  const tempRoot = options.tempRoot ?? join(tmpdir(), "kanna-e2e-fixtures");
-
+async function materializeSeedFixtureRepo(input: {
+  destinationName: string;
+  fixtureName: string;
+  fixtureRoot: string;
+  tempRoot: string;
+}): Promise<string> {
+  const fixtureRoot = resolve(input.fixtureRoot);
+  const sourceFixturePath = join(fixtureRoot, input.fixtureName);
+  const tempRoot = input.tempRoot;
   await mkdir(tempRoot, { recursive: true });
   const tempDir = await mkdtemp(join(tempRoot, "fixture-"));
-  const fixtureRepoPath = join(tempDir, sanitizeRepoName(name));
-
-  await runCommand(
-    ["git", "clone", "--local", "--no-hardlinks", sourceRepoPath, fixtureRepoPath],
-    { cwd: tempDir },
-  );
-  await rm(join(fixtureRepoPath, ".kanna-worktrees"), RM_RETRY_OPTIONS);
-
-  return fixtureRepoPath;
-}
-
-export async function createSeedFixtureRepo(
-  fixtureName: string,
-  options: CreateSeedFixtureRepoOptions = {},
-): Promise<string> {
-  const fixtureRoot = resolve(options.fixtureRoot ?? DEFAULT_SEED_FIXTURE_ROOT);
-  const sourceFixturePath = join(fixtureRoot, fixtureName);
-  const tempRoot = options.tempRoot ?? join(tmpdir(), "kanna-e2e-fixtures");
-
-  await mkdir(tempRoot, { recursive: true });
-  const tempDir = await mkdtemp(join(tempRoot, "fixture-"));
-  const fixtureRepoPath = join(tempDir, sanitizeRepoName(fixtureName));
-  const originPath = join(tempDir, `${sanitizeRepoName(fixtureName)}-origin.git`);
+  const fixtureRepoPath = join(tempDir, sanitizeRepoName(input.destinationName));
+  const originPath = join(tempDir, `${sanitizeRepoName(input.destinationName)}-origin.git`);
 
   await cp(sourceFixturePath, fixtureRepoPath, { recursive: true });
 
@@ -150,6 +131,30 @@ export async function createSeedFixtureRepo(
   await runCommand(["git", "push", "-u", "origin", "main"], { cwd: fixtureRepoPath });
 
   return fixtureRepoPath;
+}
+
+export async function createFixtureRepo(
+  name: string,
+  options: CreateFixtureRepoOptions = {},
+): Promise<string> {
+  return materializeSeedFixtureRepo({
+    destinationName: name,
+    fixtureName: options.fixtureName ?? DEFAULT_FIXTURE_NAME,
+    fixtureRoot: DEFAULT_SEED_FIXTURE_ROOT,
+    tempRoot: options.tempRoot ?? join(tmpdir(), "kanna-e2e-fixtures"),
+  });
+}
+
+export async function createSeedFixtureRepo(
+  fixtureName: string,
+  options: CreateSeedFixtureRepoOptions = {},
+): Promise<string> {
+  return materializeSeedFixtureRepo({
+    destinationName: fixtureName,
+    fixtureName,
+    fixtureRoot: options.fixtureRoot ?? DEFAULT_SEED_FIXTURE_ROOT,
+    tempRoot: options.tempRoot ?? join(tmpdir(), "kanna-e2e-fixtures"),
+  });
 }
 
 export async function cleanupFixtureRepos(repoPaths: string[]): Promise<void> {

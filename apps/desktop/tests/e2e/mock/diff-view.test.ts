@@ -6,6 +6,7 @@ import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/rese
 import { getVueState, tauriInvoke } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 import { appendE2ePerfSummaryLine, formatDiffPerfSummary } from "../helpers/perfOutput";
+import { buildGlobalKeydownScript } from "../helpers/keyboard";
 
 function getDiffPerfFileCount(): number {
   const rawValue = process.env.KANNA_E2E_DIFF_PERF_FILES;
@@ -55,14 +56,14 @@ describe("diff view", () => {
     const branch = `task-${id}`;
     const worktreePath = `${testRepoPath}/.kanna-worktrees/${branch}`;
 
-    // Create worktree
+    // Internal setup only: diff tests need a deterministic worktree-backed task
+    // without starting a real agent session.
     await tauriInvoke(client, "git_worktree_add", {
       repoPath: testRepoPath,
       branch,
       path: worktreePath,
     });
 
-    // Insert task into DB
     await client.executeAsync<string>(
       `const cb = arguments[arguments.length - 1];
        const ctx = window.__KANNA_E2E__.setupState;
@@ -86,11 +87,11 @@ describe("diff view", () => {
   });
 
   it("opens the diff modal", async () => {
-    await client.executeSync(
-      "window.__KANNA_E2E__.setupState.showDiffModal = true;"
-    );
+    await client.executeSync(buildGlobalKeydownScript({ key: "d", meta: true }));
     const diffView = await client.waitForElement(".diff-view", 5000);
     expect(diffView).toBeTruthy();
+    await client.executeSync(buildGlobalKeydownScript({ key: "Escape" }));
+    await client.waitForNoElement(".diff-view", 2_000);
   });
 
   it("loads diff content after editing a tracked file", async () => {
@@ -114,9 +115,7 @@ describe("diff view", () => {
       env: {},
     });
 
-    await client.executeSync(
-      "window.__KANNA_E2E__.setupState.showDiffModal = true;"
-    );
+    await client.executeSync(buildGlobalKeydownScript({ key: "d", meta: true }));
 
     const patch = await tauriInvoke(client, "git_diff", {
       repoPath: worktreePath,
@@ -144,13 +143,11 @@ describe("diff view", () => {
       env: {},
     });
 
-    await client.executeSync(
-      "window.__KANNA_E2E__.setupState.showDiffModal = false;"
-    );
+    await client.executeSync(buildGlobalKeydownScript({ key: "Escape" }));
+    await client.waitForNoElement(".diff-view", 2_000);
     await sleep(250);
-    await client.executeSync(
-      "window.__KANNA_E2E__.setupState.showDiffModal = true;"
-    );
+    await client.executeSync(buildGlobalKeydownScript({ key: "d", meta: true }));
+    await client.waitForElement(".diff-view", 5_000);
 
     const result = await client.executeAsync<{
       containerTop: number;
@@ -270,9 +267,7 @@ describe("diff view", () => {
       env: {},
     });
 
-    await client.executeSync(
-      "window.__KANNA_E2E__.setupState.showDiffModal = false;"
-    );
+    await client.executeSync(buildGlobalKeydownScript({ key: "Escape" }));
     await sleep(250);
 
     const result = await client.executeAsync<{
@@ -336,7 +331,12 @@ describe("diff view", () => {
            fileWrapperCount: snapshot.fileWrapperCount,
          });
        }, 15000);
-       ctx.showDiffModal = true;`
+       window.dispatchEvent(new KeyboardEvent("keydown", {
+         key: "d",
+         metaKey: true,
+         bubbles: true,
+         cancelable: true
+       }));`
     );
 
     await appendE2ePerfSummaryLine(formatDiffPerfSummary({

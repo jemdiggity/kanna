@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { WebDriverClient } from "./webdriver";
 import { execDb, callVueMethod, getVueState, queryDb, tauriInvoke } from "./vue";
 import { assertSafeE2eRepoPath } from "./fixture-repo";
+import { buildGlobalKeydownScript } from "./keyboard";
 
 interface GitWorktreeEntry {
   name?: string;
@@ -17,6 +18,11 @@ const worktreeCleanupBaselines = new Map<string, Set<string>>();
 const IMPORT_REPO_SELECTION_TIMEOUT_MS = 10_000;
 const IMPORT_REPO_SELECTION_POLL_MS = 100;
 const TASK_CLOSE_TIMEOUT_MS = 20_000;
+const IMPORT_REPO_MODAL_SELECTOR = ".modal-overlay";
+const IMPORT_REPO_INPUT_SELECTOR = ".modal-overlay .text-input";
+const IMPORT_REPO_READY_SELECTOR = ".modal-overlay .resolved-url";
+const IMPORT_REPO_NAME_CHANGE_SELECTOR = ".modal-overlay .repo-name-change";
+const IMPORT_REPO_SUBMIT_SELECTOR = ".modal-overlay .btn-primary";
 
 function isVueCallError(result: unknown): result is { __error: string } {
   return Boolean(
@@ -89,6 +95,34 @@ async function recordWorktreeCleanupBaseline(
         .filter((path): path is string => typeof path === "string" && path.length > 0)
     )
   );
+}
+
+async function importRepoThroughUi(
+  client: WebDriverClient,
+  repoPath: string,
+  name: string,
+): Promise<void> {
+  await client.executeSync(buildGlobalKeydownScript({
+    key: "I",
+    meta: true,
+    shift: true,
+  }));
+  await client.waitForElement(IMPORT_REPO_MODAL_SELECTOR, 2_000);
+  const input = await client.waitForElement(IMPORT_REPO_INPUT_SELECTOR, 2_000);
+  await client.sendKeys(input, repoPath);
+  await client.waitForElement(IMPORT_REPO_READY_SELECTOR, 5_000);
+  const changeName = await client.waitForElement(IMPORT_REPO_NAME_CHANGE_SELECTOR, 2_000);
+  await client.click(changeName);
+  const textInputs = await client.findElements(IMPORT_REPO_INPUT_SELECTOR);
+  const nameInput = textInputs.at(-1);
+  if (!nameInput) {
+    throw new Error("repo name input did not appear in import modal");
+  }
+  await client.clear(nameInput);
+  await client.sendKeys(nameInput, name);
+  const submit = await client.waitForElement(IMPORT_REPO_SUBMIT_SELECTOR, 2_000);
+  await client.click(submit);
+  await client.waitForNoElement(IMPORT_REPO_MODAL_SELECTOR, 10_000);
 }
 
 async function listOpenTaskIdsForRepo(
@@ -211,11 +245,11 @@ export async function importTestRepo(
   client: WebDriverClient,
   repoPath: string,
   name = "test-repo",
-  branch = "main"
+  _branch = "main"
 ): Promise<string> {
   assertSafeE2eRepoPath(repoPath);
   await recordWorktreeCleanupBaseline(client, repoPath);
-  await callVueMethod(client, "handleImportRepo", repoPath, name, branch);
+  await importRepoThroughUi(client, repoPath, name);
   const rows = (await queryDb(
     client,
     "SELECT id, name FROM repo WHERE path = ?",
@@ -225,7 +259,14 @@ export async function importTestRepo(
   if (!repo) throw new Error(`Repo "${name}" not found after import`);
 
   // Select it
-  await callVueMethod(client, "handleSelectRepo", repo.id);
+  const repoHeaders = await client.findElements(".repo-header");
+  for (const header of repoHeaders) {
+    const text = await client.getText(header);
+    if (text.includes(name)) {
+      await client.click(header);
+      break;
+    }
+  }
   const deadline = Date.now() + IMPORT_REPO_SELECTION_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const selected = await client.executeSync<{
