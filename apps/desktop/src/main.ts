@@ -11,6 +11,7 @@ import {
   getTaskSwitchPerfRecords,
 } from "./perf/taskSwitchPerf";
 import App from "./App.vue";
+import { createWindowWorkspace, parseWindowBootstrap, resolveWindowBootstrap } from "./windowWorkspace";
 
 interface AppWithSetupState {
   _instance?: {
@@ -63,6 +64,11 @@ if (isTauri) {
 try {
   const { db, dbName } = await loadDatabase();
   await runMigrations(db);
+  const windowBootstrap = await resolveWindowBootstrap(
+    db,
+    parseWindowBootstrap(window.location.search),
+  );
+  const windowWorkspace = createWindowWorkspace({ db, bootstrap: windowBootstrap });
 
   const RootComponent = await resolveRootComponent();
   const app = createApp(RootComponent);
@@ -70,6 +76,8 @@ try {
   app.use(i18n);
   app.provide("db", db);
   app.provide("dbName", dbName);
+  app.provide("windowWorkspace", windowWorkspace);
+  await windowWorkspace.restoreAdditionalWindows();
 
   if (import.meta.env.DEV) {
     const appWithSetupState = app as typeof app & AppWithSetupState;
@@ -80,6 +88,7 @@ try {
         if (!setupState) return null;
         setupState.db ??= db;
         setupState.dbName ??= dbName;
+        setupState.windowWorkspace ??= windowWorkspace;
         const storeState = setupState.store as Record<string, unknown> | undefined;
         if (storeState) {
           setupState.selectedRepoId ??= storeState.selectedRepoId;

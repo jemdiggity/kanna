@@ -57,12 +57,14 @@ const mockState = vi.hoisted(() => {
   }
 
   let repos = [makeRepo()];
+  let items: PipelineItem[] = [];
   let unblockedItems: PipelineItem[] = [];
   const listenMock = vi.fn(async () => () => {});
   const updatePipelineItemActivityMock = vi.fn(async () => {});
 
   function reset(): void {
     repos = [makeRepo()];
+    items = [];
     unblockedItems = [];
     listenMock.mockClear();
     updatePipelineItemActivityMock.mockClear();
@@ -72,6 +74,12 @@ const mockState = vi.hoisted(() => {
     makeItem,
     get repos() {
       return repos;
+    },
+    get items() {
+      return items;
+    },
+    set items(value: PipelineItem[]) {
+      items = value;
     },
     get unblockedItems() {
       return unblockedItems;
@@ -89,7 +97,7 @@ vi.mock("@kanna/db", () => ({
   getSetting: vi.fn(async () => null),
   getUnblockedItems: vi.fn(async () => mockState.unblockedItems),
   listRepos: vi.fn(async () => mockState.repos),
-  listPipelineItems: vi.fn(async () => []),
+  listPipelineItems: vi.fn(async () => mockState.items),
   updatePipelineItemActivity: mockState.updatePipelineItemActivityMock,
   closePipelineItem: vi.fn(async () => {}),
 }));
@@ -145,5 +153,48 @@ describe("createInitApi", () => {
 
     expect(restoreUnblockedTask).toHaveBeenCalledWith(mockState.unblockedItems[0]);
     expect(startBlockedTask).not.toHaveBeenCalled();
+  });
+
+  it("restores selected repo and task from window bootstrap before falling back to defaults", async () => {
+    mockState.items = [mockState.makeItem()];
+
+    const state = createStoreState();
+    const bootstrapRef = ref({
+      windowId: "win-2",
+      selectedRepoId: "repo-1",
+      selectedItemId: "task-1",
+    });
+    (
+      state as ReturnType<typeof createStoreState> & {
+        initialWindowBootstrap?: typeof bootstrapRef;
+      }
+    ).initialWindowBootstrap = bootstrapRef;
+
+    const services = {
+      loadInitialData: vi.fn(async () => {}),
+      restoreSelection: vi.fn(),
+    };
+    const toast = {
+      toasts: ref([]),
+      dismiss: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      error: vi.fn(),
+    };
+    const context = createStoreContext(state, toast, services);
+    const ports = {
+      closeTaskAndReleasePorts: vi.fn(async () => {}),
+    } as unknown as import("./ports").PortsStore;
+    const initApi = createInitApi(context, ports, {
+      checkUnblocked: vi.fn(async () => {}),
+      handleAgentFinished: vi.fn(),
+      startBlockedTask: vi.fn(async () => {}),
+      restoreUnblockedTask: vi.fn(async () => {}),
+    } as unknown as Parameters<typeof createInitApi>[2]);
+
+    await initApi.init(createDb());
+
+    expect(state.selectedRepoId.value).toBe("repo-1");
+    expect(services.restoreSelection).toHaveBeenCalledWith("task-1");
   });
 });

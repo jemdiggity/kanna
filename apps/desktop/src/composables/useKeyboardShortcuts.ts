@@ -1,9 +1,11 @@
 import { onMounted, onUnmounted } from "vue";
+import { isTauri } from "../tauri-mock";
 import type { ShortcutContext } from "./useShortcutContext";
 
 export type ActionName =
   | "newTask"
   | "newWindow"
+  | "closeWindow"
   | "openFile"
   | "toggleFilePreview"
   | "advanceStage"
@@ -94,8 +96,8 @@ export const shortcuts: ShortcutDef[] = [
   { action: "openShell",      labelKey: "shortcuts.shellTerminal",  groupKey: "shortcuts.groupOpenInspect", key: "j",                         meta: true,               display: "⌘J",       context: PREVIEW_MODAL_CONTEXTS },
   { action: "openShellRepoRoot", labelKey: "shortcuts.shellRepoRoot", groupKey: "shortcuts.groupOpenInspect", key: ["J", "j"],                  meta: true, shift: true,  display: "⇧⌘J",     context: PREVIEW_MODAL_CONTEXTS },
   { action: "openInIDE",      labelKey: "shortcuts.openInIDE",      groupKey: "shortcuts.groupOpenInspect", key: "o",                         meta: true,               display: "⌘O",       context: ["main"] },
-  // Window — disabled until #24 (new window state sharing)
-  // { action: "newWindow",  labelKey: "shortcuts.newWindow", groupKey: "shortcuts.groupWindow", key: ["N", "n"],                     meta: true, shift: true,  display: "⇧⌘N" },
+  { action: "newWindow",    labelKey: "shortcuts.newWindow",    groupKey: "shortcuts.groupWorkspace", key: "n",                            meta: true,               display: "⌘N",       context: ["main"] },
+  { action: "closeWindow",  labelKey: "shortcuts.closeWindow",  groupKey: "shortcuts.groupWorkspace", key: "w",                            meta: true,               display: "⌘W",       context: ["main", "diff", "file", "shell", "tree", "graph", "newTask", "transfer"] },
   // Views — layout and framing controls
   { action: "toggleSidebar", labelKey: "shortcuts.toggleSidebar", groupKey: "shortcuts.groupWorkspace", key: "b",                            meta: true,               display: "⌘B",       context: ["main"] },
   { action: "toggleMaximize", labelKey: "shortcuts.maximize",       groupKey: "shortcuts.groupWorkspace", key: "Enter",                     meta: true, shift: true,  display: "⇧⌘Enter", context: ["main", "diff", "file", "shell", "tree"] },
@@ -171,6 +173,7 @@ export function useKeyboardShortcuts(actions: KeyboardActions, options?: { befor
     const ctx = options?.context?.();
     for (const def of shortcuts) {
       if (matches(def, e)) {
+        if (isTauri && (def.action === "newWindow" || def.action === "closeWindow")) continue;
         if (ctx && !(def.context ?? ["main"]).includes(ctx)) continue;
         e.preventDefault();
         options?.beforeAction?.(def.action);

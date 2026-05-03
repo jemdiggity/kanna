@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DbHandle, PipelineItem, Repo } from "@kanna/db";
 
 const beginTaskSwitchMock = vi.hoisted(() => vi.fn());
+const invalidateSharedDataMock = vi.hoisted(() => vi.fn(async () => {}));
+const onSharedInvalidationMock = vi.hoisted(() => vi.fn(async () => () => undefined));
 
 const mockState = vi.hoisted(() => {
   const now = "2026-04-17T00:00:00.000Z";
@@ -323,6 +325,21 @@ async function flushStore(): Promise<void> {
 async function createStore() {
   setActivePinia(createPinia());
   const store = useKannaStore();
+  store.attachWindowWorkspace({
+    bootstrap: {
+      windowId: "main",
+      selectedRepoId: null,
+      selectedItemId: null,
+    },
+    loadSnapshot: vi.fn(async () => ({ windows: [] })),
+    saveSnapshot: vi.fn(async () => {}),
+    openWindow: vi.fn(async () => {}),
+    persistSelection: vi.fn(async () => {}),
+    persistSidebarHidden: vi.fn(async () => {}),
+    invalidateSharedData: invalidateSharedDataMock,
+    restoreAdditionalWindows: vi.fn(async () => {}),
+    onSharedInvalidation: onSharedInvalidationMock,
+  });
   await store.init(createDb());
   await flushStore();
   return store;
@@ -334,6 +351,8 @@ describe("kanna query snapshot regressions", () => {
     vi.setSystemTime(new Date("2026-04-17T00:00:00.000Z"));
     mockState.reset();
     beginTaskSwitchMock.mockReset();
+    invalidateSharedDataMock.mockReset();
+    onSharedInvalidationMock.mockReset();
   });
 
   afterEach(() => {
@@ -421,5 +440,13 @@ describe("kanna query snapshot regressions", () => {
     await store.selectItem("item-1");
 
     expect(beginTaskSwitchMock).toHaveBeenCalledWith("item-1");
+  });
+
+  it("emits a shared invalidation after hiding a repo", async () => {
+    const store = await createStore();
+
+    await store.hideRepo("repo-2");
+
+    expect(invalidateSharedDataMock).toHaveBeenCalledWith("hideRepo");
   });
 });

@@ -51,6 +51,11 @@ import { useKannaStore } from "./stores/kanna";
 import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
+import {
+  WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+  type WindowWorkspaceController,
+} from "./windowWorkspace";
 
 const isMobile = __KANNA_MOBILE__;
 
@@ -71,10 +76,12 @@ const toast = useToast();
 const { t } = useI18n();
 const db = inject<DbHandle>("db")!;
 const dbName = inject<string>("dbName")!;
+const windowWorkspace = inject<WindowWorkspaceController>("windowWorkspace")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
 const appUpdate = useAppUpdate();
 const appUnlisteners: Array<() => void> = [];
 useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
+store.attachWindowWorkspace(windowWorkspace);
 
 // UI state
 const showNewTaskModal = ref(false);
@@ -754,14 +761,13 @@ const keyboardActions = {
     openNewTaskModal().catch((e) => console.error("[App] openNewTaskModal failed:", e));
   },
   newWindow: async () => {
-    if (isTauri) {
-      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      new WebviewWindow(`window-${Date.now()}`, {
-        url: "/", title: "", width: 1200, height: 800, minWidth: 800, minHeight: 600,
-      });
-    } else {
-      window.open(window.location.href, "_blank");
-    }
+    await windowWorkspace.openWindow({
+      selectedRepoId: store.selectedRepoId,
+      selectedItemId: store.selectedItemId,
+    });
+  },
+  closeWindow: async () => {
+    await windowWorkspace.closeWindow();
   },
   openFile: () => {
     if (showFilePickerModal.value) {
@@ -1164,6 +1170,24 @@ onMounted(async () => {
   await importPendingIncomingTransfers();
   if (import.meta.env.DEV && window.__KANNA_E2E__) {
     window.__KANNA_E2E__.ready = true;
+  }
+
+  try {
+    const unlistenNativeNewWindow = await listen(WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT, async () => {
+      await keyboardActions.newWindow();
+    });
+    appUnlisteners.push(unlistenNativeNewWindow);
+  } catch (e: unknown) {
+    console.error("[App] native new-window listener registration failed:", e);
+  }
+
+  try {
+    const unlistenNativeCloseWindow = await listen(WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT, async () => {
+      await keyboardActions.closeWindow();
+    });
+    appUnlisteners.push(unlistenNativeCloseWindow);
+  } catch (e: unknown) {
+    console.error("[App] native close-window listener registration failed:", e);
   }
 
   try {

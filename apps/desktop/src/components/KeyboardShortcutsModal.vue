@@ -92,7 +92,7 @@ const fullModeEntries = computed(() => {
   return [
     ...entriesFor("shortcuts.groupCreateOrganize", 1, 1),
     ...entriesFor("shortcuts.groupWorkspace", 1, 10),
-    ...entriesFor("shortcuts.groupAppHelp", 1, 14),
+    ...entriesFor("shortcuts.groupAppHelp", 1, 15),
     ...entriesFor("shortcuts.groupMoveAround", 2, 1),
     ...entriesFor("shortcuts.groupOpenInspect", 3, 1),
   ];

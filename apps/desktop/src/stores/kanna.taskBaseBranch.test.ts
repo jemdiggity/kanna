@@ -1288,15 +1288,32 @@ describe("kanna store task base branch integration", () => {
     ];
 
     const store = await createStore();
+    const persistSelection = vi.fn(async () => {});
+    store.attachWindowWorkspace({
+      bootstrap: {
+        windowId: "main",
+        selectedRepoId: null,
+        selectedItemId: null,
+      },
+      loadSnapshot: vi.fn(async () => ({ windows: [] })),
+      saveSnapshot: vi.fn(async () => {}),
+      openWindow: vi.fn(async () => {}),
+      closeWindow: vi.fn(async () => {}),
+      persistSelection,
+      persistSidebarHidden: vi.fn(async () => {}),
+      invalidateSharedData: vi.fn(async () => {}),
+      restoreAdditionalWindows: vi.fn(async () => {}),
+      onSharedInvalidation: vi.fn(async () => vi.fn()),
+    });
     await store.selectItem("item-source");
     await flushStore();
 
     await store.advanceStage("item-source");
 
-    const selectNextOrder = mockState.setSettingMock.mock.calls.findIndex(
-      ([, key, value]) => key === "selected_item_id" && value === "item-next",
+    const selectNextOrder = persistSelection.mock.calls.findIndex(
+      ([selection]) => selection.selectedItemId === "item-next",
     );
-    const selectNextInvocationOrder = mockState.setSettingMock.mock.invocationCallOrder[selectNextOrder];
+    const selectNextInvocationOrder = persistSelection.mock.invocationCallOrder[selectNextOrder];
     const closeInvocationOrder = mockState.closePipelineItemMock.mock.invocationCallOrder[0];
 
     expect(selectNextOrder).toBeGreaterThanOrEqual(0);

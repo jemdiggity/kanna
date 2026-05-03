@@ -4,6 +4,10 @@ import { computed, defineComponent, h, nextTick, ref } from "vue";
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeyboardActions } from "./composables/useKeyboardShortcuts";
+import {
+  WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+} from "./windowWorkspace";
 
 async function flushPromises() {
   await Promise.resolve();
@@ -76,6 +80,7 @@ const store = {
   importRepo: vi.fn(async () => {}),
   cloneAndImportRepo: vi.fn(async () => {}),
   savePreference: vi.fn(async () => {}),
+  attachWindowWorkspace: vi.fn(),
   selectRepo: vi.fn(),
   selectItem: vi.fn(),
   closeTask: vi.fn(async () => {}),
@@ -96,6 +101,21 @@ const store = {
 };
 const toastInfoMock = vi.fn();
 const toastWarningMock = vi.fn();
+const mockWindowWorkspace = {
+  bootstrap: {
+    windowId: "main",
+    selectedRepoId: null,
+    selectedItemId: null,
+  },
+  loadSnapshot: vi.fn(async () => ({ windows: [] })),
+  saveSnapshot: vi.fn(async () => {}),
+  openWindow: vi.fn(async () => {}),
+  closeWindow: vi.fn(async () => {}),
+  persistSelection: vi.fn(async () => {}),
+  persistSidebarHidden: vi.fn(async () => {}),
+  invalidateSharedData: vi.fn(async () => {}),
+  restoreAdditionalWindows: vi.fn(async () => {}),
+};
 
 let capturedKeyboardActions: KeyboardActions | null = null;
 
@@ -340,11 +360,12 @@ function buildOutgoingTransferFinalizationRequestedEvent() {
 async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof SidebarWithoutRepoStub) {
   vi.stubGlobal("__KANNA_MOBILE__", false);
   const { default: App } = await import("./App.vue");
-  return mount(App, {
+  const wrapper = mount(App, {
     global: {
       provide: {
         db: dbMock,
         dbName: "test.db",
+        windowWorkspace: mockWindowWorkspace,
       },
       mocks: {
         $t: (key: string) => key,
@@ -369,6 +390,9 @@ async function mountApp(sidebarStub: typeof SidebarWithRepoStub | typeof Sidebar
       },
     },
   });
+  await flushPromises();
+  await flushPromises();
+  return wrapper;
 }
 
 async function mountAppWithOverrides(
@@ -377,11 +401,12 @@ async function mountAppWithOverrides(
 ) {
   vi.stubGlobal("__KANNA_MOBILE__", false);
   const { default: App } = await import("./App.vue");
-  return mount(App, {
+  const wrapper = mount(App, {
     global: {
       provide: {
         db: dbMock,
         dbName: "test.db",
+        windowWorkspace: mockWindowWorkspace,
       },
       mocks: {
         $t: (key: string) => key,
@@ -407,6 +432,9 @@ async function mountAppWithOverrides(
       },
     },
   });
+  await flushPromises();
+  await flushPromises();
+  return wrapper;
 }
 
 describe("App", () => {
@@ -429,6 +457,14 @@ describe("App", () => {
     store.sortedItemsAllRepos = [];
     listenHandlers.clear();
     capturedKeyboardActions = null;
+    mockWindowWorkspace.loadSnapshot.mockClear();
+    mockWindowWorkspace.saveSnapshot.mockClear();
+    mockWindowWorkspace.openWindow.mockClear();
+    mockWindowWorkspace.closeWindow.mockClear();
+    mockWindowWorkspace.persistSelection.mockClear();
+    mockWindowWorkspace.persistSidebarHidden.mockClear();
+    mockWindowWorkspace.invalidateSharedData.mockClear();
+    mockWindowWorkspace.restoreAdditionalWindows.mockClear();
     dbSelectMock.mockReset();
     dbSelectMock.mockResolvedValue([]);
     invokeMock.mockClear();
@@ -605,6 +641,56 @@ describe("App", () => {
     store.selectItem.mockClear();
     capturedKeyboardActions?.goToNewestRead();
     expect(store.selectItem).toHaveBeenCalledWith("read-newest");
+  });
+
+  it("opens a new window through the workspace controller using the current selection", async () => {
+    store.selectedRepoId = "repo-1";
+    store.selectedItemId = "task-1";
+
+    await mountApp(SidebarWithRepoStub);
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    await capturedKeyboardActions?.newWindow();
+
+    expect(mockWindowWorkspace.openWindow).toHaveBeenCalledWith({
+      selectedRepoId: "repo-1",
+      selectedItemId: "task-1",
+    });
+  });
+
+  it("closes the focused window through the workspace controller", async () => {
+    await mountApp(SidebarWithRepoStub);
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    await capturedKeyboardActions?.closeWindow();
+
+    expect(mockWindowWorkspace.closeWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a new window when the native window-open event arrives", async () => {
+    store.selectedRepoId = "repo-1";
+    store.selectedItemId = "task-1";
+
+    await mountApp(SidebarWithRepoStub);
+    const handler = listenHandlers.get(WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT);
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({});
+
+    expect(mockWindowWorkspace.openWindow).toHaveBeenCalledWith({
+      selectedRepoId: "repo-1",
+      selectedItemId: "task-1",
+    });
+  });
+
+  it("closes the current window when the native window-close event arrives", async () => {
+    await mountApp(SidebarWithRepoStub);
+    const handler = listenHandlers.get(WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT);
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({});
+
+    expect(mockWindowWorkspace.closeWindow).toHaveBeenCalledTimes(1);
   });
 
   it("reopens the diff modal with the last saved diff view state", async () => {

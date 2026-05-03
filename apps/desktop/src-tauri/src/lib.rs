@@ -12,7 +12,7 @@ use daemon_client::DaemonClient;
 use dashmap::DashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::menu::{AboutMetadataBuilder, MenuBuilder, SubmenuBuilder};
+use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
@@ -25,6 +25,71 @@ pub(crate) const KANNA_BUILD_COMMIT: &str = env!("KANNA_BUILD_COMMIT");
 pub(crate) const KANNA_BUILD_WORKTREE: &str = env!("KANNA_BUILD_WORKTREE");
 pub(crate) const KANNA_BUILD_INFO: &str = env!("KANNA_BUILD_INFO");
 pub type TransferServiceState = Arc<Mutex<Option<transfer_sidecar::TransferSidecarClient>>>;
+const MENU_ID_NEW_WINDOW: &str = "workspace-new-window";
+const MENU_ID_CLOSE_WINDOW: &str = "workspace-close-window";
+const WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT: &str = "kanna://native-new-window";
+const WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT: &str = "kanna://native-close-window";
+
+#[derive(Debug, PartialEq, Eq)]
+enum NativeWorkspaceMenuAction {
+    DispatchToFocused {
+        label: String,
+        event: &'static str,
+    },
+    CreateRootWindow,
+    None,
+}
+
+fn resolve_native_workspace_menu_action(
+    menu_id: &str,
+    focused_label: Option<&str>,
+) -> NativeWorkspaceMenuAction {
+    match (menu_id, focused_label) {
+        (MENU_ID_NEW_WINDOW, Some(label)) => NativeWorkspaceMenuAction::DispatchToFocused {
+            label: label.to_string(),
+            event: WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+        },
+        (MENU_ID_NEW_WINDOW, None) => NativeWorkspaceMenuAction::CreateRootWindow,
+        (MENU_ID_CLOSE_WINDOW, Some(label)) => NativeWorkspaceMenuAction::DispatchToFocused {
+            label: label.to_string(),
+            event: WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+        },
+        _ => NativeWorkspaceMenuAction::None,
+    }
+}
+
+fn create_root_kanna_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
+        .title("")
+        .inner_size(1200.0, 800.0)
+        .min_inner_size(800.0, 600.0)
+        .build()?;
+    Ok(())
+}
+
+fn handle_native_workspace_menu_event(app: &tauri::AppHandle, menu_id: &str) {
+    let focused_label = app
+        .webview_windows()
+        .into_iter()
+        .find(|(_, window)| window.is_focused().unwrap_or(false))
+        .map(|(label, _)| label);
+
+    match resolve_native_workspace_menu_action(menu_id, focused_label.as_deref()) {
+        NativeWorkspaceMenuAction::DispatchToFocused { label, event } => {
+            if let Some(window) = app.get_webview_window(&label) {
+                if let Err(error) = window.emit(event, ()) {
+                    eprintln!("[menu] failed to emit {} to {}: {}", event, label, error);
+                }
+            }
+        }
+        NativeWorkspaceMenuAction::CreateRootWindow => {
+            if let Err(error) = create_root_kanna_window(app) {
+                eprintln!("[menu] failed to create root window: {}", error);
+            }
+        }
+        NativeWorkspaceMenuAction::None => {}
+    }
+}
 
 /// Install a native macOS event monitor that intercepts fn+F (Globe+F) and
 /// toggles fullscreen.  The fn/Globe modifier sets NSEventModifierFlagFunction
@@ -531,6 +596,18 @@ pub fn run() {
                 .separator()
                 .quit()
                 .build()?;
+            let new_window_item = MenuItemBuilder::with_id(MENU_ID_NEW_WINDOW, "New Window")
+                .accelerator("CmdOrControl+N")
+                .build(app)?;
+            let close_window_item =
+                MenuItemBuilder::with_id(MENU_ID_CLOSE_WINDOW, "Close Window")
+                    .accelerator("CmdOrControl+W")
+                    .build(app)?;
+            let file_submenu = SubmenuBuilder::new(app, "File")
+                .item(&new_window_item)
+                .separator()
+                .item(&close_window_item)
+                .build()?;
             let edit_submenu = SubmenuBuilder::new(app, "Edit")
                 .undo()
                 .redo()
@@ -544,11 +621,15 @@ pub fn run() {
             let window_submenu = SubmenuBuilder::new(app, "Window").minimize().build()?;
             let menu = MenuBuilder::new(app)
                 .item(&app_submenu)
+                .item(&file_submenu)
                 .item(&edit_submenu)
                 .item(&view_submenu)
                 .item(&window_submenu)
                 .build()?;
             app.set_menu(menu)?;
+            app.on_menu_event(|app_handle, event| {
+                handle_native_workspace_menu_event(app_handle, event.id().as_ref());
+            });
 
             let mobile_app_data_dir = app
                 .path()
@@ -674,7 +755,11 @@ pub fn run() {
 
 #[cfg(all(test, debug_assertions))]
 mod tests {
-    use super::resolve_webdriver_port;
+    use super::{
+        resolve_native_workspace_menu_action, resolve_webdriver_port, NativeWorkspaceMenuAction,
+        MENU_ID_CLOSE_WINDOW, MENU_ID_NEW_WINDOW, WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+        WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+    };
 
     #[test]
     fn webdriver_disabled_for_worktrees_without_explicit_port() {
@@ -699,5 +784,35 @@ mod tests {
             std::env::remove_var("KANNA_WORKTREE");
             std::env::remove_var("KANNA_WEBDRIVER_PORT");
         }
+    }
+
+    #[test]
+    fn native_new_window_dispatches_to_the_focused_window_when_one_exists() {
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NEW_WINDOW, Some("window-2")),
+            NativeWorkspaceMenuAction::DispatchToFocused {
+                label: "window-2".to_string(),
+                event: WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+            }
+        );
+    }
+
+    #[test]
+    fn native_new_window_creates_a_fresh_window_when_none_are_open() {
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NEW_WINDOW, None),
+            NativeWorkspaceMenuAction::CreateRootWindow
+        );
+    }
+
+    #[test]
+    fn native_close_window_dispatches_to_the_focused_window() {
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_CLOSE_WINDOW, Some("main")),
+            NativeWorkspaceMenuAction::DispatchToFocused {
+                label: "main".to_string(),
+                event: WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+            }
+        );
     }
 }
