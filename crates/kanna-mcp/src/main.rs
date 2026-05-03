@@ -62,6 +62,17 @@ fn mcp_error(id: Value, code: i64, message: impl Into<String>) -> Value {
     })
 }
 
+fn mcp_tool_error_code(message: &str) -> i64 {
+    if message.starts_with("missing required argument:")
+        || message.contains(" must be ")
+        || message == "status must be success or failure"
+    {
+        -32602
+    } else {
+        -32603
+    }
+}
+
 fn mcp_tools() -> Value {
     serde_json::json!([
         {
@@ -194,7 +205,10 @@ async fn handle_mcp_request(message: Value, base_url: &str) -> Value {
         "notifications/initialized" => Value::Null,
         "tools/list" => mcp_response(id, serde_json::json!({ "tools": mcp_tools() })),
         "tools/call" => {
-            let params = message.get("params").cloned().unwrap_or_else(|| serde_json::json!({}));
+            let params = message
+                .get("params")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
             let Some(name) = params.get("name").and_then(Value::as_str) else {
                 return mcp_error(id, -32602, "missing tool name");
             };
@@ -212,7 +226,7 @@ async fn handle_mcp_request(message: Value, base_url: &str) -> Value {
                         }]
                     }),
                 ),
-                Err(message) => mcp_error(id, -32603, message),
+                Err(message) => mcp_error(id, mcp_tool_error_code(&message), message),
             }
         }
         _ => mcp_error(id, -32601, format!("unknown method: {method}")),

@@ -247,9 +247,8 @@ Add focused Rust tests for `crates/kanna-mcp`:
 
 Add or update packaging tests that assert `kanna-mcp` is built and staged with the other sidecars.
 
-Full MCP client E2E is deferred for this first pass because the repo does not currently have a dedicated MCP client harness.
-To make it testable end to end, add a small test harness that launches `kanna-mcp serve`, sends JSON-RPC over stdin, runs a test `kanna-server` HTTP fixture, and asserts complete MCP responses through stdout.
-Until then, protocol-loop and mock HTTP tests provide narrower coverage of the wiring.
+Add a focused stdio/HTTP integration test harness that launches `kanna-mcp serve`, sends JSON-RPC over stdin, runs a local `kanna-server` HTTP fixture, and asserts complete MCP responses through stdout.
+That harness should cover at least one GET tool, one POST tool, HTTP failure mapping, and local argument validation before HTTP dispatch.
 
 ## Migration
 

@@ -1,0 +1,282 @@
+use serde_json::{json, Value};
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+#[derive(Debug)]
+struct ExpectedRequest {
+    method: &'static str,
+    path: &'static str,
+    body: Option<Value>,
+    response_status: &'static str,
+    response_body: Value,
+}
+
+#[derive(Debug)]
+struct ObservedRequest {
+    method: String,
+    path: String,
+    body: Option<Value>,
+}
+
+fn read_http_request(stream: &mut TcpStream) -> ObservedRequest {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    let header_end = loop {
+        let read = stream.read(&mut buffer).expect("read request");
+        assert_ne!(read, 0, "client closed connection before headers");
+        bytes.extend_from_slice(&buffer[..read]);
+        if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            break index + 4;
+        }
+    };
+
+    let headers = String::from_utf8(bytes[..header_end].to_vec()).expect("utf8 headers");
+    let request_line = headers.lines().next().expect("request line");
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts.next().expect("method").to_string();
+    let path = request_parts.next().expect("path").to_string();
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().expect("content length"))
+        })
+        .unwrap_or(0);
+
+    while bytes.len() < header_end + content_length {
+        let read = stream.read(&mut buffer).expect("read body");
+        assert_ne!(read, 0, "client closed connection before body");
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+
+    let body = if content_length == 0 {
+        None
+    } else {
+        Some(
+            serde_json::from_slice(&bytes[header_end..header_end + content_length])
+                .expect("json body"),
+        )
+    };
+
+    ObservedRequest { method, path, body }
+}
+
+fn start_http_fixture(
+    expected: Vec<ExpectedRequest>,
+) -> (String, thread::JoinHandle<Vec<ObservedRequest>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
+    let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+    let handle = thread::spawn(move || {
+        let mut observed = Vec::new();
+        for expected_request in expected {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let request = read_http_request(&mut stream);
+            assert_eq!(request.method, expected_request.method);
+            assert_eq!(request.path, expected_request.path);
+            assert_eq!(request.body, expected_request.body);
+            observed.push(request);
+
+            let body = expected_request.response_body.to_string();
+            let response = format!(
+                "HTTP/1.1 {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                expected_request.response_status,
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        }
+        observed
+    });
+
+    (base_url, handle)
+}
+
+fn run_kanna_mcp(base_url: &str, messages: &[Value]) -> Vec<Value> {
+    let binary = env!("CARGO_BIN_EXE_kanna-mcp");
+    let mut child = Command::new(binary)
+        .args(["serve", "--server-url", base_url])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn kanna-mcp");
+
+    {
+        let stdin = child.stdin.as_mut().expect("stdin");
+        for message in messages {
+            writeln!(stdin, "{}", message).expect("write message");
+        }
+    }
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("wait for kanna-mcp");
+    assert!(
+        output.status.success(),
+        "kanna-mcp exited with {:?}; stderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    String::from_utf8(output.stdout)
+        .expect("utf8 stdout")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("json-rpc line"))
+        .collect()
+}
+
+fn tool_text(response: &Value) -> Value {
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool text");
+    serde_json::from_str(text).expect("tool json")
+}
+
+#[test]
+fn serve_forwards_get_and_post_tool_calls_to_configured_http_server() {
+    let (base_url, server) = start_http_fixture(vec![
+        ExpectedRequest {
+            method: "GET",
+            path: "/v1/repos",
+            body: None,
+            response_status: "200 OK",
+            response_body: json!([{ "id": "repo-1", "name": "kanna" }]),
+        },
+        ExpectedRequest {
+            method: "POST",
+            path: "/v1/tasks/task-1/actions/complete-stage",
+            body: Some(json!({
+                "status": "success",
+                "summary": "QA passed",
+                "metadata": { "review": "stdio-http" }
+            })),
+            response_status: "200 OK",
+            response_body: json!({ "taskId": "task-1", "stage": "pr" }),
+        },
+    ]);
+
+    let responses = run_kanna_mcp(
+        &base_url,
+        &[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": "kanna_list_repos", "arguments": {} }
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "kanna_complete_stage",
+                    "arguments": {
+                        "task_id": "task-1",
+                        "status": "success",
+                        "summary": "QA passed",
+                        "metadata": { "review": "stdio-http" }
+                    }
+                }
+            }),
+        ],
+    );
+
+    let observed = server.join().expect("fixture server");
+    assert_eq!(observed.len(), 2);
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[0]["result"]["serverInfo"]["name"], "kanna-mcp");
+    assert_eq!(
+        tool_text(&responses[1]),
+        json!([{ "id": "repo-1", "name": "kanna" }])
+    );
+    assert_eq!(
+        tool_text(&responses[2]),
+        json!({ "taskId": "task-1", "stage": "pr" })
+    );
+}
+
+#[test]
+fn serve_reports_http_failures_as_mcp_errors() {
+    let (base_url, server) = start_http_fixture(vec![ExpectedRequest {
+        method: "GET",
+        path: "/v1/repos",
+        body: None,
+        response_status: "503 Service Unavailable",
+        response_body: json!({ "error": "offline" }),
+    }]);
+
+    let responses = run_kanna_mcp(
+        &base_url,
+        &[json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": { "name": "kanna_list_repos", "arguments": {} }
+        })],
+    );
+
+    server.join().expect("fixture server");
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0]["id"], json!(9));
+    assert_eq!(responses[0]["error"]["code"], json!(-32603));
+    assert!(responses[0]["error"]["message"]
+        .as_str()
+        .expect("error message")
+        .contains("GET /v1/repos failed with status 503"));
+}
+
+#[test]
+fn serve_reports_tool_argument_errors_as_invalid_params() {
+    let (base_url_tx, base_url_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
+        base_url_tx
+            .send(format!(
+                "http://{}",
+                listener.local_addr().expect("local addr")
+            ))
+            .expect("send base url");
+        listener
+            .set_nonblocking(true)
+            .expect("set nonblocking listener");
+        thread::sleep(Duration::from_millis(200));
+        assert!(
+            listener.accept().is_err(),
+            "invalid params should not issue HTTP requests"
+        );
+    });
+    let base_url = base_url_rx.recv().expect("base url");
+
+    let responses = run_kanna_mcp(
+        &base_url,
+        &[json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "kanna_search_tasks",
+                "arguments": {}
+            }
+        })],
+    );
+
+    server.join().expect("fixture server");
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0]["id"], json!(11));
+    assert_eq!(responses[0]["error"]["code"], json!(-32602));
+    assert_eq!(
+        responses[0]["error"]["message"],
+        json!("missing required argument: query")
+    );
+}
