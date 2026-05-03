@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS repo (
     path TEXT NOT NULL,
     name TEXT NOT NULL,
     default_branch TEXT NOT NULL DEFAULT 'main',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

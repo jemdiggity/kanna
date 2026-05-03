@@ -27,21 +27,33 @@ interface SchemaMigrationRow {
   id: string;
 }
 
+interface RepoRow {
+  id: string;
+  created_at: string;
+  sort_order: number | null;
+}
+
 function normalizeSql(query: string): string {
   return query.replace(/\s+/g, " ").trim();
 }
 
-function createMigrationDb(initialRows: PipelineItemRow[]): DbHandle & {
+function createMigrationDb(
+  initialRows: PipelineItemRow[],
+  initialRepos: RepoRow[] = [],
+): DbHandle & {
   pipelineItems: PipelineItemRow[];
+  repos: RepoRow[];
   schemaMigrations: SchemaMigrationRow[];
   activityLogDrops: number;
 } {
   const pipelineItems = initialRows.map((row) => ({ ...row }));
+  const repos = initialRepos.map((repo) => ({ ...repo }));
   const schemaMigrations: SchemaMigrationRow[] = [];
   let activityLogDrops = 0;
 
   return {
     pipelineItems,
+    repos,
     schemaMigrations,
     get activityLogDrops() {
       return activityLogDrops;
@@ -54,6 +66,14 @@ function createMigrationDb(initialRows: PipelineItemRow[]): DbHandle & {
         if (!schemaMigrations.some((migration) => migration.id === id)) {
           schemaMigrations.push({ id });
         }
+      } else if (sql === "ALTER TABLE repo ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0") {
+        for (const repo of repos) {
+          repo.sort_order = 0;
+        }
+      } else if (sql === "UPDATE repo SET sort_order = ? WHERE id = ?") {
+        const [sortOrder, id] = bindValues as [number, string];
+        const repo = repos.find((candidate) => candidate.id === id);
+        if (repo) repo.sort_order = sortOrder;
       } else if (sql === "DROP TABLE IF EXISTS activity_log") {
         activityLogDrops++;
       } else if (sql === `UPDATE pipeline_item SET stage = 'in_progress' WHERE stage = 'queued'`) {
@@ -114,6 +134,12 @@ function createMigrationDb(initialRows: PipelineItemRow[]): DbHandle & {
       if (sql.startsWith("SELECT ID FROM SCHEMA_MIGRATIONS WHERE ID = ?")) {
         const [id] = bindValues as [string];
         return schemaMigrations.filter((migration) => migration.id === id) as unknown as T[];
+      }
+
+      if (sql === "SELECT ID FROM REPO ORDER BY CREATED_AT ASC") {
+        return [...repos]
+          .sort((a, b) => a.created_at.localeCompare(b.created_at))
+          .map((repo) => ({ id: repo.id })) as unknown as T[];
       }
 
       return [];
@@ -187,5 +213,21 @@ describe("runMigrations", () => {
     await runMigrations(db);
 
     expect(db.pipelineItems[0]?.stage).toBe("teardown");
+  });
+
+  it("backfills repo sort_order by creation time for existing databases", async () => {
+    db = createMigrationDb([], [
+      { id: "repo-newer", created_at: "2026-01-03T00:00:00.000Z", sort_order: null },
+      { id: "repo-older", created_at: "2026-01-01T00:00:00.000Z", sort_order: null },
+      { id: "repo-middle", created_at: "2026-01-02T00:00:00.000Z", sort_order: null },
+    ]);
+
+    await runMigrations(db);
+
+    expect(db.repos).toEqual([
+      { id: "repo-newer", created_at: "2026-01-03T00:00:00.000Z", sort_order: 2 },
+      { id: "repo-older", created_at: "2026-01-01T00:00:00.000Z", sort_order: 0 },
+      { id: "repo-middle", created_at: "2026-01-02T00:00:00.000Z", sort_order: 1 },
+    ]);
   });
 });

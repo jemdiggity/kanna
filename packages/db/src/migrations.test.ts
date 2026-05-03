@@ -1,0 +1,10 @@
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
+
+describe("database package migrations", () => {
+  it("includes repo sort_order in the initial schema", async () => {
+    const initialSchema = await readFile("src/migrations/001_initial.sql", "utf8");
+
+    expect(initialSchema).toMatch(/CREATE TABLE IF NOT EXISTS repo \([\s\S]*sort_order INTEGER NOT NULL DEFAULT 0/);
+  });
+});

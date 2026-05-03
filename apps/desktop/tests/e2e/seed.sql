@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS repo (
   id TEXT PRIMARY KEY, path TEXT NOT NULL, name TEXT NOT NULL,
   default_branch TEXT NOT NULL DEFAULT 'main',
   hidden INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -110,16 +111,16 @@ INSERT INTO settings (key, value) VALUES ('ideCommand', 'code');
 
 -- ── Repos ───────────────────────────────────────────────────────────────────
 
-INSERT INTO repo (id, path, name, default_branch, hidden, created_at, last_opened_at)
-VALUES ('repo-seed-app', '/Users/test/example-app', 'example-app', 'main', 0,
+INSERT INTO repo (id, path, name, default_branch, hidden, sort_order, created_at, last_opened_at)
+VALUES ('repo-seed-app', '/Users/test/example-app', 'example-app', 'main', 0, 0,
         datetime('now', '-30 days'), datetime('now', '-1 hours'));
 
-INSERT INTO repo (id, path, name, default_branch, hidden, created_at, last_opened_at)
-VALUES ('repo-seed-api', '/Users/test/example-api', 'example-api', 'main', 0,
+INSERT INTO repo (id, path, name, default_branch, hidden, sort_order, created_at, last_opened_at)
+VALUES ('repo-seed-api', '/Users/test/example-api', 'example-api', 'main', 0, 1,
         datetime('now', '-60 days'), datetime('now', '-3 hours'));
 
-INSERT INTO repo (id, path, name, default_branch, hidden, created_at, last_opened_at)
-VALUES ('repo-seed-docs', '/Users/test/example-docs', 'example-docs', 'main', 0,
+INSERT INTO repo (id, path, name, default_branch, hidden, sort_order, created_at, last_opened_at)
+VALUES ('repo-seed-docs', '/Users/test/example-docs', 'example-docs', 'main', 0, 2,
         datetime('now', '-20 days'), datetime('now', '-2 days'));
 
 -- ── Pipeline items ──────────────────────────────────────────────────────────
