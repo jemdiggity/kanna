@@ -2,6 +2,7 @@
 import { ref, watch, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { getShortcutGroups } from "../composables/useKeyboardShortcuts";
+import { useModalZIndex } from "../composables/useModalZIndex";
 import {
   getContextShortcutGroups,
   getContextTitle,
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>();
 
 const hideOnStartup = ref(props.hideOnStartup ?? false);
+const { zIndex } = useModalZIndex();
 watch(hideOnStartup, (val) => emit("update:hide-on-startup", val));
 
 // Context mode is default on open (relies on v-if destroying/recreating component)
@@ -219,7 +221,7 @@ function splitKeys(display: string): string[] {
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="emit('close')">
+  <div class="modal-overlay" :style="{ zIndex }" @click.self="emit('close')">
     <div class="modal shortcuts-modal">
       <h3>{{ showFullMode ? t('shortcuts.title') : contextTitle }}</h3>
 
@@ -268,7 +270,6 @@ function splitKeys(display: string): string[] {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1100;
 }
 .shortcuts-modal {
   background: #252525;
