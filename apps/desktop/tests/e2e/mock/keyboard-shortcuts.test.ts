@@ -226,6 +226,37 @@ describe("keyboard shortcuts", () => {
     await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueOne });
   });
 
+  it("unread shortcuts skip teardown tasks", async () => {
+    await ensureRepoImported();
+    const repoId = await getVueState(client, "selectedRepoId") as string;
+
+    const seedResult = await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       const db = ctx.db.value || ctx.db;
+       const rows = [
+         ["shortcut-teardown-old", "${repoId}", "Teardown old unread", "teardown", "unread", "2026-03-31T00:00:00.000Z"],
+         ["shortcut-normal-old", "${repoId}", "Normal old unread", "in progress", "unread", "2026-03-31T01:00:00.000Z"],
+       ];
+       Promise.all(rows.map(function(row) {
+         return db.execute(
+           "INSERT OR REPLACE INTO pipeline_item (id, repo_id, prompt, stage, activity, created_at, agent_type, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+           [row[0], row[1], row[2], row[3], row[4], row[5], "sdk", "[]"]
+         );
+       }))
+         .then(function() { return ctx.loadItems("${repoId}"); })
+         .then(function() { return ctx.store.selectItem("shortcut-teardown-old"); })
+         .then(function() { cb("ok"); })
+         .catch(function(e) { cb("err:" + e); });`
+    );
+    expect(seedResult).toBe("ok");
+    await sleep(500);
+
+    await pressKey("u", { meta: true });
+    await sleep(200);
+    expect(await getVueState(client, "selectedItemId")).toBe("shortcut-normal-old");
+  });
+
   it("Shift+Cmd+Enter maximizes the tree explorer", async () => {
     await ensureRepoImported();
 
