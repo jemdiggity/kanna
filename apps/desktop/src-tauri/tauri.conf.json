@@ -35,6 +35,7 @@
     "externalBin": [
       "binaries/kanna-daemon",
       "binaries/kanna-cli",
+      "binaries/kanna-mcp",
       "binaries/kanna-terminal-recovery",
       "binaries/kanna-server",
       "binaries/kanna-task-transfer"

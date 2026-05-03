@@ -24,6 +24,9 @@ describe("desktop sidecar packaging", () => {
     expect(rootBuildSidecarsScript).toContain(
       'cargo build --target "$TARGET" --manifest-path crates/kanna-server/Cargo.toml',
     );
+    expect(rootBuildSidecarsScript).toContain(
+      'cargo build --target "$TARGET" --manifest-path crates/kanna-mcp/Cargo.toml',
+    );
     expect(rootBuildSidecarsScript).toContain('env -u CARGO_TARGET_DIR cargo build');
     expect(rootBuildSidecarsScript).toContain('TARGET="$(rustc -vV');
     expect(rootBuildSidecarsScript).toContain('--target "$TARGET"');
@@ -33,6 +36,8 @@ describe("desktop sidecar packaging", () => {
     expect(stageSidecarsScript).toContain("binaries/kanna-terminal-recovery");
     expect(stageSidecarsScript).toContain("binaries/kanna-daemon");
     expect(stageSidecarsScript).toContain("binaries/kanna-cli");
+    expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-mcp");
+    expect(stageSidecarsScript).toContain("binaries/kanna-mcp");
     expect(stageSidecarsScript).toContain("binaries/kanna-server");
   });
 
@@ -56,15 +61,19 @@ describe("desktop sidecar packaging", () => {
     expect(bazelBuild).toContain('name = "kanna_bundle_inputs_release_arm64"');
     expect(bazelBuild).toContain('name = "kanna_bundle_inputs_release_x86_64"');
     expect(bazelBuild).toContain('":kanna_cli_release_arm64"');
+    expect(bazelBuild).toContain('":kanna_mcp_release_arm64"');
     expect(bazelBuild).toContain('":kanna_daemon_release_arm64"');
     expect(bazelBuild).toContain('":kanna_terminal_recovery_release_arm64"');
     expect(bazelBuild).toContain('":kanna_server_release_arm64"');
     expect(bazelBuild).toContain('":kanna_task_transfer_release_arm64"');
     expect(bazelBuild).toContain('":kanna_cli_release_x86_64"');
+    expect(bazelBuild).toContain('":kanna_mcp_release_x86_64"');
     expect(bazelBuild).toContain('":kanna_daemon_release_x86_64"');
     expect(bazelBuild).toContain('":kanna_terminal_recovery_release_x86_64"');
     expect(bazelBuild).toContain('":kanna_server_release_x86_64"');
     expect(bazelBuild).toContain('":kanna_task_transfer_release_x86_64"');
+    expect(moduleBazel).toContain('name = "kanna_mcp_crates"');
+    expect(moduleBazel).toContain('manifests = ["//crates/kanna-mcp:Cargo.toml"]');
     expect(moduleBazel).toContain('name = "kanna_server_crates"');
     expect(moduleBazel).toContain('manifests = ["//:Cargo.server.toml"]');
     expect(moduleBazel).toContain('name = "task_transfer_crates"');

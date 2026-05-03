@@ -84,6 +84,15 @@ crate.from_cargo(
     ],
 )
 crate.from_cargo(
+    name = "kanna_mcp_crates",
+    cargo_lockfile = "//crates/kanna-mcp:Cargo.lock",
+    manifests = ["//crates/kanna-mcp:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ],
+)
+crate.from_cargo(
     name = "daemon_crates",
     cargo_lockfile = "//crates/daemon:Cargo.lock",
     manifests = ["//crates/daemon:Cargo.toml"],
@@ -192,6 +201,7 @@ use_repo(
     "desktop_crates__tauri-plugin-sql-2.4.0",
     "desktop_crates__tauri-plugin-updater-2.10.1",
     "desktop_crates__tauri-plugin-webdriver-0.2.1",
+    "kanna_mcp_crates",
     "kanna_server_crates",
     "task_transfer_crates",
     "terminal_recovery_crates",
