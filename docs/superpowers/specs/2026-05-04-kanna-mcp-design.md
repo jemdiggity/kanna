@@ -40,7 +40,7 @@ If a tool needs a capability that the local HTTP API does not yet expose, the im
 `kanna-server` already exposes a local product API on port `48120`.
 Mobile and newer `kanna-cli` commands use this API for repo listing, task creation, task mutation, terminal input, and stage actions.
 
-`kanna-cli` already contains a small `mcp serve` implementation.
+Before this design is implemented, `kanna-cli` contains a small MCP serve implementation.
 That implementation proves the basic stdio MCP loop and some task-control mappings, but MCP should not remain a subcommand of the general CLI.
 `kanna-cli` is primarily a command-line tool and stage-completion helper.
 `kanna-mcp` should be the dedicated MCP server binary with clearer packaging, naming, and client configuration.
@@ -92,7 +92,7 @@ Use `kanna_`-prefixed tool names to avoid collisions in MCP clients:
 - `kanna_complete_stage`
 - `kanna_request_revision`
 
-The existing unprefixed `kanna-cli mcp serve` tool names should not be the long-term public contract.
+The old unprefixed CLI MCP tool names should not be the long-term public contract.
 If compatibility is kept temporarily, it should be clearly treated as legacy.
 
 ## Tool Contract
@@ -253,8 +253,7 @@ Until then, protocol-loop and mock HTTP tests provide narrower coverage of the w
 
 ## Migration
 
-`kanna-cli mcp serve` currently exists.
-Remove it in the first implementation.
+Remove the old `kanna-cli` MCP serve subcommand in the first implementation.
 There is no compatibility requirement for the old command, and keeping it would create a second public MCP entry point before the dedicated binary has settled.
 
 The preferred long-term client command is:
