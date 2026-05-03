@@ -38,6 +38,7 @@ import { useAppUpdate } from "./composables/useAppUpdate";
 import { isTopModal } from "./composables/useModalZIndex";
 import { selectTaskByActivity } from "./utils/selectTaskByActivity";
 import { getDefaultBaseBranch } from "./utils/baseBranchPicker";
+import { isTeardownStage } from "./stores/taskStages";
 import {
   parseIncomingTransferRequest,
   parsePairingCompletedEvent,
@@ -62,6 +63,10 @@ const isMobile = __KANNA_MOBILE__;
 function hasTag(item: { tags: string }, tag: string): boolean {
   try { return (JSON.parse(item.tags) as string[]).includes(tag); }
   catch { return false; }
+}
+
+function isActivityShortcutCandidate(item: { stage?: string }): boolean {
+  return typeof item.stage !== "string" || !isTeardownStage(item.stage);
 }
 
 function firstSupportedAgentProvider(agentProvider: AgentProvider | AgentProvider[] | string | string[] | undefined): AgentProvider | undefined {
@@ -258,7 +263,7 @@ function navigateRepos(direction: -1 | 1) {
 
 function selectReadTask(mode: "oldest" | "newest") {
   const target = selectTaskByActivity(
-    store.sortedItemsForCurrentRepo.filter((item) => !hasTag(item, "blocked")),
+    store.sortedItemsForCurrentRepo.filter((item) => isActivityShortcutCandidate(item) && !hasTag(item, "blocked")),
     mode,
     "idle",
   );
@@ -818,11 +823,19 @@ const keyboardActions = {
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
   goToOldestUnread: () => {
-    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "oldest", "unread");
+    const target = selectTaskByActivity(
+      store.sortedItemsForCurrentRepo.filter(isActivityShortcutCandidate),
+      "oldest",
+      "unread",
+    );
     if (target) store.selectItem(target.id);
   },
   goToNewestUnread: () => {
-    const target = selectTaskByActivity(store.sortedItemsForCurrentRepo, "newest", "unread");
+    const target = selectTaskByActivity(
+      store.sortedItemsForCurrentRepo.filter(isActivityShortcutCandidate),
+      "newest",
+      "unread",
+    );
     if (target) store.selectItem(target.id);
   },
   goToOldestRead: () => { selectReadTask("oldest"); },
