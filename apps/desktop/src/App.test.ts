@@ -14,6 +14,25 @@ async function flushPromises() {
   await nextTick();
 }
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve: Deferred<T>["resolve"] | null = null;
+  let reject: Deferred<T>["reject"] | null = null;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  if (!resolve || !reject) {
+    throw new Error("failed to create deferred promise");
+  }
+  return { promise, resolve, reject };
+}
+
 const listenHandlers = new Map<string, (event: unknown) => void | Promise<void>>();
 const dbSelectMock = vi.fn(async () => []);
 const dbMock = {
@@ -71,6 +90,7 @@ const store = {
     },
     finalizedCleanly: true,
   })),
+  pushTaskToPeer: vi.fn(async () => {}),
   handleOutgoingTransferCommitted: vi.fn(async () => {}),
   listBlockedByItem: vi.fn(async () => []),
   listBlockersForItem: vi.fn(async () => []),
@@ -449,6 +469,7 @@ describe("App", () => {
     store.approveIncomingTransfer.mockClear();
     store.rejectIncomingTransfer.mockClear();
     store.handleOutgoingTransferCommitted.mockClear();
+    store.pushTaskToPeer.mockClear();
     store.loadAgent.mockClear();
     store.selectItem.mockClear();
     store.repos = [{ id: "repo-1", path: "/tmp/repo", name: "repo" }];
@@ -1114,9 +1135,11 @@ describe("App", () => {
 
     const pairButton = wrapper.findAll('[data-testid="command-palette"] button')
       .find((button) => button.text() === "taskTransfer.pairPeer");
-    expect(pairButton).toBeTruthy();
+    if (!pairButton) {
+      throw new Error("Pair Machine command was not rendered");
+    }
 
-    await pairButton!.trigger("click");
+    await pairButton.trigger("click");
     await flushPromises();
 
     expect(wrapper.get('[data-testid="peer-picker-loading"]').text()).toBe("true");
@@ -1135,6 +1158,215 @@ describe("App", () => {
     expect(wrapper.get('[data-testid="peer-picker-peers"]').text()).toContain("Desk");
 
     vi.useRealTimers();
+  });
+
+  it("keeps Pair Machine pending while the pairing request is in flight and ignores duplicate selections", async () => {
+    store.currentItem = null;
+    const pairing = createDeferred<unknown>();
+    invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return ["feature/x", "main", "origin/main"];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      if (command === "list_transfer_peers") {
+        return [{
+          peer_id: "peer-remote",
+          display_name: "Desk",
+          trusted: false,
+          accepting_transfers: true,
+        }];
+      }
+      if (command === "start_peer_pairing") return pairing.promise;
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      template: `
+        <div data-testid="command-palette">
+          <button
+            v-for="command in dynamicCommands"
+            :key="command.id"
+            type="button"
+            @click="command.execute()"
+          >
+            {{ command.label }}
+          </button>
+        </div>
+      `,
+    });
+
+    const PeerPickerModalStub = defineComponent({
+      name: "PeerPickerModal",
+      props: {
+        actionPending: Boolean,
+      },
+      emits: ["select"],
+      template: `
+        <div data-testid="peer-picker">
+          <span data-testid="peer-picker-pending">{{ actionPending }}</span>
+          <button
+            data-testid="peer-picker-select-twice"
+            type="button"
+            @click="$emit('select', 'peer-remote'); $emit('select', 'peer-remote')"
+          >
+            select twice
+          </button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+      PeerPickerModal: PeerPickerModalStub,
+    });
+
+    await flushPromises();
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    const pairButton = wrapper.findAll('[data-testid="command-palette"] button')
+      .find((button) => button.text() === "taskTransfer.pairPeer");
+    if (!pairButton) {
+      throw new Error("Pair Machine command was not rendered");
+    }
+
+    await pairButton.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-pending"]').text()).toBe("false");
+
+    await wrapper.get('[data-testid="peer-picker-select-twice"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-pending"]').text()).toBe("true");
+    expect(invokeMock.mock.calls.filter(([command]) => command === "start_peer_pairing")).toHaveLength(1);
+
+    pairing.resolve({
+      peer: {
+        peer_id: "peer-remote",
+        display_name: "Desk",
+        trusted: true,
+        accepting_transfers: true,
+      },
+      verification_code: "ABC123",
+    });
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="peer-picker"]').exists()).toBe(false);
+  });
+
+  it("keeps Push to Machine pending while transfer push is in flight and ignores duplicate selections", async () => {
+    store.currentItem = {
+      id: "task-1",
+      stage: "in progress",
+      branch: "task-1",
+      prompt: "Fix handoff",
+      tags: "[]",
+    };
+    const push = createDeferred<void>();
+    store.pushTaskToPeer.mockImplementation(() => push.promise);
+    invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return ["feature/x", "main", "origin/main"];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      if (command === "list_transfer_peers") {
+        return [{
+          peer_id: "peer-remote",
+          display_name: "Desk",
+          trusted: true,
+          accepting_transfers: true,
+        }];
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const CommandPaletteModalStub = defineComponent({
+      name: "CommandPaletteModal",
+      props: {
+        dynamicCommands: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      template: `
+        <div data-testid="command-palette">
+          <button
+            v-for="command in dynamicCommands"
+            :key="command.id"
+            type="button"
+            @click="command.execute()"
+          >
+            {{ command.label }}
+          </button>
+        </div>
+      `,
+    });
+
+    const PeerPickerModalStub = defineComponent({
+      name: "PeerPickerModal",
+      props: {
+        actionPending: Boolean,
+      },
+      emits: ["select"],
+      template: `
+        <div data-testid="peer-picker">
+          <span data-testid="peer-picker-pending">{{ actionPending }}</span>
+          <button
+            data-testid="peer-picker-select-twice"
+            type="button"
+            @click="$emit('select', 'peer-remote'); $emit('select', 'peer-remote')"
+          >
+            select twice
+          </button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      CommandPaletteModal: CommandPaletteModalStub,
+      PeerPickerModal: PeerPickerModalStub,
+    });
+
+    await flushPromises();
+    capturedKeyboardActions?.commandPalette();
+    await flushPromises();
+
+    const pushButton = wrapper.findAll('[data-testid="command-palette"] button')
+      .find((button) => button.text() === "taskTransfer.pushToMachine");
+    if (!pushButton) {
+      throw new Error("Push to Machine command was not rendered");
+    }
+
+    await pushButton.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-pending"]').text()).toBe("false");
+
+    await wrapper.get('[data-testid="peer-picker-select-twice"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="peer-picker-pending"]').text()).toBe("true");
+    expect(store.pushTaskToPeer).toHaveBeenCalledTimes(1);
+    expect(store.pushTaskToPeer).toHaveBeenCalledWith("task-1", "peer-remote");
+
+    push.resolve();
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="peer-picker"]').exists()).toBe(false);
   });
 
   it("does not render the footer action bar for the current task view", async () => {

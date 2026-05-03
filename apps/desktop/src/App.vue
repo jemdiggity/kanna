@@ -718,6 +718,7 @@ function closePeerPicker() {
 }
 
 async function handlePeerSelected(peerId: string) {
+  if (transferPeerActionPending.value) return;
   const taskId = selectedTransferTaskId.value;
   if (!taskId) return;
   const selectedPeer = transferPeers.value.find((peer) => peer.id === peerId);
@@ -738,6 +739,7 @@ async function handlePeerSelected(peerId: string) {
 }
 
 async function handlePairPeer(peerId: string) {
+  if (transferPeerActionPending.value) return;
   try {
     transferPeerActionPending.value = true;
     console.log("[transfer] pair-machine request started", { peerId });
