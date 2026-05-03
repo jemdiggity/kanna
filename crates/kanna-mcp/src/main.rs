@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::env;
 use std::io::{BufRead, Write};
@@ -225,8 +225,209 @@ async fn handle_mcp_request(message: Value, base_url: &str) -> Value {
     }
 }
 
-async fn handle_mcp_tool_call(_base_url: &str, name: &str, _args: Value) -> Result<Value, String> {
-    Err(format!("unknown tool: {name}"))
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolRequest {
+    Get(String),
+    PostJson { path: String, body: Value },
+}
+
+fn encode_path_segment(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
+fn required_string(args: &Value, name: &str) -> Result<String, String> {
+    args.get(name)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("missing required argument: {name}"))
+}
+
+fn optional_string(args: &Value, name: &str) -> Option<String> {
+    args.get(name).and_then(Value::as_str).map(str::to_string)
+}
+
+fn optional_string_array(args: &Value, name: &str) -> Result<Option<Vec<String>>, String> {
+    let Some(value) = args.get(name) else {
+        return Ok(None);
+    };
+    let Some(values) = value.as_array() else {
+        return Err(format!("{name} must be an array of strings"));
+    };
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("{name} must be an array of strings"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn build_tool_request(name: &str, args: Value) -> Result<ToolRequest, String> {
+    match name {
+        "kanna_list_repos" => Ok(ToolRequest::Get("/v1/repos".to_string())),
+        "kanna_list_recent_tasks" => Ok(ToolRequest::Get("/v1/tasks/recent".to_string())),
+        "kanna_search_tasks" => {
+            let query = encode_path_segment(&required_string(&args, "query")?);
+            Ok(ToolRequest::Get(format!("/v1/tasks/search?query={query}")))
+        }
+        "kanna_list_repo_tasks" => {
+            let repo_id = encode_path_segment(&required_string(&args, "repo_id")?);
+            Ok(ToolRequest::Get(format!("/v1/repos/{repo_id}/tasks")))
+        }
+        "kanna_create_task" => {
+            let allowed_tools = optional_string_array(&args, "allowed_tools")?;
+            let mut body = serde_json::Map::new();
+            body.insert(
+                "repoId".to_string(),
+                Value::String(required_string(&args, "repo_id")?),
+            );
+            body.insert(
+                "prompt".to_string(),
+                Value::String(required_string(&args, "prompt")?),
+            );
+            for (arg_name, body_name) in [
+                ("pipeline_name", "pipelineName"),
+                ("base_ref", "baseRef"),
+                ("stage", "stage"),
+                ("agent_provider", "agentProvider"),
+                ("model", "model"),
+                ("permission_mode", "permissionMode"),
+            ] {
+                if let Some(value) = optional_string(&args, arg_name) {
+                    body.insert(body_name.to_string(), Value::String(value));
+                }
+            }
+            if let Some(values) = allowed_tools {
+                body.insert(
+                    "allowedTools".to_string(),
+                    Value::Array(values.into_iter().map(Value::String).collect()),
+                );
+            }
+            Ok(ToolRequest::PostJson {
+                path: "/v1/tasks".to_string(),
+                body: Value::Object(body),
+            })
+        }
+        "kanna_send_task_input" => {
+            let task_id = encode_path_segment(&required_string(&args, "task_id")?);
+            let input = required_string(&args, "input")?;
+            Ok(ToolRequest::PostJson {
+                path: format!("/v1/tasks/{task_id}/input"),
+                body: serde_json::json!({ "input": input }),
+            })
+        }
+        "kanna_close_task" => {
+            let task_id = encode_path_segment(&required_string(&args, "task_id")?);
+            Ok(ToolRequest::PostJson {
+                path: format!("/v1/tasks/{task_id}/actions/close"),
+                body: serde_json::json!({}),
+            })
+        }
+        "kanna_advance_stage" => {
+            let task_id = encode_path_segment(&required_string(&args, "task_id")?);
+            Ok(ToolRequest::PostJson {
+                path: format!("/v1/tasks/{task_id}/actions/advance-stage"),
+                body: serde_json::json!({}),
+            })
+        }
+        "kanna_complete_stage" => {
+            let task_id = encode_path_segment(&required_string(&args, "task_id")?);
+            let status = required_string(&args, "status")?;
+            if status != "success" && status != "failure" {
+                return Err("status must be success or failure".to_string());
+            }
+            let mut body = serde_json::json!({
+                "status": status,
+                "summary": required_string(&args, "summary")?,
+            });
+            if let Some(metadata) = args.get("metadata").cloned() {
+                body["metadata"] = metadata;
+            }
+            Ok(ToolRequest::PostJson {
+                path: format!("/v1/tasks/{task_id}/actions/complete-stage"),
+                body,
+            })
+        }
+        "kanna_request_revision" => {
+            let task_id = encode_path_segment(&required_string(&args, "task_id")?);
+            let mut body = serde_json::json!({
+                "targetStage": optional_string(&args, "target_stage").unwrap_or_else(|| "in progress".to_string()),
+                "summary": required_string(&args, "summary")?,
+                "prompt": required_string(&args, "prompt")?,
+            });
+            if let Some(metadata) = args.get("metadata").cloned() {
+                body["metadata"] = metadata;
+            }
+            Ok(ToolRequest::PostJson {
+                path: format!("/v1/tasks/{task_id}/actions/request-revision"),
+                body,
+            })
+        }
+        _ => Err(format!("unknown tool: {name}")),
+    }
+}
+
+fn join_server_url(base_url: &str, path: &str) -> String {
+    format!("{}{}", base_url.trim_end_matches('/'), path)
+}
+
+async fn get_json<T: DeserializeOwned>(base_url: &str, path: &str) -> Result<T, String> {
+    let response = reqwest::Client::new()
+        .get(join_server_url(base_url, path))
+        .send()
+        .await
+        .map_err(|e| format!("GET {path} failed: {e}"))?;
+    let status = response.status();
+    let response = response
+        .error_for_status()
+        .map_err(|e| format!("GET {path} failed with status {status}: {e}"))?;
+    response
+        .json::<T>()
+        .await
+        .map_err(|e| format!("GET {path} returned invalid JSON: {e}"))
+}
+
+async fn post_json<T: DeserializeOwned>(
+    base_url: &str,
+    path: &str,
+    body: &Value,
+) -> Result<T, String> {
+    let response = reqwest::Client::new()
+        .post(join_server_url(base_url, path))
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("POST {path} failed: {e}"))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::NO_CONTENT {
+        return serde_json::from_value(serde_json::json!({ "ok": true }))
+            .map_err(|e| format!("failed to encode empty response: {e}"));
+    }
+    let response = response
+        .error_for_status()
+        .map_err(|e| format!("POST {path} failed with status {status}: {e}"))?;
+    response
+        .json::<T>()
+        .await
+        .map_err(|e| format!("POST {path} returned invalid JSON: {e}"))
+}
+
+async fn handle_mcp_tool_call(base_url: &str, name: &str, args: Value) -> Result<Value, String> {
+    match build_tool_request(name, args)? {
+        ToolRequest::Get(path) => get_json(base_url, &path).await,
+        ToolRequest::PostJson { path, body } => post_json(base_url, &path, &body).await,
+    }
 }
 
 #[cfg(test)]
@@ -316,5 +517,57 @@ mod tests {
 
         assert_eq!(response["error"]["code"], -32602);
         assert_eq!(response["error"]["message"], "missing tool name");
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn builds_expected_tool_requests() {
+        assert_eq!(
+            build_tool_request("kanna_list_repos", json!({})).unwrap(),
+            ToolRequest::Get("/v1/repos".to_string())
+        );
+        assert_eq!(
+            build_tool_request("kanna_list_recent_tasks", json!({})).unwrap(),
+            ToolRequest::Get("/v1/tasks/recent".to_string())
+        );
+        assert_eq!(
+            build_tool_request("kanna_search_tasks", json!({ "query": "review me" })).unwrap(),
+            ToolRequest::Get("/v1/tasks/search?query=review%20me".to_string())
+        );
+        assert_eq!(
+            build_tool_request("kanna_list_repo_tasks", json!({ "repo_id": "repo-1" })).unwrap(),
+            ToolRequest::Get("/v1/repos/repo-1/tasks".to_string())
+        );
+        assert_eq!(
+            build_tool_request("kanna_close_task", json!({ "task_id": "task-1" })).unwrap(),
+            ToolRequest::PostJson {
+                path: "/v1/tasks/task-1/actions/close".to_string(),
+                body: json!({})
+            }
+        );
+    }
+
+    #[test]
+    fn validates_complete_stage_status() {
+        assert_eq!(
+            build_tool_request(
+                "kanna_complete_stage",
+                json!({ "task_id": "task-1", "status": "maybe", "summary": "done" })
+            ),
+            Err("status must be success or failure".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_missing_required_argument() {
+        assert_eq!(
+            build_tool_request("kanna_search_tasks", json!({})),
+            Err("missing required argument: query".to_string())
+        );
     }
 }
