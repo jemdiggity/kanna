@@ -254,9 +254,8 @@ Until then, protocol-loop and mock HTTP tests provide narrower coverage of the w
 ## Migration
 
 `kanna-cli mcp serve` currently exists.
-Keep it as a compatibility wrapper for the first implementation.
-The wrapper should either delegate to the same implementation path or print clear guidance that `kanna-mcp serve` is the preferred command.
-It should not keep a separate MCP tool registry.
+Remove it in the first implementation.
+There is no compatibility requirement for the old command, and keeping it would create a second public MCP entry point before the dedicated binary has settled.
 
 The preferred long-term client command is:
 
