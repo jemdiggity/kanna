@@ -25,12 +25,6 @@ enum Commands {
     },
 }
 
-fn main() {
-    let _ = Cli::parse();
-    eprintln!("not implemented");
-    process::exit(1);
-}
-
 fn env_var_from_pairs(env_pairs: &[(&str, &str)], key: &str) -> Option<String> {
     env_pairs
         .iter()
@@ -430,6 +424,55 @@ async fn handle_mcp_tool_call(base_url: &str, name: &str, args: Value) -> Result
     }
 }
 
+async fn handle_mcp_line(line: &str, base_url: &str) -> Result<Option<String>, String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let message: Value = serde_json::from_str(trimmed)
+        .map_err(|e| format!("failed to parse MCP JSON-RPC message: {e}"))?;
+    let response = handle_mcp_request(message, base_url).await;
+    if response.is_null() {
+        return Ok(None);
+    }
+    serde_json::to_string(&response)
+        .map(Some)
+        .map_err(|e| format!("failed to render MCP response: {e}"))
+}
+
+async fn serve_mcp(base_url: &str) -> Result<(), String> {
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|e| format!("failed to read stdin: {e}"))?;
+        if let Some(mut rendered) = handle_mcp_line(&line, base_url).await? {
+            rendered.push('\n');
+            stdout
+                .write_all(rendered.as_bytes())
+                .map_err(|e| format!("failed to write stdout: {e}"))?;
+            stdout
+                .flush()
+                .map_err(|e| format!("failed to flush stdout: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Serve { server_url } => {
+            let base_url = resolve_server_base_url_from_env(server_url.as_deref());
+            if let Err(e) = serve_mcp(&base_url).await {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,5 +612,38 @@ mod route_tests {
             build_tool_request("kanna_search_tasks", json!({})),
             Err("missing required argument: query".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod stdio_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn initialized_notification_produces_no_output_line() {
+        let output = handle_mcp_line(
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            "http://127.0.0.1:48120",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output, None);
+    }
+
+    #[tokio::test]
+    async fn initialize_line_produces_json_response_line() {
+        let output = handle_mcp_line(
+            r#"{"jsonrpc":"2.0","id":7,"method":"initialize"}"#,
+            "http://127.0.0.1:48120",
+        )
+        .await
+        .unwrap()
+        .expect("response line");
+        let parsed: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(parsed["id"], json!(7));
+        assert_eq!(parsed["result"]["serverInfo"]["name"], "kanna-mcp");
     }
 }
