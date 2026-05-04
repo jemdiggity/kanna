@@ -1606,6 +1606,49 @@ describe("kanna store task base branch integration", () => {
     });
   });
 
+  it("refreshes an edited repo pipeline definition before advancing stages", async () => {
+    mockState.pipelineDefinition = {
+      name: "qa",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "review", transition: "auto", agent: "review" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        pipeline: "qa",
+        stage: "in progress",
+        stage_result: JSON.stringify({ status: "success", summary: "implemented" }),
+      }),
+    ];
+
+    const store = await createStore();
+    await store.loadPipeline("/tmp/repo", "qa");
+
+    mockState.pipelineDefinition = {
+      name: "qa",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "commit", transition: "auto", mode: "continue", agent: "commit" },
+        { name: "review", transition: "auto", agent: "review" },
+      ],
+    };
+
+    await store.advanceStage("item-source");
+
+    expect(mockState.updatePipelineItemStageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "item-source",
+      "commit",
+    );
+    expect(mockState.insertPipelineItemMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ stage: "review" }),
+    );
+  });
+
   it("clears stale stage result before sending a continue stage prompt", async () => {
     mockState.pipelineDefinition = {
       name: "default",
