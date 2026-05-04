@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
@@ -60,6 +61,16 @@ async function hydrateStoreItem(client: WebDriverClient, taskId: string): Promis
   }
 }
 
+async function waitForFileSize(path: string, expectedSize: number, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const size = await stat(path).then((stats) => stats.size).catch(() => 0);
+    if (size === expectedSize) return;
+    await sleep(100);
+  }
+  throw new Error(`timed out waiting for ${path} to reach ${expectedSize} bytes`);
+}
+
 describe("stage advance", () => {
   const client = new WebDriverClient();
   let repoId = "";
@@ -118,6 +129,13 @@ describe("stage advance", () => {
 
   it("advances a live task into a continue-mode commit stage through the daemon input command", async () => {
     const taskId = "continue-stage-task";
+    const inputCapturePath = join(testRepoPath, ".kanna", "continue-stage-input.bin");
+    const expectedPrompt = [
+      "Commit agent generated prompt marker.",
+      "",
+      "Commit stage marker for Write the commit",
+    ].join("\n");
+    const expectedInput = Buffer.from(`${expectedPrompt}\r`, "utf8");
     await execDb(
       client,
       `INSERT INTO pipeline_item (
@@ -144,8 +162,11 @@ describe("stage advance", () => {
     await tauriInvoke(client, "spawn_session", {
       sessionId: taskId,
       cwd: testRepoPath,
-      executable: "/bin/cat",
-      args: [],
+      executable: "/bin/sh",
+      args: [
+        "-lc",
+        `stty raw -echo; dd bs=1 count=${expectedInput.length} of=.kanna/continue-stage-input.bin 2>/dev/null`,
+      ],
       env: {},
       cols: 80,
       rows: 24,
@@ -156,5 +177,7 @@ describe("stage advance", () => {
     if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
 
     await waitForStage(client, taskId, "commit");
+    await waitForFileSize(inputCapturePath, expectedInput.length);
+    expect(await readFile(inputCapturePath)).toEqual(expectedInput);
   });
 });
