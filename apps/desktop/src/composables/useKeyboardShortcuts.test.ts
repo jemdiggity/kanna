@@ -276,4 +276,18 @@ describe("useKeyboardShortcuts", () => {
       }
     }
   });
+
+  it("handles Escape as dismiss in the tree modal context", () => {
+    const actions = buildActions();
+    const wrapper = mountShortcutHarness(actions, () => "tree");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    expect(actions.dismiss).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
 });

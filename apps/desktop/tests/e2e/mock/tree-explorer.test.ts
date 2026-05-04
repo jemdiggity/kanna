@@ -55,6 +55,7 @@ async function waitForExplorerText(
 describe("tree explorer", () => {
   const client = new WebDriverClient();
   let fixtureRepoPath = "";
+  let repoImported = false;
 
   beforeAll(async () => {
     fixtureRepoPath = await createSeedFixtureRepo("task-switch-minimal");
@@ -68,8 +69,14 @@ describe("tree explorer", () => {
     await client.deleteSession();
   });
 
-  it("toggles ignored files through the UI for an imported fixture repo", async () => {
+  async function ensureRepoImported(): Promise<void> {
+    if (repoImported) return;
     await importRepoThroughUi(client, fixtureRepoPath);
+    repoImported = true;
+  }
+
+  it("toggles ignored files through the UI for an imported fixture repo", async () => {
+    await ensureRepoImported();
 
     await pressKey(client, "E", { meta: true, shift: true });
     await client.waitForElement(".tree-modal", 5_000);
@@ -82,5 +89,27 @@ describe("tree explorer", () => {
     await waitForExplorerText(client, IGNORED_FILE);
 
     expect(await textContent(client, ".show-all-toggle")).toContain("showing all");
+  });
+
+  it("closes a stacked commit graph before closing the tree explorer with Escape", async () => {
+    await ensureRepoImported();
+
+    await client.executeSync(
+      `window.__KANNA_E2E__.setupState.showTreeExplorer = false;
+       window.__KANNA_E2E__.setupState.showCommitGraphModal = false;`,
+    );
+
+    await pressKey(client, "E", { meta: true, shift: true });
+    await client.waitForElement(".tree-modal", 5_000);
+
+    await pressKey(client, "g", { meta: true });
+    await client.waitForElement(".graph-modal", 5_000);
+
+    await pressKey(client, "Escape");
+    await client.waitForNoElement(".graph-modal", 5_000);
+    await client.waitForElement(".tree-modal", 5_000);
+
+    await pressKey(client, "Escape");
+    await client.waitForNoElement(".tree-modal", 5_000);
   });
 });

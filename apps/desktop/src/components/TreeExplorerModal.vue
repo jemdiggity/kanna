@@ -18,7 +18,17 @@ registerContextShortcuts("tree", [
 ]);
 
 const { zIndex, bringToFront } = useModalZIndex();
-defineExpose({ zIndex, bringToFront });
+
+function dismiss(): boolean {
+  if (filtering.value || filterText.value) {
+    filterText.value = "";
+    filtering.value = false;
+    return false;
+  }
+  return true;
+}
+
+defineExpose({ zIndex, bringToFront, dismiss });
 
 const props = defineProps<{
   worktreePath: string;
@@ -67,9 +77,11 @@ async function onKeydown(e: KeyboardEvent) {
   // Stop propagation — tree explorer owns all non-meta keys
   e.stopPropagation();
 
-  if (e.key === "Escape" && !filtering.value && !filterText.value) {
+  if (e.key === "Escape") {
     e.preventDefault();
-    emit("close");
+    if (dismiss()) {
+      emit("close");
+    }
     return;
   }
 

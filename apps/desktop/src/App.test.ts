@@ -1638,4 +1638,36 @@ describe("App", () => {
 
     expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-maximized")).toBe("false");
   });
+
+  it("lets the tree explorer consume dismiss before closing it", async () => {
+    const treeDismissMock = vi.fn(() => false);
+    const TreeExplorerDismissStub = defineComponent({
+      name: "TreeExplorerModal",
+      setup(_props, { expose }) {
+        expose({
+          dismiss: treeDismissMock,
+          zIndex: 1,
+          bringToFront: vi.fn(),
+        });
+        return () => h("div", { "data-testid": "tree-explorer-modal" });
+      },
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      TreeExplorerModal: TreeExplorerDismissStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.toggleTreeExplorer();
+    await flushPromises();
+
+    const handled = capturedKeyboardActions?.dismiss();
+    await flushPromises();
+
+    expect(handled).toBe(true);
+    expect(treeDismissMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-testid="tree-explorer-modal"]').exists()).toBe(true);
+  });
 });
