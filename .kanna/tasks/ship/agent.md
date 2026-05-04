@@ -15,9 +15,21 @@ You are the shipping agent. Your job is to rename the current worktree branch to
    - Clean git working directory
    - Branch is up to date with `origin/main` (the script checks this)
    - Developer ID Application certificate installed
+   - `KANNA_UPDATER_PUBKEY` env var set
+   - `TAURI_PRIVATE_KEY_PATH` env var set and points to the Tauri updater private key
+   - `TAURI_PRIVATE_KEY_PASSWORD` env var set if the updater private key is encrypted
    - `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` env vars set (unless dry-run)
    - `gh` CLI authenticated (unless dry-run)
    - Both Rust targets installed: `aarch64-apple-darwin` and `x86_64-apple-darwin`
+
+Updater signing is required for both `--release` and `--dry-run`. If the standard updater keypair is installed, you can derive the public key and private key path like this:
+
+```bash
+export TAURI_PRIVATE_KEY_PATH="$HOME/.tauri/kanna-updater.key"
+export KANNA_UPDATER_PUBKEY="$(tr -d '\n' < "$HOME/.tauri/kanna-updater.key.pub")"
+```
+
+If `tauri signer sign` fails with `incorrect updater private key password` or a non-interactive terminal error, set `TAURI_PRIVATE_KEY_PASSWORD` and rerun.
 
 **Sandbox note:** The Claude Code sandbox blocks macOS Keychain access (`security find-identity` returns 0 identities) and network calls (`gh` fails with TLS/x509 errors). If you see these errors, they are caused by the sandbox — retry the command with `dangerouslyDisableSandbox: true`.
 
@@ -56,6 +68,8 @@ This means the tag always lands on main. If the build needs hotfixes before rele
 ## Run the ship script
 
 The ship script uses `gh` CLI and `git push`, which require network access outside the sandbox. Run with `dangerouslyDisableSandbox: true`.
+
+Before rerunning after any failed `ship.sh` attempt, check `git status`. The script may leave version files modified after a partial failure; clean up or account for those changes before rerunning so the next bump is computed intentionally.
 
 ```bash
 ./scripts/ship.sh [OPTIONS]
