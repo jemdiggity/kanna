@@ -1257,6 +1257,53 @@ describe("kanna store task base branch integration", () => {
     });
   });
 
+  it("preserves the original base ref while advancing stages from the source branch", async () => {
+    mockState.pipelineDefinition = {
+      name: "qa",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "review", transition: "manual", agent: "review" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-existing",
+        branch: "task-existing-branch",
+        base_ref: "origin/main",
+        pipeline: "qa",
+        stage: "in progress",
+      }),
+    ];
+
+    const store = await createStore();
+    await vi.waitFor(() => {
+      expect(store.items).toHaveLength(1);
+    });
+
+    await store.advanceStage("item-existing");
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "git_worktree_add",
+        expect.objectContaining({
+          repoPath: "/tmp/repo",
+          startPoint: "task-existing-branch",
+        }),
+      );
+      expect(mockState.pipelineItems.some(
+        (item) => item.stage === "review" && item.base_ref === "origin/main",
+      )).toBe(true);
+    });
+    expect(buildStagePrompt).toHaveBeenCalledWith(
+      "Agent prompt",
+      undefined,
+      expect.objectContaining({
+        branch: "task-existing-branch",
+        baseRef: "origin/main",
+      }),
+    );
+  });
+
   it("detaches the source task terminal before killing it during stage advance", async () => {
     mockState.pipelineDefinition = {
       name: "default",

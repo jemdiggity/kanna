@@ -2,6 +2,7 @@ export interface PromptContext {
   taskPrompt?: string;
   prevResult?: string;
   branch?: string;
+  baseRef?: string;
   sourceWorktree?: string;
 }
 
@@ -19,5 +20,6 @@ export function buildStagePrompt(
     .replaceAll("$TASK_PROMPT", context.taskPrompt ?? "")
     .replaceAll("$PREV_RESULT", context.prevResult ?? "")
     .replaceAll("$BRANCH", context.branch ?? "")
+    .replaceAll("$BASE_REF", context.baseRef ?? "")
     .replaceAll("$SOURCE_WORKTREE", context.sourceWorktree ?? "");
 }

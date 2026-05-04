@@ -67,6 +67,7 @@ export interface KannaSnapshot {
 
 export interface CreateItemOptions {
   baseBranch?: string;
+  baseRef?: string | null;
   tags?: string[];
   pipelineName?: string;
   stage?: string;
