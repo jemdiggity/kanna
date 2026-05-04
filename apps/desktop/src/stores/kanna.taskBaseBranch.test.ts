@@ -1582,6 +1582,7 @@ describe("kanna store task base branch integration", () => {
         branch: "task-source",
         stage: "in progress",
         stage_result: JSON.stringify({ status: "success", summary: "implemented" }),
+        agent_provider: "codex",
       }),
     ];
 
@@ -1602,11 +1603,61 @@ describe("kanna store task base branch integration", () => {
     );
     expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
       sessionId: "item-source",
-      data: Array.from(new TextEncoder().encode("Stage prompt")),
+      data: Array.from(new TextEncoder().encode("\x1b[200~Stage prompt\x1b[201~\r")),
     });
+  });
+
+  it("submits continue-mode prompts to Claude with the terminal Enter sequence", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "commit", transition: "auto", mode: "continue", agent: "commit" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        agent_provider: "claude",
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source");
+
     expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
       sessionId: "item-source",
-      data: Array.from(new TextEncoder().encode("\r")),
+      data: Array.from(new TextEncoder().encode("\x1b[200~Stage prompt\x1b[201~\x1b[13u")),
+    });
+  });
+
+  it("submits continue-mode prompts to Copilot with carriage return", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "commit", transition: "auto", mode: "continue", agent: "commit" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        agent_provider: "copilot",
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source");
+
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("\x1b[200~Stage prompt\x1b[201~\r")),
     });
   });
 

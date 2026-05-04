@@ -120,6 +120,8 @@ describe("stage advance", () => {
 
   afterAll(async () => {
     await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-task" }).catch(() => undefined);
+    await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-claude-enter-task" }).catch(() => undefined);
+    await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-copilot-task" }).catch(() => undefined);
     if (testRepoPath) {
       await cleanupWorktrees(client, testRepoPath);
     }
@@ -135,7 +137,7 @@ describe("stage advance", () => {
       "",
       "Commit stage marker for Write the commit",
     ].join("\n");
-    const expectedInput = Buffer.from(`${expectedPrompt}\r`, "utf8");
+    const expectedInput = Buffer.from(`\x1b[200~${expectedPrompt}\x1b[201~\r`, "utf8");
     await execDb(
       client,
       `INSERT INTO pipeline_item (
@@ -152,7 +154,7 @@ describe("stage advance", () => {
         "[]",
         "task-continue-stage",
         "pty",
-        "claude",
+        "codex",
         "idle",
         null,
       ],
@@ -170,7 +172,115 @@ describe("stage advance", () => {
       env: {},
       cols: 80,
       rows: 24,
+      agentProvider: "codex",
+    });
+
+    const advanceResult = await callVueMethod(client, "store.advanceStage", taskId);
+    if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
+
+    await waitForStage(client, taskId, "commit");
+    await waitForFileSize(inputCapturePath, expectedInput.length);
+    expect(await readFile(inputCapturePath)).toEqual(expectedInput);
+  });
+
+  it("submits a continue-mode Claude stage with the terminal Enter sequence", async () => {
+    const taskId = "continue-stage-claude-enter-task";
+    const inputCapturePath = join(testRepoPath, ".kanna", "continue-stage-claude-enter-input.bin");
+    const expectedPrompt = [
+      "Commit agent generated prompt marker.",
+      "",
+      "Commit stage marker for Write the commit",
+    ].join("\n");
+    const expectedInput = Buffer.from(`\x1b[200~${expectedPrompt}\x1b[201~\x1b[13u`, "utf8");
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [
+        taskId,
+        repoId,
+        "Write the commit",
+        "continue-e2e",
+        "in progress",
+        JSON.stringify({ status: "success", summary: "implemented" }),
+        "[]",
+        "task-continue-stage-claude-enter",
+        "pty",
+        "claude",
+        "idle",
+        null,
+      ],
+    );
+    await hydrateStoreItem(client, taskId);
+
+    await tauriInvoke(client, "spawn_session", {
+      sessionId: taskId,
+      cwd: testRepoPath,
+      executable: "/bin/sh",
+      args: [
+        "-lc",
+        `stty raw -echo; dd bs=1 count=${expectedInput.length} of=.kanna/continue-stage-claude-enter-input.bin 2>/dev/null`,
+      ],
+      env: {},
+      cols: 80,
+      rows: 24,
       agentProvider: "claude",
+    });
+
+    const advanceResult = await callVueMethod(client, "store.advanceStage", taskId);
+    if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
+
+    await waitForStage(client, taskId, "commit");
+    await waitForFileSize(inputCapturePath, expectedInput.length);
+    expect(await readFile(inputCapturePath)).toEqual(expectedInput);
+  });
+
+  it("submits a continue-mode Copilot stage with carriage return", async () => {
+    const taskId = "continue-stage-copilot-task";
+    const inputCapturePath = join(testRepoPath, ".kanna", "continue-stage-copilot-input.bin");
+    const expectedPrompt = [
+      "Commit agent generated prompt marker.",
+      "",
+      "Commit stage marker for Write the commit",
+    ].join("\n");
+    const expectedInput = Buffer.from(`\x1b[200~${expectedPrompt}\x1b[201~\r`, "utf8");
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [
+        taskId,
+        repoId,
+        "Write the commit",
+        "continue-e2e",
+        "in progress",
+        JSON.stringify({ status: "success", summary: "implemented" }),
+        "[]",
+        "task-continue-stage-copilot",
+        "pty",
+        "copilot",
+        "idle",
+        null,
+      ],
+    );
+    await hydrateStoreItem(client, taskId);
+
+    await tauriInvoke(client, "spawn_session", {
+      sessionId: taskId,
+      cwd: testRepoPath,
+      executable: "/bin/sh",
+      args: [
+        "-lc",
+        `stty raw -echo; dd bs=1 count=${expectedInput.length} of=.kanna/continue-stage-copilot-input.bin 2>/dev/null`,
+      ],
+      env: {},
+      cols: 80,
+      rows: 24,
+      agentProvider: "copilot",
     });
 
     const advanceResult = await callVueMethod(client, "store.advanceStage", taskId);
