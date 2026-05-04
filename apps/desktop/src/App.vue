@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { computedAsync } from "@vueuse/core";
 import { isTauri } from "./tauri-mock";
 import { invoke } from "./invoke";
-import { listen } from "./listen";
+import { listen, listenCurrentWebviewWindow } from "./listen";
 import { parseRepoConfig } from "@kanna/core";
 import { getSetting, setSetting, type AgentProvider, type DbHandle } from "@kanna/db";
 import i18n from "./i18n";
@@ -1212,7 +1212,7 @@ onMounted(async () => {
   }
 
   try {
-    const unlistenNativeNewWindow = await listen(WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT, async () => {
+    const unlistenNativeNewWindow = await listenCurrentWebviewWindow(WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT, async () => {
       await keyboardActions.newWindow();
     });
     appUnlisteners.push(unlistenNativeNewWindow);
@@ -1221,7 +1221,7 @@ onMounted(async () => {
   }
 
   try {
-    const unlistenNativeCloseWindow = await listen(WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT, async () => {
+    const unlistenNativeCloseWindow = await listenCurrentWebviewWindow(WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT, async () => {
       await keyboardActions.closeWindow();
     });
     appUnlisteners.push(unlistenNativeCloseWindow);

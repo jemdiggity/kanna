@@ -13,7 +13,7 @@ use dashmap::DashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, EventTarget, Manager};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 
@@ -76,8 +76,8 @@ fn handle_native_workspace_menu_event(app: &tauri::AppHandle, menu_id: &str) {
 
     match resolve_native_workspace_menu_action(menu_id, focused_label.as_deref()) {
         NativeWorkspaceMenuAction::DispatchToFocused { label, event } => {
-            if let Some(window) = app.get_webview_window(&label) {
-                if let Err(error) = window.emit(event, ()) {
+            if app.get_webview_window(&label).is_some() {
+                if let Err(error) = app.emit_to(EventTarget::webview_window(&label), event, ()) {
                     eprintln!("[menu] failed to emit {} to {}: {}", event, label, error);
                 }
             }

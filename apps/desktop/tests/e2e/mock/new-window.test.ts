@@ -60,6 +60,39 @@ async function switchToWindow(client: WebDriverClient, handle: string): Promise<
   }
 }
 
+async function pressCommandW(client: WebDriverClient): Promise<void> {
+  const sessionId = getClientSessionId(client);
+  const metaKey = "\uE03D";
+  const response = await fetch(`${client.getBaseUrl()}/session/${sessionId}/actions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      actions: [
+        {
+          type: "key",
+          id: "keyboard",
+          actions: [
+            { type: "keyDown", value: metaKey },
+            { type: "keyDown", value: "w" },
+            { type: "keyUp", value: "w" },
+            { type: "keyUp", value: metaKey },
+          ],
+        },
+      ],
+    }),
+  });
+  const body = await response.json() as WebDriverResponse<null>;
+  if (
+    typeof body.value === "object" &&
+    body.value !== null &&
+    "error" in body.value
+  ) {
+    throw new Error(`WebDriver error: ${body.value.message ?? "unknown error"}`);
+  }
+}
+
 async function waitForWindowCount(
   client: WebDriverClient,
   count: number,
@@ -246,14 +279,7 @@ describe("new window", () => {
     await setSelectedItem(client, taskBId);
     await waitForCurrentItemId(client, taskBId);
 
-    await client.executeAsync(
-      `const cb = arguments[arguments.length - 1];
-       const ctx = window.__KANNA_E2E__.setupState;
-       setTimeout(() => {
-         void ctx.windowWorkspace.closeWindow();
-       }, 0);
-       cb("scheduled");`,
-    );
+    await pressCommandW(client);
 
     const remainingHandles = await waitForWindowCount(client, initialHandles.length);
     expect(remainingHandles).toContain(sourceHandle);
