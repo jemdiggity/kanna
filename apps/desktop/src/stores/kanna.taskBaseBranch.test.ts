@@ -1602,7 +1602,7 @@ describe("kanna store task base branch integration", () => {
     );
     expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
       sessionId: "item-source",
-      input: "Stage prompt\n",
+      data: Array.from(new TextEncoder().encode("Stage prompt\n")),
     });
   });
 
@@ -1787,7 +1787,7 @@ describe("kanna store task base branch integration", () => {
       "send_input",
       expect.objectContaining({
         sessionId: "item-blocked",
-        input: expect.stringContaining("Upstream dependency"),
+        data: expect.arrayContaining(Array.from(new TextEncoder().encode("Upstream dependency"))),
       }),
     );
     expect(mockState.invokeMock).not.toHaveBeenCalledWith(

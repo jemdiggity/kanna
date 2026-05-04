@@ -6,6 +6,7 @@ import type { AgentDefinition, PipelineDefinition } from "../../../../packages/c
 import { clearPipelineItemStageResult, getRepo, updatePipelineItemStage } from "@kanna/db";
 import { invoke } from "../invoke";
 import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
+import { encodeDaemonInput } from "./daemonInput";
 import {
   getPreferredAgentProviders,
   resolveAgentProvider,
@@ -109,7 +110,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
       await invoke("send_input", {
         sessionId: taskId,
-        input: `${stagePrompt}\n`,
+        data: encodeDaemonInput(`${stagePrompt}\n`),
       });
     } catch (error) {
       await updatePipelineItemStage(context.requireDb(), taskId, previousStageName);
