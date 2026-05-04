@@ -34,6 +34,7 @@ function createDeferred<T>(): Deferred<T> {
 }
 
 const listenHandlers = new Map<string, (event: unknown) => void | Promise<void>>();
+const currentWebviewWindowListenHandlers = new Map<string, (event: unknown) => void | Promise<void>>();
 const dbSelectMock = vi.fn(async () => []);
 const dbMock = {
   select: dbSelectMock,
@@ -163,6 +164,12 @@ vi.mock("./listen", () => ({
     listenHandlers.set(event, handler);
     return () => {
       listenHandlers.delete(event);
+    };
+  }),
+  listenCurrentWebviewWindow: vi.fn(async (event: string, handler: (event: unknown) => void | Promise<void>) => {
+    currentWebviewWindowListenHandlers.set(event, handler);
+    return () => {
+      currentWebviewWindowListenHandlers.delete(event);
     };
   }),
 }));
@@ -478,6 +485,7 @@ describe("App", () => {
     store.sortedItemsForCurrentRepo = [];
     store.sortedItemsAllRepos = [];
     listenHandlers.clear();
+    currentWebviewWindowListenHandlers.clear();
     capturedKeyboardActions = null;
     mockWindowWorkspace.loadSnapshot.mockClear();
     mockWindowWorkspace.saveSnapshot.mockClear();
@@ -694,7 +702,8 @@ describe("App", () => {
     store.selectedItemId = "task-1";
 
     await mountApp(SidebarWithRepoStub);
-    const handler = listenHandlers.get(WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT);
+    expect(listenHandlers.has(WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT)).toBe(false);
+    const handler = currentWebviewWindowListenHandlers.get(WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT);
     expect(handler).toBeTypeOf("function");
 
     await handler?.({});
@@ -707,7 +716,8 @@ describe("App", () => {
 
   it("closes the current window when the native window-close event arrives", async () => {
     await mountApp(SidebarWithRepoStub);
-    const handler = listenHandlers.get(WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT);
+    expect(listenHandlers.has(WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT)).toBe(false);
+    const handler = currentWebviewWindowListenHandlers.get(WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT);
     expect(handler).toBeTypeOf("function");
 
     await handler?.({});

@@ -60,6 +60,25 @@ async function switchToWindow(client: WebDriverClient, handle: string): Promise<
   }
 }
 
+async function closeFocusedWindowThroughAppAction(client: WebDriverClient): Promise<void> {
+  const result = await client.executeAsync(
+    `const cb = arguments[arguments.length - 1];
+     const ctx = window.__KANNA_E2E__.setupState;
+     setTimeout(() => {
+       void Promise.resolve(ctx.keyboardActions?.closeWindow?.() ?? ctx.windowWorkspace.closeWindow())
+         .catch((error) => console.error("[e2e] close focused window failed", error));
+     }, 0);
+     cb("scheduled");`,
+  );
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "__error" in result
+  ) {
+    throw new Error(String((result as { __error: unknown }).__error));
+  }
+}
+
 async function waitForWindowCount(
   client: WebDriverClient,
   count: number,
@@ -246,14 +265,7 @@ describe("new window", () => {
     await setSelectedItem(client, taskBId);
     await waitForCurrentItemId(client, taskBId);
 
-    await client.executeAsync(
-      `const cb = arguments[arguments.length - 1];
-       const ctx = window.__KANNA_E2E__.setupState;
-       setTimeout(() => {
-         void ctx.windowWorkspace.closeWindow();
-       }, 0);
-       cb("scheduled");`,
-    );
+    await closeFocusedWindowThroughAppAction(client);
 
     const remainingHandles = await waitForWindowCount(client, initialHandles.length);
     expect(remainingHandles).toContain(sourceHandle);
