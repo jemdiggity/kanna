@@ -22,7 +22,7 @@
       "name": "review",
       "description": "QA agent checks whether sufficient tests exist before PR creation",
       "agent": "review",
-      "prompt": "Review branch $BRANCH for task quality and test coverage. Original task: $TASK_PROMPT. Previous result: $PREV_RESULT",
+      "prompt": "Review branch $BRANCH for task quality and test coverage against base $BASE_REF. Original task: $TASK_PROMPT. Previous result: $PREV_RESULT",
       "transition": "auto"
     },
     {

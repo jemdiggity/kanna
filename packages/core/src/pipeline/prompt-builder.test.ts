@@ -41,6 +41,15 @@ describe("buildStagePrompt", () => {
     );
   });
 
+  it("replaces $BASE_REF with the original task base ref", () => {
+    const result = buildStagePrompt(
+      "Agent base prompt.",
+      "Review changes since $BASE_REF.",
+      { baseRef: "origin/main" }
+    );
+    expect(result).toContain("Review changes since origin/main.");
+  });
+
   it("is a no-op when no variables are present", () => {
     const stagePrompt = "No variables here.";
     const result = buildStagePrompt("Agent base prompt.", stagePrompt, {
@@ -54,10 +63,10 @@ describe("buildStagePrompt", () => {
   it("replaces undefined/missing variables with empty string", () => {
     const result = buildStagePrompt(
       "Base.",
-      "Task: $TASK_PROMPT, Prev: $PREV_RESULT, Branch: $BRANCH, Source: $SOURCE_WORKTREE",
+      "Task: $TASK_PROMPT, Prev: $PREV_RESULT, Branch: $BRANCH, Base: $BASE_REF, Source: $SOURCE_WORKTREE",
       {}
     );
-    expect(result).toBe("Base.\n\nTask: , Prev: , Branch: , Source: ");
+    expect(result).toBe("Base.\n\nTask: , Prev: , Branch: , Base: , Source: ");
   });
 
   it("combines agent base prompt with stage prompt separated by double newline", () => {

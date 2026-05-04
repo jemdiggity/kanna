@@ -234,6 +234,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
           taskPrompt: item.prompt ?? "",
           prevResult,
           branch: item.branch ?? undefined,
+          baseRef: item.base_ref ?? undefined,
           sourceWorktree: resolveSourceWorktree(repo.path, item.branch),
         });
 
@@ -282,6 +283,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     });
     const createdItemId = await requireService(context.services.createItem, "createItem")(repo.id, repo.path, stagePrompt, "pty", {
       baseBranch: item.branch,
+      baseRef: item.base_ref ?? item.branch,
       pipelineName: item.pipeline,
       stage: nextStage.name,
       selectOnCreate: shouldFollowTask,
@@ -367,6 +369,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
         const stagePrompt = buildStagePrompt(agent.prompt, currentStage.prompt, {
           taskPrompt: item.prompt ?? "",
           branch: item.branch ?? undefined,
+          baseRef: item.base_ref ?? undefined,
           sourceWorktree: resolvePriorTaskSourceWorktree(repo.path, item.base_ref),
         });
         const worktreePath = buildWorktreePath(repo.path, item.branch);

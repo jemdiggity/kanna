@@ -45,6 +45,7 @@ pub struct TaskStageSource {
     pub stage: Option<String>,
     pub stage_result: Option<String>,
     pub branch: Option<String>,
+    pub base_ref: Option<String>,
     pub pipeline: Option<String>,
     pub agent_provider: Option<String>,
     pub closed_at: Option<String>,
@@ -226,6 +227,19 @@ impl Db {
              SET branch = ?, pipeline = ?, stage_result = ?, agent_provider = ?
              WHERE id = ?",
             (branch, pipeline, stage_result, agent_provider, id),
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn update_test_pipeline_item_base_ref(
+        &self,
+        id: &str,
+        base_ref: &str,
+    ) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE pipeline_item SET base_ref = ? WHERE id = ?",
+            (base_ref, id),
         )?;
         Ok(())
     }
@@ -417,7 +431,7 @@ impl Db {
         id: &str,
     ) -> Result<Option<TaskStageSource>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT repo_id, prompt, stage, stage_result, branch, pipeline, agent_provider, closed_at
+            "SELECT repo_id, prompt, stage, stage_result, branch, base_ref, pipeline, agent_provider, closed_at
              FROM pipeline_item WHERE id = ?",
         )?;
         let mut rows = stmt.query_map([id], |row| {
@@ -427,9 +441,10 @@ impl Db {
                 stage: row.get(2)?,
                 stage_result: row.get(3)?,
                 branch: row.get(4)?,
-                pipeline: row.get(5)?,
-                agent_provider: row.get(6)?,
-                closed_at: row.get(7)?,
+                base_ref: row.get(5)?,
+                pipeline: row.get(6)?,
+                agent_provider: row.get(7)?,
+                closed_at: row.get(8)?,
             })
         })?;
         match rows.next() {

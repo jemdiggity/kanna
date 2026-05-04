@@ -84,6 +84,7 @@ pub(crate) fn prepare_merge_agent_for_api(
             task_prompt: merge_agent.prompt,
             pipeline_name: None,
             base_ref: None,
+            stored_base_ref: None,
             stage_override: None,
             explicit_provider: None,
             model: None,
@@ -132,6 +133,7 @@ pub(crate) fn prepare_advance_stage_for_api(
         source_task.prompt.as_deref().unwrap_or(""),
         source_task.stage_result.as_deref(),
         source_task.branch.as_deref(),
+        source_task.base_ref.as_deref(),
     )?;
     let explicit_provider = if next_stage.agent.is_some() {
         None
@@ -147,6 +149,7 @@ pub(crate) fn prepare_advance_stage_for_api(
             task_prompt,
             pipeline_name: Some(pipeline_name),
             base_ref: source_task.branch,
+            stored_base_ref: source_task.base_ref,
             stage_override: Some(next_stage.name.clone()),
             explicit_provider,
             model: None,
@@ -201,6 +204,7 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
         source_task.prompt.as_deref().unwrap_or(""),
         source_task.stage_result.as_deref(),
         source_task.branch.as_deref(),
+        source_task.base_ref.as_deref(),
     )?;
     let explicit_provider = if next_stage.agent.is_some() {
         None
@@ -216,6 +220,7 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
             task_prompt,
             pipeline_name: Some(pipeline_name),
             base_ref: source_task.branch,
+            stored_base_ref: source_task.base_ref,
             stage_override: Some(next_stage.name.clone()),
             explicit_provider,
             model: None,
@@ -259,6 +264,7 @@ pub(crate) fn prepare_revision_task_for_api(
         revision_prompt,
         source_task.stage_result.as_deref(),
         source_task.branch.as_deref(),
+        source_task.base_ref.as_deref(),
     )?;
     let explicit_provider = if target_stage.agent.is_some() {
         None
@@ -274,6 +280,7 @@ pub(crate) fn prepare_revision_task_for_api(
             task_prompt,
             pipeline_name: Some(pipeline_name),
             base_ref: source_task.branch,
+            stored_base_ref: source_task.base_ref,
             stage_override: Some(target_stage.name.clone()),
             explicit_provider,
             model: None,
@@ -287,6 +294,7 @@ struct TaskCreationRequest {
     task_prompt: String,
     pipeline_name: Option<String>,
     base_ref: Option<String>,
+    stored_base_ref: Option<String>,
     stage_override: Option<String>,
     explicit_provider: Option<String>,
     model: Option<String>,
@@ -331,6 +339,7 @@ pub(crate) fn prepare_task_for_api(
             task_prompt: request.prompt.clone(),
             pipeline_name: request.pipeline_name,
             base_ref: request.base_ref,
+            stored_base_ref: None,
             stage_override: request.stage,
             explicit_provider: request.agent_provider,
             model: request.model,
@@ -385,6 +394,11 @@ fn prepare_task_spawn(
                 task_prompt: Some(&request.task_prompt),
                 prev_result: None,
                 branch: request.base_ref.as_deref(),
+                base_ref: request
+                    .stored_base_ref
+                    .as_deref()
+                    .or(request.base_ref.as_deref()),
+                source_worktree: None,
             },
         )
     };
@@ -437,7 +451,10 @@ fn prepare_task_spawn(
         activity: "working",
         port_offset: None,
         port_env_json: None,
-        base_ref: request.base_ref.as_deref(),
+        base_ref: request
+            .stored_base_ref
+            .as_deref()
+            .or(request.base_ref.as_deref()),
     })
     .map_err(|e| format!("db error: {}", e))?;
 
@@ -573,7 +590,9 @@ fn build_target_stage_prompt(
     task_prompt: &str,
     prev_result: Option<&str>,
     branch: Option<&str>,
+    base_ref: Option<&str>,
 ) -> Result<String, String> {
+    let source_worktree = branch.map(|branch| format!("{repo_path}/.kanna-worktrees/{branch}"));
     if let Some(agent_name) = stage.agent.as_deref() {
         let agent = read_agent_definition(repo_path, agent_name)?;
         return Ok(build_stage_prompt(
@@ -583,6 +602,8 @@ fn build_target_stage_prompt(
                 task_prompt: Some(task_prompt),
                 prev_result,
                 branch,
+                base_ref,
+                source_worktree: source_worktree.as_deref(),
             },
         ));
     }
@@ -667,6 +688,8 @@ struct PromptContext<'a> {
     task_prompt: Option<&'a str>,
     prev_result: Option<&'a str>,
     branch: Option<&'a str>,
+    base_ref: Option<&'a str>,
+    source_worktree: Option<&'a str>,
 }
 
 fn build_stage_prompt(
@@ -689,6 +712,8 @@ fn build_stage_prompt(
         .replace("$TASK_PROMPT", context.task_prompt.unwrap_or(""))
         .replace("$PREV_RESULT", context.prev_result.unwrap_or(""))
         .replace("$BRANCH", context.branch.unwrap_or(""))
+        .replace("$BASE_REF", context.base_ref.unwrap_or(""))
+        .replace("$SOURCE_WORKTREE", context.source_worktree.unwrap_or(""))
 }
 
 #[derive(Clone, Copy)]
@@ -1056,10 +1081,33 @@ fn short_socket_path(dir: &PathBuf) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{prepare_advance_stage_for_api, prepare_revision_task_for_api};
+    use super::{
+        build_stage_prompt, prepare_advance_stage_for_api, prepare_revision_task_for_api,
+        PromptContext,
+    };
     use crate::config::Config;
     use crate::db::Db;
     use std::process::Command;
+
+    #[test]
+    fn build_stage_prompt_replaces_base_ref() {
+        let prompt = build_stage_prompt(
+            "Review changes since $BASE_REF.",
+            Some("Current branch $BRANCH."),
+            &PromptContext {
+                task_prompt: None,
+                prev_result: None,
+                branch: Some("task-source"),
+                base_ref: Some("origin/main"),
+                source_worktree: Some("/tmp/repo/.kanna-worktrees/task-source"),
+            },
+        );
+
+        assert_eq!(
+            prompt,
+            "Review changes since origin/main.\n\nCurrent branch task-source."
+        );
+    }
 
     #[test]
     fn prepare_advance_stage_builds_next_stage_task_from_previous_branch() {
@@ -1106,7 +1154,7 @@ mod tests {
             r#"{
   "stages": [
     { "name": "in progress", "transition": "manual" },
-    { "name": "pr", "transition": "manual", "agent": "reviewer", "prompt": "Review branch $BRANCH with result $PREV_RESULT" }
+    { "name": "pr", "transition": "manual", "agent": "reviewer", "prompt": "Review branch $BRANCH against $BASE_REF with result $PREV_RESULT" }
   ]
 }"#,
         )
@@ -1171,15 +1219,22 @@ mod tests {
             "copilot",
         )
         .unwrap();
+        db.update_test_pipeline_item_base_ref("task-1", "origin/main")
+            .unwrap();
 
         let prepared = prepare_advance_stage_for_api(&db, &config, "task-1").unwrap();
+        let created_source = db
+            .get_task_stage_source(&prepared.created_task.task_id)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(prepared.created_task.repo_id, "repo-1");
         assert_eq!(prepared.created_task.stage, "pr");
         assert_eq!(
             prepared.created_task.title,
-            "Review task: Fix the mobile shell\n\nReview branch task-old-branch with result {\"status\":\"success\"}"
+            "Review task: Fix the mobile shell\n\nReview branch task-old-branch against origin/main with result {\"status\":\"success\"}"
         );
+        assert_eq!(created_source.base_ref.as_deref(), Some("origin/main"));
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
     }
 

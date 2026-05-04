@@ -621,16 +621,20 @@ export function createTasksApi(
         run: async () => {
           try {
             t1 = performance.now();
-            try {
-              const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
-              const availableBaseBranches = await invoke<string[]>("git_list_base_branches", { repoPath }).catch(() => [defaultBranch]);
-              baseRef = resolveInitialBaseRef({
-                selectedBaseBranch: opts?.baseBranch,
-                availableBaseBranches,
-                defaultBranch,
-              });
-            } catch (error) {
-              console.warn("[store] failed to compute base_ref:", error);
+            if (opts?.baseRef !== undefined) {
+              baseRef = opts.baseRef;
+            } else {
+              try {
+                const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
+                const availableBaseBranches = await invoke<string[]>("git_list_base_branches", { repoPath }).catch(() => [defaultBranch]);
+                baseRef = resolveInitialBaseRef({
+                  selectedBaseBranch: opts?.baseBranch,
+                  availableBaseBranches,
+                  defaultBranch,
+                });
+              } catch (error) {
+                console.warn("[store] failed to compute base_ref:", error);
+              }
             }
             console.log(`[perf:createItem] git base_ref: ${(performance.now() - t1).toFixed(1)}ms`);
 
