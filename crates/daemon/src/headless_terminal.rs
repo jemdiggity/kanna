@@ -12,6 +12,9 @@ use crate::protocol::{AgentProvider, SessionStatus, TerminalSnapshot};
 
 type HeadlessTerminalResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+// Ghostty's C API names this "max_scrollback", but it is a byte budget, not a
+// row count. Budget against the full grid so 10K logical rows survive snapshot.
+const GHOSTTY_SCROLLBACK_BYTES_PER_CELL: usize = 20;
 const STATUS_ROWS: usize = 8;
 const WAITING_MARKER: &str = "do you want to allow";
 const CLAUDE_PERMISSION_MARKER: &str = "bypass permissions on";
@@ -67,7 +70,7 @@ impl HeadlessTerminal {
         let mut terminal = Box::new(Terminal::new(TerminalOptions {
             cols,
             rows,
-            max_scrollback: scrollback,
+            max_scrollback: scrollback_byte_limit(cols, rows, scrollback),
         })?);
         let render_state = RenderState::new()?;
         let row_iterator = RowIterator::new()?;
@@ -282,6 +285,12 @@ impl HeadlessTerminal {
     }
 }
 
+pub fn scrollback_byte_limit(cols: u16, rows: u16, scrollback_rows: usize) -> usize {
+    usize::from(cols)
+        .saturating_mul(usize::from(rows).saturating_add(scrollback_rows))
+        .saturating_mul(GHOSTTY_SCROLLBACK_BYTES_PER_CELL)
+}
+
 fn normalize_row_text(text: &str) -> String {
     let mut normalized = String::with_capacity(text.len());
     let mut words = text.split_whitespace();
@@ -455,6 +464,25 @@ mod tests {
         assert_eq!(snapshot.rows, 30);
         assert_eq!(snapshot.cols, 100);
         assert!(snapshot.vt.contains("abc"));
+    }
+
+    #[test]
+    fn headless_terminal_snapshot_keeps_ten_thousand_scrollback_lines() {
+        let mut headless_terminal = HeadlessTerminal::new(120, 45, 10_000).unwrap();
+        for line in 1..=10_050 {
+            headless_terminal.write(format!("DSCROLL{line:05}\r\n").as_bytes());
+        }
+        headless_terminal.write(b"DSCROLLEND\r\n");
+
+        let snapshot = headless_terminal.snapshot().unwrap();
+        let retained = snapshot.vt.matches("DSCROLL").count();
+
+        assert!(
+            retained >= 10_000,
+            "expected at least 10,000 serialized scrollback lines, got {retained}; serialized_len={}",
+            snapshot.vt.len()
+        );
+        assert!(snapshot.vt.contains("DSCROLLEND"));
     }
 
     #[test]
