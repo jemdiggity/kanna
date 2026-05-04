@@ -145,6 +145,11 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     return pipeline;
   }
 
+  async function reloadPipeline(repoPath: string, pipelineName: string): Promise<PipelineDefinition> {
+    context.state.pipelineCache.delete(`${repoPath}::${pipelineName}`);
+    return loadPipeline(repoPath, pipelineName);
+  }
+
   async function loadAgent(repoPath: string, agentName: string): Promise<AgentDefinition> {
     const cacheKey = `${repoPath}::${agentName}`;
     const cached = context.state.agentCache.get(cacheKey);
@@ -191,7 +196,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
 
     let pipeline: PipelineDefinition;
     try {
-      pipeline = await loadPipeline(repo.path, item.pipeline);
+      pipeline = await reloadPipeline(repo.path, item.pipeline);
     } catch (error) {
       console.error("[store] advanceStage: pipeline definition not found:", error);
       context.toast.error(context.tt("toasts.pipelineNotFound"));
@@ -319,7 +324,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
 
     let pipeline: PipelineDefinition;
     try {
-      pipeline = await loadPipeline(repo.path, item.pipeline);
+      pipeline = await reloadPipeline(repo.path, item.pipeline);
     } catch (error) {
       console.error("[store] rerunStage: pipeline not found:", error);
       context.toast.error(context.tt("toasts.pipelineNotFound"));
