@@ -61,6 +61,15 @@ const mockState = vi.hoisted(() => {
   let unblockedItems: PipelineItem[] = [];
   const listenMock = vi.fn(async () => () => {});
   const updatePipelineItemActivityMock = vi.fn(async () => {});
+  const loadPipelineMock = vi.fn(async () => ({
+    name: "default",
+    stages: [
+      { name: "commit", transition: "auto" },
+      { name: "pr", transition: "manual" },
+    ],
+  }));
+  const advanceStageMock = vi.fn(async () => {});
+  const reloadSnapshotMock = vi.fn(async () => {});
 
   function reset(): void {
     repos = [makeRepo()];
@@ -68,6 +77,9 @@ const mockState = vi.hoisted(() => {
     unblockedItems = [];
     listenMock.mockClear();
     updatePipelineItemActivityMock.mockClear();
+    loadPipelineMock.mockClear();
+    advanceStageMock.mockClear();
+    reloadSnapshotMock.mockClear();
   }
 
   return {
@@ -89,6 +101,9 @@ const mockState = vi.hoisted(() => {
     },
     listenMock,
     updatePipelineItemActivityMock,
+    loadPipelineMock,
+    advanceStageMock,
+    reloadSnapshotMock,
     reset,
   };
 });
@@ -196,5 +211,68 @@ describe("createInitApi", () => {
 
     expect(state.selectedRepoId.value).toBe("repo-1");
     expect(services.restoreSelection).toHaveBeenCalledWith("task-1");
+  });
+
+  it("consumes successful auto-stage results once when duplicate stage-complete events arrive", async () => {
+    const item = mockState.makeItem({
+      id: "task-1",
+      stage: "commit",
+      stage_result: JSON.stringify({ status: "success", summary: "committed" }),
+      tags: "[]",
+    });
+    mockState.items = [item];
+
+    const state = createStoreState();
+    state.repos.value = [...mockState.repos];
+    state.items.value = [item];
+    const services = {
+      loadInitialData: vi.fn(async () => {}),
+      loadPipeline: mockState.loadPipelineMock,
+      advanceStage: mockState.advanceStageMock,
+      reloadSnapshot: mockState.reloadSnapshotMock,
+    };
+    const toast = {
+      toasts: ref([]),
+      dismiss: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      error: vi.fn(),
+    };
+    let claimAvailable = true;
+    const db = {
+      ...createDb(),
+      execute: vi.fn(async (query: string) => {
+        if (query.includes("UPDATE pipeline_item SET stage_result = NULL")) {
+          if (!claimAvailable) return { rowsAffected: 0 };
+          claimAvailable = false;
+          return { rowsAffected: 1 };
+        }
+        return { rowsAffected: 1 };
+      }),
+    };
+    const context = createStoreContext(state, toast, services);
+    const ports = {
+      closeTaskAndReleasePorts: vi.fn(async () => {}),
+    } as unknown as import("./ports").PortsStore;
+    const initApi = createInitApi(context, ports, {
+      checkUnblocked: vi.fn(async () => {}),
+      handleAgentFinished: vi.fn(),
+      startBlockedTask: vi.fn(async () => {}),
+      restoreUnblockedTask: vi.fn(async () => {}),
+    } as unknown as Parameters<typeof createInitApi>[2]);
+
+    await initApi.init(db);
+
+    const stageCompleteHandler = mockState.listenMock.mock.calls.find(
+      ([eventName]) => eventName === "pipeline_stage_complete",
+    )?.[1] as ((event: unknown) => Promise<void>) | undefined;
+    expect(stageCompleteHandler).toBeTruthy();
+
+    await Promise.all([
+      stageCompleteHandler?.({ payload: { task_id: "task-1" } }),
+      stageCompleteHandler?.({ payload: { task_id: "task-1" } }),
+    ]);
+
+    expect(mockState.advanceStageMock).toHaveBeenCalledTimes(1);
   });
 });

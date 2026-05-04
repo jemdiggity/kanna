@@ -252,8 +252,21 @@ export function createInitApi(
 
         if (stage.transition === "auto" && freshItem.stage_result) {
           try {
-            const result = JSON.parse(freshItem.stage_result) as { status?: string };
+            const claimedResult = freshItem.stage_result;
+            const claimedItemSnapshot = { ...freshItem };
+            const result = JSON.parse(claimedResult) as { status?: string };
             if (result.status === "success") {
+              const claim = await context.requireDb().execute(
+                "UPDATE pipeline_item SET stage_result = NULL, updated_at = datetime('now') WHERE id = ? AND stage_result = ?",
+                [taskId, claimedResult],
+              );
+              if (claim.rowsAffected === 0) return;
+              await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+              const claimedItem = context.state.items.value.find((candidate) => candidate.id === taskId);
+              if (claimedItem) {
+                Object.assign(claimedItem, claimedItemSnapshot);
+                claimedItem.stage_result = claimedResult;
+              }
               await requireService(context.services.advanceStage, "advanceStage")(taskId);
             }
           } catch (error) {

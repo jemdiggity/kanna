@@ -1602,7 +1602,11 @@ describe("kanna store task base branch integration", () => {
     );
     expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
       sessionId: "item-source",
-      data: Array.from(new TextEncoder().encode("Stage prompt\r")),
+      data: Array.from(new TextEncoder().encode("Stage prompt")),
+    });
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("\r")),
     });
   });
 
