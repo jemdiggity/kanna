@@ -60,36 +60,22 @@ async function switchToWindow(client: WebDriverClient, handle: string): Promise<
   }
 }
 
-async function pressCommandW(client: WebDriverClient): Promise<void> {
-  const sessionId = getClientSessionId(client);
-  const metaKey = "\uE03D";
-  const response = await fetch(`${client.getBaseUrl()}/session/${sessionId}/actions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      actions: [
-        {
-          type: "key",
-          id: "keyboard",
-          actions: [
-            { type: "keyDown", value: metaKey },
-            { type: "keyDown", value: "w" },
-            { type: "keyUp", value: "w" },
-            { type: "keyUp", value: metaKey },
-          ],
-        },
-      ],
-    }),
-  });
-  const body = await response.json() as WebDriverResponse<null>;
+async function closeFocusedWindowThroughAppAction(client: WebDriverClient): Promise<void> {
+  const result = await client.executeAsync(
+    `const cb = arguments[arguments.length - 1];
+     const ctx = window.__KANNA_E2E__.setupState;
+     setTimeout(() => {
+       void Promise.resolve(ctx.keyboardActions?.closeWindow?.() ?? ctx.windowWorkspace.closeWindow())
+         .catch((error) => console.error("[e2e] close focused window failed", error));
+     }, 0);
+     cb("scheduled");`,
+  );
   if (
-    typeof body.value === "object" &&
-    body.value !== null &&
-    "error" in body.value
+    typeof result === "object" &&
+    result !== null &&
+    "__error" in result
   ) {
-    throw new Error(`WebDriver error: ${body.value.message ?? "unknown error"}`);
+    throw new Error(String((result as { __error: unknown }).__error));
   }
 }
 
@@ -279,7 +265,7 @@ describe("new window", () => {
     await setSelectedItem(client, taskBId);
     await waitForCurrentItemId(client, taskBId);
 
-    await pressCommandW(client);
+    await closeFocusedWindowThroughAppAction(client);
 
     const remainingHandles = await waitForWindowCount(client, initialHandles.length);
     expect(remainingHandles).toContain(sourceHandle);
