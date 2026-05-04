@@ -110,7 +110,11 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
       await invoke("send_input", {
         sessionId: taskId,
-        data: encodeDaemonInput(`${stagePrompt}\r`),
+        data: encodeDaemonInput(stagePrompt),
+      });
+      await invoke("send_input", {
+        sessionId: taskId,
+        data: encodeDaemonInput("\r"),
       });
     } catch (error) {
       await updatePipelineItemStage(context.requireDb(), taskId, previousStageName);
