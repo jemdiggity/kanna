@@ -1488,6 +1488,38 @@ describe("kanna store task base branch integration", () => {
     );
   });
 
+  it("keeps the source task title when creating a generated next-stage prompt", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "qa", transition: "manual", agent: "qa" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        prompt: "Fix sidebar task ordering",
+        display_name: null,
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source");
+
+    expect(mockState.insertPipelineItemMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        prompt: "Stage prompt",
+        stage: "qa",
+        display_name: "Fix sidebar task ordering",
+      }),
+    );
+  });
+
   it("continues the same task and sends the next stage prompt when stage mode is continue", async () => {
     mockState.pipelineDefinition = {
       name: "default",

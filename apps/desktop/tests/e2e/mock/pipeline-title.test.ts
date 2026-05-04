@@ -1,0 +1,146 @@
+import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { WebDriverClient } from "../helpers/webdriver";
+import { resetDatabase } from "../helpers/reset";
+import { callVueMethod, queryDb, tauriInvoke } from "../helpers/vue";
+import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
+
+function isVueCallError(value: unknown): value is { __error: string } {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    "__error" in value &&
+    typeof (value as { __error?: unknown }).__error === "string",
+  );
+}
+
+describe("pipeline title preservation", () => {
+  const client = new WebDriverClient();
+  let repoId = "";
+  let fixtureRepoRoot = "";
+  let testRepoPath = "";
+
+  async function waitForCondition(
+    predicate: () => Promise<boolean>,
+    timeoutMs: number,
+    message: string,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(message);
+  }
+
+  beforeAll(async () => {
+    await client.createSession();
+    await resetDatabase(client);
+    fixtureRepoRoot = await createFixtureRepo("pipeline-title-test");
+    testRepoPath = join(fixtureRepoRoot, "apps");
+
+    const pipelineName = "title-e2e";
+    const kannaDir = join(testRepoPath, ".kanna");
+    await mkdir(join(kannaDir, "pipelines"), { recursive: true });
+    await mkdir(join(kannaDir, "agents", "qa-title-e2e"), { recursive: true });
+    await writeFile(
+      join(kannaDir, "pipelines", `${pipelineName}.json`),
+      JSON.stringify({
+        name: pipelineName,
+        stages: [
+          { name: "in progress", transition: "manual" },
+          {
+            name: "qa",
+            transition: "manual",
+            agent: "qa-title-e2e",
+            prompt: "Generated QA prompt marker for $TASK_PROMPT from $SOURCE_WORKTREE",
+          },
+        ],
+      }),
+    );
+    await writeFile(
+      join(kannaDir, "agents", "qa-title-e2e", "AGENT.md"),
+      [
+        "---",
+        "name: QA Title E2E",
+        "description: Verifies title preservation during stage advance.",
+        "---",
+        "QA agent generated prompt marker.",
+        "",
+      ].join("\n"),
+    );
+
+    const importResult = await callVueMethod(client, "store.importRepo", testRepoPath, "pipeline-title-test", "main");
+    if (isVueCallError(importResult)) throw new Error(importResult.__error);
+    if (typeof importResult !== "string") throw new Error(`unexpected import result: ${JSON.stringify(importResult)}`);
+    repoId = importResult;
+  });
+
+  afterAll(async () => {
+    await cleanupFixtureRepos(fixtureRepoRoot ? [fixtureRepoRoot] : []);
+    await client.deleteSession();
+  });
+
+  it("keeps the original title visible when advancing to a generated prompt stage", async () => {
+    const pipelineName = "title-e2e";
+    const originalTitle = "Preserve pipeline title";
+    const generatedMarker = "Generated QA prompt marker";
+
+    const createResult = await callVueMethod(
+      client,
+      "store.createItem",
+      repoId,
+      testRepoPath,
+      originalTitle,
+      "sdk",
+      { pipelineName, agentProvider: "claude" },
+    );
+    if (isVueCallError(createResult)) throw new Error(createResult.__error);
+    if (typeof createResult !== "string") throw new Error(`unexpected create result: ${JSON.stringify(createResult)}`);
+
+    const sourceRows = (await queryDb(
+      client,
+      "SELECT id, branch FROM pipeline_item WHERE id = ?",
+      [createResult],
+    )) as Array<{ id: string; branch: string | null }>;
+    const sourceTask = sourceRows[0];
+    expect(sourceTask?.branch).toBeTruthy();
+    if (!sourceTask?.branch) {
+      throw new Error("expected source task to be created with a branch");
+    }
+
+    await waitForCondition(async () => {
+      const exists = await tauriInvoke(client, "file_exists", {
+        path: `${testRepoPath}/.kanna-worktrees/${sourceTask.branch}`,
+      });
+      return exists === true;
+    }, 10_000, "source task worktree was not created");
+
+    const advanceResult = await callVueMethod(client, "store.advanceStage", sourceTask.id);
+    if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
+
+    await waitForCondition(async () => {
+      const rows = (await queryDb(
+        client,
+        "SELECT id FROM pipeline_item WHERE repo_id = ? AND stage = ? AND closed_at IS NULL ORDER BY created_at DESC LIMIT 1",
+        [repoId, "qa"],
+      )) as Array<{ id: string }>;
+      return Boolean(rows[0]?.id);
+    }, 10_000, "next-stage QA task was not created");
+
+    const qaRows = (await queryDb(
+      client,
+      "SELECT prompt, display_name FROM pipeline_item WHERE repo_id = ? AND stage = ? AND closed_at IS NULL ORDER BY created_at DESC LIMIT 1",
+      [repoId, "qa"],
+    )) as Array<{ prompt: string | null; display_name: string | null }>;
+    expect(qaRows[0]?.prompt).toContain(generatedMarker);
+    expect(qaRows[0]?.display_name).toBe(originalTitle);
+
+    const sidebarText = await client.executeSync<string>(
+      `return document.querySelector(".sidebar")?.textContent || "";`,
+    );
+    expect(sidebarText).toContain(originalTitle);
+    expect(sidebarText).not.toContain(generatedMarker);
+  });
+});

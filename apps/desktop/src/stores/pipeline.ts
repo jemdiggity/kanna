@@ -40,6 +40,10 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     return buildWorktreePath(repoPath, baseRef);
   }
 
+  function resolveInheritedTaskTitle(item: { display_name: string | null; issue_title: string | null; prompt: string | null }): string | null {
+    return item.display_name ?? item.issue_title ?? item.prompt ?? null;
+  }
+
   function computeNextVisibleItemId(currentItemId: string): string | null {
     const sortedItems = requireService(context.services.sortedItemsForCurrentRepo, "sortedItemsForCurrentRepo").value;
     const currentIndex = sortedItems.findIndex((candidate) => candidate.id === currentItemId);
@@ -281,6 +285,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       pipelineName: item.pipeline,
       stage: nextStage.name,
       selectOnCreate: shouldFollowTask,
+      displayName: resolveInheritedTaskTitle(item),
       ...agentOpts,
     });
     console.log("[pipeline:advanceStage] created next-stage task", {
