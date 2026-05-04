@@ -310,6 +310,18 @@ describe("release bundle naming", () => {
     expect(sha256(macosIcon)).not.toBe(defaultTauriIconSha256);
   });
 
+  it("keeps a vector source for the desktop app icon artwork", () => {
+    const iconSvg = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/icons/icon.svg"),
+      "utf8",
+    );
+
+    expect(iconSvg).toContain("<svg");
+    expect(iconSvg).toContain('viewBox="0 0 512 512"');
+    expect(iconSvg).toContain('id="app-icon-background"');
+    expect(iconSvg).toContain('fill="#ffffff"');
+  });
+
   it("keeps the macOS app icon artwork inside a taskbar-safe margin", () => {
     const macosIcon = readFileSync(
       resolve(repoRoot, "apps/desktop/src-tauri/icons/icon.icns"),
