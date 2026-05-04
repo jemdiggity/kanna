@@ -3,7 +3,6 @@ use rusqlite::Connection;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
-use std::io::{BufRead, Write};
 use std::process;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
@@ -51,11 +50,6 @@ enum Commands {
     Task {
         #[command(subcommand)]
         command: TaskCommands,
-    },
-    /// Run a stdio MCP server exposing Kanna task-control tools
-    Mcp {
-        #[command(subcommand)]
-        command: McpCommands,
     },
 }
 
@@ -135,16 +129,6 @@ enum TaskCommands {
         #[arg(long)]
         metadata: Option<String>,
 
-        /// Override the local Kanna server base URL
-        #[arg(long)]
-        server_url: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum McpCommands {
-    /// Serve MCP over newline-delimited JSON-RPC on stdin/stdout
-    Serve {
         /// Override the local Kanna server base URL
         #[arg(long)]
         server_url: Option<String>,
@@ -448,240 +432,6 @@ async fn request_revision_via_api(
     .await
 }
 
-async fn advance_stage_via_api(base_url: &str, task_id: &str) -> Result<TaskActionResponse, String> {
-    post_json(
-        base_url,
-        &format!("/v1/tasks/{task_id}/actions/advance-stage"),
-        &serde_json::json!({}),
-    )
-    .await
-}
-
-fn mcp_response(id: Value, result: Value) -> Value {
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "result": result,
-    })
-}
-
-fn mcp_error(id: Value, code: i64, message: impl Into<String>) -> Value {
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": code,
-            "message": message.into(),
-        },
-    })
-}
-
-fn mcp_tools() -> Value {
-    serde_json::json!([
-        {
-            "name": "complete_stage",
-            "description": "Record completion for the current Kanna pipeline stage.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": { "type": "string" },
-                    "status": { "type": "string", "enum": ["success", "failure"] },
-                    "summary": { "type": "string" },
-                    "metadata": { "type": "object" }
-                },
-                "required": ["task_id", "status", "summary"]
-            }
-        },
-        {
-            "name": "request_revision",
-            "description": "Create a new revision task from the current task branch.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": { "type": "string" },
-                    "target_stage": { "type": "string" },
-                    "summary": { "type": "string" },
-                    "prompt": { "type": "string" },
-                    "metadata": { "type": "object" }
-                },
-                "required": ["task_id", "summary", "prompt"]
-            }
-        },
-        {
-            "name": "advance_stage",
-            "description": "Advance a Kanna task to the next pipeline stage.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": { "type": "string" }
-                },
-                "required": ["task_id"]
-            }
-        },
-        {
-            "name": "create_task",
-            "description": "Create a new Kanna task.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "repo_id": { "type": "string" },
-                    "prompt": { "type": "string" },
-                    "pipeline_name": { "type": "string" },
-                    "base_ref": { "type": "string" },
-                    "stage": { "type": "string" },
-                    "agent_provider": { "type": "string" },
-                    "model": { "type": "string" },
-                    "permission_mode": { "type": "string" },
-                    "allowed_tools": { "type": "array", "items": { "type": "string" } }
-                },
-                "required": ["repo_id", "prompt"]
-            }
-        }
-    ])
-}
-
-fn required_string(args: &Value, name: &str) -> Result<String, String> {
-    args.get(name)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| format!("missing required argument: {name}"))
-}
-
-async fn handle_mcp_tool_call(base_url: &str, name: &str, args: Value) -> Result<Value, String> {
-    match name {
-        "complete_stage" => {
-            let task_id = required_string(&args, "task_id")?;
-            let request = build_complete_stage_request(
-                required_string(&args, "status")?,
-                required_string(&args, "summary")?,
-                args.get("metadata").cloned(),
-            );
-            serde_json::to_value(complete_stage_via_api(base_url, &task_id, &request).await?)
-                .map_err(|e| format!("failed to encode response: {e}"))
-        }
-        "request_revision" => {
-            let task_id = required_string(&args, "task_id")?;
-            let request = build_request_revision_request(
-                args.get("target_stage")
-                    .and_then(Value::as_str)
-                    .unwrap_or("in progress")
-                    .to_string(),
-                required_string(&args, "summary")?,
-                required_string(&args, "prompt")?,
-                args.get("metadata").cloned(),
-            );
-            serde_json::to_value(request_revision_via_api(base_url, &task_id, &request).await?)
-                .map_err(|e| format!("failed to encode response: {e}"))
-        }
-        "advance_stage" => {
-            let task_id = required_string(&args, "task_id")?;
-            serde_json::to_value(advance_stage_via_api(base_url, &task_id).await?)
-                .map_err(|e| format!("failed to encode response: {e}"))
-        }
-        "create_task" => {
-            let allowed_tool = args
-                .get("allowed_tools")
-                .and_then(Value::as_array)
-                .map(|values| {
-                    values
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let request = build_create_task_request(TaskCreateOptions {
-                repo_id: required_string(&args, "repo_id")?,
-                prompt: required_string(&args, "prompt")?,
-                pipeline_name: args.get("pipeline_name").and_then(Value::as_str).map(str::to_string),
-                base_ref: args.get("base_ref").and_then(Value::as_str).map(str::to_string),
-                stage: args.get("stage").and_then(Value::as_str).map(str::to_string),
-                agent_provider: args.get("agent_provider").and_then(Value::as_str).map(str::to_string),
-                model: args.get("model").and_then(Value::as_str).map(str::to_string),
-                permission_mode: args.get("permission_mode").and_then(Value::as_str).map(str::to_string),
-                allowed_tool,
-            });
-            serde_json::to_value(create_task_via_api(base_url, &request).await?)
-                .map_err(|e| format!("failed to encode response: {e}"))
-        }
-        _ => Err(format!("unknown tool: {name}")),
-    }
-}
-
-async fn handle_mcp_request(message: Value, base_url: &str) -> Value {
-    let id = message.get("id").cloned().unwrap_or(Value::Null);
-    let Some(method) = message.get("method").and_then(Value::as_str) else {
-        return mcp_error(id, -32600, "missing method");
-    };
-
-    match method {
-        "initialize" => mcp_response(
-            id,
-            serde_json::json!({
-                "protocolVersion": "2025-11-25",
-                "capabilities": { "tools": {} },
-                "serverInfo": {
-                    "name": "kanna-cli",
-                    "version": env!("CARGO_PKG_VERSION")
-                }
-            }),
-        ),
-        "notifications/initialized" => Value::Null,
-        "tools/list" => mcp_response(id, serde_json::json!({ "tools": mcp_tools() })),
-        "tools/call" => {
-            let params = message.get("params").cloned().unwrap_or_else(|| serde_json::json!({}));
-            let Some(name) = params.get("name").and_then(Value::as_str) else {
-                return mcp_error(id, -32602, "missing tool name");
-            };
-            let args = params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
-            match handle_mcp_tool_call(base_url, name, args).await {
-                Ok(value) => mcp_response(
-                    id,
-                    serde_json::json!({
-                        "content": [{
-                            "type": "text",
-                            "text": serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
-                        }]
-                    }),
-                ),
-                Err(message) => mcp_error(id, -32603, message),
-            }
-        }
-        _ => mcp_error(id, -32601, format!("unknown method: {method}")),
-    }
-}
-
-async fn serve_mcp(base_url: &str) -> Result<(), String> {
-    let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let line = line.map_err(|e| format!("failed to read stdin: {e}"))?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let message: Value = serde_json::from_str(trimmed)
-            .map_err(|e| format!("failed to parse MCP JSON-RPC message: {e}"))?;
-        let response = handle_mcp_request(message, base_url).await;
-        if response.is_null() {
-            continue;
-        }
-        let mut rendered = serde_json::to_string(&response)
-            .map_err(|e| format!("failed to render MCP response: {e}"))?;
-        rendered.push('\n');
-        stdout
-            .write_all(rendered.as_bytes())
-            .map_err(|e| format!("failed to write stdout: {e}"))?;
-        stdout
-            .flush()
-            .map_err(|e| format!("failed to flush stdout: {e}"))?;
-    }
-    Ok(())
-}
-
 fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
     let rendered =
         serde_json::to_string_pretty(value).map_err(|e| format!("failed to render json: {e}"))?;
@@ -876,15 +626,6 @@ async fn main() {
                 }
             }
         },
-        Commands::Mcp { command } => match command {
-            McpCommands::Serve { server_url } => {
-                let base_url = resolve_server_base_url_from_env(server_url.as_deref());
-                if let Err(e) = serve_mcp(&base_url).await {
-                    eprintln!("Error: {e}");
-                    process::exit(1);
-                }
-            }
-        },
     }
 }
 
@@ -892,7 +633,6 @@ async fn main() {
 mod tests {
     use super::{
         build_complete_stage_request, build_create_task_request, build_request_revision_request,
-        handle_mcp_request,
         resolve_optional_server_base_url, resolve_server_base_url, resolve_stage_db_path,
         TaskCreateOptions,
     };
@@ -988,48 +728,6 @@ mod tests {
                 "prompt": "Add e2e coverage for task creation.",
             })
         );
-    }
-
-    #[tokio::test]
-    async fn mcp_initialize_returns_server_info() {
-        let response = handle_mcp_request(
-            json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {}
-            }),
-            "http://127.0.0.1:48120",
-        )
-        .await;
-
-        assert_eq!(response["jsonrpc"], "2.0");
-        assert_eq!(response["id"], 1);
-        assert_eq!(response["result"]["serverInfo"]["name"], "kanna-cli");
-        assert_eq!(response["result"]["capabilities"]["tools"], json!({}));
-    }
-
-    #[tokio::test]
-    async fn mcp_tools_list_includes_task_control_tools() {
-        let response = handle_mcp_request(
-            json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list"
-            }),
-            "http://127.0.0.1:48120",
-        )
-        .await;
-
-        let tools = response["result"]["tools"].as_array().unwrap();
-        let names = tools
-            .iter()
-            .filter_map(|tool| tool["name"].as_str())
-            .collect::<Vec<_>>();
-        assert!(names.contains(&"complete_stage"));
-        assert!(names.contains(&"request_revision"));
-        assert!(names.contains(&"advance_stage"));
-        assert!(names.contains(&"create_task"));
     }
 
     #[test]

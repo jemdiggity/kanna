@@ -4,7 +4,7 @@
   "workspaces": ["apps/*", "packages/*", "services/*", "tests/*"],
   "scripts": {
     "build": "turbo build",
-    "build:desktop-sidecars": "TARGET=\"$(rustc -vV | awk '/^host:/ {print $2}')\" && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/daemon/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/kanna-cli/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/kanna-server/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/task-transfer/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path packages/terminal-recovery/Cargo.toml && scripts/stage-sidecars.sh --target \"$TARGET\"",
+    "build:desktop-sidecars": "TARGET=\"$(rustc -vV | awk '/^host:/ {print $2}')\" && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/daemon/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/kanna-cli/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/kanna-mcp/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/kanna-server/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/task-transfer/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path packages/terminal-recovery/Cargo.toml && scripts/stage-sidecars.sh --target \"$TARGET\"",
     "dev": "./scripts/dev.sh",
     "test": "turbo test",
     "lint": "turbo lint",

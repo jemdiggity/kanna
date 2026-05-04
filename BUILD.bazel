@@ -21,6 +21,11 @@ filegroup(
 )
 
 filegroup(
+    name = "kanna_mcp_cargo_srcs",
+    srcs = ["//crates/kanna-mcp:cargo_srcs"],
+)
+
+filegroup(
     name = "terminal_recovery_cargo_srcs",
     srcs = ["//packages/terminal-recovery:cargo_srcs"],
 )
@@ -74,6 +79,27 @@ genrule(
     name = "kanna_cli_release_x86_64",
     srcs = ["//crates/kanna-cli:kanna_cli_x86_64"],
     outs = ["release/kanna-cli-x86_64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_mcp_arm64",
+    srcs = ["//crates/kanna-mcp:kanna_mcp"],
+    outs = ["kanna-mcp-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_mcp_release_arm64",
+    srcs = ["//crates/kanna-mcp:kanna_mcp"],
+    outs = ["release/kanna-mcp-aarch64-apple-darwin"],
+    cmd = "cp $< $@ && chmod +x $@",
+)
+
+genrule(
+    name = "kanna_mcp_release_x86_64",
+    srcs = ["//crates/kanna-mcp:kanna_mcp_x86_64"],
+    outs = ["release/kanna-mcp-x86_64-apple-darwin"],
     cmd = "cp $< $@ && chmod +x $@",
 )
 
@@ -188,6 +214,7 @@ tauri_bundle_inputs(
     sidecars = [
         ":kanna_cli_arm64",
         ":kanna_daemon_arm64",
+        ":kanna_mcp_arm64",
         ":kanna_server_arm64",
         ":kanna_task_transfer_arm64",
         ":kanna_terminal_recovery_arm64",
@@ -218,6 +245,7 @@ tauri_bundle_inputs(
     sidecars = [
         ":kanna_cli_release_arm64",
         ":kanna_daemon_release_arm64",
+        ":kanna_mcp_release_arm64",
         ":kanna_server_release_arm64",
         ":kanna_task_transfer_release_arm64",
         ":kanna_terminal_recovery_release_arm64",
@@ -282,6 +310,7 @@ tauri_bundle_inputs(
     sidecars = [
         ":kanna_cli_release_x86_64",
         ":kanna_daemon_release_x86_64",
+        ":kanna_mcp_release_x86_64",
         ":kanna_server_release_x86_64",
         ":kanna_task_transfer_release_x86_64",
         ":kanna_terminal_recovery_release_x86_64",

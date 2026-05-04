@@ -3121,6 +3121,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanna-mcp"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "kanna-server"
 version = "0.1.0"
 dependencies = [
