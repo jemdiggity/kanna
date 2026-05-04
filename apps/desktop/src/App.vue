@@ -888,7 +888,13 @@ const keyboardActions = {
       }
       return true;
     }
-    if (showTreeExplorer.value) { closeTreeExplorer(); return true; }
+    if (showTreeExplorer.value) {
+      const shouldCloseTreeExplorer = treeExplorerRef.value?.dismiss() ?? true;
+      if (shouldCloseTreeExplorer) {
+        closeTreeExplorer();
+      }
+      return true;
+    }
     if (showNewTaskModal.value) { showNewTaskModal.value = false; return true; }
     if (showAddRepoModal.value) { showAddRepoModal.value = false; return true; }
   },
