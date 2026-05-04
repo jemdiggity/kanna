@@ -43,6 +43,7 @@ import { useToast } from "./useToast"
 import i18n from "../i18n"
 import { getAppErrorMessage } from "../appError"
 import { markTaskSwitchFirstOutput } from "../perf/taskSwitchPerf"
+import { registerE2ETerminalBuffer } from "../e2eTerminalBuffers"
 import { hasObservedDaemonReady, markDaemonReadyObserved } from "./daemonReadyState"
 
 export interface SpawnOptions {
@@ -90,6 +91,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let unlistenExit: (() => void) | null = null
   let unlistenDaemonReady: (() => void) | null = null
   let unlistenStreamLost: (() => void) | null = null
+  let unregisterE2ETerminalBuffer: (() => void) | null = null
   let container: HTMLElement | null = null
   let cleanupContainerEvents: (() => void) | null = null
   let cleanupNativeDropEvents: (() => void) | null = null
@@ -622,6 +624,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     })
 
     terminal.value = term
+    unregisterE2ETerminalBuffer?.()
+    unregisterE2ETerminalBuffer = registerE2ETerminalBuffer(sessionId, term)
   }
 
   /** Wait for the container to have non-zero dimensions, then fit the terminal. */
@@ -1160,6 +1164,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     cleanupContainerEvents = null
     cleanupNativeDropEvents?.()
     cleanupNativeDropEvents = null
+    unregisterE2ETerminalBuffer?.()
+    unregisterE2ETerminalBuffer = null
     clearPendingClipboardImage()
     pendingClipboardImageLoad = null
     kittyClipboardBuffer = ""
