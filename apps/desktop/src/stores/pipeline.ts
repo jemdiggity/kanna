@@ -6,7 +6,7 @@ import type { AgentDefinition, PipelineDefinition } from "../../../../packages/c
 import { clearPipelineItemStageResult, getRepo, updatePipelineItemStage } from "@kanna/db";
 import { invoke } from "../invoke";
 import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
-import { encodeDaemonInput } from "./daemonInput";
+import { encodeAgentStageInput } from "./daemonInput";
 import {
   getPreferredAgentProviders,
   resolveAgentProvider,
@@ -91,6 +91,8 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     previousStageName: string,
     nextStageName: string,
     stagePrompt: string,
+    agentProvider: string | null | undefined,
+    kittyKeyboard: boolean,
   ): Promise<void> {
     let hasLiveSession = false;
     try {
@@ -110,11 +112,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
       await invoke("send_input", {
         sessionId: taskId,
-        data: encodeDaemonInput(stagePrompt),
-      });
-      await invoke("send_input", {
-        sessionId: taskId,
-        data: encodeDaemonInput("\r"),
+        data: encodeAgentStageInput(stagePrompt, { agentProvider, kittyKeyboard }),
       });
     } catch (error) {
       await updatePipelineItemStage(context.requireDb(), taskId, previousStageName);
@@ -272,7 +270,14 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     }
 
     if (nextStage.mode === "continue") {
-      await continueStageInPlace(item.id, item.stage, nextStage.name, stagePrompt);
+      await continueStageInPlace(
+        item.id,
+        item.stage,
+        nextStage.name,
+        stagePrompt,
+        item.agent_provider,
+        item.agent_provider === "claude" && Boolean(item.prompt),
+      );
       return;
     }
 
