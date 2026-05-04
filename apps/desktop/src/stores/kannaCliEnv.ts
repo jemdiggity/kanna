@@ -6,6 +6,12 @@ interface BuildKannaCliEnvOptions {
   serverBaseUrl?: string;
 }
 
+export function resolveKannaServerBaseUrl(mobileServerPort?: string | null): string | undefined {
+  const port = mobileServerPort?.trim();
+  if (!port || port === "48120") return undefined;
+  return `http://127.0.0.1:${port}`;
+}
+
 export function buildKannaCliEnv(options: BuildKannaCliEnvOptions): Record<string, string> {
   const { taskId, dbName, appDataDir, socketPath, serverBaseUrl } = options;
 
@@ -24,13 +30,11 @@ interface BuildTaskRuntimeEnvOptions extends BuildKannaCliEnvOptions {
 
 export function buildTaskRuntimeEnv(options: BuildTaskRuntimeEnvOptions): Record<string, string> {
   const { portEnv, kannaCliPath, ...kannaCliEnvOptions } = options;
-  const serverBaseUrl = kannaCliEnvOptions.serverBaseUrl
-    ?? (portEnv?.KANNA_MOBILE_SERVER_PORT ? `http://127.0.0.1:${portEnv.KANNA_MOBILE_SERVER_PORT}` : "http://127.0.0.1:48120");
 
   return {
     KANNA_WORKTREE: "1",
     ...(portEnv ?? {}),
     ...(kannaCliPath ? { KANNA_CLI_PATH: kannaCliPath } : {}),
-    ...buildKannaCliEnv({ ...kannaCliEnvOptions, serverBaseUrl }),
+    ...buildKannaCliEnv(kannaCliEnvOptions),
   };
 }

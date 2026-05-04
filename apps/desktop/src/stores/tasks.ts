@@ -43,7 +43,7 @@ import { getTaskCloseBehavior } from "./taskCloseBehavior";
 import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import { getCreateWorktreeStartPoint, resolveInitialBaseRef } from "./taskBaseBranch";
-import { buildTaskRuntimeEnv } from "./kannaCliEnv";
+import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
 import { buildWorktreeSessionEnv } from "./worktreeEnv";
 import {
   reportCloseSessionError,
@@ -378,11 +378,14 @@ export function createTasksApi(
           const sdkEnv = {
             ...sdkBaseEnv,
             ...buildTaskRuntimeEnv({
-            taskId: id,
-            dbName: await resolveDbName(),
-            appDataDir: await invoke<string>("get_app_data_dir"),
-            socketPath: await invoke<string>("get_pipeline_socket_path"),
-            kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
+              taskId: id,
+              dbName: await resolveDbName(),
+              appDataDir: await invoke<string>("get_app_data_dir"),
+              socketPath: await invoke<string>("get_pipeline_socket_path"),
+              serverBaseUrl: resolveKannaServerBaseUrl(
+                await invoke<string>("read_env_var", { name: "KANNA_MOBILE_SERVER_PORT" }).catch(() => null),
+              ),
+              kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
             }),
           };
           await invoke("create_agent_session", {

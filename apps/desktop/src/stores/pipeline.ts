@@ -5,7 +5,7 @@ import { getNextStage } from "../../../../packages/core/src/pipeline/types";
 import type { AgentDefinition, PipelineDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
 import { clearPipelineItemStageResult, getRepo, updatePipelineItemStage } from "@kanna/db";
 import { invoke } from "../invoke";
-import { buildTaskRuntimeEnv } from "./kannaCliEnv";
+import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
 import {
   getPreferredAgentProviders,
   resolveAgentProvider,
@@ -339,6 +339,9 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
             dbName: await resolveDbName(),
             appDataDir: await invoke<string>("get_app_data_dir"),
             socketPath: await invoke<string>("get_pipeline_socket_path"),
+            serverBaseUrl: resolveKannaServerBaseUrl(
+              await invoke<string>("read_env_var", { name: "KANNA_MOBILE_SERVER_PORT" }).catch(() => null),
+            ),
             portEnv,
             kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
           });
