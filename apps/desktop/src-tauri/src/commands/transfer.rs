@@ -42,15 +42,20 @@ pub async fn start_peer_pairing(
     state: tauri::State<'_, crate::TransferServiceState>,
     peer_id: String,
 ) -> Result<Value, String> {
+    eprintln!("[transfer-debug] start_peer_pairing start peer_id={peer_id}");
     let mut guard = state.lock().await;
     ensure_client(&app, &mut guard).await?;
     let (result, dead) = {
         let client = guard
             .as_mut()
             .ok_or_else(|| "transfer sidecar client unavailable".to_string())?;
-        let result = client.start_peer_pairing(peer_id).await;
+        let result = client.start_peer_pairing(peer_id.clone()).await;
         (result, client.is_dead())
     };
+    match &result {
+        Ok(value) => eprintln!("[transfer-debug] start_peer_pairing ok peer_id={peer_id}: {value}"),
+        Err(error) => eprintln!("[transfer-debug] start_peer_pairing err peer_id={peer_id}: {error}"),
+    }
     if dead {
         *guard = None;
     }

@@ -57,4 +57,41 @@ describe("PeerPickerModal", () => {
     expect(wrapper.text()).not.toContain("Pair Machine");
     expect(wrapper.findAll("button").some((button) => button.text() === "Pair Machine")).toBe(false);
   });
+
+  it("disables the primary action while an action is pending", async () => {
+    const wrapper = mount(PeerPickerModal, {
+      props: {
+        peers: [{
+          id: "peer-1",
+          name: "Peer 1",
+          trusted: false,
+          acceptingTransfers: true,
+        }],
+        loading: false,
+        actionLabel: "Pair Machine",
+        actionPending: true,
+        requireTrusted: false,
+      },
+      global: {
+        mocks: {
+          $t: (key: string) =>
+            ({
+              "taskTransfer.pushToMachine": "Push to Machine",
+              "taskTransfer.noPeersFound": "No machines found on your network yet.",
+              "actions.cancel": "Cancel",
+              "common.loading": "Loading...",
+            })[key] ?? key,
+        },
+      },
+    });
+
+    await wrapper.get(".peer-row").trigger("click");
+    const primary = wrapper.get(".btn-primary");
+
+    expect(primary.attributes("disabled")).toBeDefined();
+    expect(primary.text()).toBe("Loading...");
+
+    await primary.trigger("click");
+    expect(wrapper.emitted("select")).toBeUndefined();
+  });
 });

@@ -6,6 +6,7 @@ import type { TransferPeerOption } from "../utils/taskTransfer";
 const props = defineProps<{
   peers: TransferPeerOption[];
   loading?: boolean;
+  actionPending?: boolean;
   title?: string;
   actionLabel?: string;
   requireTrusted?: boolean;
@@ -33,6 +34,7 @@ watch(
 );
 
 function confirmSelect() {
+  if (props.actionPending) return;
   if (!selectedPeerId.value) return;
   if ((props.requireTrusted ?? true) && !selectedPeer.value?.trusted) return;
   emit("select", selectedPeerId.value);
@@ -69,10 +71,10 @@ function confirmSelect() {
         </button>
         <button
           class="btn btn-primary"
-          :disabled="!selectedPeerId || loading || ((requireTrusted ?? true) && !selectedPeer?.trusted)"
+          :disabled="!selectedPeerId || loading || actionPending || ((requireTrusted ?? true) && !selectedPeer?.trusted)"
           @click="confirmSelect"
         >
-          {{ actionLabel ?? $t("taskTransfer.pushToMachine") }}
+          {{ actionPending ? $t("common.loading") : (actionLabel ?? $t("taskTransfer.pushToMachine")) }}
         </button>
       </div>
     </div>

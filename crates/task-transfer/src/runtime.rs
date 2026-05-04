@@ -209,6 +209,8 @@ pub enum RuntimeError {
     PeerNotFound(String),
     #[error("protocol error: {0}")]
     Protocol(String),
+    #[error("peer request to {peer_id} timed out after {timeout_ms}ms")]
+    PeerRequestTimeout { peer_id: String, timeout_ms: u128 },
     #[error("discovery error: {0}")]
     Discovery(String),
     #[error("incoming event channel closed")]
@@ -1069,7 +1071,8 @@ impl TransferRuntime {
         peer: &PeerRegistryEntry,
         request: PeerRequest,
     ) -> Result<PeerResponse, RuntimeError> {
-        tokio::time::timeout(self.config.peer_request_timeout, async {
+        let request_timeout = self.config.peer_request_timeout;
+        let response = tokio::time::timeout(request_timeout, async {
             let mut stream = TcpStream::connect(&peer.endpoint).await?;
             write_json_line(&mut stream, &request).await?;
 
@@ -1087,12 +1090,11 @@ impl TransferRuntime {
             Ok(response)
         })
         .await
-        .map_err(|_| {
-            RuntimeError::Protocol(format!(
-                "timed out waiting for peer {} after {:?}",
-                peer.peer_id, self.config.peer_request_timeout
-            ))
-        })?
+        .map_err(|_| RuntimeError::PeerRequestTimeout {
+            peer_id: peer.peer_id.clone(),
+            timeout_ms: request_timeout.as_millis(),
+        })??;
+        Ok(response)
     }
 
     fn next_request_id(&self, prefix: &str) -> String {

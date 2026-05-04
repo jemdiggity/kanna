@@ -142,6 +142,7 @@ const selectedTransferTaskId = ref<string | null>(null);
 const showPeerPicker = ref(false);
 const transferPeers = ref<TransferPeerOption[]>([]);
 const transferPeersLoading = ref(false);
+const transferPeerActionPending = ref(false);
 let transferPeerLoadRequestId = 0;
 const TRANSFER_PEER_DISCOVERY_RETRY_MS = 250;
 const TRANSFER_PEER_DISCOVERY_TIMEOUT_MS = 2500;
@@ -692,15 +693,19 @@ async function warmTransferSidecar() {
 }
 
 function openPeerPicker(taskId: string) {
+  console.log("[transfer] opening push-to-machine picker", { taskId });
   selectedTransferTaskId.value = taskId;
   peerPickerMode.value = "push";
+  transferPeerActionPending.value = false;
   showPeerPicker.value = true;
   void loadTransferPeers();
 }
 
 function openPairPeerPicker() {
+  console.log("[transfer] opening pair-machine picker");
   selectedTransferTaskId.value = null;
   peerPickerMode.value = "pair";
+  transferPeerActionPending.value = false;
   showPeerPicker.value = true;
   void loadTransferPeers();
 }
@@ -709,9 +714,11 @@ function closePeerPicker() {
   showPeerPicker.value = false;
   selectedTransferTaskId.value = null;
   peerPickerMode.value = "push";
+  transferPeerActionPending.value = false;
 }
 
 async function handlePeerSelected(peerId: string) {
+  if (transferPeerActionPending.value) return;
   const taskId = selectedTransferTaskId.value;
   if (!taskId) return;
   const selectedPeer = transferPeers.value.find((peer) => peer.id === peerId);
@@ -720,23 +727,36 @@ async function handlePeerSelected(peerId: string) {
     return;
   }
   try {
+    transferPeerActionPending.value = true;
     await store.pushTaskToPeer(taskId, peerId);
     closePeerPicker();
   } catch (e: unknown) {
     console.error("[App] task transfer push failed:", e);
     toast.error(e instanceof Error ? e.message : String(e));
+  } finally {
+    transferPeerActionPending.value = false;
   }
 }
 
 async function handlePairPeer(peerId: string) {
+  if (transferPeerActionPending.value) return;
   try {
+    transferPeerActionPending.value = true;
+    console.log("[transfer] pair-machine request started", { peerId });
     const result = parsePairingResult(await invoke("start_peer_pairing", { peerId }));
+    console.log("[transfer] pair-machine request completed", {
+      peerId,
+      pairedPeerId: result.peer.id,
+      pairedPeerName: result.peer.name,
+    });
     toast.info(`Paired with ${result.peer.name}. Verify code ${result.verificationCode}.`);
     closePeerPicker();
     await loadTransferPeers();
   } catch (e: unknown) {
     console.error("[App] peer pairing failed:", e);
     toast.error(e instanceof Error ? e.message : String(e));
+  } finally {
+    transferPeerActionPending.value = false;
   }
 }
 
@@ -1225,6 +1245,10 @@ onMounted(async () => {
       try {
         const payload = (event as { payload?: unknown })?.payload ?? event;
         const pairing = parsePairingCompletedEvent(payload);
+        console.log("[transfer] pairing-completed event received", {
+          peerId: pairing.peerId,
+          displayName: pairing.displayName,
+        });
         toast.info(`Paired with ${pairing.displayName}. Verify code ${pairing.verificationCode}.`);
       } catch (e: unknown) {
         console.error("[App] failed to handle pairing completion event:", e);
@@ -1496,6 +1520,7 @@ onBeforeUnmount(() => {
       :loading="transferPeersLoading"
       :title="peerPickerMode === 'pair' ? $t('taskTransfer.pairPeer') : $t('taskTransfer.pushToMachine')"
       :action-label="peerPickerMode === 'pair' ? $t('taskTransfer.pairPeer') : $t('taskTransfer.pushToMachine')"
+      :action-pending="transferPeerActionPending"
       :require-trusted="peerPickerMode !== 'pair'"
       @cancel="closePeerPicker"
       @select="(peerId) => peerPickerMode === 'pair' ? handlePairPeer(peerId) : handlePeerSelected(peerId)"
