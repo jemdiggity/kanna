@@ -44,6 +44,7 @@ import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
 import { getCreateWorktreeStartPoint, resolveInitialBaseRef } from "./taskBaseBranch";
 import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
+import { encodeDaemonInput } from "./daemonInput";
 import { buildWorktreeSessionEnv } from "./worktreeEnv";
 import {
   reportCloseSessionError,
@@ -967,7 +968,7 @@ export function createTasksApi(
 
     await invoke("send_input", {
       sessionId: item.id,
-      input: `${buildBlockedResumeMessage(resolvedBlockers)}\n`,
+      data: encodeDaemonInput(`${buildBlockedResumeMessage(resolvedBlockers)}\n`),
     });
   }
 
