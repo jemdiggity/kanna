@@ -255,6 +255,7 @@
   "mainPanel": {
     "taskBlocked": "タスクがブロック中",
     "taskBlockedHint": "すべてのブロッカーが完了すると、このタスクは自動的に開始されます。",
+    "taskSettingUp": "タスクをセットアップ中...",
     "waitingOn": "待機中:",
     "blockerDone": "完了",
     "blockerActive": "アクティブ",

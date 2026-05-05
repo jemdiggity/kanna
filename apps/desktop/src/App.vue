@@ -1398,6 +1398,7 @@ onBeforeUnmount(() => {
         :maximized="maximized"
         :blockers="currentBlockers"
         :has-repos="store.repos.length > 0"
+        :pending-setup="store.currentItem ? (store.pendingSetupIds ?? []).includes(store.currentItem.id) : false"
         @close-task="store.closeTask"
         @back="store.selectedItemId = null"
       />
