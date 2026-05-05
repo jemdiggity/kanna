@@ -885,6 +885,7 @@ Use this branch as the default when the user does not specify a target branch. B
     ideCommand: state.ideCommand,
     hideShortcutsOnStartup: state.hideShortcutsOnStartup,
     devLingerTerminals: state.devLingerTerminals,
+    pendingSetupIds: state.pendingSetupIds,
     lastHiddenRepoId: state.lastHiddenRepoId,
     selectedRepo: selection.selectedRepo,
     currentItem: selection.currentItem,

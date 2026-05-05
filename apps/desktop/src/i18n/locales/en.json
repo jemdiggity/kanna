@@ -255,6 +255,7 @@
   "mainPanel": {
     "taskBlocked": "Task Blocked",
     "taskBlockedHint": "This task will start automatically when all blockers complete.",
+    "taskSettingUp": "Setting up task...",
     "waitingOn": "Waiting on:",
     "blockerDone": "Done",
     "blockerActive": "Active",

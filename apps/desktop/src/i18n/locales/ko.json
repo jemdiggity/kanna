@@ -255,6 +255,7 @@
   "mainPanel": {
     "taskBlocked": "작업 차단됨",
     "taskBlockedHint": "모든 차단 요소가 완료되면 이 작업이 자동으로 시작됩니다.",
+    "taskSettingUp": "작업 설정 중...",
     "waitingOn": "대기 중:",
     "blockerDone": "완료",
     "blockerActive": "활성",
