@@ -156,13 +156,13 @@ function mountSidebarWithRepos(
 
 describe("Sidebar", () => {
   beforeEach(() => {
-    getStageOrder.mockReturnValue(["in progress", "pr", "merge"]);
+    getStageOrder.mockReturnValue(["merge", "pr", "review", "commit", "in progress"]);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     getStageOrder.mockReset();
-    getStageOrder.mockReturnValue(["in progress", "pr", "merge"]);
+    getStageOrder.mockReturnValue(["merge", "pr", "review", "commit", "in progress"]);
   });
 
   it("switches the sidebar into a filtered visual state and shows filtered repo counts", async () => {
