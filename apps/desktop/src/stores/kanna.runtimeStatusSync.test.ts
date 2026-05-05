@@ -180,7 +180,7 @@ vi.mock("../listen", () => ({
 vi.mock("@kanna/core", () => ({
   parseRepoConfig: vi.fn(() => ({})),
   parseAgentMd: vi.fn(() => null),
-  DEFAULT_STAGE_ORDER: ["in progress", "pr", "merge", "done"],
+  DEFAULT_STAGE_ORDER: ["merge", "pr", "review", "commit", "in progress"],
 }));
 
 vi.mock("../../../../packages/core/src/pipeline/agent-loader", () => ({

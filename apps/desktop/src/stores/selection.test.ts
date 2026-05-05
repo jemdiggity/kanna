@@ -36,6 +36,55 @@ function createDb(): DbHandle {
   };
 }
 
+function createRepo(overrides: Partial<Repo> = {}): Repo {
+  return {
+    id: "repo-1",
+    path: "/tmp/repo",
+    name: "repo",
+    default_branch: "main",
+    hidden: 0,
+    sort_order: 0,
+    created_at: "2026-04-29T00:00:00.000Z",
+    last_opened_at: "2026-04-29T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createItem(overrides: Partial<PipelineItem> = {}): PipelineItem {
+  return {
+    id: "task-1",
+    repo_id: "repo-1",
+    issue_number: null,
+    issue_title: null,
+    prompt: "Ship it",
+    pipeline: "default",
+    stage: "in progress",
+    stage_result: null,
+    tags: "[]",
+    pr_number: null,
+    pr_url: null,
+    branch: "task-task-1",
+    closed_at: null,
+    agent_type: "sdk",
+    agent_provider: "claude",
+    activity: "idle",
+    activity_changed_at: "2026-04-29T00:00:00.000Z",
+    unread_at: null,
+    port_offset: null,
+    display_name: null,
+    port_env: null,
+    pinned: 0,
+    pin_order: null,
+    base_ref: null,
+    agent_session_id: null,
+    previous_stage: null,
+    last_output_preview: null,
+    created_at: "2026-04-29T00:00:00.000Z",
+    updated_at: "2026-04-29T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("createSelectionApi", () => {
   beforeEach(() => {
     mockState.reset();
@@ -44,51 +93,8 @@ describe("createSelectionApi", () => {
   it("persists selection through the window workspace instead of global selected_item_id settings", async () => {
     const state = createStoreState();
     state.db.value = createDb();
-    state.repos.value = [
-      {
-        id: "repo-1",
-        path: "/tmp/repo",
-        name: "repo",
-        default_branch: "main",
-        hidden: 0,
-        sort_order: 0,
-        created_at: "2026-04-29T00:00:00.000Z",
-        last_opened_at: "2026-04-29T00:00:00.000Z",
-      } satisfies Repo,
-    ];
-    state.items.value = [
-      {
-        id: "task-1",
-        repo_id: "repo-1",
-        issue_number: null,
-        issue_title: null,
-        prompt: "Ship it",
-        pipeline: "default",
-        stage: "in progress",
-        stage_result: null,
-        tags: "[]",
-        pr_number: null,
-        pr_url: null,
-        branch: "task-task-1",
-        closed_at: null,
-        agent_type: "sdk",
-        agent_provider: "claude",
-        activity: "idle",
-        activity_changed_at: "2026-04-29T00:00:00.000Z",
-        unread_at: null,
-        port_offset: null,
-        display_name: null,
-        port_env: null,
-        pinned: 0,
-        pin_order: null,
-        base_ref: null,
-        agent_session_id: null,
-        previous_stage: null,
-        last_output_preview: null,
-        created_at: "2026-04-29T00:00:00.000Z",
-        updated_at: "2026-04-29T00:00:00.000Z",
-      } satisfies PipelineItem,
-    ];
+    state.repos.value = [createRepo()];
+    state.items.value = [createItem()];
     state.selectedRepoId.value = "repo-1";
 
     const persistSelection = vi.fn(async () => {});
@@ -124,51 +130,8 @@ describe("createSelectionApi", () => {
   it("falls back to the first visible repo and task when the current selection disappears", async () => {
     const state = createStoreState();
     state.db.value = createDb();
-    state.repos.value = [
-      {
-        id: "repo-1",
-        path: "/tmp/repo-1",
-        name: "repo-1",
-        default_branch: "main",
-        hidden: 0,
-        sort_order: 0,
-        created_at: "2026-04-29T00:00:00.000Z",
-        last_opened_at: "2026-04-29T00:00:00.000Z",
-      } satisfies Repo,
-    ];
-    state.items.value = [
-      {
-        id: "task-1",
-        repo_id: "repo-1",
-        issue_number: null,
-        issue_title: null,
-        prompt: "Ship it",
-        pipeline: "default",
-        stage: "in progress",
-        stage_result: null,
-        tags: "[]",
-        pr_number: null,
-        pr_url: null,
-        branch: "task-task-1",
-        closed_at: null,
-        agent_type: "sdk",
-        agent_provider: "claude",
-        activity: "idle",
-        activity_changed_at: "2026-04-29T00:00:00.000Z",
-        unread_at: null,
-        port_offset: null,
-        display_name: null,
-        port_env: null,
-        pinned: 0,
-        pin_order: null,
-        base_ref: null,
-        agent_session_id: null,
-        previous_stage: null,
-        last_output_preview: null,
-        created_at: "2026-04-29T00:00:00.000Z",
-        updated_at: "2026-04-29T00:00:00.000Z",
-      } satisfies PipelineItem,
-    ];
+    state.repos.value = [createRepo({ path: "/tmp/repo-1", name: "repo-1" })];
+    state.items.value = [createItem()];
     state.selectedRepoId.value = "repo-missing";
     state.selectedItemId.value = "task-missing";
 
@@ -189,5 +152,53 @@ describe("createSelectionApi", () => {
 
     expect(state.selectedRepoId.value).toBe("repo-1");
     expect(state.selectedItemId.value).toBe("task-1");
+  });
+
+  it("uses the built-in stage order when a repo has no stage_order override", () => {
+    const state = createStoreState();
+    state.db.value = createDb();
+    state.repos.value = [createRepo()];
+    state.items.value = [
+      createItem({
+        id: "task-progress",
+        prompt: "In progress task",
+        stage: "in progress",
+        created_at: "2026-04-29T00:03:00.000Z",
+      }),
+      createItem({
+        id: "task-commit",
+        prompt: "Commit task",
+        stage: "commit",
+        created_at: "2026-04-29T00:02:00.000Z",
+      }),
+      createItem({
+        id: "task-review",
+        prompt: "Review task",
+        stage: "review",
+        created_at: "2026-04-29T00:01:00.000Z",
+      }),
+    ];
+    state.selectedRepoId.value = "repo-1";
+
+    const context = createStoreContext(
+      state,
+      {
+        toasts: ref([]),
+        dismiss: vi.fn(),
+        info: vi.fn(),
+        warning: vi.fn(),
+        error: vi.fn(),
+      },
+      {} as never,
+    );
+
+    const api = createSelectionApi(context);
+
+    expect(api.getStageOrder("repo-1")).toEqual(["merge", "pr", "review", "commit", "in progress"]);
+    expect(api.sortedItemsForCurrentRepo.value.map((item) => item.id)).toEqual([
+      "task-review",
+      "task-commit",
+      "task-progress",
+    ]);
   });
 });
