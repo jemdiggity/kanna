@@ -612,6 +612,10 @@ fn build_target_stage_prompt(
 }
 
 fn read_builtin_resource(relative_path: &str) -> Result<String, String> {
+    if let Some(content) = compiled_builtin_resource(relative_path) {
+        return Ok(content.to_string());
+    }
+
     let mut dir = std::env::current_dir().map_err(|e| format!("failed to read cwd: {}", e))?;
     for _ in 0..10 {
         let candidate = dir.join(relative_path);
@@ -624,6 +628,38 @@ fn read_builtin_resource(relative_path: &str) -> Result<String, String> {
         }
     }
     Err(format!("resource not found: {}", relative_path))
+}
+
+fn compiled_builtin_resource(relative_path: &str) -> Option<&'static str> {
+    match relative_path {
+        ".kanna/pipelines/default.json" => {
+            Some(include_str!("../../../.kanna/pipelines/default.json"))
+        }
+        ".kanna/pipelines/qa.json" => Some(include_str!("../../../.kanna/pipelines/qa.json")),
+        ".kanna/agents/agent-factory/AGENT.md" => Some(include_str!(
+            "../../../.kanna/agents/agent-factory/AGENT.md"
+        )),
+        ".kanna/agents/commit/AGENT.md" => {
+            Some(include_str!("../../../.kanna/agents/commit/AGENT.md"))
+        }
+        ".kanna/agents/config-factory/AGENT.md" => Some(include_str!(
+            "../../../.kanna/agents/config-factory/AGENT.md"
+        )),
+        ".kanna/agents/implement/AGENT.md" => {
+            Some(include_str!("../../../.kanna/agents/implement/AGENT.md"))
+        }
+        ".kanna/agents/merge/AGENT.md" => {
+            Some(include_str!("../../../.kanna/agents/merge/AGENT.md"))
+        }
+        ".kanna/agents/pipeline-factory/AGENT.md" => Some(include_str!(
+            "../../../.kanna/agents/pipeline-factory/AGENT.md"
+        )),
+        ".kanna/agents/pr/AGENT.md" => Some(include_str!("../../../.kanna/agents/pr/AGENT.md")),
+        ".kanna/agents/review/AGENT.md" => {
+            Some(include_str!("../../../.kanna/agents/review/AGENT.md"))
+        }
+        _ => None,
+    }
 }
 
 fn parse_agent_definition(content: &str) -> Result<AgentDefinition, String> {
@@ -1083,10 +1119,11 @@ fn short_socket_path(dir: &PathBuf) -> PathBuf {
 mod tests {
     use super::{
         build_stage_prompt, prepare_advance_stage_for_api, prepare_revision_task_for_api,
-        PromptContext,
+        prepare_task_for_api, PromptContext,
     };
     use crate::config::Config;
     use crate::db::Db;
+    use crate::mobile_api::CreateTaskRequest;
     use std::process::Command;
 
     #[test]
@@ -1236,6 +1273,99 @@ mod tests {
         );
         assert_eq!(created_source.base_ref.as_deref(), Some("origin/main"));
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
+    }
+
+    #[test]
+    fn prepare_task_uses_builtin_default_pipeline_when_repo_has_no_local_default_pipeline() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "kanna-task-default-pipeline-fallback-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&repo_root);
+        std::fs::create_dir_all(&repo_root).unwrap();
+        std::fs::write(repo_root.join("README.md"), "test repo").unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: "/tmp/kanna-daemon".to_string(),
+            db_path: Db::test_db_path("default-pipeline-fallback"),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "0.0.0.0".to_string(),
+            lan_port: 48120,
+            pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        let unrelated_cwd = std::env::temp_dir().join(format!(
+            "kanna-task-default-pipeline-unrelated-cwd-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&unrelated_cwd);
+        std::fs::create_dir_all(&unrelated_cwd).unwrap();
+        std::env::set_current_dir(&unrelated_cwd).unwrap();
+
+        let prepared_result = prepare_task_for_api(
+            &db,
+            &config,
+            CreateTaskRequest {
+                repo_id: "repo-1".to_string(),
+                prompt: "Implement the fallback".to_string(),
+                pipeline_name: None,
+                base_ref: None,
+                stage: None,
+                agent_provider: Some("codex".to_string()),
+                model: None,
+                permission_mode: None,
+                allowed_tools: None,
+            },
+        );
+        std::env::set_current_dir(original_cwd).unwrap();
+        let prepared = prepared_result.unwrap();
+
+        assert_eq!(prepared.created_task.stage, "in progress");
+        assert_eq!(prepared.created_task.title, "Implement the fallback");
     }
 
     #[test]
