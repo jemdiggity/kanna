@@ -13,6 +13,7 @@ import {
 import { invoke } from "../invoke";
 import { useToast } from "../composables/useToast";
 import { loadSessionRecoveryState } from "../composables/sessionRecoveryState";
+import { defaultReposHome } from "../utils/reposHome";
 import {
   buildOutgoingTransferPayload,
   parseFinalizedOutgoingTransferResult,
@@ -414,8 +415,8 @@ export const useKannaStore = defineStore("kanna", () => {
   }
 
   async function allocateTransferredRepoPath(repoName: string): Promise<string> {
-    const appDataDir = await invoke<string>("get_app_data_dir");
-    const parentDir = `${appDataDir}/transferred-repos`;
+    const home = await invoke<string>("read_env_var", { name: "HOME" });
+    const parentDir = defaultReposHome(home);
     await invoke("ensure_directory", { path: parentDir });
 
     const base = sanitizeTransferRepoName(repoName);
