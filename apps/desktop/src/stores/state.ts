@@ -56,6 +56,10 @@ export interface WorktreeBootstrapResult {
   visibleBootstrapSteps: string[];
 }
 
+export interface AdvanceStageOptions {
+  initiatedBy?: "manual" | "auto";
+}
+
 export interface RepoSnapshotEntry {
   repo: Repo;
   items: PipelineItem[];
@@ -129,7 +133,7 @@ export interface StoreServices {
   goForward?: () => void;
   loadPipeline?: (repoPath: string, pipelineName: string) => Promise<PipelineDefinition>;
   loadAgent?: (repoPath: string, agentName: string) => Promise<AgentDefinition>;
-  advanceStage?: (taskId: string) => Promise<void>;
+  advanceStage?: (taskId: string, options?: AdvanceStageOptions) => Promise<void>;
   rerunStage?: (taskId: string) => Promise<void>;
   spawnShellSession?: (
     sessionId: string,
