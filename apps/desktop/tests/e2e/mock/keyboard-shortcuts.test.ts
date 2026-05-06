@@ -256,6 +256,44 @@ describe("keyboard shortcuts", () => {
     expect(await getVueState(client, "selectedItemId")).toBe("shortcut-normal-old");
   });
 
+  it("unread shortcuts fall back to read tasks when no unread tasks exist", async () => {
+    await ensureRepoImported();
+    const repoId = await getVueState(client, "selectedRepoId") as string;
+
+    const seedResult = await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       const db = ctx.db.value || ctx.db;
+       const rows = [
+         ["shortcut-blocked-old", "${repoId}", "Blocked old read", "in progress", "idle", "2026-03-31T00:00:00.000Z", "[\\"blocked\\"]"],
+         ["shortcut-read-old", "${repoId}", "Read old", "in progress", "idle", "2026-03-31T01:00:00.000Z", "[]"],
+         ["shortcut-read-new", "${repoId}", "Read new", "in progress", "idle", "2026-03-31T03:00:00.000Z", "[]"],
+         ["shortcut-blocked-new", "${repoId}", "Blocked new read", "in progress", "idle", "2026-03-31T04:00:00.000Z", "[\\"blocked\\"]"],
+       ];
+       db.execute("DELETE FROM pipeline_item WHERE repo_id = ?", ["${repoId}"])
+         .then(function() {
+           return Promise.all(rows.map(function(row) {
+             return db.execute(
+               "INSERT INTO pipeline_item (id, repo_id, prompt, stage, activity, created_at, agent_type, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+               [row[0], row[1], row[2], row[3], row[4], row[5], "sdk", row[6]]
+             );
+           }));
+         })
+         .then(function() { return ctx.loadItems("${repoId}"); })
+         .then(function() { return ctx.store.selectItem("shortcut-read-new"); })
+         .then(function() { cb("ok"); })
+         .catch(function(e) { cb("err:" + e); });`
+    );
+    expect(seedResult).toBe("ok");
+    await waitForSelection({ repoId, itemId: "shortcut-read-new" });
+
+    await pressKey("u", { meta: true });
+    await waitForSelection({ repoId, itemId: "shortcut-read-old" });
+
+    await pressKey("U", { meta: true, shift: true });
+    await waitForSelection({ repoId, itemId: "shortcut-read-new" });
+  });
+
   it("Shift+Cmd+Enter maximizes the tree explorer", async () => {
     await ensureRepoImported();
 
