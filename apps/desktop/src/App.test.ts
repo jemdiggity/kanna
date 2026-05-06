@@ -122,6 +122,7 @@ const store = {
 };
 const toastInfoMock = vi.fn();
 const toastWarningMock = vi.fn();
+const toastErrorMock = vi.fn();
 const mockWindowWorkspace = {
   bootstrap: {
     windowId: "main",
@@ -246,7 +247,7 @@ vi.mock("./composables/useAppUpdate", () => ({
 
 vi.mock("./composables/useToast", () => ({
   useToast: () => ({
-    error: vi.fn(),
+    error: toastErrorMock,
     info: toastInfoMock,
     warning: toastWarningMock,
   }),
@@ -500,6 +501,7 @@ describe("App", () => {
     invokeMock.mockClear();
     toastInfoMock.mockClear();
     toastWarningMock.mockClear();
+    toastErrorMock.mockClear();
     appUpdateStartMock.mockClear();
     appUpdateMock.dispose.mockClear();
     appUpdateMock.dismiss.mockClear();
@@ -928,6 +930,113 @@ describe("App", () => {
     await flushPromises();
 
     expect(toastInfoMock).toHaveBeenCalledWith(expect.stringContaining("654321"));
+    wrapper.unmount();
+  });
+
+  it("shows the pairing code on the initiating machine while the target approves", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    const handler = listenHandlers.get("pairing-started");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({
+      type: "pairing_started",
+      peer_id: "peer-1",
+      display_name: "Peer 1",
+      verification_code: "654321",
+    });
+    await flushPromises();
+
+    expect(toastInfoMock).toHaveBeenCalledWith("Enter code 654321 on Peer 1.");
+    wrapper.unmount();
+  });
+
+  it("requests the pairing code on the target machine before accepting pairing", async () => {
+    const promptMock = vi.fn().mockReturnValue("654321");
+    Object.defineProperty(window, "prompt", {
+      configurable: true,
+      value: promptMock,
+    });
+    invokeMock.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "accept_peer_pairing") {
+        return { pairingRequestId: args?.pairingRequestId };
+      }
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return ["feature/x", "main", "origin/main"];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    const handler = listenHandlers.get("pairing-requested");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({
+      type: "pairing_requested",
+      request_id: "incoming-pair-1",
+      peer_id: "peer-1",
+      display_name: "Peer 1",
+      verification_code: "654321",
+    });
+    await flushPromises();
+
+    expect(promptMock).toHaveBeenCalledWith("Enter pairing code for Peer 1");
+    expect(invokeMock).toHaveBeenCalledWith("accept_peer_pairing", {
+      pairingRequestId: "incoming-pair-1",
+      verificationCode: "654321",
+    });
+    expect(invokeMock.mock.calls.some(([command]) => command === "reject_peer_pairing")).toBe(false);
+    expect(toastInfoMock).toHaveBeenCalledWith(expect.stringContaining("654321"));
+    Reflect.deleteProperty(window, "prompt");
+    wrapper.unmount();
+  });
+
+  it("rejects an incoming pairing request when the target enters the wrong code", async () => {
+    const promptMock = vi.fn().mockReturnValue("000000");
+    Object.defineProperty(window, "prompt", {
+      configurable: true,
+      value: promptMock,
+    });
+    invokeMock.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "reject_peer_pairing") {
+        return { pairingRequestId: args?.pairingRequestId };
+      }
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return ["feature/x", "main", "origin/main"];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    const handler = listenHandlers.get("pairing-requested");
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({
+      type: "pairing_requested",
+      request_id: "incoming-pair-2",
+      peer_id: "peer-2",
+      display_name: "Peer 2",
+      verification_code: "654321",
+    });
+    await flushPromises();
+
+    expect(invokeMock).toHaveBeenCalledWith("reject_peer_pairing", {
+      pairingRequestId: "incoming-pair-2",
+    });
+    expect(invokeMock.mock.calls.some(([command]) => command === "accept_peer_pairing")).toBe(false);
+    expect(toastErrorMock).toHaveBeenCalledWith("Pairing code did not match.");
+    Reflect.deleteProperty(window, "prompt");
     wrapper.unmount();
   });
 

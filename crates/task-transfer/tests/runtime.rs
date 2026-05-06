@@ -3,7 +3,9 @@ use base64::Engine;
 use kanna_task_transfer::crypto::{public_key_to_string, TransferIdentity};
 use kanna_task_transfer::peer_store::{PeerRecord, PeerStore};
 use kanna_task_transfer::registry::{PeerRegistry, PeerRegistryEntry};
-use kanna_task_transfer::runtime::{DiscoveryMode, RuntimeConfig, RuntimeEvent, TransferRuntime};
+use kanna_task_transfer::runtime::{
+    DiscoveryMode, PairingResult, RuntimeConfig, RuntimeEvent, TransferRuntime,
+};
 use serde_json::json;
 use std::path::Path;
 use std::time::Duration;
@@ -38,7 +40,7 @@ async fn peers_become_trusted_after_explicit_pairing() {
     assert_eq!(peers_before[0].peer_id, "peer-secondary");
     assert!(!peers_before[0].trusted);
 
-    let paired = primary.start_pairing("peer-secondary").await.unwrap();
+    let paired = pair_peers(&primary, &secondary, "peer-secondary").await;
     assert_eq!(paired.peer.peer_id, "peer-secondary");
     assert!(paired.peer.trusted);
     assert!(!paired.peer.public_key.is_empty());
@@ -61,6 +63,73 @@ async fn peers_become_trusted_after_explicit_pairing() {
     assert_eq!(secondary_peers.len(), 1);
     assert_eq!(secondary_peers[0].peer_id, "peer-primary");
     assert!(secondary_peers[0].trusted);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_pairing_waits_for_target_acceptance_before_trusting() {
+    let temp = tempfile::tempdir().unwrap();
+
+    let secondary = TransferRuntime::spawn(RuntimeConfig::for_tests(
+        "peer-secondary",
+        "Secondary",
+        temp.path(),
+        0,
+    ))
+    .await
+    .unwrap();
+
+    let primary = TransferRuntime::spawn(RuntimeConfig::for_tests(
+        "peer-primary",
+        "Primary",
+        temp.path(),
+        0,
+    ))
+    .await
+    .unwrap();
+
+    let mut pairing = tokio::spawn(async move { primary.start_pairing("peer-secondary").await });
+
+    let pairing_event = secondary.next_event().await.unwrap();
+    let RuntimeEvent::PairingRequested(pairing_request) = pairing_event else {
+        panic!("expected pairing request event");
+    };
+    assert_eq!(pairing_request.peer_id, "peer-primary");
+    assert_eq!(pairing_request.display_name, "Primary");
+    assert_eq!(pairing_request.verification_code.len(), 6);
+
+    let secondary_peers_before_accept = secondary.list_peers().await.unwrap();
+    assert_eq!(secondary_peers_before_accept.len(), 1);
+    assert_eq!(secondary_peers_before_accept[0].peer_id, "peer-primary");
+    assert!(!secondary_peers_before_accept[0].trusted);
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut pairing)
+            .await
+            .is_err(),
+        "start_pairing completed before the target accepted"
+    );
+
+    secondary
+        .accept_pairing(
+            &pairing_request.request_id,
+            &pairing_request.verification_code,
+        )
+        .await
+        .unwrap();
+
+    let paired = pairing.await.unwrap().unwrap();
+    assert_eq!(paired.peer.peer_id, "peer-secondary");
+    assert!(paired.peer.trusted);
+
+    let pairing_completed = secondary.next_event().await.unwrap();
+    let RuntimeEvent::PairingCompleted(pairing_completed) = pairing_completed else {
+        panic!("expected pairing completed event");
+    };
+    assert_eq!(pairing_completed.peer_id, "peer-primary");
+    assert_eq!(
+        pairing_completed.verification_code,
+        pairing_request.verification_code
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -129,7 +198,7 @@ async fn mdns_peers_can_discover_pair_and_transfer() {
     assert!(!discovered.endpoint.is_empty());
     wait_for_peer(&secondary, "peer-primary-mdns").await;
 
-    primary.start_pairing("peer-secondary-mdns").await.unwrap();
+    pair_peers(&primary, &secondary, "peer-secondary-mdns").await;
 
     let preflight = primary
         .prepare_transfer_preflight("peer-secondary-mdns", "task-source")
@@ -182,7 +251,7 @@ async fn primary_runtime_can_send_a_real_incoming_transfer_to_secondary() {
     assert_eq!(peers[0].peer_id, "peer-secondary");
     assert_ne!(peers[0].endpoint, "127.0.0.1:0");
 
-    primary.start_pairing("peer-secondary").await.unwrap();
+    pair_peers(&primary, &secondary, "peer-secondary").await;
 
     let preflight = primary
         .prepare_transfer_preflight("peer-secondary", "task-source")
@@ -338,7 +407,7 @@ async fn destination_must_also_trust_the_source_peer() {
 async fn commit_ack_stays_responsive_when_secondary_events_are_not_drained() {
     let temp = tempfile::tempdir().unwrap();
 
-    let _secondary = TransferRuntime::spawn(RuntimeConfig::for_tests(
+    let secondary = TransferRuntime::spawn(RuntimeConfig::for_tests(
         "peer-secondary",
         "Secondary",
         temp.path(),
@@ -358,7 +427,7 @@ async fn commit_ack_stays_responsive_when_secondary_events_are_not_drained() {
 
     for transfer_index in 0..40 {
         if transfer_index == 0 {
-            primary.start_pairing("peer-secondary").await.unwrap();
+            pair_peers(&primary, &secondary, "peer-secondary").await;
         }
         let preflight = primary
             .prepare_transfer_preflight("peer-secondary", &format!("task-{transfer_index}"))
@@ -400,7 +469,7 @@ async fn expired_preflight_commit_is_rejected_and_emits_no_incoming_event() {
     .await
     .unwrap();
 
-    primary.start_pairing("peer-secondary").await.unwrap();
+    pair_peers(&primary, &secondary, "peer-secondary").await;
 
     let first = primary
         .prepare_transfer_preflight("peer-secondary", "task-stale")
@@ -452,7 +521,7 @@ async fn destination_can_acknowledge_import_commit_back_to_source() {
     .await
     .unwrap();
 
-    primary.start_pairing("peer-secondary").await.unwrap();
+    pair_peers(&primary, &secondary, "peer-secondary").await;
 
     let preflight = primary
         .prepare_transfer_preflight("peer-secondary", "task-source")
@@ -511,7 +580,7 @@ async fn destination_can_finalize_outgoing_transfer_after_approval() {
         .unwrap(),
     );
 
-    primary.start_pairing("peer-secondary").await.unwrap();
+    pair_peers(&primary, &secondary, "peer-secondary").await;
 
     let preflight = primary
         .prepare_transfer_preflight("peer-secondary", "task-source")
@@ -620,7 +689,7 @@ async fn destination_fetches_staged_transfer_artifacts_from_the_source_peer() {
     .await
     .unwrap();
 
-    source.start_pairing("peer-destination").await.unwrap();
+    pair_peers(&source, &destination, "peer-destination").await;
 
     let bundle_path = temp.path().join("source.bundle");
     let bundle_bytes = b"bundle-contents";
@@ -881,7 +950,7 @@ async fn fetch_transfer_artifact_does_not_leak_artifact_bytes_on_the_wire() {
     .await
     .unwrap();
 
-    source.start_pairing("peer-destination").await.unwrap();
+    pair_peers(&source, &destination, "peer-destination").await;
 
     let bundle_path = temp.path().join("source.bundle");
     let bundle_bytes = b"bundle-contents";
@@ -997,7 +1066,7 @@ async fn acknowledge_import_committed_does_not_leak_task_ids_on_the_wire() {
     .await
     .unwrap();
 
-    source.start_pairing("peer-destination").await.unwrap();
+    pair_peers(&source, &destination, "peer-destination").await;
 
     let preflight = source
         .prepare_transfer_preflight("peer-destination", "task-source")
@@ -1108,6 +1177,8 @@ async fn next_incoming_transfer_request(
     loop {
         match runtime.next_event().await.unwrap() {
             RuntimeEvent::IncomingTransferRequest(event) => return event,
+            RuntimeEvent::PairingStarted(_) => {}
+            RuntimeEvent::PairingRequested(_) => {}
             RuntimeEvent::PairingCompleted(_) => {}
             RuntimeEvent::OutgoingTransferFinalizationRequested(_) => {
                 panic!("expected incoming transfer event");
@@ -1125,6 +1196,8 @@ async fn next_outgoing_transfer_committed(
     loop {
         match runtime.next_event().await.unwrap() {
             RuntimeEvent::OutgoingTransferCommitted(event) => return event,
+            RuntimeEvent::PairingStarted(_) => {}
+            RuntimeEvent::PairingRequested(_) => {}
             RuntimeEvent::PairingCompleted(_) => {}
             RuntimeEvent::OutgoingTransferFinalizationRequested(_) => {
                 panic!("expected outgoing transfer committed event");
@@ -1140,10 +1213,81 @@ async fn consume_pairing_completed(runtime: &TransferRuntime) {
     let event = runtime.next_event().await.unwrap();
     match event {
         RuntimeEvent::PairingCompleted(_) => {}
+        RuntimeEvent::PairingStarted(_) => panic!("expected pairing completed event"),
+        RuntimeEvent::PairingRequested(_) => panic!("expected pairing completed event"),
         RuntimeEvent::IncomingTransferRequest(_) => panic!("expected pairing completed event"),
         RuntimeEvent::OutgoingTransferCommitted(_) => panic!("expected pairing completed event"),
         RuntimeEvent::OutgoingTransferFinalizationRequested(_) => {
             panic!("expected pairing completed event");
         }
     }
+}
+
+async fn pair_peers(
+    source: &TransferRuntime,
+    target: &TransferRuntime,
+    target_peer_id: &str,
+) -> PairingResult {
+    let pairing = source.start_pairing(target_peer_id);
+    tokio::pin!(pairing);
+    let mut pairing_started = false;
+    let mut pairing_request = None;
+    while !pairing_started || pairing_request.is_none() {
+        tokio::select! {
+            result = &mut pairing => {
+                panic!("pairing completed before target emitted a request: {result:?}");
+            }
+            event = source.next_event(), if !pairing_started => {
+                match event.unwrap() {
+                    RuntimeEvent::PairingStarted(event) => {
+                        assert_eq!(event.peer_id, target_peer_id);
+                        assert_eq!(event.verification_code.len(), 6);
+                        pairing_started = true;
+                    }
+                    RuntimeEvent::PairingRequested(_) => {
+                        panic!("source should not receive its own pairing request event");
+                    }
+                    RuntimeEvent::PairingCompleted(_) => {}
+                    RuntimeEvent::IncomingTransferRequest(_) => {
+                        panic!("expected pairing started event");
+                    }
+                    RuntimeEvent::OutgoingTransferCommitted(_) => {
+                        panic!("expected pairing started event");
+                    }
+                    RuntimeEvent::OutgoingTransferFinalizationRequested(_) => {
+                        panic!("expected pairing started event");
+                    }
+                }
+            }
+            event = target.next_event() => {
+                match event.unwrap() {
+                    RuntimeEvent::PairingRequested(event) => pairing_request = Some(event),
+                    RuntimeEvent::PairingStarted(_) => {
+                        panic!("target should not receive pairing started event");
+                    }
+                    RuntimeEvent::PairingCompleted(_) => {}
+                    RuntimeEvent::IncomingTransferRequest(_) => {
+                        panic!("expected pairing request event");
+                    }
+                    RuntimeEvent::OutgoingTransferCommitted(_) => {
+                        panic!("expected pairing request event");
+                    }
+                    RuntimeEvent::OutgoingTransferFinalizationRequested(_) => {
+                        panic!("expected pairing request event");
+                    }
+                }
+            }
+        }
+    }
+
+    let pairing_request = pairing_request.unwrap();
+
+    target
+        .accept_pairing(
+            &pairing_request.request_id,
+            &pairing_request.verification_code,
+        )
+        .await
+        .unwrap();
+    pairing.await.unwrap()
 }
