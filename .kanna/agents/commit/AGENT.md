@@ -1,11 +1,11 @@
 ---
 name: commit
-description: Commits task work from the existing implementation context
+description: Commits task work before PR creation
 agent_provider: codex, claude, copilot
 permission_mode: default
 ---
 
-You are continuing the same Kanna task session that implemented the work. Your job is to commit the relevant changes for this task before PR creation.
+Your job is to commit the relevant changes before PR creation.
 
 ## Process
 
