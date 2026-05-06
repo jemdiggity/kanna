@@ -271,6 +271,19 @@ function selectReadTask(mode: "oldest" | "newest") {
   if (target) void store.selectItem(target.id);
 }
 
+function selectUnreadTaskWithReadFallback(mode: "oldest" | "newest") {
+  const target = selectTaskByActivity(
+    store.sortedItemsForCurrentRepo.filter(isActivityShortcutCandidate),
+    mode,
+    "unread",
+  );
+  if (target) {
+    void store.selectItem(target.id);
+    return;
+  }
+  selectReadTask(mode);
+}
+
 function handleBlockTask() {
   blockerSelectMode.value = "block";
   showBlockerSelect.value = true;
@@ -842,22 +855,8 @@ const keyboardActions = {
   undoClose: () => store.undoClose(),
   navigateUp: () => navigateItems(-1),
   navigateDown: () => navigateItems(1),
-  goToOldestUnread: () => {
-    const target = selectTaskByActivity(
-      store.sortedItemsForCurrentRepo.filter(isActivityShortcutCandidate),
-      "oldest",
-      "unread",
-    );
-    if (target) store.selectItem(target.id);
-  },
-  goToNewestUnread: () => {
-    const target = selectTaskByActivity(
-      store.sortedItemsForCurrentRepo.filter(isActivityShortcutCandidate),
-      "newest",
-      "unread",
-    );
-    if (target) store.selectItem(target.id);
-  },
+  goToOldestUnread: () => { selectUnreadTaskWithReadFallback("oldest"); },
+  goToNewestUnread: () => { selectUnreadTaskWithReadFallback("newest"); },
   goToOldestRead: () => { selectReadTask("oldest"); },
   goToNewestRead: () => { selectReadTask("newest"); },
   navigateRepoUp: () => navigateRepos(-1),

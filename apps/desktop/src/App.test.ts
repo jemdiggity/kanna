@@ -738,6 +738,26 @@ describe("App", () => {
     expect(store.selectItem).toHaveBeenCalledWith("normal-unread");
   });
 
+  it("falls back to read tasks when unread shortcut navigation has no unread task", async () => {
+    store.sortedItemsForCurrentRepo = [
+      { id: "blocked-oldest", activity: "idle", created_at: "2026-03-31T00:00:00.000Z", tags: '["blocked"]' },
+      { id: "read-oldest", activity: "idle", created_at: "2026-03-31T01:00:00.000Z", tags: "[]" },
+      { id: "working-newest", activity: "working", created_at: "2026-03-31T02:00:00.000Z", tags: "[]" },
+      { id: "read-newest", activity: "idle", created_at: "2026-03-31T03:00:00.000Z", tags: "[]" },
+      { id: "blocked-newest", activity: "idle", created_at: "2026-03-31T04:00:00.000Z", tags: '["blocked"]' },
+    ];
+
+    await mountApp(SidebarWithRepoStub);
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.goToOldestUnread();
+    expect(store.selectItem).toHaveBeenCalledWith("read-oldest");
+
+    store.selectItem.mockClear();
+    capturedKeyboardActions?.goToNewestUnread();
+    expect(store.selectItem).toHaveBeenCalledWith("read-newest");
+  });
+
   it("reopens the diff modal with the last saved diff view state", async () => {
     const DiffModalStub = defineComponent({
       name: "DiffModal",
