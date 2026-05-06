@@ -42,7 +42,7 @@ import { buildPendingTaskPlaceholder } from "./taskCreationPlaceholder";
 import { getTaskCloseBehavior } from "./taskCloseBehavior";
 import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
 import { shouldPrewarmTaskShellOnCreate } from "./taskShellPrewarm";
-import { getCreateWorktreeStartPoint, resolveInitialBaseRef } from "./taskBaseBranch";
+import { getCreateWorktreeStartPoint, getOriginFetchBranch, resolveInitialBaseRef } from "./taskBaseBranch";
 import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
 import { encodeDaemonInput } from "./daemonInput";
 import { buildWorktreeSessionEnv } from "./worktreeEnv";
@@ -266,13 +266,24 @@ export function createTasksApi(
     repoPath: string,
     branch: string,
     worktreePath: string,
-    baseBranch?: string,
+    baseRef?: string | null,
   ): Promise<WorktreeBootstrapResult> {
     const visibleBootstrapSteps: string[] = [];
-    let startPoint = getCreateWorktreeStartPoint(baseBranch);
+    let startPoint = getCreateWorktreeStartPoint(baseRef ?? undefined);
     let renderedStartPoint = startPoint ?? "HEAD";
+    const originFetchBranch = getOriginFetchBranch(startPoint);
 
-    if (!startPoint) {
+    if (originFetchBranch) {
+      renderedStartPoint = startPoint ?? renderedStartPoint;
+      visibleBootstrapSteps.push(`git fetch origin ${originFetchBranch}`);
+      try {
+        await invoke("git_fetch", { repoPath, branch: originFetchBranch });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[store] fetch origin failed:", message);
+        context.toast.warning(context.tt("toasts.fetchFailed"));
+      }
+    } else if (!startPoint) {
       try {
         const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
         renderedStartPoint = defaultBranch;
@@ -333,7 +344,7 @@ export function createTasksApi(
       let portEnv: Record<string, string> = {};
       let ptySetupCmds: string[] = [];
       try {
-        worktreeBootstrap = await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch);
+        worktreeBootstrap = await createWorktree(repoPath, branch, worktreePath, opts?.baseBranch ?? opts?.baseRef ?? null);
         repoConfig = await readRepoConfig(worktreePath);
         ptySetupCmds = repoConfig.setup || [];
       } catch (error) {
@@ -627,15 +638,19 @@ export function createTasksApi(
             } else {
               try {
                 const defaultBranch = await invoke<string>("git_default_branch", { repoPath });
-                const availableBaseBranches = await invoke<string[]>("git_list_base_branches", { repoPath }).catch(() => [defaultBranch]);
+                const availableBaseBranches = await invoke<string[]>("git_list_base_branches", { repoPath });
                 baseRef = resolveInitialBaseRef({
                   selectedBaseBranch: opts?.baseBranch,
                   availableBaseBranches,
                   defaultBranch,
                 });
               } catch (error) {
-                console.warn("[store] failed to compute base_ref:", error);
+                console.warn("[store] failed to verify base branch:", error);
+                baseRef = null;
               }
+            }
+            if (!baseRef) {
+              throw new Error("No valid base branch selected");
             }
             console.log(`[perf:createItem] git base_ref: ${(performance.now() - t1).toFixed(1)}ms`);
 
@@ -671,7 +686,8 @@ export function createTasksApi(
             }
             await ports.releaseTaskPorts(id).catch(() => undefined);
             console.error("[store] task creation failed:", error);
-            context.toast.error(context.tt("toasts.dbInsertFailed"));
+            const message = error instanceof Error ? error.message : String(error);
+            context.toast.error(message === "No valid base branch selected" ? message : context.tt("toasts.dbInsertFailed"));
             throw error;
           }
           console.log(`[perf:createItem] DB insert: ${(performance.now() - t1).toFixed(1)}ms`);
@@ -696,6 +712,7 @@ export function createTasksApi(
             effectiveAgentProvider,
             {
               ...opts,
+              baseRef,
               model: resolvedModel ?? undefined,
             },
           );

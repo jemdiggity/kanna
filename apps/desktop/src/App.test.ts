@@ -600,7 +600,7 @@ describe("App", () => {
     wrapper.unmount();
   });
 
-  it("submits undefined baseBranch when the resolved default branch was never explicitly changed", async () => {
+  it("submits the visible baseBranch when the resolved default branch was never explicitly changed", async () => {
     const wrapper = await mountApp(SidebarWithRepoStub);
 
     await flushPromises();
@@ -620,14 +620,23 @@ describe("App", () => {
       expect.objectContaining({
         agentProvider: "claude",
         pipelineName: "default",
-        baseBranch: undefined,
+        baseBranch: "origin/main",
       }),
     );
   });
 
-  it("does not pass an explicit fallback base branch when repo branch data was unresolved", async () => {
+  it("does not create a task when repo branch data was unresolved", async () => {
     store.selectedRepoId = null;
     store.selectedRepo = null;
+    invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return [];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      throw new Error(`unexpected invoke: ${command}`);
+    });
 
     const wrapper = await mountApp(SidebarWithoutRepoStub);
 
@@ -636,21 +645,73 @@ describe("App", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toBe("main");
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("tasks.baseBranchRequired");
 
     await wrapper.get("textarea").setValue("Create unresolved task");
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
+    await flushPromises();
+
+    expect(store.createItem).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-select an arbitrary feature branch when default refs are missing", async () => {
+    invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return ["feature/x"];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+
+    await flushPromises();
+    await wrapper.get('[data-testid="open-new-task"]').trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("tasks.baseBranchRequired");
+
+    await wrapper.get("textarea").setValue("Create arbitrary branch task");
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
+    await flushPromises();
+
+    expect(store.createItem).not.toHaveBeenCalled();
+  });
+
+  it("uses the local default branch when the origin default is missing", async () => {
+    invokeMock.mockImplementation(async (command: string, args?: { name?: string; repoPath?: string }) => {
+      if (command === "list_dir") return ["default.json"];
+      if (command === "read_text_file") return "";
+      if (command === "git_default_branch") return "main";
+      if (command === "git_list_base_branches") return ["feature/x", "main"];
+      if (command === "read_env_var") return "/Users/test";
+      if (command === "which_binary" && (args?.name === "claude" || args?.name === "codex")) return true;
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+
+    await flushPromises();
+    await wrapper.get('[data-testid="open-new-task"]').trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toBe("main");
+
+    await wrapper.get("textarea").setValue("Create local default task");
     await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
     await flushPromises();
 
     expect(store.createItem).toHaveBeenCalledWith(
       "repo-1",
       "/tmp/repo",
-      "Create unresolved task",
+      "Create local default task",
       "pty",
       expect.objectContaining({
-        agentProvider: "claude",
-        pipelineName: "default",
-        baseBranch: undefined,
+        baseBranch: "main",
       }),
     );
   });

@@ -24,8 +24,11 @@ export function getDefaultBaseBranch(
   candidates: string[],
   defaultBranch: string,
 ): string {
-  const ordered = orderBaseBranchCandidates(candidates, defaultBranch);
-  return ordered[0] ?? "";
+  const unique = new Set(candidates.filter((value) => value.trim().length > 0));
+  const originDefault = `origin/${defaultBranch}`;
+  if (unique.has(originDefault)) return originDefault;
+  if (unique.has(defaultBranch)) return defaultBranch;
+  return "";
 }
 
 export function filterBaseBranchCandidates(
