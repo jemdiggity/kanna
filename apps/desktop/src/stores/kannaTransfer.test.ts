@@ -1359,7 +1359,8 @@ describe("incoming transfer approval", () => {
 
     await store.init(fakeDb);
 
-    mockIncomingTransferApprovalInvoke(payload, async (cmd) => {
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "read_env_var" && args?.name === "HOME") return "/Users/test";
       if (cmd === "get_app_data_dir") return "/tmp/kanna-mock-data";
       if (cmd === "file_exists") return false;
       if (
@@ -1381,7 +1382,7 @@ describe("incoming transfer approval", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("git_clone", {
       url: "git@github.com:jemdiggity/kanna.git",
-      destination: expect.stringContaining("/repo-1"),
+      destination: "/Users/test/.kanna/repos/repo-1",
     });
     expect(typeof localTaskId).toBe("string");
   });
@@ -1483,7 +1484,8 @@ describe("incoming transfer approval", () => {
 
     await store.init(fakeDb);
 
-    mockIncomingTransferApprovalInvoke(payload, async (cmd) => {
+    mockIncomingTransferApprovalInvoke(payload, async (cmd, args) => {
+      if (cmd === "read_env_var" && args?.name === "HOME") return "/Users/test";
       if (cmd === "get_app_data_dir") return "/tmp/kanna-mock-data";
       if (cmd === "file_exists") return false;
       if (cmd === "fetch_transfer_artifact") {
@@ -1514,7 +1516,7 @@ describe("incoming transfer approval", () => {
       artifactId: "artifact-1",
     });
     expect(invokeMock).toHaveBeenCalledWith("git_init", {
-      path: expect.stringContaining("/repo-1"),
+      path: "/Users/test/.kanna/repos/repo-1",
     });
     expect(invokeMock).toHaveBeenCalledWith("run_script", {
       script: expect.stringContaining("git fetch"),
