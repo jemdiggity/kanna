@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildGlobalKeydownScript } from "../helpers/keyboard";
 import { resetDatabase } from "../helpers/reset";
@@ -11,6 +12,8 @@ interface TransferPeer {
   peerId?: string;
   display_name?: string;
   displayName?: string;
+  public_key?: string;
+  publicKey?: string;
   trusted?: boolean;
 }
 
@@ -24,6 +27,60 @@ function readPeerDisplayName(peer: TransferPeer): string | null {
   if (typeof peer.display_name === "string" && peer.display_name.length > 0) return peer.display_name;
   if (typeof peer.displayName === "string" && peer.displayName.length > 0) return peer.displayName;
   return null;
+}
+
+function readPeerPublicKey(peer: TransferPeer): string | null {
+  if (typeof peer.public_key === "string" && peer.public_key.length > 0) return peer.public_key;
+  if (typeof peer.publicKey === "string" && peer.publicKey.length > 0) return peer.publicKey;
+  return null;
+}
+
+function computePairingCode(leftPeer: TransferPeer, rightPeer: TransferPeer): string {
+  const leftPeerId = readPeerId(leftPeer);
+  const rightPeerId = readPeerId(rightPeer);
+  const leftPublicKey = readPeerPublicKey(leftPeer);
+  const rightPublicKey = readPeerPublicKey(rightPeer);
+  if (!leftPeerId || !rightPeerId || !leftPublicKey || !rightPublicKey) {
+    throw new Error("cannot compute pairing code without both peer ids and public keys");
+  }
+
+  const participants = [
+    `${leftPeerId}:${leftPublicKey}`,
+    `${rightPeerId}:${rightPublicKey}`,
+  ].sort();
+  const digest = createHash("sha256")
+    .update(participants[0])
+    .update("|")
+    .update(participants[1])
+    .digest();
+  const value = digest.readUInt32BE(0) % 1_000_000;
+  return value.toString().padStart(6, "0");
+}
+
+async function installPairingPromptStub(code: string): Promise<void> {
+  await secondary.executeSync(
+    `window.__KANNA_E2E_PAIRING_PROMPT__ = { called: false, message: null, returnedCode: ${JSON.stringify(code)} };
+     window.prompt = (message) => {
+       window.__KANNA_E2E_PAIRING_PROMPT__.called = true;
+       window.__KANNA_E2E_PAIRING_PROMPT__.message = message;
+       return window.__KANNA_E2E_PAIRING_PROMPT__.returnedCode;
+     };`,
+  );
+}
+
+async function waitForSecondaryPairingPrompt(timeoutMs = 10_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const prompt = await secondary.executeSync<{ called?: boolean; message?: string | null }>(
+      `return window.__KANNA_E2E_PAIRING_PROMPT__ ?? null;`,
+    );
+    if (prompt?.called && typeof prompt.message === "string") {
+      return prompt.message;
+    }
+    await sleep(100);
+  }
+
+  throw new Error("timed out waiting for secondary pairing prompt");
 }
 
 async function waitForPeer(
@@ -111,6 +168,13 @@ describe("local transfer Pair Machine", () => {
       (peer) => peer.trusted === false,
     );
     expect(readPeerDisplayName(discovered)).toBe("Secondary");
+    const primaryDiscoveredFromSecondary = await waitForPeer(
+      secondary,
+      "peer-primary",
+      (peer) => peer.trusted === false,
+    );
+    const pairingCode = computePairingCode(discovered, primaryDiscoveredFromSecondary);
+    await installPairingPromptStub(pairingCode);
     await pauseForSlowMode("untrusted secondary peer discovered");
 
     await primary.executeSync(buildGlobalKeydownScript({ key: "P", meta: true, shift: true }));
@@ -128,6 +192,12 @@ describe("local transfer Pair Machine", () => {
     await primary.click(pairButton);
     await pauseForSlowMode("Pair Machine action clicked");
 
+    const startedToast = await primary.waitForText(".toast", `Enter code ${pairingCode} on Secondary.`, 10_000);
+    expect(await primary.getText(startedToast)).toContain(`Enter code ${pairingCode} on Secondary.`);
+
+    const secondaryPromptMessage = await waitForSecondaryPairingPrompt();
+    expect(secondaryPromptMessage).toBe("Enter pairing code for Primary");
+
     const primaryPeer = await waitForPeer(
       primary,
       "peer-secondary",
@@ -144,11 +214,11 @@ describe("local transfer Pair Machine", () => {
 
     const primaryToast = await primary.waitForText(".toast", "Paired with Secondary. Verify code", 10_000);
     const primaryToastText = await primary.getText(primaryToast);
-    expect(primaryToastText).toMatch(/Verify code [A-Z0-9]{6}/);
+    expect(primaryToastText).toContain(`Verify code ${pairingCode}`);
 
     const secondaryToast = await secondary.waitForText(".toast", "Paired with Primary. Verify code", 10_000);
     const secondaryToastText = await secondary.getText(secondaryToast);
-    expect(secondaryToastText).toMatch(/Verify code [A-Z0-9]{6}/);
+    expect(secondaryToastText).toContain(`Verify code ${pairingCode}`);
 
     expect(await getVueState(primary, "showPeerPicker")).toBe(false);
   });

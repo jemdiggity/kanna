@@ -178,6 +178,21 @@ pub struct PairingCompletedEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingRequestedEvent {
+    pub request_id: String,
+    pub peer_id: String,
+    pub display_name: String,
+    pub verification_code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingStartedEvent {
+    pub peer_id: String,
+    pub display_name: String,
+    pub verification_code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PairingResult {
     pub peer: DiscoveredPeer,
     pub verification_code: String,
@@ -185,6 +200,8 @@ pub struct PairingResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeEvent {
+    PairingStarted(PairingStartedEvent),
+    PairingRequested(PairingRequestedEvent),
     PairingCompleted(PairingCompletedEvent),
     IncomingTransferRequest(IncomingTransferEvent),
     OutgoingTransferCommitted(OutgoingTransferCommittedEvent),
@@ -244,6 +261,18 @@ struct TransferArtifactRecord {
 type PendingOutgoingTransferFinalizations =
     Arc<Mutex<HashMap<String, oneshot::Sender<Result<FinalizedOutgoingTransfer, RuntimeError>>>>>;
 
+type PendingPairingRequests = Arc<Mutex<HashMap<String, PendingPairingRequest>>>;
+
+struct PendingPairingRequest {
+    verification_code: String,
+    responder: oneshot::Sender<PairingDecision>,
+}
+
+enum PairingDecision {
+    Accepted,
+    Rejected,
+}
+
 #[derive(Clone)]
 struct ListenerContext {
     self_peer_id: String,
@@ -252,6 +281,8 @@ struct ListenerContext {
     registry_root: PathBuf,
     discovery: PeerDiscovery,
     pending_transfer_ttl: Duration,
+    peer_request_timeout: Duration,
+    pending_pairing_requests: PendingPairingRequests,
     outgoing_transfers: Arc<Mutex<HashMap<String, OutgoingTransferReservation>>>,
     pending_outgoing_transfer_finalizations: PendingOutgoingTransferFinalizations,
     incoming_reservations: Arc<Mutex<HashMap<String, IncomingTransferReservation>>>,
@@ -264,10 +295,12 @@ pub struct TransferRuntime {
     config: RuntimeConfig,
     discovery: PeerDiscovery,
     identity: TransferIdentity,
+    pending_pairing_requests: PendingPairingRequests,
     outgoing_transfers: Arc<Mutex<HashMap<String, OutgoingTransferReservation>>>,
     pending_outgoing_transfer_finalizations: PendingOutgoingTransferFinalizations,
     incoming_reservations: Arc<Mutex<HashMap<String, IncomingTransferReservation>>>,
     transfer_artifacts: Arc<Mutex<HashMap<String, HashMap<String, TransferArtifactRecord>>>>,
+    incoming_sender: mpsc::UnboundedSender<RuntimeEvent>,
     incoming_events: Mutex<mpsc::UnboundedReceiver<RuntimeEvent>>,
     request_counter: Arc<AtomicU64>,
     listener_task: JoinHandle<()>,
@@ -424,6 +457,7 @@ impl TransferRuntime {
             ),
         };
         let (incoming_sender, incoming_receiver) = mpsc::unbounded_channel();
+        let pending_pairing_requests = Arc::new(Mutex::new(HashMap::new()));
         let outgoing_transfers = Arc::new(Mutex::new(HashMap::new()));
         let pending_outgoing_transfer_finalizations = Arc::new(Mutex::new(HashMap::new()));
         let incoming_reservations = Arc::new(Mutex::new(HashMap::new()));
@@ -436,6 +470,8 @@ impl TransferRuntime {
             registry_root: config.registry_dir.clone(),
             discovery: discovery.clone(),
             pending_transfer_ttl: config.pending_transfer_ttl,
+            peer_request_timeout: config.peer_request_timeout,
+            pending_pairing_requests: Arc::clone(&pending_pairing_requests),
             outgoing_transfers: Arc::clone(&outgoing_transfers),
             pending_outgoing_transfer_finalizations: Arc::clone(
                 &pending_outgoing_transfer_finalizations,
@@ -443,7 +479,7 @@ impl TransferRuntime {
             incoming_reservations: Arc::clone(&incoming_reservations),
             transfer_artifacts: Arc::clone(&transfer_artifacts),
             request_counter: Arc::clone(&request_counter),
-            incoming_sender,
+            incoming_sender: incoming_sender.clone(),
         };
         let listener_task = tokio::spawn(run_listener(listener, listener_context));
 
@@ -451,10 +487,12 @@ impl TransferRuntime {
             config,
             discovery,
             identity,
+            pending_pairing_requests,
             outgoing_transfers,
             pending_outgoing_transfer_finalizations,
             incoming_reservations,
             transfer_artifacts,
+            incoming_sender,
             incoming_events: Mutex::new(incoming_receiver),
             request_counter,
             listener_task,
@@ -474,6 +512,19 @@ impl TransferRuntime {
     pub async fn start_pairing(&self, target_peer_id: &str) -> Result<PairingResult, RuntimeError> {
         let target_peer = self.find_peer(target_peer_id).await?;
         let request_id = self.next_request_id("pair");
+        let expected_verification_code = pairing_verification_code(
+            &self.config.peer_id,
+            &public_key_to_string(&self.identity.public_key),
+            &target_peer.peer_id,
+            &target_peer.public_key,
+        );
+        self.incoming_sender
+            .send(RuntimeEvent::PairingStarted(PairingStartedEvent {
+                peer_id: target_peer.peer_id.clone(),
+                display_name: target_peer.display_name.clone(),
+                verification_code: expected_verification_code.clone(),
+            }))
+            .map_err(|_| RuntimeError::IncomingEventChannelClosed)?;
         let response = self
             .send_peer_request(
                 &target_peer,
@@ -507,6 +558,13 @@ impl TransferRuntime {
                     )));
                 }
 
+                if verification_code != expected_verification_code {
+                    return Err(RuntimeError::Protocol(format!(
+                        "mismatched verification code in pairing response: expected {}, got {}",
+                        expected_verification_code, verification_code
+                    )));
+                }
+
                 self.upsert_trusted_peer(PeerRecord {
                     peer_id: peer.peer_id,
                     display_name: peer.display_name,
@@ -528,6 +586,55 @@ impl TransferRuntime {
             } => Err(RuntimeError::Protocol(message)),
             other => Err(unexpected_peer_response("pairing", &other)),
         }
+    }
+
+    pub async fn accept_pairing(
+        &self,
+        request_id: &str,
+        verification_code: &str,
+    ) -> Result<(), RuntimeError> {
+        let mut pending = self.pending_pairing_requests.lock().await;
+        let Some(request) = pending.get(request_id) else {
+            return Err(RuntimeError::Protocol(format!(
+                "pairing request {} is not pending",
+                request_id
+            )));
+        };
+        if request.verification_code != verification_code {
+            return Err(RuntimeError::Protocol(format!(
+                "pairing request {} verification code did not match",
+                request_id
+            )));
+        }
+
+        let request = pending.remove(request_id).ok_or_else(|| {
+            RuntimeError::Protocol(format!("pairing request {} is not pending", request_id))
+        })?;
+        request
+            .responder
+            .send(PairingDecision::Accepted)
+            .map_err(|_| {
+                RuntimeError::Protocol(format!(
+                    "pairing request {} is no longer waiting",
+                    request_id
+                ))
+            })
+    }
+
+    pub async fn reject_pairing(&self, request_id: &str) -> Result<(), RuntimeError> {
+        let mut pending = self.pending_pairing_requests.lock().await;
+        let request = pending.remove(request_id).ok_or_else(|| {
+            RuntimeError::Protocol(format!("pairing request {} is not pending", request_id))
+        })?;
+        request
+            .responder
+            .send(PairingDecision::Rejected)
+            .map_err(|_| {
+                RuntimeError::Protocol(format!(
+                    "pairing request {} is no longer waiting",
+                    request_id
+                ))
+            })
     }
 
     pub async fn prepare_transfer_preflight(
@@ -1166,6 +1273,9 @@ impl Drop for TransferRuntime {
         if let Ok(mut reservations) = self.incoming_reservations.try_lock() {
             reservations.clear();
         }
+        if let Ok(mut pending) = self.pending_pairing_requests.try_lock() {
+            pending.clear();
+        }
         if let Ok(mut pending) = self.pending_outgoing_transfer_finalizations.try_lock() {
             pending.clear();
         }
@@ -1247,32 +1357,76 @@ async fn handle_connection(
                 &context.self_peer_id,
                 &context.self_public_key,
             );
-            peer_store(&context.registry_root, &context.self_peer_id)?.upsert(PeerRecord {
-                peer_id: source_peer_id.clone(),
-                display_name: source_display_name.clone(),
-                public_key: source_public_key.clone(),
-                capabilities_json,
-                paired_at: Utc::now().to_rfc3339(),
-                last_seen_at: Some(Utc::now().to_rfc3339()),
-                revoked_at: None,
-            })?;
+            let pairing_request_id = format!(
+                "incoming-pair-{}-{}",
+                context.self_peer_id,
+                context.request_counter.fetch_add(1, Ordering::Relaxed)
+            );
+            let (approval_sender, approval_receiver) = oneshot::channel();
+            context.pending_pairing_requests.lock().await.insert(
+                pairing_request_id.clone(),
+                PendingPairingRequest {
+                    verification_code: verification_code.clone(),
+                    responder: approval_sender,
+                },
+            );
             context
                 .incoming_sender
-                .send(RuntimeEvent::PairingCompleted(PairingCompletedEvent {
-                    peer_id: source_peer_id,
-                    display_name: source_display_name,
+                .send(RuntimeEvent::PairingRequested(PairingRequestedEvent {
+                    request_id: pairing_request_id.clone(),
+                    peer_id: source_peer_id.clone(),
+                    display_name: source_display_name.clone(),
                     verification_code: verification_code.clone(),
                 }))
                 .map_err(|_| RuntimeError::IncomingEventChannelClosed)?;
-            PeerResponse::StartPairing {
-                request_id,
-                peer: PairingPeer {
-                    peer_id: context.self_peer_id.clone(),
-                    display_name: context.self_display_name.clone(),
-                    public_key: context.self_public_key.clone(),
-                    capabilities_json: local_capabilities_json(),
-                },
-                verification_code,
+
+            let approved =
+                match tokio::time::timeout(context.peer_request_timeout, approval_receiver).await {
+                    Ok(Ok(PairingDecision::Accepted)) => true,
+                    Ok(Ok(PairingDecision::Rejected)) => false,
+                    Ok(Err(_)) => false,
+                    Err(_) => {
+                        context
+                            .pending_pairing_requests
+                            .lock()
+                            .await
+                            .remove(&pairing_request_id);
+                        false
+                    }
+                };
+            if !approved {
+                PeerResponse::Error {
+                    request_id,
+                    message: "pairing request was not accepted".into(),
+                }
+            } else {
+                peer_store(&context.registry_root, &context.self_peer_id)?.upsert(PeerRecord {
+                    peer_id: source_peer_id.clone(),
+                    display_name: source_display_name.clone(),
+                    public_key: source_public_key.clone(),
+                    capabilities_json,
+                    paired_at: Utc::now().to_rfc3339(),
+                    last_seen_at: Some(Utc::now().to_rfc3339()),
+                    revoked_at: None,
+                })?;
+                context
+                    .incoming_sender
+                    .send(RuntimeEvent::PairingCompleted(PairingCompletedEvent {
+                        peer_id: source_peer_id,
+                        display_name: source_display_name,
+                        verification_code: verification_code.clone(),
+                    }))
+                    .map_err(|_| RuntimeError::IncomingEventChannelClosed)?;
+                PeerResponse::StartPairing {
+                    request_id,
+                    peer: PairingPeer {
+                        peer_id: context.self_peer_id.clone(),
+                        display_name: context.self_display_name.clone(),
+                        public_key: context.self_public_key.clone(),
+                        capabilities_json: local_capabilities_json(),
+                    },
+                    verification_code,
+                }
             }
         }
         Ok(PeerRequest::PrepareTransfer {

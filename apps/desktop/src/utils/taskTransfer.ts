@@ -117,6 +117,13 @@ export interface PairingCompletedEvent {
   verificationCode: string;
 }
 
+export interface PairingRequestedEvent {
+  requestId: string;
+  peerId: string;
+  displayName: string;
+  verificationCode: string;
+}
+
 function normalizeRemoteUrl(remoteUrl: string | null): string | null {
   if (!remoteUrl) return null;
   const trimmed = remoteUrl.trim();
@@ -332,6 +339,32 @@ export function parsePairingCompletedEvent(value: unknown): PairingCompletedEven
       record,
       ["verificationCode", "verification_code"],
       "pairing-completed event missing verification code",
+    ),
+  };
+}
+
+export function parsePairingRequestedEvent(value: unknown): PairingRequestedEvent {
+  const record = asRecord(value);
+  if (!record) {
+    throw new Error("pairing-requested event payload is invalid");
+  }
+
+  return {
+    requestId: readRequiredString(
+      record,
+      ["requestId", "request_id"],
+      "pairing-requested event missing request id",
+    ),
+    peerId: readRequiredString(record, ["peerId", "peer_id"], "pairing-requested event missing peer id"),
+    displayName: readRequiredString(
+      record,
+      ["displayName", "display_name"],
+      "pairing-requested event missing display name",
+    ),
+    verificationCode: readRequiredString(
+      record,
+      ["verificationCode", "verification_code"],
+      "pairing-requested event missing verification code",
     ),
   };
 }
