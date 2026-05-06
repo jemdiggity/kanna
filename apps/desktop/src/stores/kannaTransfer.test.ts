@@ -125,6 +125,17 @@ function mockIncomingTransferApprovalInvoke(
         finalizedCleanly: true,
       };
     }
+    if (cmd === "git_default_branch") {
+      return "main";
+    }
+    if (cmd === "git_list_base_branches") {
+      return ["origin/main", "main", finalizedPayload.task.branch].filter(
+        (value): value is string => typeof value === "string" && value.length > 0,
+      );
+    }
+    if (cmd === "git_fetch") {
+      return null;
+    }
     return handler(cmd, args);
   });
 }
@@ -1246,6 +1257,15 @@ describe("incoming transfer approval", () => {
       }
       if (cmd === "which_binary") {
         return args?.name === "claude" ? "/usr/bin/claude" : null;
+      }
+      if (cmd === "git_default_branch") {
+        return "main";
+      }
+      if (cmd === "git_list_base_branches") {
+        return ["origin/main", "main"];
+      }
+      if (cmd === "git_fetch") {
+        return null;
       }
       if (cmd === "git_worktree_add" || cmd === "create_agent_session") {
         return null;

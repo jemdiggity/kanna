@@ -5,10 +5,7 @@ import type { AgentProvider } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
 import { registerContextShortcuts } from "../composables/useShortcutContext";
 import { macOsTextInputAttrs } from "../utils/textInput";
-import {
-  filterBaseBranchCandidates,
-  getDefaultBaseBranch,
-} from "../utils/baseBranchPicker";
+import { filterBaseBranchCandidates } from "../utils/baseBranchPicker";
 const { zIndex } = useModalZIndex();
 
 registerContextShortcuts("newTask", [
@@ -122,7 +119,9 @@ watch([defaultSelectableBaseBranch, selectableBaseBranches], ([defaultBranch, ca
 watch(showBaseBranchPicker, async (open) => {
   if (open) {
     baseBranchQuery.value = "";
-    selectedBaseBranchIndex.value = Math.max(0, visibleBaseBranches.value.indexOf(selectedBaseBranch.value));
+    selectedBaseBranchIndex.value = selectedBaseBranch.value === null
+      ? 0
+      : Math.max(0, visibleBaseBranches.value.indexOf(selectedBaseBranch.value));
     await nextTick();
     baseBranchSearchRef.value?.focus();
     return;
