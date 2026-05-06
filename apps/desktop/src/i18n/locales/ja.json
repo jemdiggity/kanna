@@ -7,6 +7,7 @@
     "editBlockedTask": "ブロックタスクを編集",
     "descriptionPlaceholder": "タスクの説明...",
     "baseBranch": "ベースブランチ",
+    "baseBranchRequired": "有効なベースブランチを選択してください",
     "baseBranchSearchPlaceholder": "ブランチを検索...",
     "untitled": "無題",
     "renameTask": "タスク名を変更"

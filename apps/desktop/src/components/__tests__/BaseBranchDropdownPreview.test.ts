@@ -60,4 +60,15 @@ describe("BaseBranchDropdownPreview", () => {
     expect(wrapper.get('[data-testid="selected-base-branch"]').text()).toContain("release/2026.04");
     expect(wrapper.find('[data-testid="base-branch-dropdown"]').exists()).toBe(false);
   });
+
+  it("does not use an arbitrary feature branch as the default selection", async () => {
+    const wrapper = mount(BaseBranchDropdownPreview, {
+      props: {
+        defaultBranchName: "main",
+        baseBranches: ["feature/a", "feature/b"],
+      },
+    });
+
+    expect(wrapper.get('[data-testid="selected-base-branch"]').text()).toBe("");
+  });
 });

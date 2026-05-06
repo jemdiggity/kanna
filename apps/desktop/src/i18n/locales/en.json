@@ -7,6 +7,7 @@
     "editBlockedTask": "Edit Blocked Task",
     "descriptionPlaceholder": "Describe the task...",
     "baseBranch": "Base branch",
+    "baseBranchRequired": "Select a valid base branch",
     "baseBranchSearchPlaceholder": "Search branches...",
     "untitled": "Untitled",
     "renameTask": "Rename Task"
