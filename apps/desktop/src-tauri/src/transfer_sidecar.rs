@@ -116,6 +116,50 @@ impl TransferSidecarClient {
         }))
     }
 
+    pub async fn accept_peer_pairing(
+        &mut self,
+        pairing_request_id: String,
+        verification_code: String,
+    ) -> Result<Value, String> {
+        let request_id = self.next_request_id("accept-pair");
+        let response = self
+            .send_request(
+                json!({
+                    "type": "accept_pairing",
+                    "request_id": request_id,
+                    "pairing_request_id": pairing_request_id,
+                    "verification_code": verification_code,
+                }),
+                &request_id,
+            )
+            .await?;
+
+        Ok(json!({
+            "pairingRequestId": required_string(&response, &["pairing_request_id", "pairingRequestId"])?,
+        }))
+    }
+
+    pub async fn reject_peer_pairing(
+        &mut self,
+        pairing_request_id: String,
+    ) -> Result<Value, String> {
+        let request_id = self.next_request_id("reject-pair");
+        let response = self
+            .send_request(
+                json!({
+                    "type": "reject_pairing",
+                    "request_id": request_id,
+                    "pairing_request_id": pairing_request_id,
+                }),
+                &request_id,
+            )
+            .await?;
+
+        Ok(json!({
+            "pairingRequestId": required_string(&response, &["pairing_request_id", "pairingRequestId"])?,
+        }))
+    }
+
     pub async fn prepare_outgoing_transfer(&mut self, payload: Value) -> Result<Value, String> {
         let phase = payload
             .get("phase")
@@ -343,7 +387,10 @@ impl TransferSidecarClient {
             )
         })?;
         if request_id.starts_with("list-") {
-            eprintln!("[transfer-debug] sidecar response {}: {}", request_id, response);
+            eprintln!(
+                "[transfer-debug] sidecar response {}: {}",
+                request_id, response
+            );
         }
         if response.get("type").and_then(Value::as_str) == Some("error") {
             return Err(response
@@ -395,6 +442,11 @@ fn spawn_reader(
                 }
             };
 
+            if let Some(event_name) = forwarded_event_name(&value) {
+                let _ = app.emit(event_name, &value);
+                continue;
+            }
+
             if let Some(request_id) = value.get("request_id").and_then(Value::as_str) {
                 if let Some(sender) = pending.lock().await.remove(request_id) {
                     let _ = sender.send(value);
@@ -404,11 +456,6 @@ fn spawn_reader(
                         request_id
                     );
                 }
-                continue;
-            }
-
-            if let Some(event_name) = forwarded_event_name(&value) {
-                let _ = app.emit(event_name, &value);
                 continue;
             }
 
@@ -447,6 +494,8 @@ fn parse_finalize_outgoing_transfer_response(response: &Value) -> Result<Value, 
 
 fn forwarded_event_name(value: &Value) -> Option<&'static str> {
     match value.get("type").and_then(Value::as_str) {
+        Some("pairing_started") => Some("pairing-started"),
+        Some("pairing_requested") => Some("pairing-requested"),
         Some("incoming_transfer_request") => Some("transfer-request"),
         Some("pairing_completed") => Some("pairing-completed"),
         Some("outgoing_transfer_committed") => Some("outgoing-transfer-committed"),

@@ -27,7 +27,10 @@ pub async fn list_transfer_peers(
         (result, client.is_dead())
     };
     match &result {
-        Ok(peers) => eprintln!("[transfer-debug] list_transfer_peers ok count={}", peers.len()),
+        Ok(peers) => eprintln!(
+            "[transfer-debug] list_transfer_peers ok count={}",
+            peers.len()
+        ),
         Err(error) => eprintln!("[transfer-debug] list_transfer_peers err: {}", error),
     }
     if dead {
@@ -54,8 +57,55 @@ pub async fn start_peer_pairing(
     };
     match &result {
         Ok(value) => eprintln!("[transfer-debug] start_peer_pairing ok peer_id={peer_id}: {value}"),
-        Err(error) => eprintln!("[transfer-debug] start_peer_pairing err peer_id={peer_id}: {error}"),
+        Err(error) => {
+            eprintln!("[transfer-debug] start_peer_pairing err peer_id={peer_id}: {error}")
+        }
     }
+    if dead {
+        *guard = None;
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn accept_peer_pairing(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::TransferServiceState>,
+    pairing_request_id: String,
+    verification_code: String,
+) -> Result<Value, String> {
+    let mut guard = state.lock().await;
+    ensure_client(&app, &mut guard).await?;
+    let (result, dead) = {
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| "transfer sidecar client unavailable".to_string())?;
+        let result = client
+            .accept_peer_pairing(pairing_request_id, verification_code)
+            .await;
+        (result, client.is_dead())
+    };
+    if dead {
+        *guard = None;
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn reject_peer_pairing(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::TransferServiceState>,
+    pairing_request_id: String,
+) -> Result<Value, String> {
+    let mut guard = state.lock().await;
+    ensure_client(&app, &mut guard).await?;
+    let (result, dead) = {
+        let client = guard
+            .as_mut()
+            .ok_or_else(|| "transfer sidecar client unavailable".to_string())?;
+        let result = client.reject_peer_pairing(pairing_request_id).await;
+        (result, client.is_dead())
+    };
     if dead {
         *guard = None;
     }
