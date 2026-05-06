@@ -5,10 +5,7 @@ import type { AgentProvider } from "@kanna/db";
 import { useModalZIndex } from "../composables/useModalZIndex";
 import { registerContextShortcuts } from "../composables/useShortcutContext";
 import { macOsTextInputAttrs } from "../utils/textInput";
-import {
-  filterBaseBranchCandidates,
-  getDefaultBaseBranch,
-} from "../utils/baseBranchPicker";
+import { filterBaseBranchCandidates } from "../utils/baseBranchPicker";
 const { zIndex } = useModalZIndex();
 
 registerContextShortcuts("newTask", [
@@ -25,7 +22,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  submit: [prompt: string, agentProvider: AgentProvider, pipelineName: string, baseBranch?: string];
+  submit: [prompt: string, agentProvider: AgentProvider, pipelineName: string, baseBranch: string];
   cancel: [];
 }>();
 
@@ -43,22 +40,25 @@ const pipelineValueId = "pipeline-value";
 const pipelineToggleId = "pipeline-toggle";
 const pipelinePickerId = "pipeline-picker";
 const defaultBranchName = computed(() => props.defaultBranchName ?? "main");
-const resolvedBaseBranch = computed(() => {
-  if (props.defaultBaseBranch) return props.defaultBaseBranch;
-  if (props.defaultBranchName) {
-    return getDefaultBaseBranch(props.baseBranches ?? [], props.defaultBranchName) || props.defaultBranchName;
+const selectableBaseBranches = computed(() => props.baseBranches ?? []);
+const defaultSelectableBaseBranch = computed<string | null>(() => {
+  const branches = selectableBaseBranches.value;
+  if (props.defaultBaseBranch && branches.includes(props.defaultBaseBranch)) {
+    return props.defaultBaseBranch;
   }
 
-  return getDefaultBaseBranch(props.baseBranches ?? [], defaultBranchName.value) || undefined;
+  const originDefault = `origin/${defaultBranchName.value}`;
+  if (branches.includes(originDefault)) return originDefault;
+  if (branches.includes(defaultBranchName.value)) return defaultBranchName.value;
+  return null;
 });
-const selectedBaseBranch = ref(resolvedBaseBranch.value ?? defaultBranchName.value);
-const hasExplicitBaseBranchSelection = ref(false);
+const selectedBaseBranch = ref<string | null>(defaultSelectableBaseBranch.value);
 const showBaseBranchPicker = ref(false);
 const baseBranchQuery = ref("");
 const selectedBaseBranchIndex = ref(0);
 const visibleBaseBranches = computed(() =>
   filterBaseBranchCandidates(
-    props.baseBranches ?? [],
+    selectableBaseBranches.value,
     baseBranchQuery.value,
     defaultBranchName.value,
   ),
@@ -106,10 +106,22 @@ watch(baseBranchQuery, () => {
   selectedBaseBranchIndex.value = 0;
 });
 
+const hasValidBaseBranch = computed(() =>
+  selectedBaseBranch.value !== null && selectableBaseBranches.value.includes(selectedBaseBranch.value),
+);
+
+watch([defaultSelectableBaseBranch, selectableBaseBranches], ([defaultBranch, candidates]) => {
+  if (selectedBaseBranch.value === null || !candidates.includes(selectedBaseBranch.value)) {
+    selectedBaseBranch.value = defaultBranch;
+  }
+}, { immediate: true });
+
 watch(showBaseBranchPicker, async (open) => {
   if (open) {
     baseBranchQuery.value = "";
-    selectedBaseBranchIndex.value = Math.max(0, visibleBaseBranches.value.indexOf(selectedBaseBranch.value));
+    selectedBaseBranchIndex.value = selectedBaseBranch.value === null
+      ? 0
+      : Math.max(0, visibleBaseBranches.value.indexOf(selectedBaseBranch.value));
     await nextTick();
     baseBranchSearchRef.value?.focus();
     return;
@@ -121,15 +133,13 @@ watch(showBaseBranchPicker, async (open) => {
 
 function handleSubmit() {
   const text = prompt.value.trim();
-  if (!text) return;
-  const emittedBaseBranch = hasExplicitBaseBranchSelection.value ? selectedBaseBranch.value : undefined;
-  emit("submit", text, agentProvider.value, selectedPipeline.value, emittedBaseBranch);
+  if (!text || !hasValidBaseBranch.value || selectedBaseBranch.value === null) return;
+  emit("submit", text, agentProvider.value, selectedPipeline.value, selectedBaseBranch.value);
   prompt.value = "";
 }
 
 function handleBaseBranchSelect(branch: string) {
   selectedBaseBranch.value = branch;
-  hasExplicitBaseBranchSelection.value = true;
   showBaseBranchPicker.value = false;
 }
 
@@ -307,7 +317,13 @@ function handleKeydown(e: KeyboardEvent) {
           <label class="pipeline-label">{{ $t("tasks.baseBranch") }}</label>
           <div class="base-branch-dropdown-shell">
             <div class="base-branch-row">
-              <span class="base-branch-value" data-testid="base-branch-value">{{ selectedBaseBranch }}</span>
+              <span
+                class="base-branch-value"
+                :class="{ invalid: !hasValidBaseBranch }"
+                data-testid="base-branch-value"
+              >
+                {{ selectedBaseBranch ?? $t("tasks.baseBranchRequired") }}
+              </span>
               <button
                 id="base-branch-toggle"
                 type="button"
@@ -413,7 +429,7 @@ function handleKeydown(e: KeyboardEvent) {
           <button class="btn btn-cancel" @click="emit('cancel')">{{ $t('actions.cancel') }}</button>
           <button
             class="btn btn-primary"
-            :disabled="!prompt.trim()"
+            :disabled="!prompt.trim() || !hasValidBaseBranch"
             @click="handleSubmit"
           >
             {{ $t('actions.create') }}
@@ -548,6 +564,10 @@ function handleKeydown(e: KeyboardEvent) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.base-branch-value.invalid {
+  color: #d08b65;
 }
 
 .change-link {
