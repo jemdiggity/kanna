@@ -1477,6 +1477,87 @@ describe("kanna store task base branch integration", () => {
     });
   });
 
+  it("keeps automatic next-stage tasks in the background when follow_task is omitted", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "review", transition: "auto" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        created_at: "2026-04-14T00:02:00.000Z",
+        updated_at: "2026-04-14T00:02:00.000Z",
+      }),
+      mockState.makeItem({
+        id: "item-active",
+        branch: "task-active",
+        stage: "in progress",
+        created_at: "2026-04-14T00:01:00.000Z",
+        updated_at: "2026-04-14T00:01:00.000Z",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-active");
+    await flushStore();
+
+    await store.advanceStage("item-source", { initiatedBy: "auto" });
+
+    let createdReviewItem: PipelineItem | undefined;
+    await vi.waitFor(() => {
+      createdReviewItem = mockState.pipelineItems.find((item) => item.id !== "item-source" && item.stage === "review");
+      expect(createdReviewItem).toBeDefined();
+    });
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "spawn_session",
+        expect.objectContaining({ sessionId: createdReviewItem?.id }),
+      );
+    });
+    expect(store.selectedItemId).toBe("item-active");
+  });
+
+  it("lets automatic next-stage tasks opt into focus with follow_task true", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "review", transition: "auto", follow_task: true },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+      }),
+      mockState.makeItem({
+        id: "item-active",
+        branch: "task-active",
+        stage: "in progress",
+        created_at: "2026-04-14T00:01:00.000Z",
+        updated_at: "2026-04-14T00:01:00.000Z",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-active");
+    await flushStore();
+
+    await store.advanceStage("item-source", { initiatedBy: "auto" });
+
+    await vi.waitFor(() => {
+      expect(
+        mockState.pipelineItems.some((item) => item.id === store.selectedItemId && item.stage === "review"),
+      ).toBe(true);
+    });
+  });
+
   it("leaves selection unset when follow_task is false and there is no next visible item", async () => {
     mockState.pipelineDefinition = {
       name: "default",

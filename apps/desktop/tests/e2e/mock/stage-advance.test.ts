@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
-import { callVueMethod, execDb, queryDb, tauriInvoke } from "../helpers/vue";
+import { callVueMethod, execDb, getVueState, queryDb, tauriInvoke } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 
 function isVueCallError(value: unknown): value is { __error: string } {
@@ -61,6 +62,67 @@ async function hydrateStoreItem(client: WebDriverClient, taskId: string): Promis
   }
 }
 
+async function sendPipelineStageComplete(client: WebDriverClient, taskId: string): Promise<void> {
+  const socketPath = await tauriInvoke(client, "get_pipeline_socket_path");
+  if (typeof socketPath !== "string" || socketPath.length === 0) {
+    throw new Error(`unexpected pipeline socket path: ${JSON.stringify(socketPath)}`);
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const socket = createConnection(socketPath);
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      settle(new Error(`timed out sending pipeline_stage_complete for ${taskId}`));
+    }, 5_000);
+
+    socket.once("error", (error) => settle(error));
+    socket.once("connect", () => {
+      socket.end(`${JSON.stringify({ type: "stage_complete", task_id: taskId })}\n`);
+    });
+    socket.once("close", (hadError) => {
+      if (!hadError) settle();
+    });
+  });
+}
+
+async function waitForCreatedStageTask(
+  client: WebDriverClient,
+  repoId: string,
+  stage: string,
+  timeoutMs = 10_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = (await queryDb(
+      client,
+      "SELECT id FROM pipeline_item WHERE repo_id = ? AND stage = ? AND closed_at IS NULL ORDER BY created_at DESC LIMIT 1",
+      [repoId, stage],
+    )) as Array<{ id: string | null }>;
+    const id = rows[0]?.id;
+    if (id) return id;
+    await sleep(100);
+  }
+  throw new Error(`timed out waiting for a ${stage} task`);
+}
+
+async function waitForSelectedTask(client: WebDriverClient, expectedTaskId: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const selectedTaskId = await getVueState(client, "selectedItemId");
+    if (selectedTaskId === expectedTaskId) return;
+    await sleep(100);
+  }
+  throw new Error(`timed out waiting for selected task ${expectedTaskId}`);
+}
+
 async function waitForFileSize(path: string, expectedSize: number, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -104,6 +166,16 @@ describe("stage advance", () => {
       }),
     );
     await writeFile(
+      join(kannaDir, "pipelines", "auto-spawn-focus-e2e.json"),
+      JSON.stringify({
+        name: "auto-spawn-focus-e2e",
+        stages: [
+          { name: "auto-source", transition: "auto" },
+          { name: "review", transition: "manual" },
+        ],
+      }),
+    );
+    await writeFile(
       join(kannaDir, "agents", "commit-e2e", "AGENT.md"),
       [
         "---",
@@ -127,6 +199,83 @@ describe("stage advance", () => {
     }
     await cleanupFixtureRepos(fixtureRepoRoot ? [fixtureRepoRoot] : []);
     await client.deleteSession();
+  });
+
+  it("keeps an automatically spawned next-stage task in the background when follow_task is omitted", async () => {
+    const sourceTaskId = "auto-spawn-focus-source";
+    const sourceBranch = "task-auto-spawn-focus-source";
+    const activeTaskId = "auto-spawn-focus-active";
+    await tauriInvoke(client, "git_worktree_add", {
+      repoPath: testRepoPath,
+      branch: sourceBranch,
+      path: join(testRepoPath, ".kanna-worktrees", sourceBranch),
+      startPoint: "main",
+    });
+
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sourceTaskId,
+        repoId,
+        "Automatically spawn review",
+        "auto-spawn-focus-e2e",
+        "auto-source",
+        null,
+        "[]",
+        sourceBranch,
+        "pty",
+        "codex",
+        "idle",
+        null,
+        "2026-05-06T00:00:00.000Z",
+        "2026-05-06T00:00:00.000Z",
+      ],
+    );
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        activeTaskId,
+        repoId,
+        "Keep this task selected",
+        "auto-spawn-focus-e2e",
+        "auto-source",
+        null,
+        "[]",
+        null,
+        "sdk",
+        "codex",
+        "idle",
+        null,
+        "2026-05-06T00:01:00.000Z",
+        "2026-05-06T00:01:00.000Z",
+      ],
+    );
+    await hydrateStoreItem(client, sourceTaskId);
+    await hydrateStoreItem(client, activeTaskId);
+
+    const selectResult = await callVueMethod(client, "store.selectItem", activeTaskId);
+    if (isVueCallError(selectResult)) throw new Error(selectResult.__error);
+    await waitForSelectedTask(client, activeTaskId);
+
+    await execDb(
+      client,
+      "UPDATE pipeline_item SET stage_result = ?, updated_at = datetime('now') WHERE id = ?",
+      [JSON.stringify({ status: "success", summary: "ready for review" }), sourceTaskId],
+    );
+    await sendPipelineStageComplete(client, sourceTaskId);
+
+    const reviewTaskId = await waitForCreatedStageTask(client, repoId, "review");
+    expect(reviewTaskId).not.toBe(sourceTaskId);
+    await sleep(500);
+    expect(await getVueState(client, "selectedItemId")).toBe(activeTaskId);
   });
 
   it("advances a live task into a continue-mode commit stage through the daemon input command", async () => {
@@ -290,4 +439,5 @@ describe("stage advance", () => {
     await waitForFileSize(inputCapturePath, expectedInput.length);
     expect(await readFile(inputCapturePath)).toEqual(expectedInput);
   });
+
 });
