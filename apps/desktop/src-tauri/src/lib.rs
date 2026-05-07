@@ -27,15 +27,20 @@ pub(crate) const KANNA_BUILD_INFO: &str = env!("KANNA_BUILD_INFO");
 pub type TransferServiceState = Arc<Mutex<Option<transfer_sidecar::TransferSidecarClient>>>;
 const MENU_ID_NEW_WINDOW: &str = "workspace-new-window";
 const MENU_ID_CLOSE_WINDOW: &str = "workspace-close-window";
+const MENU_ID_NAVIGATE_TASK_UP: &str = "navigate-task-up";
+const MENU_ID_NAVIGATE_TASK_DOWN: &str = "navigate-task-down";
+const MENU_ID_NAVIGATE_REPO_UP: &str = "navigate-repo-up";
+const MENU_ID_NAVIGATE_REPO_DOWN: &str = "navigate-repo-down";
 const WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT: &str = "kanna://native-new-window";
 const WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT: &str = "kanna://native-close-window";
+const WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT: &str = "kanna://native-navigate-task-up";
+const WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT: &str = "kanna://native-navigate-task-down";
+const WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT: &str = "kanna://native-navigate-repo-up";
+const WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT: &str = "kanna://native-navigate-repo-down";
 
 #[derive(Debug, PartialEq, Eq)]
 enum NativeWorkspaceMenuAction {
-    DispatchToFocused {
-        label: String,
-        event: &'static str,
-    },
+    DispatchToFocused { label: String, event: &'static str },
     CreateRootWindow,
     None,
 }
@@ -53,6 +58,22 @@ fn resolve_native_workspace_menu_action(
         (MENU_ID_CLOSE_WINDOW, Some(label)) => NativeWorkspaceMenuAction::DispatchToFocused {
             label: label.to_string(),
             event: WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+        },
+        (MENU_ID_NAVIGATE_TASK_UP, Some(label)) => NativeWorkspaceMenuAction::DispatchToFocused {
+            label: label.to_string(),
+            event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT,
+        },
+        (MENU_ID_NAVIGATE_TASK_DOWN, Some(label)) => NativeWorkspaceMenuAction::DispatchToFocused {
+            label: label.to_string(),
+            event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
+        },
+        (MENU_ID_NAVIGATE_REPO_UP, Some(label)) => NativeWorkspaceMenuAction::DispatchToFocused {
+            label: label.to_string(),
+            event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
+        },
+        (MENU_ID_NAVIGATE_REPO_DOWN, Some(label)) => NativeWorkspaceMenuAction::DispatchToFocused {
+            label: label.to_string(),
+            event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
         },
         _ => NativeWorkspaceMenuAction::None,
     }
@@ -599,10 +620,9 @@ pub fn run() {
             let new_window_item = MenuItemBuilder::with_id(MENU_ID_NEW_WINDOW, "New Window")
                 .accelerator("CmdOrControl+N")
                 .build(app)?;
-            let close_window_item =
-                MenuItemBuilder::with_id(MENU_ID_CLOSE_WINDOW, "Close Window")
-                    .accelerator("CmdOrControl+W")
-                    .build(app)?;
+            let close_window_item = MenuItemBuilder::with_id(MENU_ID_CLOSE_WINDOW, "Close Window")
+                .accelerator("CmdOrControl+W")
+                .build(app)?;
             let file_submenu = SubmenuBuilder::new(app, "File")
                 .item(&new_window_item)
                 .separator()
@@ -618,12 +638,34 @@ pub fn run() {
                 .select_all()
                 .build()?;
             let view_submenu = SubmenuBuilder::new(app, "View").fullscreen().build()?;
+            let previous_task_item =
+                MenuItemBuilder::with_id(MENU_ID_NAVIGATE_TASK_UP, "Previous Task")
+                    .accelerator("CmdOrControl+Alt+ArrowUp")
+                    .build(app)?;
+            let next_task_item = MenuItemBuilder::with_id(MENU_ID_NAVIGATE_TASK_DOWN, "Next Task")
+                .accelerator("CmdOrControl+Alt+ArrowDown")
+                .build(app)?;
+            let previous_repo_item =
+                MenuItemBuilder::with_id(MENU_ID_NAVIGATE_REPO_UP, "Previous Repo")
+                    .accelerator("CmdOrControl+Shift+ArrowUp")
+                    .build(app)?;
+            let next_repo_item = MenuItemBuilder::with_id(MENU_ID_NAVIGATE_REPO_DOWN, "Next Repo")
+                .accelerator("CmdOrControl+Shift+ArrowDown")
+                .build(app)?;
+            let navigate_submenu = SubmenuBuilder::new(app, "Navigate")
+                .item(&previous_task_item)
+                .item(&next_task_item)
+                .separator()
+                .item(&previous_repo_item)
+                .item(&next_repo_item)
+                .build()?;
             let window_submenu = SubmenuBuilder::new(app, "Window").minimize().build()?;
             let menu = MenuBuilder::new(app)
                 .item(&app_submenu)
                 .item(&file_submenu)
                 .item(&edit_submenu)
                 .item(&view_submenu)
+                .item(&navigate_submenu)
                 .item(&window_submenu)
                 .build()?;
             app.set_menu(menu)?;
@@ -759,9 +801,14 @@ pub fn run() {
 #[cfg(all(test, debug_assertions))]
 mod tests {
     use super::{
-        resolve_native_workspace_menu_action, resolve_webdriver_port, NativeWorkspaceMenuAction,
-        MENU_ID_CLOSE_WINDOW, MENU_ID_NEW_WINDOW, WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
-        WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+        MENU_ID_CLOSE_WINDOW, MENU_ID_NAVIGATE_REPO_DOWN, MENU_ID_NAVIGATE_REPO_UP,
+        MENU_ID_NAVIGATE_TASK_DOWN, MENU_ID_NAVIGATE_TASK_UP, MENU_ID_NEW_WINDOW,
+        NativeWorkspaceMenuAction, WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+        WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
+        WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
+        WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
+        WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT, WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+        resolve_native_workspace_menu_action, resolve_webdriver_port,
     };
 
     #[test]
@@ -815,6 +862,50 @@ mod tests {
             NativeWorkspaceMenuAction::DispatchToFocused {
                 label: "main".to_string(),
                 event: WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+            }
+        );
+    }
+
+    #[test]
+    fn native_task_navigation_dispatches_to_the_focused_window() {
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NAVIGATE_TASK_UP, Some("main")),
+            NativeWorkspaceMenuAction::DispatchToFocused {
+                label: "main".to_string(),
+                event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT,
+            }
+        );
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NAVIGATE_TASK_DOWN, Some("main")),
+            NativeWorkspaceMenuAction::DispatchToFocused {
+                label: "main".to_string(),
+                event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
+            }
+        );
+    }
+
+    #[test]
+    fn native_task_navigation_is_ignored_without_a_focused_window() {
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NAVIGATE_TASK_DOWN, None),
+            NativeWorkspaceMenuAction::None
+        );
+    }
+
+    #[test]
+    fn native_repo_navigation_dispatches_to_the_focused_window() {
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NAVIGATE_REPO_UP, Some("main")),
+            NativeWorkspaceMenuAction::DispatchToFocused {
+                label: "main".to_string(),
+                event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
+            }
+        );
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NAVIGATE_REPO_DOWN, Some("main")),
+            NativeWorkspaceMenuAction::DispatchToFocused {
+                label: "main".to_string(),
+                event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
             }
         );
     }

@@ -42,6 +42,10 @@ export const WINDOW_WORKSPACE_SETTINGS_KEY = "window_workspace_v1";
 export const WINDOW_WORKSPACE_INVALIDATED_EVENT = "kanna://window-workspace-invalidated";
 export const WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT = "kanna://native-new-window";
 export const WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT = "kanna://native-close-window";
+export const WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT = "kanna://native-navigate-task-up";
+export const WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT = "kanna://native-navigate-task-down";
+export const WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT = "kanna://native-navigate-repo-up";
+export const WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT = "kanna://native-navigate-repo-down";
 
 export function parseWindowBootstrap(search: string): WindowBootstrap {
   const params = new URLSearchParams(search);

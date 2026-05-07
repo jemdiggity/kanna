@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeyboardActions } from "./composables/useKeyboardShortcuts";
 import {
   WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
   WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
 } from "./windowWorkspace";
 
@@ -786,6 +788,51 @@ describe("App", () => {
     await handler?.({});
 
     expect(mockWindowWorkspace.closeWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("navigates tasks when the native task-navigation event arrives", async () => {
+    store.selectedRepoId = "repo-1";
+    store.selectedItemId = "task-new";
+    store.sortedItemsAllRepos = [
+      { id: "task-new", repo_id: "repo-1" },
+      { id: "task-old", repo_id: "repo-1" },
+    ];
+
+    await mountApp(SidebarWithRepoStub);
+    expect(listenHandlers.has(WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT)).toBe(false);
+    const handler = currentWebviewWindowListenHandlers.get(WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT);
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({});
+
+    expect(store.selectItem).toHaveBeenCalledWith("task-old", { previousItemId: "task-new" });
+  });
+
+  it("navigates repos when the native repo-navigation event arrives", async () => {
+    store.repos = [
+      { id: "repo-1", path: "/tmp/repo-1", name: "repo 1" },
+      { id: "repo-2", path: "/tmp/repo-2", name: "repo 2" },
+    ];
+    store.selectedRepoId = "repo-1";
+    store.selectedItemId = "task-one";
+    store.items = [
+      { id: "task-two", repo_id: "repo-2", stage: "in progress" },
+    ];
+    store.sortedItemsAllRepos = [
+      { id: "task-one", repo_id: "repo-1" },
+      { id: "task-two", repo_id: "repo-2" },
+    ];
+    store.lastSelectedItemByRepo = {};
+
+    await mountApp(SidebarWithRepoStub);
+    expect(listenHandlers.has(WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT)).toBe(false);
+    const handler = currentWebviewWindowListenHandlers.get(WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT);
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({});
+
+    expect(store.selectRepo).toHaveBeenCalledWith("repo-2");
+    expect(store.selectItem).toHaveBeenCalledWith("task-two", { previousItemId: "task-one" });
   });
 
   it("skips teardown tasks when navigating to unread tasks", async () => {

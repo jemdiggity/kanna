@@ -55,6 +55,10 @@ import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
 import {
   WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT,
   WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
   type WindowWorkspaceController,
 } from "./windowWorkspace";
@@ -1018,6 +1022,23 @@ function focusAgentTerminal() {
   });
 }
 
+function listenNativeMenuAction(
+  eventName: string,
+  action: () => void | Promise<void>,
+  label: string,
+) {
+  void (async () => {
+    try {
+      const unlisten = await listenCurrentWebviewWindow(eventName, async () => {
+        await action();
+      });
+      appUnlisteners.push(unlisten);
+    } catch (e: unknown) {
+      console.error(`[App] native ${label} listener registration failed:`, e);
+    }
+  })();
+}
+
 function isFileTransfer(event: DragEvent): boolean {
   const transfer = event.dataTransfer;
   if (!transfer) return false;
@@ -1228,6 +1249,27 @@ onMounted(async () => {
   } catch (e: unknown) {
     console.error("[App] native close-window listener registration failed:", e);
   }
+
+  listenNativeMenuAction(
+    WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT,
+    keyboardActions.navigateUp,
+    "navigate-task-up",
+  );
+  listenNativeMenuAction(
+    WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
+    keyboardActions.navigateDown,
+    "navigate-task-down",
+  );
+  listenNativeMenuAction(
+    WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
+    keyboardActions.navigateRepoUp,
+    "navigate-repo-up",
+  );
+  listenNativeMenuAction(
+    WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
+    keyboardActions.navigateRepoDown,
+    "navigate-repo-down",
+  );
 
   try {
     const unlistenTransferRequest = await listen("transfer-request", async (event: unknown) => {
