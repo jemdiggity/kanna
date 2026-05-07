@@ -5,6 +5,7 @@ import { open } from "../dialog";
 import { invoke } from "../invoke";
 import { parseRepoInput } from "../utils/parseRepoInput";
 import type { ParsedInput } from "../utils/parseRepoInput";
+import { defaultReposHome } from "../utils/reposHome";
 import { useModalZIndex } from "../composables/useModalZIndex";
 import { macOsTextInputAttrs } from "../utils/textInput";
 
@@ -79,7 +80,7 @@ onMounted(async () => {
   } catch {
     homeDir.value = "/Users/unknown/";
   }
-  createParentDir.value = `${homeDir.value}.kanna/repos`;
+  createParentDir.value = defaultReposHome(homeDir.value);
   focusActiveInput();
   window.addEventListener("keydown", handleKeydown);
 });
