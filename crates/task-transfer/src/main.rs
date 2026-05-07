@@ -27,6 +27,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let payload = match event {
+                RuntimeEvent::PairingStarted(event) => SidecarEvent::PairingStarted {
+                    peer_id: event.peer_id,
+                    display_name: event.display_name,
+                    verification_code: event.verification_code,
+                },
+                RuntimeEvent::PairingRequested(event) => SidecarEvent::PairingRequested {
+                    request_id: event.request_id,
+                    peer_id: event.peer_id,
+                    display_name: event.display_name,
+                    verification_code: event.verification_code,
+                },
                 RuntimeEvent::PairingCompleted(event) => SidecarEvent::PairingCompleted {
                     peer_id: event.peer_id,
                     display_name: event.display_name,
@@ -97,6 +108,30 @@ async fn handle_request(runtime: &TransferRuntime, request: ControlRequest) -> C
                 request_id,
                 peer: result.peer,
                 verification_code: result.verification_code,
+            },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::AcceptPairing {
+            request_id,
+            pairing_request_id,
+            verification_code,
+        } => match runtime
+            .accept_pairing(&pairing_request_id, &verification_code)
+            .await
+        {
+            Ok(()) => ControlResponse::AcceptPairing {
+                request_id,
+                pairing_request_id,
+            },
+            Err(error) => control_error(request_id, error),
+        },
+        ControlRequest::RejectPairing {
+            request_id,
+            pairing_request_id,
+        } => match runtime.reject_pairing(&pairing_request_id).await {
+            Ok(()) => ControlResponse::RejectPairing {
+                request_id,
+                pairing_request_id,
             },
             Err(error) => control_error(request_id, error),
         },

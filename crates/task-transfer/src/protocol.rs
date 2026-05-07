@@ -10,6 +10,15 @@ pub enum ControlRequest {
         request_id: String,
         target_peer_id: String,
     },
+    AcceptPairing {
+        request_id: String,
+        pairing_request_id: String,
+        verification_code: String,
+    },
+    RejectPairing {
+        request_id: String,
+        pairing_request_id: String,
+    },
     StageTransferArtifact {
         request_id: String,
         transfer_id: String,
@@ -61,6 +70,14 @@ pub enum ControlResponse {
         request_id: String,
         peer: DiscoveredPeer,
         verification_code: String,
+    },
+    AcceptPairing {
+        request_id: String,
+        pairing_request_id: String,
+    },
+    RejectPairing {
+        request_id: String,
+        pairing_request_id: String,
     },
     StageTransferArtifact {
         request_id: String,
@@ -214,6 +231,17 @@ pub struct PairingPeer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SidecarEvent {
+    PairingStarted {
+        peer_id: String,
+        display_name: String,
+        verification_code: String,
+    },
+    PairingRequested {
+        request_id: String,
+        peer_id: String,
+        display_name: String,
+        verification_code: String,
+    },
     PairingCompleted {
         peer_id: String,
         display_name: String,

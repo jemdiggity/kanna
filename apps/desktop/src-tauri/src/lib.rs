@@ -742,6 +742,8 @@ pub fn run() {
             // Transfer commands
             commands::transfer::list_transfer_peers,
             commands::transfer::start_peer_pairing,
+            commands::transfer::accept_peer_pairing,
+            commands::transfer::reject_peer_pairing,
             commands::transfer::prepare_outgoing_transfer,
             commands::transfer::stage_transfer_artifact,
             commands::transfer::fetch_transfer_artifact,

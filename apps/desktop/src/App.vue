@@ -42,6 +42,7 @@ import { isTeardownStage } from "./stores/taskStages";
 import {
   parseIncomingTransferRequest,
   parsePairingCompletedEvent,
+  parsePairingRequestedEvent,
   parsePairingResult,
   parseOutgoingTransferCommittedEvent,
   parseOutgoingTransferFinalizationRequestEvent,
@@ -1244,6 +1245,59 @@ onMounted(async () => {
     appUnlisteners.push(unlistenTransferRequest);
   } catch (e: unknown) {
     console.error("[App] transfer-request listener registration failed:", e);
+  }
+
+  try {
+    const unlistenPairingStarted = await listen("pairing-started", async (event: unknown) => {
+      try {
+        const payload = (event as { payload?: unknown })?.payload ?? event;
+        const pairing = parsePairingCompletedEvent(payload);
+        toast.info(`Enter code ${pairing.verificationCode} on ${pairing.displayName}.`);
+      } catch (e: unknown) {
+        console.error("[App] failed to handle pairing started event:", e);
+      }
+    });
+    appUnlisteners.push(unlistenPairingStarted);
+  } catch (e: unknown) {
+    console.error("[App] pairing-started listener registration failed:", e);
+  }
+
+  try {
+    const unlistenPairingRequested = await listen("pairing-requested", async (event: unknown) => {
+      let pairingRequestId: string | null = null;
+      try {
+        const payload = (event as { payload?: unknown })?.payload ?? event;
+        const pairing = parsePairingRequestedEvent(payload);
+        pairingRequestId = pairing.requestId;
+        const enteredCode = window
+          .prompt(`Enter pairing code for ${pairing.displayName}`)
+          ?.trim() ?? null;
+        if (enteredCode !== pairing.verificationCode) {
+          await invoke("reject_peer_pairing", { pairingRequestId: pairing.requestId });
+          toast.error("Pairing code did not match.");
+          return;
+        }
+
+        await invoke("accept_peer_pairing", {
+          pairingRequestId: pairing.requestId,
+          verificationCode: enteredCode,
+        });
+        toast.info(`Paired with ${pairing.displayName}. Verify code ${pairing.verificationCode}.`);
+      } catch (e: unknown) {
+        console.error("[App] failed to handle pairing request event:", e);
+        if (pairingRequestId) {
+          try {
+            await invoke("reject_peer_pairing", { pairingRequestId });
+          } catch (rejectError: unknown) {
+            console.error("[App] failed to reject pairing request:", rejectError);
+          }
+        }
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    });
+    appUnlisteners.push(unlistenPairingRequested);
+  } catch (e: unknown) {
+    console.error("[App] pairing-requested listener registration failed:", e);
   }
 
   try {
