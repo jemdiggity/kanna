@@ -1093,7 +1093,7 @@ async function openNewTaskModal(repoId?: string) {
     repoDefaultBranchName.value = defaultBranch || undefined;
     availableBaseBranches.value = baseBranches;
     defaultBaseBranchName.value =
-      getDefaultBaseBranch(baseBranches, defaultBranch || "main") || (defaultBranch || undefined);
+      getDefaultBaseBranch(baseBranches, defaultBranch || "main") || undefined;
   } else {
     availablePipelines.value = [];
     defaultPipelineName.value = undefined;

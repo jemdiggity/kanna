@@ -38,7 +38,7 @@ const showDropdown = ref(false);
 const query = ref("");
 const selectedIndex = ref(0);
 const selectedBaseBranch = ref(
-  getDefaultBaseBranch(props.baseBranches, props.defaultBranchName) || props.defaultBranchName,
+  getDefaultBaseBranch(props.baseBranches, props.defaultBranchName),
 );
 const searchRef = ref<HTMLInputElement | null>(null);
 

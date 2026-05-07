@@ -36,8 +36,8 @@ describe("getDefaultBaseBranch", () => {
     expect(getDefaultBaseBranch(["main", "feature/a"], "main")).toBe("main");
   });
 
-  it("returns the first available candidate when default refs are missing", () => {
-    expect(getDefaultBaseBranch(["feature/b", "feature/a"], "main")).toBe("feature/a");
+  it("returns an empty string when default refs are missing", () => {
+    expect(getDefaultBaseBranch(["feature/b", "feature/a"], "main")).toBe("");
   });
 
   it("returns an empty string when there are no candidates", () => {

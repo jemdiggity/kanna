@@ -68,6 +68,7 @@ const mockState = vi.hoisted(() => {
     KANNA_DB_NAME: "kanna-wt-task-existing.db",
     PATH: "/usr/local/bin:/usr/bin:/bin",
   };
+  let defaultBranchResponse = "main";
   let baseBranchResponse: string[] | Error = ["origin/main", "main"];
   let repoConfig: RepoConfig = {};
   let repoConfigResolver: ((path: string) => RepoConfig | undefined) | null = null;
@@ -95,7 +96,7 @@ const mockState = vi.hoisted(() => {
   const invokeMock = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     switch (command) {
       case "git_default_branch":
-        return "main";
+        return defaultBranchResponse;
       case "git_list_base_branches":
         if (baseBranchResponse instanceof Error) throw baseBranchResponse;
         return baseBranchResponse;
@@ -201,6 +202,7 @@ const mockState = vi.hoisted(() => {
     repos = [makeRepo()];
     pipelineItems = [];
     pipelineDefinition = { name: "default", stages: [] };
+    defaultBranchResponse = "main";
     baseBranchResponse = ["origin/main", "main"];
     readEnvVarOverrides = {
       KANNA_DB_NAME: "kanna-wt-task-existing.db",
@@ -248,6 +250,12 @@ const mockState = vi.hoisted(() => {
     },
     set baseBranchResponse(value: string[] | Error) {
       baseBranchResponse = value;
+    },
+    get defaultBranchResponse() {
+      return defaultBranchResponse;
+    },
+    set defaultBranchResponse(value: string) {
+      defaultBranchResponse = value;
     },
     get readEnvVarOverrides() {
       return readEnvVarOverrides;
@@ -588,6 +596,7 @@ describe("kanna store task base branch integration", () => {
   });
 
   it("persists an explicit baseBranch into base_ref and uses it as the worktree start point from repo root", async () => {
+    mockState.baseBranchResponse = ["feature/task-base-branch", "origin/main", "main"];
     const store = await createStore();
 
     await store.createItem("repo-1", "/tmp/repo", "Ship explicit base branch", "sdk", {
@@ -661,20 +670,94 @@ describe("kanna store task base branch integration", () => {
     ).toBe(false);
   });
 
-  it("falls back to the local default branch for base_ref when base branch enumeration fails", async () => {
-    mockState.baseBranchResponse = new Error("git_list_base_branches failed");
+  it("prefers origin/dev for the dev default branch and uses that remote ref as the worktree start point", async () => {
+    mockState.defaultBranchResponse = "dev";
+    mockState.baseBranchResponse = ["feature/x", "dev", "origin/dev"];
+    mockState.repos = [mockState.makeRepo({ default_branch: "dev" })];
     const store = await createStore();
 
-    await store.createItem("repo-1", "/tmp/repo", "Ship fallback task", "sdk", {
+    await store.createItem("repo-1", "/tmp/repo", "Ship dev default branch task", "sdk", {
       agentProvider: "claude",
     });
 
     expect(mockState.insertPipelineItemMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        base_ref: "main",
+        base_ref: "origin/dev",
       }),
     );
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "git_worktree_add",
+        expect.objectContaining({
+          repoPath: "/tmp/repo",
+          startPoint: "origin/dev",
+        }),
+      );
+    });
+  });
+
+  it("fetches an explicitly selected origin base branch before creating the worktree", async () => {
+    mockState.defaultBranchResponse = "dev";
+    mockState.baseBranchResponse = ["dev", "origin/dev"];
+    const store = await createStore();
+
+    await store.createItem("repo-1", "/tmp/repo", "Ship explicit remote base branch task", "sdk", {
+      baseBranch: "origin/dev",
+      agentProvider: "claude",
+    });
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith("git_fetch", {
+        repoPath: "/tmp/repo",
+        branch: "dev",
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "git_worktree_add",
+        expect.objectContaining({
+          repoPath: "/tmp/repo",
+          startPoint: "origin/dev",
+        }),
+      );
+    });
+
+    const gitFetchCallIndex = mockState.invokeMock.mock.calls.findIndex(([command, args]) =>
+      command === "git_fetch" &&
+      typeof args === "object" &&
+      args !== null &&
+      "branch" in args &&
+      (args as { branch?: unknown }).branch === "dev"
+    );
+    const gitWorktreeAddCallIndex = mockState.invokeMock.mock.calls.findIndex(([command]) => command === "git_worktree_add");
+
+    expect(gitFetchCallIndex).toBeGreaterThanOrEqual(0);
+    expect(gitWorktreeAddCallIndex).toBeGreaterThan(gitFetchCallIndex);
+  });
+
+  it("does not create a task when base branch enumeration fails", async () => {
+    mockState.baseBranchResponse = new Error("git_list_base_branches failed");
+    const store = await createStore();
+
+    await expect(store.createItem("repo-1", "/tmp/repo", "Ship fallback task", "sdk", {
+      agentProvider: "claude",
+    })).rejects.toThrow("No valid base branch");
+
+    expect(mockState.insertPipelineItemMock).not.toHaveBeenCalled();
+  });
+
+  it("does not create a task when no verified default base branch exists", async () => {
+    mockState.baseBranchResponse = ["feature/x"];
+    const store = await createStore();
+
+    await expect(store.createItem("repo-1", "/tmp/repo", "Ship missing base task", "sdk", {
+      agentProvider: "claude",
+    })).rejects.toThrow("No valid base branch");
+
+    expect(mockState.insertPipelineItemMock).not.toHaveBeenCalled();
   });
 
   it("reserves every configured base port for the default branch and starts worktrees at the next offset", async () => {

@@ -209,7 +209,7 @@ describe("NewTaskModal", () => {
     expect(wrapper.find('[data-testid="pipeline-option-review"]').exists()).toBe(false);
     await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
 
-    expect(wrapper.emitted("submit")).toEqual([["Ship pipeline picker", "claude", "review", undefined]]);
+    expect(wrapper.emitted("submit")).toEqual([["Ship pipeline picker", "claude", "review", "origin/main"]]);
   });
 
   it("supports keyboard navigation in the pipeline picker and returns focus to the toggle", async () => {
@@ -371,7 +371,7 @@ describe("NewTaskModal", () => {
     await search.trigger("keydown", { key: "Enter", metaKey: true });
 
     expect(wrapper.emitted("submit")).toEqual([
-      ["Ship branch picker submit", "claude", "default", undefined],
+      ["Ship branch picker submit", "claude", "default", "origin/main"],
     ]);
 
     wrapper.unmount();
@@ -408,10 +408,10 @@ describe("NewTaskModal", () => {
     expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("origin/main");
   });
 
-  it("falls back to the default branch name when no base branch candidates exist", async () => {
+  it("shows the local default branch when origin default is unavailable", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {
-        baseBranches: [],
+        baseBranches: ["feature/x", "main"],
         defaultBranchName: "main",
       },
       global: { mocks: { $t: (key: string) => key } },
@@ -422,7 +422,29 @@ describe("NewTaskModal", () => {
     expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("main");
   });
 
-  it("does not emit an explicit base branch when submit leaves a resolved default untouched", async () => {
+  it("blocks submit when no valid default base branch is available", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        defaultAgentProvider: "claude",
+        pipelines: ["default"],
+        defaultPipeline: "default",
+        baseBranches: ["feature/x"],
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("tasks.baseBranchRequired");
+
+    await wrapper.get("textarea").setValue("Ship invalid branch guard");
+    await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
+
+    expect(wrapper.emitted("submit")).toBeUndefined();
+    expect(wrapper.get(".btn-primary").attributes("disabled")).toBeDefined();
+  });
+
+  it("emits the visible base branch when submit leaves a resolved default untouched", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {
         defaultAgentProvider: "claude",
@@ -440,7 +462,30 @@ describe("NewTaskModal", () => {
     await wrapper.get("textarea").trigger("keydown", { key: "Enter", metaKey: true });
 
     expect(wrapper.emitted("submit")).toEqual([
-      ["Ship branch fallback", "claude", "default", undefined],
+      ["Ship branch fallback", "claude", "default", "origin/main"],
     ]);
+  });
+
+  it("repairs the selected base branch when the available branches change", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        baseBranches: ["origin/main", "main"],
+        defaultBaseBranch: "origin/main",
+        defaultBranchName: "main",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("origin/main");
+
+    await wrapper.setProps({
+      baseBranches: ["origin/dev", "dev"],
+      defaultBaseBranch: "origin/dev",
+      defaultBranchName: "dev",
+    });
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="base-branch-value"]').text()).toContain("origin/dev");
   });
 });
