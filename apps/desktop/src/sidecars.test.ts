@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import rootPkg from "../../../package.json";
@@ -18,20 +18,7 @@ describe("desktop sidecar packaging", () => {
     const rootBuildSidecarsScript = rootPkg.scripts?.["build:desktop-sidecars"];
     const stageSidecarsScript = tauriConf.bundle.externalBin.join("\n");
     expect(buildSidecarsScript).toBe("pnpm -C ../.. run build:desktop-sidecars");
-    expect(rootBuildSidecarsScript).toContain(
-      'cargo build --target "$TARGET" --manifest-path packages/terminal-recovery/Cargo.toml',
-    );
-    expect(rootBuildSidecarsScript).toContain(
-      'cargo build --target "$TARGET" --manifest-path crates/kanna-server/Cargo.toml',
-    );
-    expect(rootBuildSidecarsScript).toContain(
-      'cargo build --target "$TARGET" --manifest-path crates/kanna-mcp/Cargo.toml',
-    );
-    expect(rootBuildSidecarsScript).toContain('env -u CARGO_TARGET_DIR cargo build');
-    expect(rootBuildSidecarsScript).toContain('TARGET="$(rustc -vV');
-    expect(rootBuildSidecarsScript).toContain('--target "$TARGET"');
-    expect(rootBuildSidecarsScript).toContain("scripts/stage-sidecars.sh");
-    expect(rootBuildSidecarsScript).toContain('--target "$TARGET"');
+    expect(rootBuildSidecarsScript).toBe("./kd build sidecars");
     expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-terminal-recovery");
     expect(stageSidecarsScript).toContain("binaries/kanna-terminal-recovery");
     expect(stageSidecarsScript).toContain("binaries/kanna-daemon");
@@ -46,9 +33,7 @@ describe("desktop sidecar packaging", () => {
     const rootBuildSidecarsScript = rootPkg.scripts?.["build:desktop-sidecars"];
     const stageSidecarsScript = tauriConf.bundle.externalBin.join("\n");
     expect(buildSidecarsScript).toBe("pnpm -C ../.. run build:desktop-sidecars");
-    expect(rootBuildSidecarsScript).toContain(
-      'cargo build --target "$TARGET" --manifest-path crates/task-transfer/Cargo.toml',
-    );
+    expect(rootBuildSidecarsScript).toBe("./kd build sidecars");
     expect(tauriConf.bundle.externalBin).toContain("binaries/kanna-task-transfer");
     expect(stageSidecarsScript).toContain("binaries/kanna-task-transfer");
   });
@@ -85,6 +70,25 @@ describe("desktop sidecar packaging", () => {
     expect(desktopPkg.scripts?.dev).toContain("vite");
     expect(tauriConf.build.beforeDevCommand).toBe("pnpm run dev");
     expect(tauriConf.build.beforeBuildCommand).toBe("pnpm run build");
-    expect(rootPkg.scripts?.dev).toBe("./scripts/dev.sh");
+    expect(rootPkg.scripts?.dev).toBe("./kd dev up");
+  });
+
+  it("exposes kd launcher metadata for task setup and local tool entrypoints", () => {
+    const repoRoot = resolve(import.meta.dirname, "../../..");
+    const kandevPackagePath = resolve(repoRoot, "tools/kandev/package.json");
+    const kandevPackage = JSON.parse(readFileSync(kandevPackagePath, "utf8")) as {
+      bin?: Record<string, string>;
+    };
+    const rootLauncher = resolve(repoRoot, "kd");
+    const kdBootstrapper = resolve(repoRoot, "tools/kandev/bin/kd");
+    const mcpBootstrapper = resolve(repoRoot, "tools/kandev/bin/kandev-mcp");
+
+    expect(kandevPackage.bin?.kd).toBe("./bin/kd");
+    expect(kandevPackage.bin?.kandev).toBe("./bin/kd");
+    expect(kandevPackage.bin?.["kandev-mcp"]).toBe("./bin/kandev-mcp");
+    expect(existsSync(kdBootstrapper)).toBe(true);
+    expect(existsSync(mcpBootstrapper)).toBe(true);
+    expect(lstatSync(rootLauncher).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(rootLauncher)).toBe("tools/kandev/bin/kd");
   });
 });

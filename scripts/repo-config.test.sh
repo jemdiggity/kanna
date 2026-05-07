@@ -12,8 +12,9 @@ assert_contains() {
   fi
 }
 
-assert_contains "\"/bin/sh ./scripts/setup-worktree.sh\""
-assert_contains "\"/bin/bash ./scripts/dev.sh stop -k\""
+assert_contains "\"pnpm install\""
+assert_contains "\"./kd env sync\""
+assert_contains "\"./kd dev down --kill-daemon\""
 assert_contains "\"/bin/bash ./scripts/clean.sh --all\""
 assert_contains "\"\$schema\": \"https://schemas.kanna.build/config.schema.json\""
 assert_contains "\"workspace\""

@@ -1,10 +1,10 @@
 {
   "$schema": "https://schemas.kanna.build/config.schema.json",
   "setup": [
-    "/bin/sh ./scripts/setup-worktree.sh",
-    "pnpm install"
+    "pnpm install",
+    "./kd env sync"
   ],
-  "teardown": ["/bin/bash ./scripts/dev.sh stop -k", "/bin/bash ./scripts/clean.sh --all"],
+  "teardown": ["./kd dev down --kill-daemon", "/bin/bash ./scripts/clean.sh --all"],
   "test": ["pnpm test"],
   "workspace": {
     "path": {
@@ -18,6 +18,10 @@
     "KANNA_MOBILE_SERVER_PORT": 48120,
     "KANNA_MOBILE_PORT": 8081,
     "KANNA_APPIUM_PORT": 4723,
-    "KANNA_TRANSFER_PORT": 4455
+    "KANNA_TRANSFER_PORT": 4455,
+    "KANNA_FIREBASE_AUTH_PORT": 9099,
+    "KANNA_FIREBASE_FIRESTORE_PORT": 8080,
+    "KANNA_FIREBASE_FUNCTIONS_PORT": 5001,
+    "KANNA_FIREBASE_UI_PORT": 4000
   }
 }

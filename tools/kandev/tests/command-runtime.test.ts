@@ -1,0 +1,83 @@
+import { describe, expect, it } from "vitest";
+import { checkRequiredCommands } from "../src/runtime/doctor";
+import { buildMobileDeviceSmokeCommand, buildMobileTestCommand } from "../src/runtime/mobile-commands";
+import { getPortStatuses } from "../src/runtime/port-status";
+import { stopTmuxWindow } from "../src/runtime/tmux";
+import type { CommandRunner } from "../src/runtime/process";
+
+describe("command runtime helpers", () => {
+  it("checks whether Firebase emulator ports are listening", async () => {
+    const calls: string[] = [];
+    const runner: CommandRunner = {
+      async run(command, args) {
+        calls.push(`${command} ${args.join(" ")}`);
+        const port = args.find((arg) => arg.startsWith("-iTCP:"))?.split(":").at(-1);
+        return port === "9099"
+          ? { exitCode: 0, stdout: "123\n", stderr: "" }
+          : { exitCode: 1, stdout: "", stderr: "" };
+      }
+    };
+
+    const statuses = await getPortStatuses(runner, {
+      auth: 9099,
+      firestore: 8080
+    });
+
+    expect(statuses).toEqual([
+      { name: "auth", port: 9099, listening: true, pids: ["123"] },
+      { name: "firestore", port: 8080, listening: false, pids: [] }
+    ]);
+    expect(calls).toEqual(["lsof -nP -iTCP:9099 -sTCP:LISTEN -t", "lsof -nP -iTCP:8080 -sTCP:LISTEN -t"]);
+  });
+
+  it("builds mobile test commands from the repo root", () => {
+    expect(buildMobileTestCommand("/repo")).toEqual({
+      command: "pnpm",
+      args: ["--dir", "/repo/apps/mobile", "test"]
+    });
+    expect(buildMobileDeviceSmokeCommand("/repo")).toEqual({
+      command: "pnpm",
+      args: ["--dir", "/repo/apps/mobile", "run", "test:e2e:device:smoke"]
+    });
+  });
+
+  it("reports required command availability for doctor", async () => {
+    const runner: CommandRunner = {
+      async run(_command, args) {
+        return args.at(-1) === "tmux"
+          ? { exitCode: 1, stdout: "", stderr: "" }
+          : { exitCode: 0, stdout: `/usr/bin/${args.at(-1)}\n`, stderr: "" };
+      }
+    };
+
+    const result = await checkRequiredCommands(runner, ["git", "pnpm", "tmux"]);
+
+    expect(result.ok).toBe(false);
+    expect(result.commands).toEqual([
+      { name: "git", found: true, path: "/usr/bin/git" },
+      { name: "pnpm", found: true, path: "/usr/bin/pnpm" },
+      { name: "tmux", found: false }
+    ]);
+  });
+
+  it("stops a single tmux window without killing the dev session", async () => {
+    const calls: string[] = [];
+    const runner: CommandRunner = {
+      async run(command, args) {
+        calls.push(`${command} ${args.join(" ")}`);
+        if (args.includes("list-windows")) {
+          return { exitCode: 0, stdout: "desktop\nemulators\nmobile\n", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+    };
+
+    await expect(stopTmuxWindow(runner, { server: "kanna-task", session: "kanna-task" }, "emulators")).resolves.toBe(true);
+
+    expect(calls).toEqual([
+      "tmux -L kanna-task list-windows -t kanna-task -F #{window_name}",
+      "tmux -L kanna-task send-keys -t kanna-task:emulators C-c",
+      "tmux -L kanna-task kill-window -t kanna-task:emulators"
+    ]);
+  });
+});

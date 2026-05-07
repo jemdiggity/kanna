@@ -3,6 +3,7 @@ packages:
   - "packages/*"
   - "services/*"
   - "tests/*"
+  - "tools/*"
 enableGlobalVirtualStore: true
 hoist: false
 confirmModulesPurge: false

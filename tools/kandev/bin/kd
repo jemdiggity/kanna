@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" != /* ]]; then
+    SOURCE="$SOURCE_DIR/$TARGET"
+  else
+    SOURCE="$TARGET"
+  fi
+done
+
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+ROOT_DIR="$(cd "$BIN_DIR/../../.." && pwd)"
+KANDEV_DIR="$ROOT_DIR/tools/kandev"
+DIST_ENTRY="$KANDEV_DIR/dist/bin/kd.js"
+
+if [[ ! -d "$KANDEV_DIR/node_modules" ]]; then
+  echo "Bootstrapping tools/kandev dependencies..." >&2
+  pnpm --dir "$KANDEV_DIR" install >&2
+fi
+
+needs_build=false
+if [[ ! -f "$DIST_ENTRY" ]]; then
+  needs_build=true
+elif find \
+  "$KANDEV_DIR/src" \
+  "$KANDEV_DIR/bin" \
+  "$KANDEV_DIR/package.json" \
+  "$KANDEV_DIR/tsconfig.json" \
+  "$KANDEV_DIR/tsup.config.ts" \
+  -type f -newer "$DIST_ENTRY" -print -quit | grep -q .; then
+  needs_build=true
+fi
+
+if [[ "$needs_build" == true ]]; then
+  echo "Building tools/kandev..." >&2
+  pnpm --dir "$KANDEV_DIR" build >&2
+fi
+
+exec node "$DIST_ENTRY" "$@"
