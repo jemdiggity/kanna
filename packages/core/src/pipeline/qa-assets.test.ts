@@ -16,12 +16,15 @@ describe("QA pipeline assets", () => {
     expect(commitAgent).not.toContain("same Kanna task session");
   });
 
-  it("instructs the QA agent to keep changes in its own worktree", () => {
+  it("instructs the QA agent to request revision instead of changing the review branch", () => {
     const reviewAgent = readRepoFile(".kanna/agents/review/AGENT.md");
     const qaPipeline = readRepoFile(".kanna/pipelines/qa.json");
 
     expect(reviewAgent).toContain("You do not need to inspect the source task worktree");
-    expect(reviewAgent).toContain("Make any fixes only in your current worktree");
+    expect(reviewAgent).toContain("Do not make code, test, documentation, or configuration changes in the review worktree.");
+    expect(reviewAgent).toContain("If the branch requires changes, request a revision back to the `in progress` stage.");
+    expect(reviewAgent).toContain('--target-stage "in progress"');
+    expect(reviewAgent).not.toContain("Make any fixes only in your current worktree");
     expect(qaPipeline).toContain("$BASE_REF");
     expect(qaPipeline).not.toContain("$SOURCE_WORKTREE");
   });
