@@ -356,7 +356,7 @@ User makes PR → GitHub API → DB update → stage transition
 | Script | Purpose |
 |---|---|
 | `dev.sh` | Dev server in tmux, auto-detects worktree, manages daemon lifecycle, seed data |
-| `setup.sh` | Verify prerequisites (Xcode CLT, Rust, pnpm ≥10.8.1, tmux, etc.) |
+| `setup.sh` | Verify prerequisites (Xcode CLT, Rust, pnpm ≥11.0.0, tmux, etc.) |
 | `clean.sh` | Remove build artifacts (Rust targets, node_modules, dist, .turbo) |
 | `install.sh` | Download and install latest release from GitHub (DMG, arch auto-detect) |
 | `ship.sh` | Release automation: version bump, dual-arch build, sign, notarize, publish |

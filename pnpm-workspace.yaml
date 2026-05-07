@@ -3,4 +3,14 @@ packages:
   - "packages/*"
   - "services/*"
   - "tests/*"
-onlyBuiltDependencies: []
+enableGlobalVirtualStore: true
+hoist: false
+confirmModulesPurge: false
+allowBuilds:
+  appium: false
+  edgedriver: false
+  esbuild: false
+  geckodriver: false
+  protobufjs: false
+  re2: false
+  sharp: false
