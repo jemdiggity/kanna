@@ -704,6 +704,7 @@ pub fn run() {
             commands::git::git_log,
             commands::git::git_graph,
             commands::git::git_default_branch,
+            commands::git::git_current_branch,
             commands::git::git_list_base_branches,
             commands::git::git_branch_upstream,
             commands::git::git_remote_url,

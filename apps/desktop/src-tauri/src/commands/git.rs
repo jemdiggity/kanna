@@ -268,6 +268,16 @@ pub fn git_default_branch(repo_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn git_current_branch(repo_path: String) -> Result<Option<String>, String> {
+    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+    let head = repo.head().map_err(|e| e.to_string())?;
+    if !head.is_branch() {
+        return Ok(None);
+    }
+    Ok(head.shorthand().map(|name| name.to_string()))
+}
+
+#[tauri::command]
 pub fn git_list_base_branches(repo_path: String) -> Result<Vec<String>, String> {
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
     let mut refs = BTreeSet::new();
@@ -321,7 +331,9 @@ pub fn git_branch_upstream(repo_path: String) -> Result<Option<String>, String> 
 
 #[cfg(test)]
 mod tests {
-    use super::{format_git_command_failure, git_branch_upstream, git_list_base_branches};
+    use super::{
+        format_git_command_failure, git_branch_upstream, git_current_branch, git_list_base_branches,
+    };
     use git2::{Repository, Signature};
     use std::{
         fs,
@@ -370,6 +382,25 @@ mod tests {
 
         repo.commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
             .expect("initial commit should succeed")
+    }
+
+    #[test]
+    fn git_current_branch_returns_checked_out_branch_name() {
+        let temp_repo = TempRepo::new("current-branch");
+        let repo = Repository::init(&temp_repo.path).expect("repo should initialize");
+        let commit_id = create_commit(&repo, &temp_repo.path);
+        let commit = repo
+            .find_commit(commit_id)
+            .expect("commit should be readable");
+        repo.branch("feature/renamed", &commit, false)
+            .expect("feature branch should exist");
+        repo.set_head("refs/heads/feature/renamed")
+            .expect("HEAD should point at feature branch");
+
+        let current = git_current_branch(temp_repo.path.to_string_lossy().into_owned())
+            .expect("current branch lookup should succeed");
+
+        assert_eq!(current, Some("feature/renamed".to_string()));
     }
 
     #[test]

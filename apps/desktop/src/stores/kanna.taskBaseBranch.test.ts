@@ -69,6 +69,7 @@ const mockState = vi.hoisted(() => {
     PATH: "/usr/local/bin:/usr/bin:/bin",
   };
   let defaultBranchResponse = "main";
+  let currentBranchResponse: string | Error | null = null;
   let baseBranchResponse: string[] | Error = ["origin/main", "main"];
   let repoConfig: RepoConfig = {};
   let repoConfigResolver: ((path: string) => RepoConfig | undefined) | null = null;
@@ -97,6 +98,9 @@ const mockState = vi.hoisted(() => {
     switch (command) {
       case "git_default_branch":
         return defaultBranchResponse;
+      case "git_current_branch":
+        if (currentBranchResponse instanceof Error) throw currentBranchResponse;
+        return currentBranchResponse ?? String(args?.repoPath ?? "").split("/").pop() ?? null;
       case "git_list_base_branches":
         if (baseBranchResponse instanceof Error) throw baseBranchResponse;
         return baseBranchResponse;
@@ -203,6 +207,7 @@ const mockState = vi.hoisted(() => {
     pipelineItems = [];
     pipelineDefinition = { name: "default", stages: [] };
     defaultBranchResponse = "main";
+    currentBranchResponse = null;
     baseBranchResponse = ["origin/main", "main"];
     readEnvVarOverrides = {
       KANNA_DB_NAME: "kanna-wt-task-existing.db",
@@ -256,6 +261,12 @@ const mockState = vi.hoisted(() => {
     },
     set defaultBranchResponse(value: string) {
       defaultBranchResponse = value;
+    },
+    get currentBranchResponse() {
+      return currentBranchResponse;
+    },
+    set currentBranchResponse(value: string | Error | null) {
+      currentBranchResponse = value;
     },
     get readEnvVarOverrides() {
       return readEnvVarOverrides;
@@ -1383,6 +1394,59 @@ describe("kanna store task base branch integration", () => {
       expect.objectContaining({
         branch: "task-existing-branch",
         baseRef: "origin/main",
+      }),
+    );
+  });
+
+  it("advances stages from the branch currently checked out in the source worktree", async () => {
+    mockState.currentBranchResponse = "renamed/source-branch";
+    mockState.pipelineDefinition = {
+      name: "qa",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "review", transition: "manual", agent: "review" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-existing",
+        branch: "task-stale-branch",
+        base_ref: "origin/dev",
+        pipeline: "qa",
+        stage: "in progress",
+      }),
+    ];
+
+    const store = await createStore();
+    await vi.waitFor(() => {
+      expect(store.items).toHaveLength(1);
+    });
+
+    await store.advanceStage("item-existing");
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "git_current_branch",
+        { repoPath: "/tmp/repo/.kanna-worktrees/task-stale-branch" },
+      );
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "git_worktree_add",
+        expect.objectContaining({
+          repoPath: "/tmp/repo",
+          startPoint: "renamed/source-branch",
+        }),
+      );
+      expect(mockState.pipelineItems.some(
+        (item) => item.stage === "review" && item.base_ref === "origin/dev",
+      )).toBe(true);
+    });
+    expect(buildStagePrompt).toHaveBeenCalledWith(
+      "Agent prompt",
+      undefined,
+      expect.objectContaining({
+        branch: "renamed/source-branch",
+        baseRef: "origin/dev",
+        sourceWorktree: "/tmp/repo/.kanna-worktrees/task-stale-branch",
       }),
     );
   });

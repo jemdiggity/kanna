@@ -36,6 +36,18 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     return buildWorktreePath(repoPath, branch);
   }
 
+  async function resolveCurrentSourceBranch(repoPath: string, storedBranch: string): Promise<string> {
+    const worktreePath = buildWorktreePath(repoPath, storedBranch);
+    try {
+      const currentBranch = await invoke<string | null>("git_current_branch", { repoPath: worktreePath });
+      const trimmed = currentBranch?.trim();
+      if (trimmed) return trimmed;
+    } catch (error) {
+      console.warn("[pipeline:advanceStage] failed to resolve current source branch:", error);
+    }
+    return storedBranch;
+  }
+
   function resolvePriorTaskSourceWorktree(repoPath: string, baseRef: string | null): string | undefined {
     if (!baseRef?.startsWith("task-")) return undefined;
     return buildWorktreePath(repoPath, baseRef);
@@ -234,6 +246,8 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
 
     let stagePrompt = "";
     let agentOpts: Record<string, unknown> = { agentProvider: item.agent_provider };
+    const sourceBranch = await resolveCurrentSourceBranch(repo.path, item.branch);
+    const sourceWorktree = resolveSourceWorktree(repo.path, item.branch);
 
     if (nextStage.agent) {
       try {
@@ -242,9 +256,9 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
         stagePrompt = buildStagePrompt(agent.prompt, nextStage.prompt, {
           taskPrompt: item.prompt ?? "",
           prevResult,
-          branch: item.branch ?? undefined,
+          branch: sourceBranch,
           baseRef: item.base_ref ?? undefined,
-          sourceWorktree: resolveSourceWorktree(repo.path, item.branch),
+          sourceWorktree,
         });
 
         const preferredProviders = getPreferredAgentProviders({
@@ -298,8 +312,8 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       selectedBeforeCreate: context.state.selectedItemId.value,
     });
     const createdItemId = await requireService(context.services.createItem, "createItem")(repo.id, repo.path, stagePrompt, "pty", {
-      baseBranch: item.branch,
-      baseRef: item.base_ref ?? item.branch,
+      baseBranch: sourceBranch,
+      baseRef: item.base_ref ?? sourceBranch,
       pipelineName: item.pipeline,
       stage: nextStage.name,
       selectOnCreate: shouldFollowTask,
