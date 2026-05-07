@@ -1,12 +1,21 @@
 import { join } from "node:path";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod, execDb, getVueState, queryDb, tauriInvoke } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
+
+const execFileAsync = promisify(execFile);
+
+async function git(repoPath: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", repoPath, ...args]);
+  return stdout.trim();
+}
 
 function isVueCallError(value: unknown): value is { __error: string } {
   return Boolean(
@@ -138,6 +147,7 @@ describe("stage advance", () => {
   let repoId = "";
   let fixtureRepoRoot = "";
   let testRepoPath = "";
+  let renamedStageTaskId = "";
 
   beforeAll(async () => {
     await client.createSession();
@@ -194,6 +204,9 @@ describe("stage advance", () => {
     await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-task" }).catch(() => undefined);
     await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-claude-enter-task" }).catch(() => undefined);
     await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-copilot-task" }).catch(() => undefined);
+    if (renamedStageTaskId) {
+      await tauriInvoke(client, "kill_session", { sessionId: renamedStageTaskId }).catch(() => undefined);
+    }
     if (testRepoPath) {
       await cleanupWorktrees(client, testRepoPath);
     }
@@ -276,6 +289,68 @@ describe("stage advance", () => {
     expect(reviewTaskId).not.toBe(sourceTaskId);
     await sleep(500);
     expect(await getVueState(client, "selectedItemId")).toBe(activeTaskId);
+  });
+
+  it("creates the next stage task from the source worktree's renamed branch", async () => {
+    const sourceTaskId = "renamed-source-stage-task";
+    const storedSourceBranch = "task-renamed-source-stage";
+    const actualSourceBranch = "renamed/stage-source-e2e";
+    const markerName = "renamed-source-stage-marker.txt";
+    const markerContent = "created on the renamed source branch\n";
+    const sourceWorktreePath = join(testRepoPath, ".kanna-worktrees", storedSourceBranch);
+
+    await tauriInvoke(client, "git_worktree_add", {
+      repoPath: testRepoPath,
+      branch: storedSourceBranch,
+      path: sourceWorktreePath,
+      startPoint: "main",
+    });
+    await git(sourceWorktreePath, ["branch", "-m", actualSourceBranch]);
+    await writeFile(join(sourceWorktreePath, markerName), markerContent);
+    await git(sourceWorktreePath, ["add", markerName]);
+    await git(sourceWorktreePath, ["commit", "-m", "test: marker on renamed source branch"]);
+
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [
+        sourceTaskId,
+        repoId,
+        "Advance from renamed source",
+        "auto-spawn-focus-e2e",
+        "auto-source",
+        JSON.stringify({ status: "success", summary: "ready for review" }),
+        "[]",
+        storedSourceBranch,
+        "pty",
+        "codex",
+        "idle",
+        null,
+      ],
+    );
+    await hydrateStoreItem(client, sourceTaskId);
+
+    const advanceResult = await callVueMethod(client, "store.advanceStage", sourceTaskId);
+    if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
+
+    renamedStageTaskId = await waitForCreatedStageTask(client, repoId, "review");
+    expect(renamedStageTaskId).not.toBe(sourceTaskId);
+
+    const rows = (await queryDb(
+      client,
+      "SELECT branch, base_ref FROM pipeline_item WHERE id = ?",
+      [renamedStageTaskId],
+    )) as Array<{ branch: string | null; base_ref: string | null }>;
+    const createdBranch = rows[0]?.branch;
+    expect(createdBranch).toBeTruthy();
+    expect(rows[0]?.base_ref).toBe(actualSourceBranch);
+
+    const createdMarkerPath = join(testRepoPath, ".kanna-worktrees", createdBranch as string, markerName);
+    await waitForFileSize(createdMarkerPath, Buffer.byteLength(markerContent), 20_000);
+    expect(await readFile(createdMarkerPath, "utf8")).toBe(markerContent);
   });
 
   it("advances a live task into a continue-mode commit stage through the daemon input command", async () => {
