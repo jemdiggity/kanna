@@ -25,4 +25,12 @@ describe("QA pipeline assets", () => {
     expect(qaPipeline).toContain("$BASE_REF");
     expect(qaPipeline).not.toContain("$SOURCE_WORKTREE");
   });
+
+  it("keeps the PR agent agnostic to the development branch name", () => {
+    const prAgent = readRepoFile(".kanna/agents/pr/AGENT.md");
+
+    expect(prAgent).toContain("$BASE_REF");
+    expect(prAgent).not.toContain("latest main");
+    expect(prAgent).not.toContain("origin/main");
+  });
 });
