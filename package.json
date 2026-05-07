@@ -1,17 +1,18 @@
 {
   "name": "kanna",
   "private": true,
-  "workspaces": ["apps/*", "packages/*", "services/*", "tests/*"],
+  "workspaces": ["apps/*", "packages/*", "services/*", "tests/*", "tools/*"],
   "scripts": {
     "build": "turbo build",
-    "build:desktop-sidecars": "TARGET=\"$(rustc -vV | awk '/^host:/ {print $2}')\" && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/daemon/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/kanna-cli/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/kanna-mcp/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/kanna-server/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path crates/task-transfer/Cargo.toml && env -u CARGO_TARGET_DIR cargo build --target \"$TARGET\" --manifest-path packages/terminal-recovery/Cargo.toml && scripts/stage-sidecars.sh --target \"$TARGET\"",
-    "dev": "./scripts/dev.sh",
+    "build:desktop-sidecars": "./kd build sidecars",
+    "dev": "./kd dev up",
     "test": "turbo test",
     "lint": "turbo lint",
-    "firebase:emulators": "pnpm exec firebase emulators:start --project kanna-local",
-    "firebase:emulators:test": "pnpm exec firebase emulators:exec --project kanna-local --only auth,firestore,functions \"pnpm test\""
+    "firebase:emulators": "./kd emulators up",
+    "firebase:emulators:test": "./kd emulators exec -- pnpm test"
   },
   "devDependencies": {
+    "@kanna/kandev": "workspace:*",
     "firebase-tools": "^14.25.0",
     "happy-dom": "^20.8.4",
     "turbo": "^2",
