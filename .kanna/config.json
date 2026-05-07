@@ -19,6 +19,5 @@
     "KANNA_MOBILE_PORT": 8081,
     "KANNA_APPIUM_PORT": 4723,
     "KANNA_TRANSFER_PORT": 4455
-  },
-  "stage_order": ["merge", "pr", "review", "commit", "in progress"]
+  }
 }
