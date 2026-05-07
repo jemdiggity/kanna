@@ -1731,6 +1731,45 @@ describe("kanna store task base branch integration", () => {
     expect(store.selectedItemId).toBeNull();
   });
 
+  it("closes the task when advancing from the final pipeline stage", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "pr", transition: "manual" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-pr",
+        branch: "task-pr",
+        stage: "pr",
+        created_at: "2026-04-14T00:02:00.000Z",
+        updated_at: "2026-04-14T00:02:00.000Z",
+      }),
+      mockState.makeItem({
+        id: "item-next",
+        branch: "task-next",
+        stage: "in progress",
+        created_at: "2026-04-14T00:01:00.000Z",
+        updated_at: "2026-04-14T00:01:00.000Z",
+      }),
+    ];
+
+    const store = await createStore();
+    await store.selectItem("item-pr");
+    await flushStore();
+
+    await store.advanceStage("item-pr");
+    await flushStore();
+
+    const prItem = mockState.pipelineItems.find((item) => item.id === "item-pr");
+    expect(mockState.closePipelineItemMock).toHaveBeenCalledWith(expect.anything(), "item-pr");
+    expect(prItem?.stage).toBe("done");
+    expect(prItem?.closed_at).not.toBeNull();
+    expect(store.selectedItemId).toBe("item-next");
+  });
+
   it("passes the source worktree path into the PR stage prompt context", async () => {
     mockState.pipelineDefinition = {
       name: "default",
