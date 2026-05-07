@@ -1022,19 +1022,21 @@ function focusAgentTerminal() {
   });
 }
 
-async function listenNativeMenuAction(
+function listenNativeMenuAction(
   eventName: string,
   action: () => void | Promise<void>,
   label: string,
 ) {
-  try {
-    const unlisten = await listenCurrentWebviewWindow(eventName, async () => {
-      await action();
-    });
-    appUnlisteners.push(unlisten);
-  } catch (e: unknown) {
-    console.error(`[App] native ${label} listener registration failed:`, e);
-  }
+  void (async () => {
+    try {
+      const unlisten = await listenCurrentWebviewWindow(eventName, async () => {
+        await action();
+      });
+      appUnlisteners.push(unlisten);
+    } catch (e: unknown) {
+      console.error(`[App] native ${label} listener registration failed:`, e);
+    }
+  })();
 }
 
 function isFileTransfer(event: DragEvent): boolean {
@@ -1248,28 +1250,26 @@ onMounted(async () => {
     console.error("[App] native close-window listener registration failed:", e);
   }
 
-  await Promise.all([
-    listenNativeMenuAction(
-      WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT,
-      keyboardActions.navigateUp,
-      "navigate-task-up",
-    ),
-    listenNativeMenuAction(
-      WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
-      keyboardActions.navigateDown,
-      "navigate-task-down",
-    ),
-    listenNativeMenuAction(
-      WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
-      keyboardActions.navigateRepoUp,
-      "navigate-repo-up",
-    ),
-    listenNativeMenuAction(
-      WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
-      keyboardActions.navigateRepoDown,
-      "navigate-repo-down",
-    ),
-  ]);
+  listenNativeMenuAction(
+    WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT,
+    keyboardActions.navigateUp,
+    "navigate-task-up",
+  );
+  listenNativeMenuAction(
+    WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
+    keyboardActions.navigateDown,
+    "navigate-task-down",
+  );
+  listenNativeMenuAction(
+    WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
+    keyboardActions.navigateRepoUp,
+    "navigate-repo-up",
+  );
+  listenNativeMenuAction(
+    WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
+    keyboardActions.navigateRepoDown,
+    "navigate-repo-down",
+  );
 
   try {
     const unlistenTransferRequest = await listen("transfer-request", async (event: unknown) => {
