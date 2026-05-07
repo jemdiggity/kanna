@@ -274,5 +274,6 @@ describe("createInitApi", () => {
     ]);
 
     expect(mockState.advanceStageMock).toHaveBeenCalledTimes(1);
+    expect(mockState.advanceStageMock).toHaveBeenCalledWith("task-1", { initiatedBy: "auto" });
   });
 });

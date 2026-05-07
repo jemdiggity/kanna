@@ -267,7 +267,7 @@ export function createInitApi(
                 Object.assign(claimedItem, claimedItemSnapshot);
                 claimedItem.stage_result = claimedResult;
               }
-              await requireService(context.services.advanceStage, "advanceStage")(taskId);
+              await requireService(context.services.advanceStage, "advanceStage")(taskId, { initiatedBy: "auto" });
             }
           } catch (error) {
             console.error("[store] failed to parse stage_result:", error);

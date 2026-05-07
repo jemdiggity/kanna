@@ -12,12 +12,12 @@ import {
   resolveAgentProvider,
 } from "./agent-provider";
 import { resolveDbName } from "./db";
-import { requireService, type StoreContext } from "./state";
+import { requireService, type AdvanceStageOptions, type StoreContext } from "./state";
 
 export interface PipelineApi {
   loadPipeline: (repoPath: string, pipelineName: string) => Promise<PipelineDefinition>;
   loadAgent: (repoPath: string, agentName: string) => Promise<AgentDefinition>;
-  advanceStage: (taskId: string) => Promise<void>;
+  advanceStage: (taskId: string, options?: AdvanceStageOptions) => Promise<void>;
   rerunStage: (taskId: string) => Promise<void>;
 }
 
@@ -186,7 +186,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     return blockers.some((blocker) => blocker.closed_at === null);
   }
 
-  async function advanceStage(taskId: string): Promise<void> {
+  async function advanceStage(taskId: string, options: AdvanceStageOptions = {}): Promise<void> {
     const item = context.state.items.value.find((candidate) => candidate.id === taskId);
     if (!item?.branch) return;
 
@@ -217,7 +217,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       return;
     }
 
-    const shouldFollowTask = nextStage.follow_task !== false;
+    const shouldFollowTask = nextStage.follow_task ?? (options.initiatedBy !== "auto");
     const sourceTaskIsSelected = context.state.selectedItemId.value === item.id;
     const fallbackSelectionId = computeNextVisibleItemId(item.id);
     console.log("[pipeline:advanceStage] selection policy", {
@@ -225,6 +225,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       currentStage: item.stage,
       nextStage: nextStage.name,
       followTask: nextStage.follow_task,
+      initiatedBy: options.initiatedBy ?? "manual",
       shouldFollowTask,
       sourceTaskIsSelected,
       fallbackSelectionId,
