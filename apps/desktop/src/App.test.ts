@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KeyboardActions } from "./composables/useKeyboardShortcuts";
 import {
   WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+  WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
   WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
 } from "./windowWorkspace";
 
@@ -786,6 +787,24 @@ describe("App", () => {
     await handler?.({});
 
     expect(mockWindowWorkspace.closeWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("navigates tasks when the native task-navigation event arrives", async () => {
+    store.selectedRepoId = "repo-1";
+    store.selectedItemId = "task-new";
+    store.sortedItemsAllRepos = [
+      { id: "task-new", repo_id: "repo-1" },
+      { id: "task-old", repo_id: "repo-1" },
+    ];
+
+    await mountApp(SidebarWithRepoStub);
+    expect(listenHandlers.has(WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT)).toBe(false);
+    const handler = currentWebviewWindowListenHandlers.get(WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT);
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({});
+
+    expect(store.selectItem).toHaveBeenCalledWith("task-old", { previousItemId: "task-new" });
   });
 
   it("skips teardown tasks when navigating to unread tasks", async () => {

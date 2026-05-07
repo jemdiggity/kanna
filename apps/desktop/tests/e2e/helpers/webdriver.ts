@@ -108,6 +108,20 @@ export class WebDriverClient {
     await pauseForSlowMode(`webdriver press ${value}`);
   }
 
+  async emitToWebviewWindow(event: string, payload: unknown = null, label = "main"): Promise<void> {
+    const result = await this.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       window.__TAURI_INTERNALS__.invoke("plugin:event|emit_to", {
+         target: { kind: "WebviewWindow", label: ${JSON.stringify(label)} },
+         event: ${JSON.stringify(event)},
+         payload: ${JSON.stringify(payload)},
+       }).then(function() { cb("ok"); }).catch(function(e) { cb("err:" + e); });`,
+    );
+    if (result !== "ok") {
+      throw new Error(`emitToWebviewWindow(${event}) failed: ${result}`);
+    }
+  }
+
   async getElementRect(elementId: string): Promise<ElementRect> {
     const res = await this.get(`/session/${this.sid}/element/${elementId}/rect`);
     return res.value as ElementRect;

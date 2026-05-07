@@ -225,6 +225,63 @@ describe("keyboard shortcuts", () => {
     await waitForSelection({ repoId: repoOneId, itemId: repoOneIssueOne });
   });
 
+  it("uses native task-navigation events to navigate tasks", async () => {
+    await resetDatabase(client);
+    await client.executeSync("location.reload()");
+    await client.waitForAppReady();
+    await dismissStartupShortcutsModal(client);
+
+    const repoId = await importTestRepo(client, testRepoPath, "keyboard-actions");
+    repoImported = true;
+
+    const newerTaskId = "e2e-key-actions-newer";
+    const olderTaskId = "e2e-key-actions-older";
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item
+         (id, repo_id, issue_number, issue_title, prompt, stage, tags, branch, agent_type, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        olderTaskId,
+        repoId,
+        301,
+        "Older key action task",
+        "Prompt for older key action task",
+        "in progress",
+        "[]",
+        null,
+        "sdk",
+        "2026-04-17T10:00:00.000Z",
+        "2026-04-17T10:00:00.000Z",
+        newerTaskId,
+        repoId,
+        302,
+        "Newer key action task",
+        "Prompt for newer key action task",
+        "in progress",
+        "[]",
+        null,
+        "sdk",
+        "2026-04-17T10:01:00.000Z",
+        "2026-04-17T10:01:00.000Z",
+      ],
+    );
+
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = ${CTX_SCRIPT};
+       ctx.refreshAllItems()
+         .then(function() { return ctx.store.selectRepo(${JSON.stringify(repoId)}); })
+         .then(function() { return ctx.store.selectItem(${JSON.stringify(newerTaskId)}); })
+         .then(function() { cb("ok"); })
+         .catch(function(e) { cb("err:" + e); });`,
+    );
+    await waitForSelection({ repoId, itemId: newerTaskId });
+
+    await client.emitToWebviewWindow("kanna://native-navigate-task-down");
+    await waitForSelection({ repoId, itemId: olderTaskId });
+  });
+
   it("unread shortcuts skip teardown tasks", async () => {
     await ensureRepoImported();
     const repoId = await getVueState(client, "selectedRepoId") as string;
