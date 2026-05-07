@@ -12,6 +12,7 @@ const props = defineProps<{
   maximized?: boolean;
   blockers?: PipelineItem[];
   hasRepos?: boolean;
+  pendingSetup?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -142,6 +143,11 @@ function dismissCommandHint() {
           </div>
         </div>
       </template>
+      <template v-else-if="pendingSetup">
+        <div class="setup-placeholder">
+          <p class="setup-title">{{ $t('mainPanel.taskSettingUp') }}</p>
+        </div>
+      </template>
       <template v-else>
         <TerminalTabs
           :session-id="item.id"
@@ -243,6 +249,15 @@ function dismissCommandHint() {
   align-items: center;
   justify-content: center;
   gap: 6px;
+}
+
+.setup-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  font-size: 13px;
 }
 
 .empty-title {

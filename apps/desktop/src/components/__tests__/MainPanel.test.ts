@@ -102,4 +102,59 @@ describe("MainPanel", () => {
     expect(wrapper.text()).toContain("Version 1.0.32");
     expect(wrapper.text()).toContain("Version 0.125.0-beta.1+20260429");
   });
+
+  it("does not mount task terminals while setup is still pending", async () => {
+    const { default: MainPanel } = await import("../MainPanel.vue");
+
+    const wrapper = mount(MainPanel, {
+      props: {
+        item: {
+          id: "task-pending",
+          repo_id: "repo-1",
+          prompt: "Make a merge master task",
+          stage: "merge",
+          tags: "[\"merge\"]",
+          pr_number: null,
+          pr_url: null,
+          branch: "task-task-pending",
+          agent_type: "pty",
+          agent_provider: "codex",
+          port_offset: null,
+          port_env: null,
+          activity: "working",
+          created_at: "2026-05-05 02:09:21",
+          updated_at: "2026-05-05 02:09:21",
+          activity_changed_at: "2026-05-05 02:09:21",
+          unread_at: null,
+          pinned: 0,
+          pin_order: null,
+          display_name: "Merge Master",
+          closed_at: null,
+          pipeline: "default",
+          stage_result: null,
+          issue_number: null,
+          issue_title: null,
+          base_ref: null,
+          agent_session_id: null,
+          previous_stage: null,
+          last_output_preview: null,
+        },
+        repoPath: "/tmp/repo",
+        pendingSetup: true,
+        hasRepos: true,
+      },
+      global: {
+        mocks: {
+          $t: (key: string) => key,
+        },
+        stubs: {
+          TaskHeader: { template: '<div data-testid="task-header" />' },
+          TerminalTabs: { template: '<div data-testid="terminal-tabs" />' },
+        },
+      },
+    });
+
+    expect(wrapper.find('[data-testid="terminal-tabs"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("mainPanel.taskSettingUp");
+  });
 });
