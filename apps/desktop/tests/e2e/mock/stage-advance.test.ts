@@ -9,6 +9,7 @@ import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { callVueMethod, execDb, getVueState, queryDb, tauriInvoke } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
+import { buildGlobalKeydownScript } from "../helpers/keyboard";
 
 const execFileAsync = promisify(execFile);
 
@@ -43,6 +44,25 @@ async function waitForStage(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`timed out waiting for ${taskId} to reach stage ${expectedStage}`);
+}
+
+async function waitForClosedTask(
+  client: WebDriverClient,
+  taskId: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = (await queryDb(
+      client,
+      "SELECT stage, closed_at FROM pipeline_item WHERE id = ?",
+      [taskId],
+    )) as Array<{ stage: string | null; closed_at: string | null }>;
+    const row = rows[0];
+    if (row?.stage === "done" && typeof row.closed_at === "string" && row.closed_at.length > 0) return;
+    await sleep(100);
+  }
+  throw new Error(`timed out waiting for ${taskId} to close`);
 }
 
 async function hydrateStoreItem(client: WebDriverClient, taskId: string): Promise<void> {
@@ -132,6 +152,23 @@ async function waitForSelectedTask(client: WebDriverClient, expectedTaskId: stri
   throw new Error(`timed out waiting for selected task ${expectedTaskId}`);
 }
 
+async function waitForSidebarToExcludeText(
+  client: WebDriverClient,
+  text: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSidebarText = "";
+  while (Date.now() < deadline) {
+    lastSidebarText = await client.executeSync<string>(
+      `return document.querySelector(".sidebar")?.textContent || "";`,
+    );
+    if (!lastSidebarText.includes(text)) return;
+    await sleep(100);
+  }
+  throw new Error(`timed out waiting for sidebar to remove ${JSON.stringify(text)}; saw ${JSON.stringify(lastSidebarText)}`);
+}
+
 async function waitForFileSize(path: string, expectedSize: number, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -182,6 +219,16 @@ describe("stage advance", () => {
         stages: [
           { name: "auto-source", transition: "auto" },
           { name: "review", transition: "manual" },
+        ],
+      }),
+    );
+    await writeFile(
+      join(kannaDir, "pipelines", "final-stage-e2e.json"),
+      JSON.stringify({
+        name: "final-stage-e2e",
+        stages: [
+          { name: "in progress", transition: "manual" },
+          { name: "pr", transition: "manual" },
         ],
       }),
     );
@@ -513,6 +560,48 @@ describe("stage advance", () => {
     await waitForStage(client, taskId, "commit");
     await waitForFileSize(inputCapturePath, expectedInput.length);
     expect(await readFile(inputCapturePath)).toEqual(expectedInput);
+  });
+
+  it("closes a final-stage task through the Cmd+S shortcut", async () => {
+    const taskId = "final-stage-shortcut-task";
+    const branch = "task-final-stage-shortcut";
+    await tauriInvoke(client, "git_worktree_add", {
+      repoPath: testRepoPath,
+      branch,
+      path: join(testRepoPath, ".kanna-worktrees", branch),
+      startPoint: "main",
+    });
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [
+        taskId,
+        repoId,
+        "Close PR from shortcut",
+        "final-stage-e2e",
+        "pr",
+        null,
+        "[]",
+        branch,
+        "pty",
+        "codex",
+        "idle",
+        null,
+      ],
+    );
+    await hydrateStoreItem(client, taskId);
+
+    const selectResult = await callVueMethod(client, "store.selectItem", taskId);
+    if (isVueCallError(selectResult)) throw new Error(selectResult.__error);
+    await waitForSelectedTask(client, taskId);
+
+    await client.executeSync(buildGlobalKeydownScript({ key: "s", meta: true }));
+
+    await waitForClosedTask(client, taskId);
+    await waitForSidebarToExcludeText(client, "Close PR from shortcut");
   });
 
 });
