@@ -801,8 +801,11 @@ pub fn run() {
 #[cfg(all(test, debug_assertions))]
 mod tests {
     use super::{
-        MENU_ID_CLOSE_WINDOW, MENU_ID_NAVIGATE_TASK_DOWN, MENU_ID_NAVIGATE_TASK_UP,
-        MENU_ID_NEW_WINDOW, NativeWorkspaceMenuAction, WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+        MENU_ID_CLOSE_WINDOW, MENU_ID_NAVIGATE_REPO_DOWN, MENU_ID_NAVIGATE_REPO_UP,
+        MENU_ID_NAVIGATE_TASK_DOWN, MENU_ID_NAVIGATE_TASK_UP, MENU_ID_NEW_WINDOW,
+        NativeWorkspaceMenuAction, WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+        WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
+        WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
         WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
         WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT, WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
         resolve_native_workspace_menu_action, resolve_webdriver_port,
@@ -886,6 +889,24 @@ mod tests {
         assert_eq!(
             resolve_native_workspace_menu_action(MENU_ID_NAVIGATE_TASK_DOWN, None),
             NativeWorkspaceMenuAction::None
+        );
+    }
+
+    #[test]
+    fn native_repo_navigation_dispatches_to_the_focused_window() {
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NAVIGATE_REPO_UP, Some("main")),
+            NativeWorkspaceMenuAction::DispatchToFocused {
+                label: "main".to_string(),
+                event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
+            }
+        );
+        assert_eq!(
+            resolve_native_workspace_menu_action(MENU_ID_NAVIGATE_REPO_DOWN, Some("main")),
+            NativeWorkspaceMenuAction::DispatchToFocused {
+                label: "main".to_string(),
+                event: WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
+            }
         );
     }
 }
