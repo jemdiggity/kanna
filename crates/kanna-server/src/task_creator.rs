@@ -126,14 +126,17 @@ pub(crate) fn prepare_advance_stage_for_api(
         .stages
         .get(current_stage_index + 1)
         .ok_or_else(|| format!("task already at final stage: {}", current_stage_name))?;
+    let source_branch =
+        resolve_current_source_worktree_branch(&repo.path, source_task.branch.as_deref());
 
     let task_prompt = build_target_stage_prompt(
         &repo.path,
         next_stage,
         source_task.prompt.as_deref().unwrap_or(""),
         source_task.stage_result.as_deref(),
-        source_task.branch.as_deref(),
+        source_branch.as_deref(),
         source_task.base_ref.as_deref(),
+        source_task.branch.as_deref(),
     )?;
     let explicit_provider = if next_stage.agent.is_some() {
         None
@@ -148,7 +151,7 @@ pub(crate) fn prepare_advance_stage_for_api(
         TaskCreationRequest {
             task_prompt,
             pipeline_name: Some(pipeline_name),
-            base_ref: source_task.branch,
+            base_ref: source_branch,
             stored_base_ref: source_task.base_ref,
             stage_override: Some(next_stage.name.clone()),
             explicit_provider,
@@ -197,14 +200,17 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
     let Some(next_stage) = pipeline.stages.get(current_stage_index + 1) else {
         return Ok(None);
     };
+    let source_branch =
+        resolve_current_source_worktree_branch(&repo.path, source_task.branch.as_deref());
 
     let task_prompt = build_target_stage_prompt(
         &repo.path,
         next_stage,
         source_task.prompt.as_deref().unwrap_or(""),
         source_task.stage_result.as_deref(),
-        source_task.branch.as_deref(),
+        source_branch.as_deref(),
         source_task.base_ref.as_deref(),
+        source_task.branch.as_deref(),
     )?;
     let explicit_provider = if next_stage.agent.is_some() {
         None
@@ -219,7 +225,7 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
         TaskCreationRequest {
             task_prompt,
             pipeline_name: Some(pipeline_name),
-            base_ref: source_task.branch,
+            base_ref: source_branch,
             stored_base_ref: source_task.base_ref,
             stage_override: Some(next_stage.name.clone()),
             explicit_provider,
@@ -257,14 +263,17 @@ pub(crate) fn prepare_revision_task_for_api(
         .iter()
         .find(|stage| stage.name == target_stage_name)
         .ok_or_else(|| format!("stage not found in pipeline: {}", target_stage_name))?;
+    let source_branch =
+        resolve_current_source_worktree_branch(&repo.path, source_task.branch.as_deref());
 
     let task_prompt = build_target_stage_prompt(
         &repo.path,
         target_stage,
         revision_prompt,
         source_task.stage_result.as_deref(),
-        source_task.branch.as_deref(),
+        source_branch.as_deref(),
         source_task.base_ref.as_deref(),
+        source_task.branch.as_deref(),
     )?;
     let explicit_provider = if target_stage.agent.is_some() {
         None
@@ -279,7 +288,7 @@ pub(crate) fn prepare_revision_task_for_api(
         TaskCreationRequest {
             task_prompt,
             pipeline_name: Some(pipeline_name),
-            base_ref: source_task.branch,
+            base_ref: source_branch,
             stored_base_ref: source_task.base_ref,
             stage_override: Some(target_stage.name.clone()),
             explicit_provider,
@@ -591,8 +600,10 @@ fn build_target_stage_prompt(
     prev_result: Option<&str>,
     branch: Option<&str>,
     base_ref: Option<&str>,
+    source_worktree_branch: Option<&str>,
 ) -> Result<String, String> {
-    let source_worktree = branch.map(|branch| format!("{repo_path}/.kanna-worktrees/{branch}"));
+    let source_worktree =
+        source_worktree_branch.map(|branch| format!("{repo_path}/.kanna-worktrees/{branch}"));
     if let Some(agent_name) = stage.agent.as_deref() {
         let agent = read_agent_definition(repo_path, agent_name)?;
         return Ok(build_stage_prompt(
@@ -609,6 +620,34 @@ fn build_target_stage_prompt(
     }
 
     Ok(task_prompt.to_string())
+}
+
+fn resolve_current_source_worktree_branch(
+    repo_path: &str,
+    stored_branch: Option<&str>,
+) -> Option<String> {
+    let stored_branch = stored_branch?;
+    let worktree_path = Path::new(repo_path)
+        .join(".kanna-worktrees")
+        .join(stored_branch);
+    let output = Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(&worktree_path)
+        .output();
+
+    let Ok(output) = output else {
+        return Some(stored_branch.to_string());
+    };
+    if !output.status.success() {
+        return Some(stored_branch.to_string());
+    }
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() {
+        Some(stored_branch.to_string())
+    } else {
+        Some(branch)
+    }
 }
 
 fn read_builtin_resource(relative_path: &str) -> Result<String, String> {
@@ -1273,6 +1312,147 @@ mod tests {
         );
         assert_eq!(created_source.base_ref.as_deref(), Some("origin/main"));
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
+    }
+
+    #[test]
+    fn prepare_advance_stage_uses_current_source_worktree_branch_after_rename() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "kanna-stage-advance-renamed-source-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&repo_root);
+        std::fs::create_dir_all(repo_root.join(".kanna/pipelines")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna/agents/reviewer")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna-worktrees")).unwrap();
+        std::fs::write(repo_root.join("README.md"), "test repo").unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/pipelines/default.json"),
+            r#"{
+  "stages": [
+    { "name": "in progress", "transition": "manual" },
+    { "name": "pr", "transition": "manual", "agent": "reviewer", "prompt": "Review branch $BRANCH against $BASE_REF" }
+  ]
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/agents/reviewer/AGENT.md"),
+            "---\nagent_provider: claude\n---\nReview task: $TASK_PROMPT",
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "README.md", ".kanna"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "task-old-branch"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let source_worktree = repo_root.join(".kanna-worktrees/task-old-branch");
+        assert!(Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                source_worktree.to_string_lossy().as_ref(),
+                "task-old-branch",
+            ])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "-m", "renamed/source-branch"])
+            .current_dir(&source_worktree)
+            .status()
+            .unwrap()
+            .success());
+        assert!(!Command::new("git")
+            .args(["rev-parse", "--verify", "task-old-branch"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: "/tmp/kanna-daemon".to_string(),
+            db_path: Db::test_db_path("advance-stage-renamed-source"),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "0.0.0.0".to_string(),
+            lan_port: 48120,
+            pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.insert_test_pipeline_item(
+            "task-1",
+            "repo-1",
+            "Fix the mobile shell",
+            Some("Mobile shell"),
+            "in progress",
+            "2026-04-17 07:00:00",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_stage_context(
+            "task-1",
+            "task-old-branch",
+            "default",
+            Some("{\"status\":\"success\"}"),
+            "copilot",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_base_ref("task-1", "origin/dev")
+            .unwrap();
+
+        let prepared = prepare_advance_stage_for_api(&db, &config, "task-1").unwrap();
+
+        assert_eq!(prepared.created_task.repo_id, "repo-1");
+        assert_eq!(prepared.created_task.stage, "pr");
+        assert_eq!(
+            prepared.created_task.title,
+            "Review task: Fix the mobile shell\n\nReview branch renamed/source-branch against origin/dev"
+        );
+        assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
+        let _ = std::fs::remove_dir_all(&repo_root);
     }
 
     #[test]

@@ -239,6 +239,7 @@ const invokeHandlers: Record<string, (...args: any[]) => any> = {
   kill_session: () => ({}),
   git_diff: () => "",
   git_default_branch: () => "main",
+  git_current_branch: () => null,
   git_list_base_branches: () => ["origin/main", "main"],
   git_branch_upstream: () => null,
   git_remote_url: () => "https://github.com/example/repo.git",
