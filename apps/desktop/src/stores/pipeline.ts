@@ -220,7 +220,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
 
     const nextStage = getNextStage(pipeline, item.stage);
     if (!nextStage) {
-      context.toast.warning(context.tt("toasts.taskAtFinalStage"));
+      await requireService(context.services.closeTask, "closeTask")(item.id);
       return;
     }
 
