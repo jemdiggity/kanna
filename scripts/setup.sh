@@ -62,16 +62,17 @@ else
 fi
 
 # pnpm
-PNPM_REQUIRED="10.8.1"
+PNPM_REQUIRED="11.0.0"
+PNPM_RECOMMENDED="11.0.8"
 if command -v pnpm &>/dev/null; then
   pnpm_ver="$(pnpm --version)"
   if printf '%s\n%s\n' "$PNPM_REQUIRED" "$pnpm_ver" | sort -V | head -n1 | grep -qx "$PNPM_REQUIRED"; then
     pass "pnpm $pnpm_ver (>= $PNPM_REQUIRED)"
   else
-    fail "pnpm $pnpm_ver is too old — need >= $PNPM_REQUIRED. Update with: corepack prepare pnpm@${PNPM_REQUIRED} --activate"
+    fail "pnpm $pnpm_ver is too old — need >= $PNPM_REQUIRED. Update with: corepack prepare pnpm@${PNPM_RECOMMENDED} --activate"
   fi
 else
-  fail "pnpm — install with: corepack enable && corepack prepare pnpm@${PNPM_REQUIRED} --activate"
+  fail "pnpm — install with: corepack enable && corepack prepare pnpm@${PNPM_RECOMMENDED} --activate"
 fi
 
 # Bazelisk / Bazel
