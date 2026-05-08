@@ -68,6 +68,8 @@ Tasks can be pinned to the top of their repo's task list by dragging above the p
 
 **SDK mode (alternate):** Agent CLI runs headless with `--output-format stream-json`. NDJSON on stdin/stdout. Non-interactive. Used for automation.
 
+**Sending input to a running task:** Use `kanna-cli task send-input --task-id <TASK_ID> --message "Please fix the failing typecheck"` to send feedback or instructions to an already-running agent task through the desktop-backed local API. The command posts to `/v1/tasks/{task_id}/input` and appends Enter to the message when needed.
+
 ### Diff viewer
 
 - Modal (Cmd+D), not a tab
@@ -126,7 +128,7 @@ Use `pnpm` for all package management and script execution. Not npm.
 - `packages/db/` — database schema types and query helpers
 - `crates/claude-agent-sdk/` — Rust wrapper for Claude CLI (NDJSON streaming)
 - `crates/daemon/` — PTY daemon (Unix socket, session persistence)
-- `crates/kanna-cli/` — sidecar binary for agents to signal stage completion (`kanna-cli stage-complete`)
+- `crates/kanna-cli/` — sidecar binary for agents to signal stage completion (`kanna-cli stage-complete`) and send input to running tasks (`kanna-cli task send-input`)
 - `crates/kanna-hook/` — lightweight binary that signals events to the daemon
 - `crates/tauri-plugin-delta-updater/` — self-updater plugin (stub)
 - `tests/` — CLI contract tests (`cli-contract/`), PTY test utility (`pty-test/`)
