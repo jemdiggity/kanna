@@ -136,6 +136,14 @@ impl AppState {
         }
     }
 
+    pub async fn mobile_server_status(&self) -> crate::mobile_api::MobileServerStatus {
+        let pairing_code = {
+            let session = self.pairing_session.lock().await;
+            pairing::active_pairing_code(session.as_ref())
+        };
+        crate::mobile_api::build_mobile_server_status(&self.config, pairing_code)
+    }
+
     #[cfg(test)]
     fn with_task_creator(config: Config, task_creator: TestTaskCreator) -> Self {
         let mut state = Self::new(config);
@@ -248,14 +256,7 @@ async fn list_repo_tasks(
 async fn status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<crate::mobile_api::MobileServerStatus>, (axum::http::StatusCode, String)> {
-    let pairing_code = {
-        let session = state.pairing_session.lock().await;
-        pairing::active_pairing_code(session.as_ref())
-    };
-    Ok(Json(crate::mobile_api::build_mobile_server_status(
-        &state.config,
-        pairing_code,
-    )))
+    Ok(Json(state.mobile_server_status().await))
 }
 
 async fn list_recent_tasks(

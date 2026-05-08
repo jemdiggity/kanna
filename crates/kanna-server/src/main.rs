@@ -13,7 +13,7 @@ mod task_creator;
 
 use config::Config;
 use futures_util::{SinkExt, StreamExt};
-use relay_client::RelayMessage;
+use relay_client::{RelayId, RelayInvoke, RelayMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -66,8 +66,8 @@ async fn main() {
     log::info!("Database opened: {}", config.db_path);
 
     let http_state = Arc::new(http_api::AppState::new(config.clone()));
-    let lan_task = tokio::spawn(http_api::serve(http_state));
-    let relay_loop = run_relay_loop(config, db);
+    let lan_task = tokio::spawn(http_api::serve(Arc::clone(&http_state)));
+    let relay_loop = run_relay_loop(config, db, http_state);
     tokio::pin!(relay_loop);
 
     tokio::select! {
@@ -83,7 +83,11 @@ async fn main() {
     };
 }
 
-async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
+async fn run_relay_loop(
+    config: Config,
+    db: db::Db,
+    http_state: Arc<http_api::AppState>,
+) -> Result<(), String> {
     // Reconnection loop
     loop {
         log::info!("Connecting to relay at {}...", config.relay_url);
@@ -127,38 +131,41 @@ async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
                     };
 
                     match parsed {
-                        RelayMessage::Invoke { id, command, args } => {
-                            log::info!("Invoke #{}: {}", id, command);
+                        RelayMessage::Invoke { id, request } => match request {
+                            RelayInvoke::Command { command, args } => {
+                                log::info!("Invoke #{}: {}", id, command);
 
-                            // Special-case: observe_session needs a long-lived daemon connection
-                            if command == "observe_session" {
-                                let session_id =
-                                    match args.get("session_id").and_then(|v| v.as_str()) {
-                                        Some(s) => s.to_string(),
-                                        None => {
-                                            send_response(
-                                                &sink,
-                                                id,
-                                                Err("missing required arg: session_id".to_string()),
-                                            )
-                                            .await;
-                                            continue;
-                                        }
-                                    };
+                                // Special-case: observe_session needs a long-lived daemon connection
+                                if command == "observe_session" {
+                                    let session_id =
+                                        match args.get("session_id").and_then(|v| v.as_str()) {
+                                            Some(s) => s.to_string(),
+                                            None => {
+                                                send_response(
+                                                    &sink,
+                                                    id,
+                                                    Err("missing required arg: session_id"
+                                                        .to_string()),
+                                                )
+                                                .await;
+                                                continue;
+                                            }
+                                        };
 
-                                // Cancel existing observer for this session
-                                if let Some(handle) = observe_tasks.remove(&session_id) {
-                                    handle.abort();
-                                    log::info!(
-                                        "Aborted existing observer for session {}",
-                                        session_id
-                                    );
-                                }
+                                    // Cancel existing observer for this session
+                                    if let Some(handle) = observe_tasks.remove(&session_id) {
+                                        handle.abort();
+                                        log::info!(
+                                            "Aborted existing observer for session {}",
+                                            session_id
+                                        );
+                                    }
 
-                                // Create dedicated daemon connection for observing
-                                let mut obs_daemon =
-                                    match daemon_client::DaemonClient::connect(&config.daemon_dir)
-                                        .await
+                                    // Create dedicated daemon connection for observing
+                                    let mut obs_daemon = match daemon_client::DaemonClient::connect(
+                                        &config.daemon_dir,
+                                    )
+                                    .await
                                     {
                                         Ok(d) => d,
                                         Err(e) => {
@@ -176,144 +183,183 @@ async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
                                         }
                                     };
 
-                                // Send Observe command
-                                use kanna_daemon::protocol::{
-                                    Command as DaemonCommand, Event as DaemonEvent,
-                                };
-                                match obs_daemon
-                                    .send_command(&DaemonCommand::Observe {
-                                        session_id: session_id.clone(),
-                                    })
-                                    .await
-                                {
-                                    Ok(DaemonEvent::Ok) => {
-                                        // Send success response
-                                        send_response(&sink, id, Ok(serde_json::Value::Null)).await;
+                                    // Send Observe command
+                                    use kanna_daemon::protocol::{
+                                        Command as DaemonCommand, Event as DaemonEvent,
+                                    };
+                                    match obs_daemon
+                                        .send_command(&DaemonCommand::Observe {
+                                            session_id: session_id.clone(),
+                                        })
+                                        .await
+                                    {
+                                        Ok(DaemonEvent::Ok) => {
+                                            // Send success response
+                                            send_response(&sink, id, Ok(serde_json::Value::Null))
+                                                .await;
 
-                                        // Spawn background task to replay the current snapshot and
-                                        // forward later daemon events.
-                                        let sink_clone = Arc::clone(&sink);
-                                        let sid = session_id.clone();
-                                        let handle = tokio::spawn(async move {
-                                            observer_loop(obs_daemon, &sid, sink_clone).await;
-                                        });
-                                        observe_tasks.insert(session_id, handle);
-                                    }
-                                    Ok(DaemonEvent::Error { message, .. }) => {
-                                        send_response(
-                                            &sink,
-                                            id,
-                                            Err(format!("daemon error: {}", message)),
-                                        )
-                                        .await;
-                                    }
-                                    Ok(other) => {
-                                        send_response(
-                                            &sink,
-                                            id,
-                                            Err(format!("unexpected daemon response: {:?}", other)),
-                                        )
-                                        .await;
-                                    }
-                                    Err(e) => {
-                                        send_response(
-                                            &sink,
-                                            id,
-                                            Err(format!("daemon error: {}", e)),
-                                        )
-                                        .await;
-                                    }
-                                }
-                                continue;
-                            }
-
-                            // Special-case: unobserve_session just aborts the observer task
-                            if command == "unobserve_session" {
-                                let session_id =
-                                    match args.get("session_id").and_then(|v| v.as_str()) {
-                                        Some(s) => s.to_string(),
-                                        None => {
+                                            // Spawn background task to replay the current snapshot and
+                                            // forward later daemon events.
+                                            let sink_clone = Arc::clone(&sink);
+                                            let sid = session_id.clone();
+                                            let handle = tokio::spawn(async move {
+                                                observer_loop(obs_daemon, &sid, sink_clone).await;
+                                            });
+                                            observe_tasks.insert(session_id, handle);
+                                        }
+                                        Ok(DaemonEvent::Error { message, .. }) => {
                                             send_response(
                                                 &sink,
                                                 id,
-                                                Err("missing required arg: session_id".to_string()),
+                                                Err(format!("daemon error: {}", message)),
                                             )
                                             .await;
-                                            continue;
                                         }
-                                    };
-
-                                if let Some(handle) = observe_tasks.remove(&session_id) {
-                                    handle.abort();
-                                    log::info!("Detached observer for session {}", session_id);
+                                        Ok(other) => {
+                                            send_response(
+                                                &sink,
+                                                id,
+                                                Err(format!(
+                                                    "unexpected daemon response: {:?}",
+                                                    other
+                                                )),
+                                            )
+                                            .await;
+                                        }
+                                        Err(e) => {
+                                            send_response(
+                                                &sink,
+                                                id,
+                                                Err(format!("daemon error: {}", e)),
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                    continue;
                                 }
 
-                                send_response(&sink, id, Ok(serde_json::Value::Null)).await;
-                                continue;
-                            }
+                                // Special-case: unobserve_session just aborts the observer task
+                                if command == "unobserve_session" {
+                                    let session_id =
+                                        match args.get("session_id").and_then(|v| v.as_str()) {
+                                            Some(s) => s.to_string(),
+                                            None => {
+                                                send_response(
+                                                    &sink,
+                                                    id,
+                                                    Err("missing required arg: session_id"
+                                                        .to_string()),
+                                                )
+                                                .await;
+                                                continue;
+                                            }
+                                        };
 
-                            // Normal commands: short-lived daemon connection
-                            let daemon_result =
-                                daemon_client::DaemonClient::connect(&config.daemon_dir).await;
+                                    if let Some(handle) = observe_tasks.remove(&session_id) {
+                                        handle.abort();
+                                        log::info!("Detached observer for session {}", session_id);
+                                    }
 
-                            let response = match daemon_result {
-                                Ok(mut daemon) => {
-                                    match commands::handle_invoke(
-                                        &command,
-                                        &args,
-                                        &db,
-                                        &mut daemon,
-                                        &config,
-                                    )
-                                    .await
-                                    {
-                                        Ok(data) => RelayMessage::Response {
-                                            id,
-                                            data: Some(data),
-                                            error: None,
-                                        },
-                                        Err(e) => {
-                                            log::error!("Invoke #{} error: {}", id, e);
-                                            RelayMessage::Response {
+                                    send_response(&sink, id, Ok(serde_json::Value::Null)).await;
+                                    continue;
+                                }
+
+                                // Normal commands: short-lived daemon connection
+                                let daemon_result =
+                                    daemon_client::DaemonClient::connect(&config.daemon_dir).await;
+
+                                let response = match daemon_result {
+                                    Ok(mut daemon) => {
+                                        match commands::handle_invoke(
+                                            &command,
+                                            &args,
+                                            &db,
+                                            &mut daemon,
+                                            &config,
+                                        )
+                                        .await
+                                        {
+                                            Ok(data) => RelayMessage::Response {
                                                 id,
-                                                data: None,
-                                                error: Some(e),
+                                                data: Some(data),
+                                                error: None,
+                                                status: None,
+                                                body: None,
+                                            },
+                                            Err(e) => {
+                                                log::error!("Invoke #{} error: {}", id, e);
+                                                RelayMessage::Response {
+                                                    id,
+                                                    data: None,
+                                                    error: Some(e),
+                                                    status: None,
+                                                    body: None,
+                                                }
                                             }
                                         }
                                     }
+                                    Err(e) => {
+                                        log::error!(
+                                            "Failed to connect to daemon for invoke #{}: {}",
+                                            id,
+                                            e
+                                        );
+                                        RelayMessage::Response {
+                                            id,
+                                            data: None,
+                                            error: Some(format!("daemon connection failed: {}", e)),
+                                            status: None,
+                                            body: None,
+                                        }
+                                    }
+                                };
+
+                                if let Err(e) = send_relay_response_message(&sink, response).await {
+                                    log::error!("{}", e);
+                                    break;
                                 }
-                                Err(e) => {
-                                    log::error!(
-                                        "Failed to connect to daemon for invoke #{}: {}",
-                                        id,
-                                        e
-                                    );
+                            }
+                            RelayInvoke::Http { method, path, .. } => {
+                                log::info!("HTTP invoke #{}: {} {}", id, method, path);
+
+                                let response = if method == "GET" && path == "/v1/status" {
+                                    match serde_json::to_value(
+                                        http_state.mobile_server_status().await,
+                                    ) {
+                                        Ok(body) => RelayMessage::Response {
+                                            id,
+                                            data: None,
+                                            error: None,
+                                            status: Some(200),
+                                            body: Some(body),
+                                        },
+                                        Err(e) => RelayMessage::Response {
+                                            id,
+                                            data: None,
+                                            error: Some(format!("serialize error: {}", e)),
+                                            status: Some(500),
+                                            body: None,
+                                        },
+                                    }
+                                } else {
                                     RelayMessage::Response {
                                         id,
                                         data: None,
-                                        error: Some(format!("daemon connection failed: {}", e)),
+                                        error: Some(format!(
+                                            "unsupported HTTP invoke: {} {}",
+                                            method, path
+                                        )),
+                                        status: Some(404),
+                                        body: None,
                                     }
-                                }
-                            };
+                                };
 
-                            let response_json = match serde_json::to_string(&response) {
-                                Ok(j) => j,
-                                Err(e) => {
-                                    log::error!("Failed to serialize response: {}", e);
-                                    continue;
+                                if let Err(e) = send_relay_response_message(&sink, response).await {
+                                    log::error!("{}", e);
+                                    break;
                                 }
-                            };
-
-                            if let Err(e) = sink
-                                .lock()
-                                .await
-                                .send(Message::Text(response_json.into()))
-                                .await
-                            {
-                                log::error!("Failed to send response: {}", e);
-                                break;
                             }
-                        }
+                        },
                         RelayMessage::AuthOk { user_id } => {
                             log::info!("Relay authenticated as user {}", user_id);
                         }
@@ -356,7 +402,7 @@ async fn run_relay_loop(config: Config, db: db::Db) -> Result<(), String> {
 /// Send a response message through the relay WebSocket.
 async fn send_response(
     sink: &Arc<Mutex<relay_client::WsSink>>,
-    id: u64,
+    id: RelayId,
     result: Result<serde_json::Value, String>,
 ) {
     let response = match result {
@@ -364,25 +410,39 @@ async fn send_response(
             id,
             data: Some(data),
             error: None,
+            status: None,
+            body: None,
         },
         Err(e) => RelayMessage::Response {
             id,
             data: None,
             error: Some(e),
+            status: None,
+            body: None,
         },
     };
 
+    if let Err(e) = send_relay_response_message(sink, response).await {
+        log::error!("Failed to send response: {}", e);
+    }
+}
+
+async fn send_relay_response_message(
+    sink: &Arc<Mutex<relay_client::WsSink>>,
+    response: RelayMessage,
+) -> Result<(), String> {
     let json = match serde_json::to_string(&response) {
         Ok(j) => j,
         Err(e) => {
-            log::error!("Failed to serialize response: {}", e);
-            return;
+            return Err(format!("failed to serialize response: {}", e));
         }
     };
 
     if let Err(e) = sink.lock().await.send(Message::Text(json.into())).await {
-        log::error!("Failed to send response: {}", e);
+        return Err(format!("failed to send response: {}", e));
     }
+
+    Ok(())
 }
 
 fn relay_snapshot_event(
