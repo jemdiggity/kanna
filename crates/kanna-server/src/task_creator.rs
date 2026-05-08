@@ -87,6 +87,7 @@ pub(crate) fn prepare_merge_agent_for_api(
             stored_base_ref: None,
             stage_override: None,
             explicit_provider: None,
+            default_provider: None,
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
@@ -155,6 +156,7 @@ pub(crate) fn prepare_advance_stage_for_api(
             stored_base_ref: source_task.base_ref,
             stage_override: Some(next_stage.name.clone()),
             explicit_provider,
+            default_provider: None,
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
@@ -229,6 +231,7 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
             stored_base_ref: source_task.base_ref,
             stage_override: Some(next_stage.name.clone()),
             explicit_provider,
+            default_provider: None,
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
@@ -292,6 +295,7 @@ pub(crate) fn prepare_revision_task_for_api(
             stored_base_ref: source_task.base_ref,
             stage_override: Some(target_stage.name.clone()),
             explicit_provider,
+            default_provider: None,
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
@@ -306,6 +310,7 @@ struct TaskCreationRequest {
     stored_base_ref: Option<String>,
     stage_override: Option<String>,
     explicit_provider: Option<String>,
+    default_provider: Option<String>,
     model: Option<String>,
     permission_mode: Option<String>,
     allowed_tools: Vec<String>,
@@ -340,6 +345,13 @@ pub(crate) fn prepare_task_for_api(
         .map_err(|e| format!("db error: {}", e))?
         .ok_or_else(|| format!("repo not found: {}", request.repo_id))?;
 
+    let explicit_provider = request.agent_provider;
+    let default_provider = if explicit_provider.is_none() {
+        read_default_agent_provider_setting(db)?
+    } else {
+        None
+    };
+
     prepare_task_spawn(
         db,
         config,
@@ -350,12 +362,23 @@ pub(crate) fn prepare_task_for_api(
             base_ref: request.base_ref,
             stored_base_ref: None,
             stage_override: request.stage,
-            explicit_provider: request.agent_provider,
+            explicit_provider,
+            default_provider,
             model: request.model,
             permission_mode: request.permission_mode,
             allowed_tools: request.allowed_tools.unwrap_or_default(),
         },
     )
+}
+
+fn read_default_agent_provider_setting(db: &Db) -> Result<Option<String>, String> {
+    let provider = db
+        .get_setting("defaultAgentProvider")
+        .map_err(|e| format!("db error: {}", e))?;
+    Ok(match provider.as_deref() {
+        Some("claude" | "copilot" | "codex") => provider,
+        _ => Some("claude".to_string()),
+    })
 }
 
 fn prepare_task_spawn(
@@ -413,10 +436,9 @@ fn prepare_task_spawn(
     };
 
     let provider = resolve_agent_provider(
-        request
-            .explicit_provider
-            .as_deref()
-            .or(stage.agent_provider.as_deref()),
+        request.explicit_provider.as_deref(),
+        request.default_provider.as_deref(),
+        stage.agent_provider.as_deref(),
         agent.as_ref(),
     )?;
     let model = request
@@ -817,13 +839,15 @@ impl AgentProvider {
 }
 
 fn resolve_agent_provider(
+    explicit_provider: Option<&str>,
+    default_provider: Option<&str>,
     stage_provider: Option<&str>,
     agent: Option<&AgentDefinition>,
 ) -> Result<AgentProvider, String> {
     let mut candidates = Vec::new();
-    if let Some(stage_provider) = stage_provider {
+    if let Some(provider) = explicit_provider.or(default_provider).or(stage_provider) {
         candidates.extend(
-            stage_provider
+            provider
                 .split(',')
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -1158,7 +1182,7 @@ fn short_socket_path(dir: &PathBuf) -> PathBuf {
 mod tests {
     use super::{
         build_stage_prompt, prepare_advance_stage_for_api, prepare_revision_task_for_api,
-        prepare_task_for_api, PromptContext,
+        prepare_task_for_api, read_default_agent_provider_setting, PromptContext,
     };
     use crate::config::Config;
     use crate::db::Db;
@@ -1546,6 +1570,129 @@ mod tests {
 
         assert_eq!(prepared.created_task.stage, "in progress");
         assert_eq!(prepared.created_task.title, "Implement the fallback");
+    }
+
+    #[test]
+    fn prepare_task_uses_default_agent_provider_setting_when_request_omits_provider() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "kanna-task-default-agent-provider-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&repo_root);
+        std::fs::create_dir_all(&repo_root).unwrap();
+        std::fs::write(repo_root.join("README.md"), "test repo").unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: "/tmp/kanna-daemon".to_string(),
+            db_path: Db::test_db_path("default-agent-provider"),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "0.0.0.0".to_string(),
+            lan_port: 48120,
+            pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.set_test_setting("defaultAgentProvider", "copilot")
+            .unwrap();
+
+        let prepared = prepare_task_for_api(
+            &db,
+            &config,
+            CreateTaskRequest {
+                repo_id: "repo-1".to_string(),
+                prompt: "Use the configured default provider".to_string(),
+                pipeline_name: None,
+                base_ref: None,
+                stage: None,
+                agent_provider: None,
+                model: None,
+                permission_mode: None,
+                allowed_tools: None,
+            },
+        )
+        .unwrap();
+        let created_source = db
+            .get_task_stage_source(&prepared.created_task.task_id)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(created_source.agent_provider.as_deref(), Some("copilot"));
+
+        let prepared = prepare_task_for_api(
+            &db,
+            &config,
+            CreateTaskRequest {
+                repo_id: "repo-1".to_string(),
+                prompt: "Use the explicit provider".to_string(),
+                pipeline_name: None,
+                base_ref: None,
+                stage: None,
+                agent_provider: Some("codex".to_string()),
+                model: None,
+                permission_mode: None,
+                allowed_tools: None,
+            },
+        )
+        .unwrap();
+        let created_source = db
+            .get_task_stage_source(&prepared.created_task.task_id)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(created_source.agent_provider.as_deref(), Some("codex"));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn default_agent_provider_setting_falls_back_to_claude_when_unset() {
+        let db_path = Db::test_db_path("default-agent-provider-unset");
+        let db = Db::open_for_tests(&db_path).unwrap();
+
+        let provider = read_default_agent_provider_setting(&db).unwrap();
+
+        assert_eq!(provider.as_deref(), Some("claude"));
     }
 
     #[test]
