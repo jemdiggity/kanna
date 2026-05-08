@@ -43,6 +43,17 @@ export function validatePipeline(def: PipelineDefinition): string[] {
       );
     }
 
+    if (stage.post_action !== undefined) {
+      if (!stage.post_action.name || typeof stage.post_action.name !== "string" || stage.post_action.name.trim() === "") {
+        errors.push(`Stage "${stage.name ?? "(unnamed)"}" has post_action with missing name`);
+      }
+      if (stage.post_action.transition !== "manual" && stage.post_action.transition !== "auto") {
+        errors.push(
+          `Stage "${stage.name ?? "(unnamed)"}" has post_action "${stage.post_action.name ?? "(unnamed)"}" with invalid transition "${stage.post_action.transition as string}"; must be "manual" or "auto"`
+        );
+      }
+    }
+
     if (stage.environment !== undefined) {
       const envMap = def.environments ?? {};
       if (!Object.prototype.hasOwnProperty.call(envMap, stage.environment)) {
@@ -99,6 +110,36 @@ export function parsePipelineJson(raw: string): PipelineDefinition {
   return def;
 }
 
+function extractPostAction(value: unknown): PipelineStage["post_action"] | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const postAction: PipelineStage["post_action"] = {
+    name: typeof raw["name"] === "string" ? raw["name"] : "",
+    transition: (raw["transition"] as "manual" | "auto") ?? "",
+  };
+
+  if (typeof raw["description"] === "string") {
+    postAction.description = raw["description"];
+  }
+  if (typeof raw["agent"] === "string") {
+    postAction.agent = raw["agent"];
+  }
+  if (typeof raw["prompt"] === "string") {
+    postAction.prompt = raw["prompt"];
+  }
+  if (
+    typeof raw["agent_provider"] === "string" ||
+    (Array.isArray(raw["agent_provider"]) && raw["agent_provider"].every((entry) => typeof entry === "string"))
+  ) {
+    postAction.agent_provider = raw["agent_provider"] as string | string[];
+  }
+
+  return postAction;
+}
+
 function extractStages(obj: Record<string, unknown>): PipelineStage[] {
   if (!Array.isArray(obj["stages"])) {
     return [];
@@ -135,6 +176,10 @@ function extractStages(obj: Record<string, unknown>): PipelineStage[] {
     }
     if (typeof s["mode"] === "string") {
       stage.mode = s["mode"] as PipelineStage["mode"];
+    }
+    const postAction = extractPostAction(s["post_action"]);
+    if (postAction) {
+      stage.post_action = postAction;
     }
 
     return stage;

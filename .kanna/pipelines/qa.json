@@ -1,22 +1,21 @@
 {
   "$schema": "./schema.json",
   "name": "qa",
-  "description": "Implementation -> commit -> QA review -> PR flow with automatic revision requests for weak testing",
+  "description": "Implementation with commit post-action -> QA review -> PR flow with automatic revision requests for weak testing",
   "stages": [
     {
       "name": "in progress",
       "description": "Agent implements the task",
       "agent": "implement",
       "prompt": "$TASK_PROMPT",
-      "transition": "manual"
-    },
-    {
-      "name": "commit",
-      "description": "Implementation agent commits the relevant work before review",
-      "agent": "commit",
-      "prompt": "Commit the relevant work for this task before QA review. Original task: $TASK_PROMPT",
-      "transition": "auto",
-      "mode": "continue"
+      "transition": "manual",
+      "post_action": {
+        "name": "commit",
+        "description": "Implementation agent commits the relevant work before review",
+        "agent": "commit",
+        "prompt": "Commit the relevant work for this task before QA review. Original task: $TASK_PROMPT",
+        "transition": "auto"
+      }
     },
     {
       "name": "review",

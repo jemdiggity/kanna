@@ -85,6 +85,43 @@
           },
           "mode": {
             "enum": ["new_task", "continue"]
+          },
+          "post_action": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "transition"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "agent_provider": {
+                "oneOf": [
+                  {
+                    "enum": ["codex", "claude", "copilot"]
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "enum": ["codex", "claude", "copilot"]
+                    },
+                    "minItems": 1
+                  }
+                ]
+              },
+              "transition": {
+                "enum": ["manual", "auto"]
+              }
+            }
           }
         }
       }
@@ -94,20 +131,19 @@
     {
       "$schema": "./schema.json",
       "name": "default",
-      "description": "Standard in progress -> commit -> PR flow",
+      "description": "Standard in progress -> PR flow with commit as a post-action",
       "stages": [
         {
           "name": "in progress",
           "agent": "implement",
           "prompt": "$TASK_PROMPT",
-          "transition": "manual"
-        },
-        {
-          "name": "commit",
-          "agent": "commit",
-          "prompt": "Commit the relevant work for this task. Original task: $TASK_PROMPT",
-          "transition": "auto",
-          "mode": "continue"
+          "transition": "manual",
+          "post_action": {
+            "name": "commit",
+            "agent": "commit",
+            "prompt": "Commit the relevant work for this task. Original task: $TASK_PROMPT",
+            "transition": "auto"
+          }
         },
         {
           "name": "pr",

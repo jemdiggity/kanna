@@ -140,6 +140,49 @@ describe("parsePipelineJson", () => {
 
     expect(result.stages[0].mode).toBeUndefined();
   });
+
+  it("parses a stage post_action", () => {
+    const json = JSON.stringify({
+      name: "My Pipeline",
+      stages: [
+        {
+          name: "in progress",
+          transition: "manual",
+          post_action: {
+            name: "commit",
+            description: "Commit the relevant work",
+            agent: "commit",
+            prompt: "Commit $TASK_PROMPT",
+            agent_provider: ["codex", "claude"],
+            transition: "auto",
+          },
+        },
+        { name: "pr", transition: "manual" },
+      ],
+    });
+
+    const result = parsePipelineJson(json);
+
+    expect(result.stages[0].post_action).toEqual({
+      name: "commit",
+      description: "Commit the relevant work",
+      agent: "commit",
+      prompt: "Commit $TASK_PROMPT",
+      agent_provider: ["codex", "claude"],
+      transition: "auto",
+    });
+  });
+
+  it("ignores non-object post_action values", () => {
+    const json = JSON.stringify({
+      name: "My Pipeline",
+      stages: [{ name: "in progress", transition: "manual", post_action: "commit" }],
+    });
+
+    const result = parsePipelineJson(json);
+
+    expect(result.stages[0].post_action).toBeUndefined();
+  });
 });
 
 describe("validatePipeline", () => {
@@ -202,6 +245,40 @@ describe("validatePipeline", () => {
     const errors = validatePipeline(pipeline);
 
     expect(errors.some((error) => error.includes("mode"))).toBe(true);
+  });
+
+  it("returns error for post_action without a name", () => {
+    const pipeline = {
+      name: "Pipeline",
+      stages: [
+        {
+          name: "in progress",
+          transition: "manual" as const,
+          post_action: { transition: "auto" as const },
+        },
+      ],
+    };
+
+    const errors = validatePipeline(pipeline);
+
+    expect(errors.some((error) => error.includes("post_action") && error.includes("name"))).toBe(true);
+  });
+
+  it("returns error for invalid post_action transition", () => {
+    const pipeline = {
+      name: "Pipeline",
+      stages: [
+        {
+          name: "in progress",
+          transition: "manual" as const,
+          post_action: { name: "commit", transition: "sideways" as "auto" },
+        },
+      ],
+    };
+
+    const errors = validatePipeline(pipeline);
+
+    expect(errors.some((error) => error.includes("post_action") && error.includes("transition"))).toBe(true);
   });
 
   it("returns error for undefined environment reference", () => {

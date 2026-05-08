@@ -3,6 +3,15 @@ export interface PipelineEnvironment {
   teardown?: string[];
 }
 
+export interface PipelinePostAction {
+  name: string;
+  description?: string;
+  agent?: string;
+  prompt?: string;
+  agent_provider?: string | string[];
+  transition: "manual" | "auto";
+}
+
 export interface PipelineStage {
   name: string;
   description?: string;
@@ -13,6 +22,7 @@ export interface PipelineStage {
   transition: "manual" | "auto";
   follow_task?: boolean;
   mode?: "new_task" | "continue";
+  post_action?: PipelinePostAction;
 }
 
 export interface PipelineDefinition {
