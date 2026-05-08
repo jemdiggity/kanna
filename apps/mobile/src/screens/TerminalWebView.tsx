@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { StyleSheet, View } from "react-native";
-import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import {
+  WebView as NativeWebView,
+  type WebViewMessageEvent,
+  type WebViewProps
+} from "react-native-webview";
 import type { TaskTerminalStatus } from "../state/sessionStore";
 import {
   buildTerminalAppendScript,
@@ -18,13 +22,21 @@ interface TerminalWebViewProps {
 
 const FULLSCREEN_BOTTOM_INSET = 132;
 
+interface TerminalWebViewHandle {
+  injectJavaScript(script: string): void;
+}
+
+const WebView = NativeWebView as unknown as React.ForwardRefExoticComponent<
+  WebViewProps & React.RefAttributes<TerminalWebViewHandle>
+>;
+
 export function TerminalWebView({
   taskId,
   output,
   status,
   fullscreen = false
 }: TerminalWebViewProps) {
-  const webViewRef = useRef<WebView>(null);
+  const webViewRef = useRef<TerminalWebViewHandle>(null);
   const bridgeReadyRef = useRef(false);
   const pendingScriptRef = useRef<string | null>(null);
   const previousTaskIdRef = useRef<string | null>(null);
