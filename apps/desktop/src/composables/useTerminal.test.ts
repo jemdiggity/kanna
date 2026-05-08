@@ -239,7 +239,9 @@ describe("useTerminal", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { resetTerminalOutputSubscriptionsForTests } = await import("./useTerminal");
+    resetTerminalOutputSubscriptionsForTests();
     invokeMock.mockReset();
     invokeMock.mockResolvedValue(null);
     listenMock.mockReset();
@@ -2007,6 +2009,57 @@ describe("useTerminal", () => {
     });
 
     expect(terminal.scrollToLine).not.toHaveBeenCalled();
+  });
+
+  it("shares one terminal output listener across mounted terminals in the window", async () => {
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      props: {
+        sessionId: {
+          type: String,
+          required: true,
+        },
+      },
+      setup(props) {
+        const { init, startListening } = useTerminal(props.sessionId);
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const first = mount(TestHarness, { props: { sessionId: "session-1" } });
+    const second = mount(TestHarness, { props: { sessionId: "session-2" } });
+    const firstElement = document.createElement("div");
+    const secondElement = document.createElement("div");
+    Object.defineProperty(firstElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(firstElement, "offsetHeight", { configurable: true, value: 600 });
+    Object.defineProperty(secondElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(secondElement, "offsetHeight", { configurable: true, value: 600 });
+
+    first.vm.init(firstElement);
+    second.vm.init(secondElement);
+    await first.vm.startListening();
+    await second.vm.startListening();
+
+    const terminalOutputListenCalls = listenMock.mock.calls.filter(([eventName]) => eventName === "terminal_output");
+    expect(terminalOutputListenCalls).toHaveLength(1);
+
+    const outputListener = eventListeners.get("terminal_output")?.[0];
+    outputListener?.({
+      payload: {
+        session_id: "session-2",
+        data: Array.from(new TextEncoder().encode("streaming output")),
+      },
+    });
+
+    expect(terminals[0]?.write).not.toHaveBeenCalledWith(expect.any(Uint8Array));
+    expect(terminals[1]?.write).toHaveBeenCalledWith(expect.any(Uint8Array));
+
+    first.unmount();
+    second.unmount();
   });
 
   it("keeps the prompt visible when resizing from the bottom of scrollback", async () => {

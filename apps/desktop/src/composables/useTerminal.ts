@@ -64,6 +64,124 @@ const CLIPBOARD_IMAGE_TTL_MS = 30_000
 const NATIVE_DROP_DEDUPE_WINDOW_MS = 100
 const BRACKETED_PASTE_CONTROL_SEQUENCE = /\u001b\[\?2004[hl]/
 
+interface TerminalOutputPayload {
+  session_id?: string
+  data_b64?: string
+  data?: unknown
+}
+
+interface TauriEventPayload<T> {
+  payload?: T
+}
+
+type TerminalOutputHandler = (payload: TerminalOutputPayload) => void
+type TerminalOutputEvent = TauriEventPayload<TerminalOutputPayload> | TerminalOutputPayload
+
+const terminalOutputSubscribers = new Map<string, Set<TerminalOutputHandler>>()
+let unlistenSharedTerminalOutput: (() => void) | null = null
+let sharedTerminalOutputListenPromise: Promise<void> | null = null
+
+function hasEventPayload(event: TerminalOutputEvent): event is TauriEventPayload<TerminalOutputPayload> {
+  return Object.prototype.hasOwnProperty.call(event, "payload")
+}
+
+function payloadFromTerminalOutputEvent(event: TerminalOutputEvent): TerminalOutputPayload {
+  if (hasEventPayload(event)) {
+    return event.payload ?? {}
+  }
+  return event
+}
+
+function terminalOutputSubscriberCount(): number {
+  let count = 0
+  for (const handlers of terminalOutputSubscribers.values()) {
+    count += handlers.size
+  }
+  return count
+}
+
+function isByteArray(data: unknown): data is number[] {
+  return Array.isArray(data) && data.every((value) => typeof value === "number")
+}
+
+async function ensureSharedTerminalOutputListener(): Promise<void> {
+  if (unlistenSharedTerminalOutput || sharedTerminalOutputListenPromise) {
+    return sharedTerminalOutputListenPromise ?? Promise.resolve()
+  }
+
+  sharedTerminalOutputListenPromise = listen(
+    "terminal_output",
+    (event: TerminalOutputEvent) => {
+      const payload = payloadFromTerminalOutputEvent(event)
+      const sid = payload.session_id
+      if (!sid) return
+      const handlers = terminalOutputSubscribers.get(sid)
+      if (!handlers) return
+      for (const handler of [...handlers]) {
+        handler(payload)
+      }
+    },
+  ).then((unlisten) => {
+    unlistenSharedTerminalOutput = () => {
+      unlisten()
+      unlistenSharedTerminalOutput = null
+      sharedTerminalOutputListenPromise = null
+    }
+    if (terminalOutputSubscriberCount() === 0) {
+      unlistenSharedTerminalOutput()
+    }
+  }).catch((error) => {
+    sharedTerminalOutputListenPromise = null
+    console.warn("[terminal][event] failed to register shared terminal_output listener", error)
+  })
+
+  return sharedTerminalOutputListenPromise
+}
+
+async function subscribeTerminalOutput(
+  sessionIds: readonly string[],
+  handler: TerminalOutputHandler,
+): Promise<() => void> {
+  for (const sid of sessionIds) {
+    const handlers = terminalOutputSubscribers.get(sid) ?? new Set<TerminalOutputHandler>()
+    handlers.add(handler)
+    terminalOutputSubscribers.set(sid, handlers)
+  }
+
+  let active = true
+  const unsubscribe = () => {
+    if (!active) return
+    active = false
+    for (const sid of sessionIds) {
+      const handlers = terminalOutputSubscribers.get(sid)
+      if (!handlers) continue
+      handlers.delete(handler)
+      if (handlers.size === 0) {
+        terminalOutputSubscribers.delete(sid)
+      }
+    }
+    if (terminalOutputSubscriberCount() === 0 && unlistenSharedTerminalOutput) {
+      unlistenSharedTerminalOutput()
+    }
+  }
+
+  await ensureSharedTerminalOutputListener()
+  if (!active) {
+    unsubscribe()
+  }
+
+  return unsubscribe
+}
+
+export function resetTerminalOutputSubscriptionsForTests(): void {
+  terminalOutputSubscribers.clear()
+  if (unlistenSharedTerminalOutput) {
+    unlistenSharedTerminalOutput()
+  }
+  unlistenSharedTerminalOutput = null
+  sharedTerminalOutputListenPromise = null
+}
+
 export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, options?: TerminalOptions) {
   const toast = useToast()
   const terminal = ref<Terminal | null>(null)
@@ -978,48 +1096,44 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
     if (!unlistenOutput) {
       let outputChunkCount = 0
-      unlistenOutput = await listen(
-        "terminal_output",
-        (event) => {
-          const sid = event.payload.session_id
-          if ((sid === sessionId || sid === teardownId) && terminal.value) {
-            outputChunkCount += 1
-            if (sid === sessionId) {
-              markTaskSwitchFirstOutput(sessionId)
-            }
-
-            if (event.payload.data_b64) {
-              const binary = atob(event.payload.data_b64)
-              const bytes = new Uint8Array(binary.length)
-              for (let i = 0; i < binary.length; i++) {
-                bytes[i] = binary.charCodeAt(i)
-              }
-              handleTerminalOutputControlSequences(bytes)
-              if (outputChunkCount <= 5) {
-                console.warn("[terminal][output] chunk", {
-                  sessionId,
-                  instanceId,
-                  chunk: outputChunkCount,
-                  byteLength: bytes.length,
-                })
-              }
-              terminal.value.write(bytes)
-            } else if (Array.isArray(event.payload.data)) {
-              const bytes = new Uint8Array(event.payload.data)
-              handleTerminalOutputControlSequences(bytes)
-              if (outputChunkCount <= 5) {
-                console.warn("[terminal][output] chunk", {
-                  sessionId,
-                  instanceId,
-                  chunk: outputChunkCount,
-                  byteLength: event.payload.data.length,
-                })
-              }
-              terminal.value.write(bytes)
-            }
-          }
+      unlistenOutput = await subscribeTerminalOutput([sessionId, teardownId], (payload) => {
+        const sid = payload.session_id
+        if (!sid || !terminal.value) return
+        outputChunkCount += 1
+        if (sid === sessionId) {
+          markTaskSwitchFirstOutput(sessionId)
         }
-      )
+
+        if (payload.data_b64) {
+          const binary = atob(payload.data_b64)
+          const bytes = new Uint8Array(binary.length)
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i)
+          }
+          handleTerminalOutputControlSequences(bytes)
+          if (outputChunkCount <= 5) {
+            console.warn("[terminal][output] chunk", {
+              sessionId,
+              instanceId,
+              chunk: outputChunkCount,
+              byteLength: bytes.length,
+            })
+          }
+          terminal.value.write(bytes)
+        } else if (isByteArray(payload.data)) {
+          const bytes = new Uint8Array(payload.data)
+          handleTerminalOutputControlSequences(bytes)
+          if (outputChunkCount <= 5) {
+            console.warn("[terminal][output] chunk", {
+              sessionId,
+              instanceId,
+              chunk: outputChunkCount,
+              byteLength: payload.data.length,
+            })
+          }
+          terminal.value.write(bytes)
+        }
+      })
       console.warn("[terminal][instance] listener:add", {
         sessionId,
         instanceId,

@@ -22,11 +22,24 @@ interface KannaTerminalBuffersE2EApi {
   sessionIds: () => string[];
 }
 
+interface KannaAppMetricsSnapshot {
+  invokeCounts: Record<string, number>;
+  listenCounts: Record<string, number>;
+  unlistenCounts: Record<string, number>;
+  activeListenCounts: Record<string, number>;
+}
+
+interface KannaAppMetricsE2EApi {
+  snapshot: () => KannaAppMetricsSnapshot;
+  clear: () => void;
+}
+
 interface KannaE2EHook {
   ready: boolean;
   setupState: object | null;
   dbName: string;
   taskSwitchPerf: KannaTaskSwitchPerfE2EApi;
+  appMetrics: KannaAppMetricsE2EApi;
   terminalBuffers?: KannaTerminalBuffersE2EApi;
 }
 

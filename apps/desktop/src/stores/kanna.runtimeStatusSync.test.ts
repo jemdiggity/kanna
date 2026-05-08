@@ -369,7 +369,28 @@ describe("kanna runtime status reconciliation", () => {
     mockState.updateAgentSessionIdMock.mockClear();
   });
 
-  it("reconciles a selected task to idle after terminal output when the daemon now reports waiting", async () => {
+  it("reconciles a selected task to idle from a direct daemon status change", async () => {
+    const store = await createStore();
+    await store.selectRepo("repo-1");
+    await store.selectItem("task-1");
+    await flushStore();
+
+    mockState.emit("status_changed", {
+      session_id: "task-1",
+      status: "waiting",
+    });
+
+    await flushStore();
+
+    expect(mockState.updatePipelineItemActivityMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "task-1",
+      "idle",
+    );
+    expect(mockState.pipelineItems[0]?.activity).toBe("idle");
+  });
+
+  it("does not poll all daemon sessions for ordinary terminal output", async () => {
     const store = await createStore();
     await store.selectRepo("repo-1");
     await store.selectItem("task-1");
@@ -382,38 +403,15 @@ describe("kanna runtime status reconciliation", () => {
       data_b64: "AA==",
     });
 
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(1000);
     await flushStore();
 
-    expect(mockState.updatePipelineItemActivityMock).toHaveBeenCalledWith(
+    expect(mockState.invokeMock).not.toHaveBeenCalledWith("list_sessions");
+    expect(mockState.updatePipelineItemActivityMock).not.toHaveBeenCalledWith(
       expect.anything(),
       "task-1",
       "idle",
     );
-    expect(mockState.pipelineItems[0]?.activity).toBe("idle");
-  });
-
-  it("reconciles an unselected task to unread after terminal output when the daemon now reports waiting", async () => {
-    const store = await createStore();
-    await store.selectRepo("repo-1");
-    await flushStore();
-
-    mockState.sessionStatuses = [{ session_id: "task-1", status: "waiting" }];
-
-    mockState.emit("terminal_output", {
-      session_id: "task-1",
-      data_b64: "AA==",
-    });
-
-    await vi.advanceTimersByTimeAsync(250);
-    await flushStore();
-
-    expect(mockState.updatePipelineItemActivityMock).toHaveBeenCalledWith(
-      expect.anything(),
-      "task-1",
-      "unread",
-    );
-    expect(mockState.pipelineItems[0]?.activity).toBe("unread");
   });
 
   it("persists a codex resume session id from session_exit payload", async () => {

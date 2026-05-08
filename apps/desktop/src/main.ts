@@ -12,6 +12,7 @@ import {
 } from "./perf/taskSwitchPerf";
 import App from "./App.vue";
 import { createWindowWorkspace, parseWindowBootstrap, resolveWindowBootstrap } from "./windowWorkspace";
+import { e2eAppMetrics } from "./e2eAppMetrics";
 
 interface AppWithSetupState {
   _instance?: {
@@ -133,6 +134,7 @@ try {
         getAll: () => getTaskSwitchPerfRecords(),
         clear: () => clearTaskSwitchPerfRecords(),
       },
+      appMetrics: e2eAppMetrics,
     };
   }
 

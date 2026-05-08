@@ -217,13 +217,6 @@ export function createInitApi(
       tasks.handleAgentFinished(sessionId);
     });
 
-    listen("terminal_output", (event: unknown) => {
-      const payload = (event as { payload?: { session_id?: string } }).payload ?? (event as { session_id?: string });
-      const sessionId = payload.session_id;
-      if (typeof sessionId !== "string") return;
-      requireService(context.services.scheduleRuntimeStatusSync, "scheduleRuntimeStatusSync")(sessionId);
-    });
-
     listen("daemon_ready", async () => {
       markDaemonReadyObserved();
       await requireService(context.services.syncTaskStatusesFromDaemon, "syncTaskStatusesFromDaemon")();

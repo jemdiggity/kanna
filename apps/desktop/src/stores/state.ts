@@ -105,7 +105,6 @@ export interface StoreState {
   agentCache: Map<string, AgentDefinition>;
   stageOrderCache: Map<string, string[]>;
   pendingCreateVisibility: Map<string, { bumpAt: number }>;
-  runtimeStatusSyncTimer: Ref<ReturnType<typeof setTimeout> | null>;
 }
 
 export interface StoreServices {
@@ -162,7 +161,6 @@ export interface StoreServices {
     options?: PtySpawnOptions,
   ) => Promise<void>;
   syncTaskStatusesFromDaemon?: () => Promise<void>;
-  scheduleRuntimeStatusSync?: (sessionId: string) => void;
   applyTaskRuntimeStatus?: (item: PipelineItem, status: string) => Promise<void>;
   waitForSessionExit?: (sessionId: string) => Promise<void>;
   resolveSessionExitWaiters?: (sessionId: string) => void;
@@ -253,7 +251,6 @@ export function createStoreState(): StoreState {
   const pipelineCache = new Map<string, PipelineDefinition>();
   const agentCache = new Map<string, AgentDefinition>();
   const stageOrderCache = new Map<string, string[]>();
-  const runtimeStatusSyncTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 
   return {
     db,
@@ -274,7 +271,6 @@ export function createStoreState(): StoreState {
     agentCache,
     stageOrderCache,
     pendingCreateVisibility,
-    runtimeStatusSyncTimer,
   };
 }
 
