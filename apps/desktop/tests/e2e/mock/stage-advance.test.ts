@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -177,6 +177,98 @@ async function waitForFileSize(path: string, expectedSize: number, timeoutMs = 5
     await sleep(100);
   }
   throw new Error(`timed out waiting for ${path} to reach ${expectedSize} bytes`);
+}
+
+async function findFreePort(): Promise<number> {
+  return await new Promise<number>((resolvePort, reject) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("failed to resolve free port"));
+        return;
+      }
+      server.close((error) => {
+        if (error) reject(error);
+        else resolvePort(address.port);
+      });
+    });
+  });
+}
+
+function escapeTomlString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+}
+
+async function resolveKannaServerBinary(): Promise<string> {
+  const repoRoot = join(process.cwd(), "../..");
+  const candidates = [
+    join(process.cwd(), "src-tauri", "binaries", "kanna-server-aarch64-apple-darwin"),
+    join(process.cwd(), "src-tauri", "binaries", "kanna-server-x86_64-apple-darwin"),
+    join(repoRoot, ".build", "aarch64-apple-darwin", "debug", "kanna-server"),
+    join(repoRoot, ".build", "x86_64-apple-darwin", "debug", "kanna-server"),
+    join(repoRoot, ".build", "debug", "kanna-server"),
+  ];
+  for (const candidate of candidates) {
+    if (await stat(candidate).then((stats) => stats.isFile()).catch(() => false)) {
+      return candidate;
+    }
+  }
+  throw new Error(`kanna-server sidecar not found in ${candidates.join(", ")}`);
+}
+
+async function startTestKannaServer(
+  client: WebDriverClient,
+  configDir: string,
+): Promise<{ baseUrl: string; child: ChildProcessWithoutNullStreams }> {
+  const appDataDir = await tauriInvoke(client, "get_app_data_dir") as string;
+  const dbName = await tauriInvoke(client, "read_env_var", { name: "KANNA_DB_NAME" }) as string;
+  const daemonDir = process.env.KANNA_DAEMON_DIR;
+  if (!daemonDir) throw new Error("KANNA_DAEMON_DIR is required for server E2E");
+
+  const port = await findFreePort();
+  const configPath = join(configDir, "server-api-e2e.toml");
+  const pairingStorePath = join(configDir, "server-api-e2e-pairings.json");
+  await writeFile(
+    configPath,
+    [
+      'relay_url = "wss://relay.example.invalid"',
+      'device_token = "e2e-token"',
+      `daemon_dir = "${escapeTomlString(daemonDir)}"`,
+      `db_path = "${escapeTomlString(join(appDataDir, dbName))}"`,
+      'desktop_id = "desktop-e2e"',
+      'desktop_name = "Kanna E2E"',
+      'lan_host = "127.0.0.1"',
+      `lan_port = ${port}`,
+      `pairing_store_path = "${escapeTomlString(pairingStorePath)}"`,
+      "",
+    ].join("\n"),
+  );
+
+  const child = spawn(await resolveKannaServerBinary(), [], {
+    env: { ...process.env, KANNA_SERVER_CONFIG: configPath },
+    stdio: "pipe",
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf8");
+  });
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(`kanna-server exited early with code ${child.exitCode}: ${stderr}`);
+    }
+    const response = await fetch(`${baseUrl}/v1/status`).catch(() => null);
+    if (response?.ok) return { baseUrl, child };
+    await sleep(250);
+  }
+
+  child.kill();
+  throw new Error(`timed out waiting for kanna-server at ${baseUrl}: ${stderr}`);
 }
 
 describe("stage advance", () => {
@@ -452,6 +544,92 @@ describe("stage advance", () => {
     await waitForStage(client, taskId, "commit");
     await waitForFileSize(inputCapturePath, expectedInput.length);
     expect(await readFile(inputCapturePath)).toEqual(expectedInput);
+  });
+
+  it("advances a continue-mode stage through the server API without creating a new task", async () => {
+    const taskId = "server-continue-stage-task";
+    const branch = "task-server-continue-stage";
+    const worktreePath = join(testRepoPath, ".kanna-worktrees", branch);
+    const inputCapturePath = join(worktreePath, ".kanna", "server-continue-stage-input.bin");
+    const expectedPrompt = [
+      "Commit agent generated prompt marker.",
+      "",
+      "Commit stage marker for Write the server commit",
+    ].join("\n");
+    const expectedInput = Buffer.from(`\x1b[200~${expectedPrompt}\x1b[201~\x1b[13u`, "utf8");
+
+    await tauriInvoke(client, "git_worktree_add", {
+      repoPath: testRepoPath,
+      branch,
+      path: worktreePath,
+      startPoint: "main",
+    });
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [
+        taskId,
+        repoId,
+        "Write the server commit",
+        "continue-e2e",
+        "in progress",
+        JSON.stringify({ status: "success", summary: "implemented over HTTP" }),
+        "[]",
+        branch,
+        "pty",
+        "claude",
+        "idle",
+        null,
+      ],
+    );
+
+    await tauriInvoke(client, "spawn_session", {
+      sessionId: taskId,
+      cwd: worktreePath,
+      executable: "/bin/sh",
+      args: [
+        "-lc",
+        `stty raw -echo; dd bs=1 count=${expectedInput.length} of=.kanna/server-continue-stage-input.bin 2>/dev/null`,
+      ],
+      env: {},
+      cols: 80,
+      rows: 24,
+      agentProvider: "claude",
+    });
+
+    const server = await startTestKannaServer(client, join(testRepoPath, ".kanna"));
+    try {
+      const response = await fetch(`${server.baseUrl}/v1/tasks/${encodeURIComponent(taskId)}/actions/advance-stage`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(`advance-stage failed: ${response.status} ${await response.text()}`);
+      }
+      expect(await response.json()).toEqual({ taskId });
+
+      await waitForStage(client, taskId, "commit");
+      await waitForFileSize(inputCapturePath, expectedInput.length);
+      expect(await readFile(inputCapturePath)).toEqual(expectedInput);
+
+      const rows = (await queryDb(
+        client,
+        "SELECT stage, stage_result, closed_at, branch FROM pipeline_item WHERE repo_id = ? ORDER BY id",
+        [repoId],
+      )) as Array<{ stage: string | null; stage_result: string | null; closed_at: string | null; branch: string | null }>;
+      const row = rows.find((candidate) => candidate.branch === branch);
+      expect(row).toEqual({
+        stage: "commit",
+        stage_result: null,
+        closed_at: null,
+        branch,
+      });
+      expect(rows.filter((candidate) => candidate.branch === branch)).toHaveLength(1);
+    } finally {
+      server.child.kill();
+    }
   });
 
   it("submits a continue-mode Claude stage with the terminal Enter sequence", async () => {
