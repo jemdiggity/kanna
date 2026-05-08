@@ -41,3 +41,11 @@ export function writeFirebaseEmulatorConfig(repoRoot: string, ports: FirebasePor
 export function buildFirebaseEmulatorArgs(configPath: string, extraArgs: string[]): string[] {
   return ["exec", "firebase", "emulators:start", "--project", "kanna-local", "--config", configPath, ...extraArgs];
 }
+
+export function buildFirebaseCommandEnv(repoRoot: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const repoNodeModules = join(repoRoot, "node_modules");
+  return {
+    ...env,
+    NODE_PATH: env.NODE_PATH ? `${repoNodeModules}:${env.NODE_PATH}` : repoNodeModules
+  };
+}

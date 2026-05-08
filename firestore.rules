@@ -1,0 +1,53 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedInAs(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function expectedProfileFields() {
+      return [
+        'displayName',
+        'photoURL',
+        'locale',
+        'updatedAt',
+      ];
+    }
+
+    function privilegedUserFields() {
+      return [
+        'admin',
+        'desktopSecret',
+        'desktopSecretHash',
+        'isAdmin',
+        'role',
+        'roles',
+        'secret',
+      ];
+    }
+
+    function changedUserFields() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function isExpectedProfileUpdate() {
+      return changedUserFields().hasOnly(expectedProfileFields())
+        && !changedUserFields().hasAny(privilegedUserFields());
+    }
+
+    match /users/{uid} {
+      allow get: if isSignedInAs(uid);
+      allow list, create, delete: if false;
+      allow update: if isSignedInAs(uid) && isExpectedProfileUpdate();
+    }
+
+    match /desktopPresence/{desktopId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

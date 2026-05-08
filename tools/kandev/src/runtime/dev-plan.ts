@@ -1,3 +1,5 @@
+import { buildFirebaseCommandEnv } from "./firebase";
+
 export interface DevWindow {
   name: string;
   cwd: string;
@@ -33,7 +35,7 @@ export function buildDevPlan(input: BuildDevPlanInput): DevPlan {
     windows.push({
       name: "emulators",
       cwd: input.repoRoot,
-      env: sharedEnv,
+      env: buildFirebaseCommandEnv(input.repoRoot, sharedEnv),
       command: `pnpm --dir services/firebase-functions build && pnpm exec firebase emulators:start --project kanna-local --config ${JSON.stringify(input.firebaseConfigPath)}`
     });
   }
