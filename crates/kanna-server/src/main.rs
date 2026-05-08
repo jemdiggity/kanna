@@ -319,39 +319,22 @@ async fn run_relay_loop(
                                     break;
                                 }
                             }
-                            RelayInvoke::Http { method, path, .. } => {
+                            RelayInvoke::Http { method, path, body } => {
                                 log::info!("HTTP invoke #{}: {} {}", id, method, path);
 
-                                let response = if method == "GET" && path == "/v1/status" {
-                                    match serde_json::to_value(
-                                        http_state.mobile_server_status().await,
-                                    ) {
-                                        Ok(body) => RelayMessage::Response {
-                                            id,
-                                            data: None,
-                                            error: None,
-                                            status: Some(200),
-                                            body: Some(body),
-                                        },
-                                        Err(e) => RelayMessage::Response {
-                                            id,
-                                            data: None,
-                                            error: Some(format!("serialize error: {}", e)),
-                                            status: Some(500),
-                                            body: None,
-                                        },
-                                    }
-                                } else {
-                                    RelayMessage::Response {
-                                        id,
-                                        data: None,
-                                        error: Some(format!(
-                                            "unsupported HTTP invoke: {} {}",
-                                            method, path
-                                        )),
-                                        status: Some(404),
-                                        body: None,
-                                    }
+                                let invoke_response = http_api::dispatch_http_invoke(
+                                    Arc::clone(&http_state),
+                                    &method,
+                                    &path,
+                                    body,
+                                )
+                                .await;
+                                let response = RelayMessage::Response {
+                                    id,
+                                    data: None,
+                                    error: invoke_response.error,
+                                    status: Some(invoke_response.status),
+                                    body: invoke_response.body,
                                 };
 
                                 if let Err(e) = send_relay_response_message(&sink, response).await {
