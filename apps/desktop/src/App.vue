@@ -282,6 +282,7 @@ function selectUnreadTaskWithReadFallback(mode: "oldest" | "newest") {
     store.sortedItemsForCurrentRepo.filter(isActivityShortcutCandidate),
     mode,
     "unread",
+    store.currentItem?.created_at,
   );
   if (target) {
     void store.selectItem(target.id);

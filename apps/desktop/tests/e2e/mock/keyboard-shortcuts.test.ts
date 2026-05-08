@@ -380,7 +380,72 @@ describe("keyboard shortcuts", () => {
     expect(await getVueState(client, "selectedItemId")).toBe("shortcut-normal-old");
   });
 
-  it("unread shortcuts fall back to read tasks when no unread tasks exist", async () => {
+  it("read and unread shortcuts navigate relative to the selected task", async () => {
+    await ensureRepoImported();
+    const repoId = await getVueState(client, "selectedRepoId") as string;
+
+    await execDb(client, "DELETE FROM pipeline_item WHERE repo_id = ?", [repoId]);
+    const rows = [
+      ["shortcut-read-oldest", repoId, "Read oldest", "in progress", "idle", "2026-03-31T00:00:00.000Z", "[]"],
+      ["shortcut-read-near-older", repoId, "Read near older", "in progress", "idle", "2026-03-31T01:00:00.000Z", "[]"],
+      ["shortcut-unread-oldest", repoId, "Unread oldest", "in progress", "unread", "2026-03-31T01:30:00.000Z", "[]"],
+      ["shortcut-unread-near-older", repoId, "Unread near older", "in progress", "unread", "2026-03-31T02:00:00.000Z", "[]"],
+      ["shortcut-current", repoId, "Current task", "in progress", "idle", "2026-03-31T03:00:00.000Z", "[]"],
+      ["shortcut-unread-near-newer", repoId, "Unread near newer", "in progress", "unread", "2026-03-31T04:00:00.000Z", "[]"],
+      ["shortcut-unread-newest", repoId, "Unread newest", "in progress", "unread", "2026-03-31T04:30:00.000Z", "[]"],
+      ["shortcut-read-near-newer", repoId, "Read near newer", "in progress", "idle", "2026-03-31T05:00:00.000Z", "[]"],
+      ["shortcut-read-newest", repoId, "Read newest", "in progress", "idle", "2026-03-31T06:00:00.000Z", "[]"],
+    ] as const;
+    for (const row of rows) {
+      await execDb(
+        client,
+        "INSERT INTO pipeline_item (id, repo_id, prompt, stage, activity, created_at, agent_type, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [row[0], row[1], row[2], row[3], row[4], row[5], "sdk", row[6]],
+      );
+    }
+
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = ${CTX_SCRIPT};
+       ctx.loadItems(${JSON.stringify(repoId)})
+         .then(function() { return ctx.store.selectItem("shortcut-current"); })
+         .then(function() { cb("ok"); })
+         .catch(function(e) { cb("err:" + e); });`,
+    );
+    await waitForSelection({ repoId, itemId: "shortcut-current" });
+
+    await pressKey("u", { meta: true });
+    await waitForSelection({ repoId, itemId: "shortcut-unread-near-older" });
+
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       ${CTX_SCRIPT}.store.selectItem("shortcut-current").then(function() { cb("ok"); }).catch(function(e) { cb("err:" + e); });`,
+    );
+    await waitForSelection({ repoId, itemId: "shortcut-current" });
+
+    await pressKey("U", { meta: true, shift: true });
+    await waitForSelection({ repoId, itemId: "shortcut-unread-near-newer" });
+
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       ${CTX_SCRIPT}.store.selectItem("shortcut-current").then(function() { cb("ok"); }).catch(function(e) { cb("err:" + e); });`,
+    );
+    await waitForSelection({ repoId, itemId: "shortcut-current" });
+
+    await pressKey("r", { meta: true });
+    await waitForSelection({ repoId, itemId: "shortcut-read-near-older" });
+
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       ${CTX_SCRIPT}.store.selectItem("shortcut-current").then(function() { cb("ok"); }).catch(function(e) { cb("err:" + e); });`,
+    );
+    await waitForSelection({ repoId, itemId: "shortcut-current" });
+
+    await pressKey("R", { meta: true, shift: true });
+    await waitForSelection({ repoId, itemId: "shortcut-read-near-newer" });
+  });
+
+  it("unread shortcuts fall back to relative read tasks when no unread tasks exist", async () => {
     await ensureRepoImported();
     const repoId = await getVueState(client, "selectedRepoId") as string;
 
@@ -391,8 +456,11 @@ describe("keyboard shortcuts", () => {
        const rows = [
          ["shortcut-blocked-old", "${repoId}", "Blocked old read", "in progress", "idle", "2026-03-31T00:00:00.000Z", "[\\"blocked\\"]"],
          ["shortcut-read-old", "${repoId}", "Read old", "in progress", "idle", "2026-03-31T01:00:00.000Z", "[]"],
-         ["shortcut-read-new", "${repoId}", "Read new", "in progress", "idle", "2026-03-31T03:00:00.000Z", "[]"],
-         ["shortcut-blocked-new", "${repoId}", "Blocked new read", "in progress", "idle", "2026-03-31T04:00:00.000Z", "[\\"blocked\\"]"],
+         ["shortcut-read-near-old", "${repoId}", "Read near old", "in progress", "idle", "2026-03-31T02:00:00.000Z", "[]"],
+         ["shortcut-current-read-fallback", "${repoId}", "Current", "in progress", "idle", "2026-03-31T03:00:00.000Z", "[]"],
+         ["shortcut-read-near-new", "${repoId}", "Read near new", "in progress", "idle", "2026-03-31T04:00:00.000Z", "[]"],
+         ["shortcut-read-new", "${repoId}", "Read new", "in progress", "idle", "2026-03-31T05:00:00.000Z", "[]"],
+         ["shortcut-blocked-new", "${repoId}", "Blocked new read", "in progress", "idle", "2026-03-31T06:00:00.000Z", "[\\"blocked\\"]"],
        ];
        db.execute("DELETE FROM pipeline_item WHERE repo_id = ?", ["${repoId}"])
          .then(function() {
@@ -404,18 +472,24 @@ describe("keyboard shortcuts", () => {
            }));
          })
          .then(function() { return ctx.loadItems("${repoId}"); })
-         .then(function() { return ctx.store.selectItem("shortcut-read-new"); })
+         .then(function() { return ctx.store.selectItem("shortcut-current-read-fallback"); })
          .then(function() { cb("ok"); })
          .catch(function(e) { cb("err:" + e); });`
     );
     expect(seedResult).toBe("ok");
-    await waitForSelection({ repoId, itemId: "shortcut-read-new" });
+    await waitForSelection({ repoId, itemId: "shortcut-current-read-fallback" });
 
     await pressKey("u", { meta: true });
-    await waitForSelection({ repoId, itemId: "shortcut-read-old" });
+    await waitForSelection({ repoId, itemId: "shortcut-read-near-old" });
+
+    await client.executeAsync<string>(
+      `const cb = arguments[arguments.length - 1];
+       ${CTX_SCRIPT}.store.selectItem("shortcut-current-read-fallback").then(function() { cb("ok"); }).catch(function(e) { cb("err:" + e); });`,
+    );
+    await waitForSelection({ repoId, itemId: "shortcut-current-read-fallback" });
 
     await pressKey("U", { meta: true, shift: true });
-    await waitForSelection({ repoId, itemId: "shortcut-read-new" });
+    await waitForSelection({ repoId, itemId: "shortcut-read-near-new" });
   });
 
   it("Shift+Cmd+Enter maximizes the tree explorer", async () => {
