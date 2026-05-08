@@ -1423,6 +1423,7 @@ fn test_router_with_terminal_streamer(
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
+    use crate::db::Db;
     use crate::mobile_api::{CreateTaskResponse, MobileServerStatus, TaskActionResponse};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -1430,9 +1431,59 @@ mod tests {
     use serde_json::from_slice;
     use serde_json::Value;
     use std::net::SocketAddr;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    fn daemon_socket_path_for_dir(daemon_dir: &str) -> PathBuf {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let dir = PathBuf::from(daemon_dir);
+        let mut hasher = DefaultHasher::new();
+        dir.hash(&mut hasher);
+        let hash = hasher.finish() as u32;
+        PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
+    }
+
+    fn init_test_git_repo(repo_root: &Path) {
+        let _ = std::fs::remove_dir_all(repo_root);
+        std::fs::create_dir_all(repo_root).unwrap();
+        std::fs::write(repo_root.join("README.md"), "test repo").unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(repo_root)
+            .status()
+            .unwrap()
+            .success());
+    }
 
     #[tokio::test]
     async fn list_desktops_route_returns_configured_desktop() {
@@ -1774,6 +1825,120 @@ mod tests {
         assert_eq!(created.repo_id, "repo-1");
         assert_eq!(created.title, "Ship it");
         assert_eq!(created.stage, "in progress");
+    }
+
+    #[tokio::test]
+    async fn create_task_route_uses_saved_default_agent_provider_when_payload_omits_provider() {
+        use kanna_daemon::protocol::{
+            AgentProvider, Command as DaemonCommand, Event as DaemonEvent,
+        };
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixListener;
+
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let repo_root =
+            std::env::temp_dir().join(format!("kanna-http-create-default-provider-{unique}"));
+        init_test_git_repo(&repo_root);
+
+        let daemon_dir = std::env::temp_dir().join(format!(
+            "kanna-http-create-default-provider-daemon-{unique}"
+        ));
+        std::fs::create_dir_all(&daemon_dir).unwrap();
+        let socket_path = daemon_socket_path_for_dir(&daemon_dir.to_string_lossy());
+        let _ = std::fs::remove_file(&socket_path);
+        let daemon_listener = UnixListener::bind(&socket_path).unwrap();
+        let daemon_server = tokio::spawn(async move {
+            let (stream, _) = daemon_listener.accept().await.unwrap();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let command: DaemonCommand = serde_json::from_str(line.trim()).unwrap();
+            let session_id = match command {
+                DaemonCommand::Spawn {
+                    session_id,
+                    cwd,
+                    agent_provider,
+                    ..
+                } => {
+                    assert_eq!(agent_provider, Some(AgentProvider::Copilot));
+                    assert!(cwd.contains(".kanna-worktrees/task-"));
+                    session_id
+                }
+                other => panic!("expected spawn command, got {:?}", other),
+            };
+            write_half
+                .write_all(
+                    format!(
+                        "{}\n",
+                        serde_json::to_string(&DaemonEvent::SessionCreated { session_id }).unwrap()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: daemon_dir.to_string_lossy().to_string(),
+            db_path: Db::test_db_path(&format!("http-api-default-provider-{unique}")),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "127.0.0.1".to_string(),
+            lan_port: 48120,
+            pairing_store_path: format!("/tmp/kanna-pairings-default-provider-{unique}.json"),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.set_test_setting("defaultAgentProvider", "copilot")
+            .unwrap();
+        drop(db);
+
+        let app = super::router(Arc::new(super::AppState::new(config.clone())));
+        let response = app
+            .oneshot(
+                Request::post("/v1/tasks")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "repoId": "repo-1",
+                            "prompt": "Use the saved default provider"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created: CreateTaskResponse = from_slice(&body).unwrap();
+        let db = Db::open(&config.db_path).unwrap();
+        let created_source = db.get_task_stage_source(&created.task_id).unwrap().unwrap();
+        assert_eq!(created_source.agent_provider.as_deref(), Some("copilot"));
+
+        daemon_server.await.unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_dir_all(&daemon_dir);
+        let _ = std::fs::remove_dir_all(&repo_root);
     }
 
     #[tokio::test]

@@ -1659,6 +1659,29 @@ mod tests {
 
         assert_eq!(created_source.agent_provider.as_deref(), Some("copilot"));
 
+        let prepared = prepare_task_for_api(
+            &db,
+            &config,
+            CreateTaskRequest {
+                repo_id: "repo-1".to_string(),
+                prompt: "Use the explicit provider".to_string(),
+                pipeline_name: None,
+                base_ref: None,
+                stage: None,
+                agent_provider: Some("codex".to_string()),
+                model: None,
+                permission_mode: None,
+                allowed_tools: None,
+            },
+        )
+        .unwrap();
+        let created_source = db
+            .get_task_stage_source(&prepared.created_task.task_id)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(created_source.agent_provider.as_deref(), Some("codex"));
+
         let _ = std::fs::remove_dir_all(&repo_root);
     }
 
