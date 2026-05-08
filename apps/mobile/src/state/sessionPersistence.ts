@@ -1,4 +1,5 @@
 import type { MobileView } from "./sessionStore";
+import type { MobileAuthUser } from "../lib/firebase/auth";
 
 const MOBILE_CONTEXT_STORAGE_KEY = "kanna.mobile.context.v1";
 
@@ -7,6 +8,7 @@ export interface PersistedSessionContext {
   selectedRepoId: string | null;
   selectedTaskId: string | null;
   activeView: MobileView;
+  authUser?: MobileAuthUser | null;
 }
 
 export interface SessionPersistence {
@@ -56,7 +58,8 @@ function parsePersistedSessionContext(
       selectedDesktopId: normalizeNullableString(parsed.selectedDesktopId),
       selectedRepoId: normalizeNullableString(parsed.selectedRepoId),
       selectedTaskId: normalizeNullableString(parsed.selectedTaskId),
-      activeView: parsed.activeView
+      activeView: parsed.activeView,
+      authUser: parsePersistedAuthUser(parsed.authUser)
     };
   } catch {
     return null;
@@ -75,4 +78,21 @@ function isMobileView(value: unknown): value is MobileView {
     value === "desktops" ||
     value === "more"
   );
+}
+
+function parsePersistedAuthUser(value: unknown): MobileAuthUser | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<MobileAuthUser>;
+  if (typeof candidate.uid !== "string") {
+    return null;
+  }
+
+  return {
+    uid: candidate.uid,
+    email: normalizeNullableString(candidate.email),
+    displayName: normalizeNullableString(candidate.displayName)
+  };
 }

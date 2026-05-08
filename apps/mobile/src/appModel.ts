@@ -1,4 +1,6 @@
 import { createKannaClient, type KannaClient } from "./lib/api/client";
+import type { MobileAuthSession } from "./lib/firebase/auth";
+import { createConfiguredMobileAuthSession } from "./lib/firebase/sdk";
 import { createLanTransport, type FetchLike } from "./lib/transports/lanTransport";
 import { createRootNavigator } from "./navigation/RootNavigator";
 import {
@@ -120,11 +122,12 @@ export function resolveServerBaseUrl(
 export function createAppModel(
   baseUrl = resolveServerBaseUrl(),
   fetchImpl = globalThis.fetch as unknown as FetchLike,
-  persistence?: SessionPersistence
+  persistence?: SessionPersistence,
+  authSession: MobileAuthSession = createConfiguredMobileAuthSession()
 ): AppModel {
   const client = createKannaClient(createLanTransport(baseUrl, fetchImpl));
   const sessionStore = createSessionStore();
-  const controller = createMobileController(client, sessionStore);
+  const controller = createMobileController(client, sessionStore, authSession);
   let persistencePromise: Promise<SessionPersistence> | null = persistence
     ? Promise.resolve(persistence)
     : null;

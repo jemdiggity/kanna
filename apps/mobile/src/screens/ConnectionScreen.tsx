@@ -1,33 +1,88 @@
-import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import type { ConnectionState } from "../state/sessionStore";
+import React, { useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import type { AuthState, ConnectionState } from "../state/sessionStore";
 
 interface ConnectionScreenProps {
+  auth: AuthState;
   connectionState: ConnectionState;
   desktopName: string | null;
   errorMessage: string | null;
   pairingCode: string | null;
   onConnectLocal(): void;
+  onSignIn(email: string, password: string): void;
+  onSignOut(): void;
 }
 
 export function ConnectionScreen({
+  auth,
   connectionState,
   desktopName,
   errorMessage,
   pairingCode,
-  onConnectLocal
+  onConnectLocal,
+  onSignIn,
+  onSignOut
 }: ConnectionScreenProps) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const primaryLabel =
     connectionState === "connecting" ? "Connecting..." : "Connect on Local Network";
+  const authSummary = getConnectionAuthSummary(auth);
+  const canSubmitAuth = email.trim().length > 0 && password.length > 0;
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.eyebrow}>Kanna Mobile</Text>
-      <Text style={styles.title}>Pair with a Desktop</Text>
-      <Text style={styles.copy}>
-        This iPhone app talks to the desktop-side daemon. Start with the local
-        network path, then browse tasks and open them like channels.
-      </Text>
+      <Text style={styles.title}>Connection</Text>
+
+      <View style={styles.card}>
+        <Text style={styles.cardLabel}>Cloud Auth</Text>
+        <Text style={styles.cardValue}>{authSummary.title}</Text>
+        <Text style={styles.cardMeta}>{authSummary.detail}</Text>
+
+        {auth.status === "signedIn" ? (
+          <Pressable style={styles.secondaryButton} onPress={onSignOut}>
+            <Text style={styles.secondaryLabel}>Sign Out</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.authForm}>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              onChangeText={setEmail}
+              placeholder="Email"
+              placeholderTextColor="#718199"
+              style={styles.input}
+              value={email}
+            />
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setPassword}
+              placeholder="Password"
+              placeholderTextColor="#718199"
+              secureTextEntry
+              style={styles.input}
+              value={password}
+            />
+            <Pressable
+              disabled={!canSubmitAuth || auth.status === "signingIn"}
+              onPress={() => onSignIn(email.trim(), password)}
+              style={[
+                styles.primaryButton,
+                !canSubmitAuth || auth.status === "signingIn"
+                  ? styles.disabledButton
+                  : null
+              ]}
+            >
+              <Text style={styles.primaryLabel}>
+                {auth.status === "signingIn" ? "Signing In..." : "Sign In"}
+              </Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
 
       <View style={styles.card}>
         <Text style={styles.cardLabel}>Desktop</Text>
@@ -46,18 +101,43 @@ export function ConnectionScreen({
       <Pressable style={styles.primaryButton} onPress={onConnectLocal}>
         <Text style={styles.primaryLabel}>{primaryLabel}</Text>
       </Pressable>
-
-      <Pressable style={styles.secondaryButton}>
-        <Text style={styles.secondaryLabel}>Remote Access Coming Next</Text>
-      </Pressable>
     </View>
   );
+}
+
+export function getConnectionAuthSummary(auth: AuthState): {
+  title: string;
+  detail: string;
+} {
+  switch (auth.status) {
+    case "signedIn":
+      return {
+        title: auth.user.email ?? auth.user.displayName ?? "Signed in",
+        detail: "Signed in"
+      };
+    case "signingIn":
+      return {
+        title: "Signing in",
+        detail: auth.user?.email ?? "Checking credentials"
+      };
+    case "error":
+      return {
+        title: "Sign-in error",
+        detail: auth.message
+      };
+    case "signedOut":
+    default:
+      return {
+        title: "Signed out",
+        detail: "Use local alpha credentials"
+      };
+  }
 }
 
 const styles = StyleSheet.create({
   wrap: {
     flex: 1,
-    gap: 16,
+    gap: 12,
     justifyContent: "center",
     paddingHorizontal: 20,
     paddingTop: 20
@@ -71,21 +151,16 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#F5F7FB",
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: "700"
-  },
-  copy: {
-    color: "#B5C0D4",
-    fontSize: 15,
-    lineHeight: 22
   },
   card: {
     backgroundColor: "#10192A",
     borderColor: "#20304C",
-    borderRadius: 20,
+    borderRadius: 10,
     borderWidth: 1,
     gap: 8,
-    padding: 18
+    padding: 14
   },
   cardLabel: {
     color: "#7FA7D9",
@@ -102,6 +177,19 @@ const styles = StyleSheet.create({
     color: "#9AAED0",
     fontSize: 14
   },
+  authForm: {
+    gap: 8
+  },
+  input: {
+    backgroundColor: "#0B1220",
+    borderColor: "#20304C",
+    borderRadius: 8,
+    borderWidth: 1,
+    color: "#F5F7FB",
+    fontSize: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 12
+  },
   errorCard: {
     backgroundColor: "rgba(97, 33, 36, 0.38)",
     borderColor: "rgba(214, 102, 114, 0.34)",
@@ -116,8 +204,11 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: "#E8F1FF",
-    borderRadius: 16,
-    paddingVertical: 16
+    borderRadius: 8,
+    paddingVertical: 14
+  },
+  disabledButton: {
+    opacity: 0.56
   },
   primaryLabel: {
     color: "#0B1220",
@@ -128,9 +219,9 @@ const styles = StyleSheet.create({
   secondaryButton: {
     backgroundColor: "#152036",
     borderColor: "#22304D",
-    borderRadius: 16,
+    borderRadius: 8,
     borderWidth: 1,
-    paddingVertical: 16
+    paddingVertical: 14
   },
   secondaryLabel: {
     color: "#D5DEEC",
