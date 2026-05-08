@@ -1,4 +1,4 @@
-import { isTeardownStage, TEARDOWN_STAGE } from "./taskStages";
+import { isTeardownStage } from "./taskStages";
 
 export interface CloseSelectionTransition {
   selectNext: boolean;
@@ -14,6 +14,6 @@ export function shouldSelectNextOnCloseTransition(
     transition.selectNext &&
     !transition.wasBlocked &&
     !isTeardownStage(transition.previousStage) &&
-    (transition.nextStage === TEARDOWN_STAGE || transition.nextStage === "done")
+    (transition.nextStage === "tearing_down" || transition.nextStage === "done")
   );
 }

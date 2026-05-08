@@ -8,5 +8,6 @@ describe("E2E seed schema", () => {
 
     expect(seedSql).toMatch(/CREATE TABLE IF NOT EXISTS repo \([\s\S]*sort_order INTEGER NOT NULL DEFAULT 0/);
     expect(seedSql).toMatch(/INSERT INTO repo \(id, path, name, default_branch, hidden, sort_order,/);
+    expect(seedSql).toMatch(/CREATE TABLE IF NOT EXISTS pipeline_item \([\s\S]*teardown_started_at TEXT/);
   });
 });

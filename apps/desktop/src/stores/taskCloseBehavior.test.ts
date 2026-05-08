@@ -54,6 +54,17 @@ describe("getTaskCloseBehavior", () => {
     ).toBe("finish");
   });
 
+  it("finishes tasks that are already tearing down without requiring a teardown stage", () => {
+    expect(
+      getTaskCloseBehavior({
+        wasBlocked: false,
+        currentStage: "pr",
+        isTearingDown: true,
+        hasTeardownCommands: true,
+      }),
+    ).toBe("finish");
+  });
+
   it("treats legacy torndown as already in teardown", () => {
     expect(
       getTaskCloseBehavior({

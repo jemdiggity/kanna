@@ -80,6 +80,7 @@ function buildItem(repoId = "repo-1"): PipelineItem {
     base_ref: "main",
     agent_session_id: null,
     previous_stage: null,
+    teardown_started_at: null,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
   };
@@ -226,6 +227,7 @@ function createTransferDb(initial: {
           base_ref: baseRef as string | null,
           agent_session_id: null,
           previous_stage: null,
+          teardown_started_at: null,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });
@@ -263,6 +265,10 @@ function createTransferDb(initial: {
           row.stage = stage;
         }
 
+        if (q.includes("TEARDOWN_STARTED_AT")) {
+          row.teardown_started_at = new Date().toISOString();
+        }
+
         if (q.startsWith("UPDATE PIPELINE_ITEM SET AGENT_SESSION_ID = ?")) {
           const [agentSessionId] = params as [string, string];
           row.agent_session_id = agentSessionId;
@@ -271,6 +277,7 @@ function createTransferDb(initial: {
         if (q.includes("STAGE = 'DONE'")) {
           row.previous_stage = row.stage;
           row.stage = "done";
+          row.teardown_started_at = null;
           row.closed_at = new Date().toISOString();
         }
 
@@ -2598,8 +2605,9 @@ describe("outgoing transfer commit acknowledgment", () => {
     expect(teardownArgs?.at(-1)).toContain("Teardown command failed");
     expect(fakeDb.tables.pipeline_item[0]).toMatchObject({
       id: "task-source",
-      stage: "teardown",
+      stage: "in progress",
     });
+    expect(fakeDb.tables.pipeline_item[0]?.teardown_started_at).not.toBeNull();
     expect(fakeDb.tables.pipeline_item[0]?.closed_at).toBeNull();
   });
 });

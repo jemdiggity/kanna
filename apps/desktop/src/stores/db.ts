@@ -63,6 +63,7 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     issue_number INTEGER, issue_title TEXT, prompt TEXT,
     stage TEXT NOT NULL DEFAULT 'in_progress', pr_number INTEGER, pr_url TEXT,
     branch TEXT, agent_type TEXT,
+    teardown_started_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -141,6 +142,7 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     await addColumn("pipeline_item", "base_ref", "TEXT");
     await addColumn("pipeline_item", "agent_provider", "TEXT NOT NULL DEFAULT 'claude'");
     await addColumn("pipeline_item", "previous_stage", "TEXT");
+    await addColumn("pipeline_item", "teardown_started_at", "TEXT");
   });
 
   await runMigration("003_legacy_stage_to_tags_backfill", async () => {
@@ -301,5 +303,17 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     for (const [index, repo] of repos.entries()) {
       await db.execute("UPDATE repo SET sort_order = ? WHERE id = ?", [index, repo.id]);
     }
+  });
+  await runMigration("016_task_teardown_state", async () => {
+    await addColumn("pipeline_item", "teardown_started_at", "TEXT");
+    await db.execute(`
+      UPDATE pipeline_item
+      SET
+        teardown_started_at = COALESCE(teardown_started_at, updated_at, datetime('now')),
+        stage = COALESCE(previous_stage, 'in progress'),
+        updated_at = datetime('now')
+      WHERE stage IN ('teardown', 'torndown')
+        AND closed_at IS NULL
+    `);
   });
 }

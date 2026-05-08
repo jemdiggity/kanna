@@ -13,7 +13,7 @@ import {
   shouldClearCachedTerminalStateOnSessionExit,
 } from "./kannaCleanup";
 import { formatAppWindowTitle, type AppBuildInfo } from "./windowTitle";
-import { isTeardownStage } from "./taskStages";
+import { isTaskTearingDown } from "./taskStages";
 import { requireService, type StoreContext } from "./state";
 
 export interface InitApi {
@@ -189,7 +189,7 @@ export function createInitApi(
         }
 
         const item = context.state.items.value.find((candidate) => candidate.id === itemId);
-        if (!item || !isTeardownStage(item.stage)) {
+        if (!item || !isTaskTearingDown(item)) {
           return;
         }
 

@@ -137,6 +137,7 @@ describe("MainPanel", () => {
           base_ref: null,
           agent_session_id: null,
           previous_stage: null,
+          teardown_started_at: null,
           last_output_preview: null,
         },
         repoPath: "/tmp/repo",

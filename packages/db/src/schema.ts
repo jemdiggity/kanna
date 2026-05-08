@@ -39,6 +39,7 @@ export interface PipelineItem {
   base_ref: string | null;
   agent_session_id: string | null;
   previous_stage: string | null;
+  teardown_started_at: string | null;
   created_at: string;
   updated_at: string;
 }

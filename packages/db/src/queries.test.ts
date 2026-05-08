@@ -14,6 +14,7 @@ import {
   deleteTaskPortsForItem,
   insertPipelineItem,
   updatePipelineItemStage,
+  markPipelineItemTearingDown,
   updatePipelineItemTags,
   updatePipelineItemStageResult,
   clearPipelineItemStageResult,
@@ -139,6 +140,7 @@ function createMockDb(): DbHandle & {
           base_ref: null,
           agent_session_id: null,
           previous_stage: null,
+          teardown_started_at: null,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           pinned: 0,
@@ -238,6 +240,13 @@ function createMockDb(): DbHandle & {
         const item = tables.pipeline_item.find((p) => p.id === id);
         if (item) {
           item.tags = newTags;
+          item.updated_at = new Date().toISOString();
+        }
+      } else if (q.startsWith("UPDATE PIPELINE_ITEM SET") && q.includes("TEARDOWN_STARTED_AT")) {
+        const [id] = bindValues as string[];
+        const item = tables.pipeline_item.find((p) => p.id === id);
+        if (item) {
+          item.teardown_started_at = new Date().toISOString();
           item.updated_at = new Date().toISOString();
         }
       } else if (q.startsWith("UPDATE PIPELINE_ITEM SET STAGE =")) {
@@ -771,6 +780,14 @@ describe("stage queries", () => {
     await updatePipelineItemStage(db, "pi1", "review");
     const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
     expect(item?.stage).toBe("review");
+  });
+
+  it("markPipelineItemTearingDown marks teardown state without changing stage", async () => {
+    await updatePipelineItemStage(db, "pi1", "pr");
+    await markPipelineItemTearingDown(db, "pi1");
+    const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
+    expect(item?.stage).toBe("pr");
+    expect(item?.teardown_started_at).not.toBeNull();
   });
 
   it("updatePipelineItemTags overwrites tags for a single task", async () => {

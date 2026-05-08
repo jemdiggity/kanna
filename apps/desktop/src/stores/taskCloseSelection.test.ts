@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { shouldSelectNextOnCloseTransition } from "./taskCloseSelection";
-import { TEARDOWN_STAGE } from "./taskStages";
 
 describe("shouldSelectNextOnCloseTransition", () => {
   it("selects immediately when a normal task enters teardown", () => {
@@ -9,7 +8,7 @@ describe("shouldSelectNextOnCloseTransition", () => {
         selectNext: true,
         wasBlocked: false,
         previousStage: "in progress",
-        nextStage: TEARDOWN_STAGE,
+        nextStage: "tearing_down",
       }),
     ).toBe(true);
   });
@@ -63,7 +62,7 @@ describe("shouldSelectNextOnCloseTransition", () => {
       shouldSelectNextOnCloseTransition({
         selectNext: true,
         wasBlocked: false,
-        previousStage: TEARDOWN_STAGE,
+        previousStage: "teardown",
         nextStage: "done",
       }),
     ).toBe(false);

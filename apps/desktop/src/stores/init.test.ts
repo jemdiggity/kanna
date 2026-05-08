@@ -49,6 +49,7 @@ const mockState = vi.hoisted(() => {
       base_ref: null,
       agent_session_id: "resume-123",
       previous_stage: null,
+      teardown_started_at: null,
       last_output_preview: null,
       created_at: now,
       updated_at: now,
@@ -114,6 +115,7 @@ vi.mock("@kanna/db", () => ({
   listRepos: vi.fn(async () => mockState.repos),
   listPipelineItems: vi.fn(async () => mockState.items),
   updatePipelineItemActivity: mockState.updatePipelineItemActivityMock,
+  markPipelineItemTearingDown: vi.fn(async () => {}),
   closePipelineItem: vi.fn(async () => {}),
 }));
 

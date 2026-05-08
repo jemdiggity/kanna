@@ -88,6 +88,7 @@ function item(id: string, overrides: Partial<PipelineItem>): PipelineItem {
     pin_order: null,
     base_ref: null,
     previous_stage: null,
+    teardown_started_at: null,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
   };
@@ -261,6 +262,26 @@ describe("Sidebar", () => {
     expect(vm.matchesSearch(pipelineItems[0])).toBe(true);
     expect(vm.matchesSearch(pipelineItems[2])).toBe(true);
     expect(vm.matchesSearch(pipelineItems[1])).toBe(false);
+  });
+
+  it("keeps a tearing-down task in its pipeline stage section with strikethrough styling", async () => {
+    const pipelineItems = [
+      item("task-1", {
+        display_name: "PR task cleanup",
+        stage: "pr",
+        teardown_started_at: "2026-05-08T00:00:00.000Z",
+      }),
+    ];
+
+    const wrapper = mountSidebar(pipelineItems, null);
+
+    await flushPromises();
+
+    expect(wrapper.findAll(".section-label").map((label) => label.text())).toEqual(["pr"]);
+    expect(wrapper.text()).not.toContain("teardown");
+    const title = wrapper.get(".pipeline-item .item-title");
+    expect(title.attributes("style")).toContain("text-decoration: line-through");
+    expect(title.attributes("style")).toContain("opacity: 0.5");
   });
 
   it("disables pinned drag interactions while search is active", async () => {
