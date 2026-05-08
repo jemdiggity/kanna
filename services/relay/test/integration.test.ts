@@ -297,6 +297,180 @@ describe("Relay integration", () => {
     await closeAndWait(desktopTwo);
   });
 
+  it("routes HTTP-style invokes only to the selected desktop", async () => {
+    const { ws: desktopOne } = await connectAndAuth({
+      desktop_id: "desktop-one-http",
+      desktop_secret: "secret-one",
+    });
+    const { ws: desktopTwo } = await connectAndAuth({
+      desktop_id: "desktop-two-http",
+      desktop_secret: "secret-two",
+    });
+    const { ws: phone } = await connectAndAuth({
+      id_token: "user-two-desktops-http",
+    });
+
+    const desktopOneUnexpectedInvoke = waitForMessage(
+      desktopOne,
+      (msg) => msg.type === "invoke",
+      250
+    ).then(
+      () => "invoke",
+      () => "timeout"
+    );
+    const desktopTwoInvoke = waitForMessage(
+      desktopTwo,
+      (msg) =>
+        msg.type === "invoke" &&
+        msg.desktopId === "desktop-two-http" &&
+        msg.method === "GET" &&
+        msg.path === "/v1/status"
+    );
+
+    phone.send(
+      JSON.stringify({
+        type: "invoke",
+        id: "http-status",
+        desktopId: "desktop-two-http",
+        method: "GET",
+        path: "/v1/status",
+        body: null,
+      })
+    );
+
+    const invoke = await desktopTwoInvoke;
+    expect(invoke.body).toBeNull();
+    await expect(desktopOneUnexpectedInvoke).resolves.toBe("timeout");
+
+    await closeAndWait(phone);
+    await closeAndWait(desktopOne);
+    await closeAndWait(desktopTwo);
+  });
+
+  it("requires desktopId for HTTP-style invokes when multiple desktops are connected", async () => {
+    const { ws: desktopOne } = await connectAndAuth({
+      desktop_id: "desktop-one-missing-id",
+      desktop_secret: "secret-one",
+    });
+    const { ws: desktopTwo } = await connectAndAuth({
+      desktop_id: "desktop-two-missing-id",
+      desktop_secret: "secret-two",
+    });
+    const { ws: phone } = await connectAndAuth({
+      id_token: "user-missing-desktop-id",
+    });
+
+    const desktopOneUnexpectedInvoke = waitForMessage(
+      desktopOne,
+      (msg) => msg.type === "invoke",
+      250
+    ).then(
+      () => "invoke",
+      () => "timeout"
+    );
+    const desktopTwoUnexpectedInvoke = waitForMessage(
+      desktopTwo,
+      (msg) => msg.type === "invoke",
+      250
+    ).then(
+      () => "invoke",
+      () => "timeout"
+    );
+
+    phone.send(
+      JSON.stringify({
+        type: "invoke",
+        id: "missing-desktop-id",
+        method: "GET",
+        path: "/v1/status",
+        body: null,
+      })
+    );
+
+    const response = await waitForMessage(
+      phone,
+      (msg) => msg.type === "response" && msg.id === "missing-desktop-id"
+    );
+    expect(response.error).toBe("Multiple desktops connected; desktopId required");
+    await expect(desktopOneUnexpectedInvoke).resolves.toBe("timeout");
+    await expect(desktopTwoUnexpectedInvoke).resolves.toBe("timeout");
+
+    await closeAndWait(phone);
+    await closeAndWait(desktopOne);
+    await closeAndWait(desktopTwo);
+  });
+
+  it("returns Desktop offline for an HTTP-style invoke targeting a disconnected desktop", async () => {
+    const { ws: desktop } = await connectAndAuth({
+      desktop_id: "desktop-online",
+      desktop_secret: "secret-online",
+    });
+    const { ws: phone } = await connectAndAuth({
+      id_token: "user-offline-desktop",
+    });
+
+    phone.send(
+      JSON.stringify({
+        type: "invoke",
+        id: "offline-desktop",
+        desktopId: "desktop-offline",
+        method: "GET",
+        path: "/v1/status",
+        body: null,
+      })
+    );
+
+    const response = await waitForMessage(
+      phone,
+      (msg) => msg.type === "response" && msg.id === "offline-desktop"
+    );
+    expect(response.error).toBe("Desktop offline");
+
+    await closeAndWait(phone);
+    await closeAndWait(desktop);
+  });
+
+  it("routes desktop responses only to phones authenticated as the same user", async () => {
+    const { ws: userOneDesktop } = await connectAndAuth({
+      device_token: "user-one:desktop",
+    });
+    const { ws: userOnePhone } = await connectAndAuth({
+      id_token: "user-one:phone",
+    });
+    const { ws: userTwoPhone } = await connectAndAuth({
+      id_token: "user-two:phone",
+    });
+
+    const userOneResponse = waitForMessage(
+      userOnePhone,
+      (msg) => msg.type === "response" && msg.id === "same-user-only"
+    );
+    const userTwoUnexpectedResponse = waitForMessage(
+      userTwoPhone,
+      (msg) => msg.type === "response",
+      250
+    ).then(
+      () => "response",
+      () => "timeout"
+    );
+
+    userOneDesktop.send(
+      JSON.stringify({
+        type: "response",
+        id: "same-user-only",
+        data: { ok: true },
+      })
+    );
+
+    const response = await userOneResponse;
+    expect(response.data).toEqual({ ok: true });
+    await expect(userTwoUnexpectedResponse).resolves.toBe("timeout");
+
+    await closeAndWait(userTwoPhone);
+    await closeAndWait(userOnePhone);
+    await closeAndWait(userOneDesktop);
+  });
+
   it("should reject connections that do not send auth within timeout", async () => {
     // Connect without sending auth — the relay should close after AUTH_TIMEOUT_MS (10s)
     // We won't wait the full 10s, just verify the connection opens fine
