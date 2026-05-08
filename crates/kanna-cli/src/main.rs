@@ -163,6 +163,16 @@ enum TaskCommands {
         #[arg(long)]
         server_url: Option<String>,
     },
+    /// Advance an accepted task to the next pipeline stage
+    AdvanceStage {
+        /// The accepted task/pipeline_item ID
+        #[arg(long)]
+        task_id: String,
+
+        /// Override the local Kanna server base URL
+        #[arg(long)]
+        server_url: Option<String>,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -543,6 +553,18 @@ async fn send_task_input_via_api(
         .map(|_| TaskInputResponse { ok: true })
 }
 
+async fn advance_stage_via_api(
+    base_url: &str,
+    task_id: &str,
+) -> Result<TaskActionResponse, String> {
+    post_json(
+        base_url,
+        &format!("/v1/tasks/{task_id}/actions/advance-stage"),
+        &serde_json::json!({}),
+    )
+    .await
+}
+
 fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
     let rendered =
         serde_json::to_string_pretty(value).map_err(|e| format!("failed to render json: {e}"))?;
@@ -818,6 +840,22 @@ async fn main() {
                     process::exit(1);
                 }
             }
+            TaskCommands::AdvanceStage {
+                task_id,
+                server_url,
+            } => {
+                let base_url = resolve_server_base_url_from_env(server_url.as_deref());
+                let advanced = advance_stage_via_api(&base_url, &task_id)
+                    .await
+                    .unwrap_or_else(|e| {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    });
+                if let Err(e) = print_json(&advanced) {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                }
+            }
         },
     }
 }
@@ -825,15 +863,17 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_complete_stage_request, build_create_task_request, build_request_revision_request,
-        build_send_task_input_request, find_task_status_row, format_task_list,
-        format_task_status, resolve_optional_server_base_url, resolve_server_base_url,
-        resolve_stage_db_path, send_task_input_via_api, task_list_path, task_not_found_error,
-        TaskCreateOptions, TaskInputResponse, TaskSummary,
+        advance_stage_via_api, build_complete_stage_request, build_create_task_request,
+        build_request_revision_request, build_send_task_input_request, find_task_status_row,
+        format_task_list, format_task_status, resolve_optional_server_base_url,
+        resolve_server_base_url, resolve_stage_db_path, send_task_input_via_api, task_list_path,
+        task_not_found_error, TaskCreateOptions, TaskInputResponse, TaskSummary,
     };
     use serde_json::json;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener as TokioTcpListener;
 
     #[test]
     fn prefers_cli_specific_db_path() {
@@ -1038,7 +1078,6 @@ mod tests {
             })
         );
     }
-
     #[test]
     fn task_list_uses_recent_tasks_endpoint() {
         assert_eq!(task_list_path(), "/v1/tasks/recent");
@@ -1121,5 +1160,58 @@ mod tests {
             task_not_found_error("missing-task"),
             "Task 'missing-task' was not found in recent tasks".to_string()
         );
+    }
+
+    fn http_json_response(status: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    async fn serve_single_http_response(
+        response: String,
+    ) -> (String, tokio::task::JoinHandle<String>) {
+        let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0; 4096];
+            let bytes_read = socket.read(&mut buffer).await.unwrap();
+            let request = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+            socket.write_all(response.as_bytes()).await.unwrap();
+            request
+        });
+
+        (base_url, handle)
+    }
+
+    #[tokio::test]
+    async fn advance_stage_posts_to_task_action_path_with_empty_json_body() {
+        let response = http_json_response("200 OK", "{\"taskId\":\"next-task-1\"}");
+        let (base_url, handle) = serve_single_http_response(response).await;
+
+        let action = advance_stage_via_api(&base_url, "task-123").await.unwrap();
+        let request = handle.await.unwrap();
+
+        assert_eq!(action.task_id, "next-task-1");
+        assert!(request.starts_with("POST /v1/tasks/task-123/actions/advance-stage HTTP/1.1"));
+        assert!(request.contains("content-type: application/json"));
+        assert!(request.ends_with("{}"));
+    }
+
+    #[tokio::test]
+    async fn advance_stage_surfaces_http_errors() {
+        let response = http_json_response("409 Conflict", "{\"error\":\"task not accepted yet\"}");
+        let (base_url, handle) = serve_single_http_response(response).await;
+
+        let error = advance_stage_via_api(&base_url, "task-123")
+            .await
+            .unwrap_err();
+        let request = handle.await.unwrap();
+
+        assert!(request.starts_with("POST /v1/tasks/task-123/actions/advance-stage HTTP/1.1"));
+        assert!(error.contains("409 Conflict"));
     }
 }
