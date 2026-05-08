@@ -113,11 +113,21 @@ describe("useShortcutContext", () => {
       const result = getContextShortcuts("file");
       const actions = result.map((s) => s.action);
 
+      expect(actions).toContain("shortcuts.filePreview");
       expect(actions).toContain("shortcuts.treeExplorer");
       expect(actions).toContain("shortcuts.viewDiff");
       expect(actions).toContain("shortcuts.shellTerminal");
       expect(actions).toContain("shortcuts.maximize");
       expect(actions).toContain("shortcuts.keyboardShortcuts");
+    });
+
+    it("shows the file preview recall shortcut in the file context menu", () => {
+      const result = getContextShortcutGroups((key) => key, "file");
+      const filePreviewShortcut = result
+        .flatMap((group) => group.shortcuts)
+        .find((shortcut) => shortcut.action === "shortcuts.filePreview");
+
+      expect(filePreviewShortcut?.keys).toBe("⌥⌘P");
     });
 
     it("translates grouped context shortcut labels while preserving supplementary labels", () => {

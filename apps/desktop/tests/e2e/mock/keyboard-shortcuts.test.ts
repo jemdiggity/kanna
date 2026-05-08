@@ -492,6 +492,32 @@ describe("keyboard shortcuts", () => {
     await waitForSelection({ repoId, itemId: "shortcut-read-near-new" });
   });
 
+  it("shows the Option+Cmd+P file preview shortcut in the file picker shortcut menu", async () => {
+    await ensureRepoImported();
+    await client.executeSync(
+      `${CTX_SCRIPT}.showShortcutsModal = false;
+       ${CTX_SCRIPT}.showFilePickerModal = false;
+       ${CTX_SCRIPT}.showFilePreviewModal = false;`,
+    );
+
+    await pressKey("p", { meta: true });
+    await client.waitForElement(".picker-modal", 2000);
+
+    await pressKey("/", { meta: true });
+    const modal = await client.waitForElement(".shortcuts-modal", 2000);
+    const text = await client.getText(modal);
+
+    expect(text).toContain("File Preview");
+    expect(text).toContain("⌥⌘P");
+
+    await client.executeSync(
+      `${CTX_SCRIPT}.showShortcutsModal = false;
+       ${CTX_SCRIPT}.showFilePickerModal = false;`,
+    );
+    await client.waitForNoElement(".shortcuts-modal", 2000);
+    await client.waitForNoElement(".picker-modal", 2000);
+  });
+
   it("Shift+Cmd+Enter maximizes the tree explorer", async () => {
     await ensureRepoImported();
 
