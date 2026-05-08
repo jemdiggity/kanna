@@ -1591,7 +1591,9 @@ onBeforeUnmount(() => {
     />
     <FilePreviewModal
       ref="filePreviewRef"
-      v-if="showFilePreviewModal && !isMobile && store.selectedRepo?.path"
+      v-if="(showFilePreviewModal || previewHidden) && !isMobile && store.selectedRepo?.path"
+      v-show="showFilePreviewModal"
+      :key="`${activeWorktreePath}:${previewFilePath}`"
       :file-path="previewFilePath"
       :worktree-path="activeWorktreePath"
       :ide-command="store.ideCommand"
