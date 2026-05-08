@@ -136,4 +136,48 @@ describe("createSessionStore", () => {
 
     expect(publishes).toBe(0);
   });
+
+  it("persists the signed-in auth user snapshot for reload", () => {
+    const store = createSessionStore();
+
+    store.setAuthState({
+      status: "signedIn",
+      user: {
+        uid: "user-1",
+        email: "dev@kanna.test",
+        displayName: "Dev"
+      }
+    });
+
+    expect(store.getPersistedContext().authUser).toEqual({
+      uid: "user-1",
+      email: "dev@kanna.test",
+      displayName: "Dev"
+    });
+  });
+
+  it("hydrates a persisted auth user as signed in context", () => {
+    const store = createSessionStore();
+
+    store.hydrateContext({
+      selectedDesktopId: null,
+      selectedRepoId: null,
+      selectedTaskId: null,
+      activeView: "tasks",
+      authUser: {
+        uid: "user-1",
+        email: "dev@kanna.test",
+        displayName: null
+      }
+    });
+
+    expect(store.getState().auth).toEqual({
+      status: "signedIn",
+      user: {
+        uid: "user-1",
+        email: "dev@kanna.test",
+        displayName: null
+      }
+    });
+  });
 });

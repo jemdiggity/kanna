@@ -200,7 +200,8 @@ describe("createAppModel", () => {
       selectedDesktopId: "desktop-2",
       selectedRepoId: "repo-2",
       selectedTaskId: "task-2",
-      activeView: "more"
+      activeView: "more",
+      authUser: null
     });
   });
 });

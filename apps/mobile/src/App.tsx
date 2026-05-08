@@ -66,12 +66,19 @@ export default function App() {
     if (state.connectionState !== "connected") {
       return (
         <ConnectionScreen
+          auth={state.auth}
           connectionState={state.connectionState}
           desktopName={state.desktopName}
           errorMessage={state.errorMessage}
           pairingCode={state.pairingCode}
           onConnectLocal={() => {
             void controller.connectLocal();
+          }}
+          onSignIn={(email, password) => {
+            void controller.signInWithEmailPassword(email, password);
+          }}
+          onSignOut={() => {
+            void controller.signOut();
           }}
         />
       );

@@ -4,11 +4,13 @@ import type {
   RepoSummary,
   TaskSummary
 } from "../lib/api/types";
+import type { MobileAuthState } from "../lib/firebase/auth";
 import type { PersistedSessionContext } from "./sessionPersistence";
 
 export type ConnectionState = "idle" | "connecting" | "connected" | "error";
 export type MobileView = "tasks" | "recent" | "search" | "desktops" | "more";
 export type TaskTerminalStatus = "idle" | "connecting" | "live" | "closed" | "error";
+export type AuthState = MobileAuthState;
 
 export interface SessionState {
   connectionMode: DesktopMode | null;
@@ -16,6 +18,7 @@ export interface SessionState {
   desktopName: string | null;
   serverStatus: string | null;
   errorMessage: string | null;
+  auth: AuthState;
   desktops: DesktopSummary[];
   selectedDesktopId: string | null;
   repos: RepoSummary[];
@@ -43,6 +46,7 @@ export interface SessionStore {
   setConnectionState(state: ConnectionState): void;
   setDesktopStatus(status: string | null, desktopName: string | null, pairingCode: string | null): void;
   setErrorMessage(message: string | null): void;
+  setAuthState(auth: AuthState): void;
   setDesktops(desktops: DesktopSummary[]): void;
   selectDesktop(desktopId: string): void;
   setRepos(repos: RepoSummary[]): void;
@@ -68,6 +72,7 @@ export function createSessionStore(): SessionStore {
     desktopName: null,
     serverStatus: null,
     errorMessage: null,
+    auth: { status: "signedOut" },
     desktops: [],
     selectedDesktopId: null,
     repos: [],
@@ -136,7 +141,8 @@ export function createSessionStore(): SessionStore {
         selectedDesktopId: state.selectedDesktopId,
         selectedRepoId: state.selectedRepoId,
         selectedTaskId: state.selectedTaskId,
-        activeView: state.activeView
+        activeView: state.activeView,
+        authUser: state.auth.status === "signedIn" ? state.auth.user : null
       };
     },
     hydrateContext(context) {
@@ -145,7 +151,10 @@ export function createSessionStore(): SessionStore {
         selectedDesktopId: context.selectedDesktopId,
         selectedRepoId: context.selectedRepoId,
         selectedTaskId: context.selectedTaskId,
-        activeView: context.activeView
+        activeView: context.activeView,
+        auth: context.authUser
+          ? { status: "signedIn", user: context.authUser }
+          : state.auth
       };
       publish();
     },
@@ -163,6 +172,10 @@ export function createSessionStore(): SessionStore {
     },
     setErrorMessage(errorMessage) {
       state = { ...state, errorMessage };
+      publish();
+    },
+    setAuthState(auth) {
+      state = { ...state, auth };
       publish();
     },
     setDesktops(desktops) {

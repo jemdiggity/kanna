@@ -1,10 +1,14 @@
 import type { CreateTaskResponse, TaskSummary } from "../lib/api/types";
 import type { KannaClient, TaskTerminalSubscription } from "../lib/api/client";
+import type { MobileAuthSession } from "../lib/firebase/auth";
 import type { MobileView, SessionStore } from "./sessionStore";
 
 export interface MobileController {
   bootstrap(): Promise<void>;
   connectLocal(): Promise<void>;
+  signInWithEmailPassword(email: string, password: string): Promise<void>;
+  signOut(): Promise<void>;
+  getIdToken(forceRefresh?: boolean): Promise<string | null>;
   refresh(): Promise<void>;
   showView(view: MobileView): void;
   selectDesktop(desktopId: string): void;
@@ -26,7 +30,8 @@ const BACKGROUND_REFRESH_INTERVAL_MS = 3_000;
 
 export function createMobileController(
   client: KannaClient,
-  store: SessionStore
+  store: SessionStore,
+  authSession?: MobileAuthSession
 ): MobileController {
   let activeTaskTerminal:
     | {
@@ -36,6 +41,7 @@ export function createMobileController(
     | null = null;
   let backgroundRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let backgroundRefreshInFlight = false;
+  let authUnsubscribe: (() => void) | null = null;
 
   const setTerminalStartupError = (taskId: string, error: unknown) => {
     store.setTaskTerminalStatus(taskId, "error");
@@ -179,9 +185,24 @@ export function createMobileController(
     store.setErrorMessage(error instanceof Error ? error.message : "Mobile app request failed");
   };
 
+  const initializeAuth = async () => {
+    if (!authSession) {
+      return;
+    }
+
+    await authSession.initialize();
+    store.setAuthState(authSession.getState());
+    if (!authUnsubscribe) {
+      authUnsubscribe = authSession.subscribe((authState) => {
+        store.setAuthState(authState);
+      });
+    }
+  };
+
   return {
     async bootstrap() {
       store.setErrorMessage(null);
+      await initializeAuth();
 
       try {
         const status = await client.getStatus();
@@ -216,6 +237,34 @@ export function createMobileController(
       } catch (error) {
         fail(error);
       }
+    },
+
+    async signInWithEmailPassword(email, password) {
+      if (!authSession) {
+        store.setAuthState({
+          status: "error",
+          message: "Firebase Auth is not configured.",
+          user: null
+        });
+        return;
+      }
+
+      await authSession.signInWithEmailPassword({ email, password });
+      store.setAuthState(authSession.getState());
+    },
+
+    async signOut() {
+      if (!authSession) {
+        store.setAuthState({ status: "signedOut" });
+        return;
+      }
+
+      await authSession.signOut();
+      store.setAuthState(authSession.getState());
+    },
+
+    getIdToken(forceRefresh) {
+      return authSession?.getIdToken(forceRefresh) ?? Promise.resolve(null);
     },
 
     async refresh() {

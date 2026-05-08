@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createSessionStore } from "./sessionStore";
 import { createMobileController } from "./mobileController";
+import type { MobileAuthSession } from "../lib/firebase/auth";
 import type {
   KannaClient,
   TaskTerminalStreamEvent,
@@ -110,6 +111,17 @@ function createClientMock(): ClientMock {
       expiresAtUnixMs: 1
     }),
     __terminalStream: terminalStream
+  };
+}
+
+function createAuthSessionMock(): MobileAuthSession {
+  return {
+    getState: vi.fn(() => ({ status: "signedOut" })),
+    subscribe: vi.fn(() => () => undefined),
+    initialize: vi.fn().mockResolvedValue(undefined),
+    signInWithEmailPassword: vi.fn().mockResolvedValue(undefined),
+    signOut: vi.fn().mockResolvedValue(undefined),
+    getIdToken: vi.fn().mockResolvedValue(null)
   };
 }
 
@@ -515,6 +527,47 @@ describe("createMobileController", () => {
     expect(client.advanceTaskStage).toHaveBeenCalledWith("task-1");
     expect(store.getState().selectedTaskId).toBe("task-pr");
     expect(store.getState().recentTasks[0]?.id).toBe("task-pr");
+  });
+
+  it("mirrors auth session state into the mobile store during bootstrap", async () => {
+    const store = createSessionStore();
+    const auth = createAuthSessionMock();
+    vi.mocked(auth.getState).mockReturnValue({
+      status: "signedIn",
+      user: {
+        uid: "user-1",
+        email: "dev@kanna.test",
+        displayName: null
+      }
+    });
+    const controller = createMobileController(createClientMock(), store, auth);
+
+    await controller.bootstrap();
+
+    expect(auth.initialize).toHaveBeenCalledTimes(1);
+    expect(store.getState().auth).toEqual({
+      status: "signedIn",
+      user: {
+        uid: "user-1",
+        email: "dev@kanna.test",
+        displayName: null
+      }
+    });
+  });
+
+  it("delegates email sign-in and sign-out to the auth session", async () => {
+    const store = createSessionStore();
+    const auth = createAuthSessionMock();
+    const controller = createMobileController(createClientMock(), store, auth);
+
+    await controller.signInWithEmailPassword("dev@kanna.test", "secret");
+    await controller.signOut();
+
+    expect(auth.signInWithEmailPassword).toHaveBeenCalledWith({
+      email: "dev@kanna.test",
+      password: "secret"
+    });
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
   });
 });
 interface ClientMock extends KannaClient {
