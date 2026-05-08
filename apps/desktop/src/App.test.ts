@@ -1741,6 +1741,63 @@ describe("App", () => {
     expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
   });
 
+  it("preserves file preview component state when hiding and showing the last preview", async () => {
+    const MarkdownFilePickerModalTestStub = defineComponent({
+      name: "FilePickerModal",
+      emits: ["select"],
+      template: `
+        <div data-testid="file-picker-modal">
+          <button data-testid="file-picker-select" @click="$emit('select', 'docs/example.md')">select</button>
+        </div>
+      `,
+    });
+
+    const StatefulFilePreviewModalTestStub = defineComponent({
+      name: "FilePreviewModal",
+      emits: ["close"],
+      setup(_props, { emit, expose }) {
+        const mode = ref("raw");
+
+        function dismiss() {
+          emit("close");
+          return true;
+        }
+
+        expose({ dismiss, zIndex: 1000, bringToFront: vi.fn() });
+
+        return { mode };
+      },
+      template: `
+        <div data-testid="file-preview-modal" :data-mode="mode">
+          <button data-testid="toggle-markdown-render" @click="mode = 'rendered'">rendered</button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      FilePickerModal: MarkdownFilePickerModalTestStub,
+      FilePreviewModal: StatefulFilePreviewModalTestStub,
+    });
+
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    await wrapper.get('[data-testid="file-picker-select"]').trigger("click");
+    await flushPromises();
+
+    await wrapper.get('[data-testid="toggle-markdown-render"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-mode")).toBe("rendered");
+
+    capturedKeyboardActions?.toggleFilePreview();
+    await flushPromises();
+    capturedKeyboardActions?.toggleFilePreview();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-mode")).toBe("rendered");
+  });
+
   it("opens the file picker over the file preview and dismisses the picker first", async () => {
     vi.stubGlobal("__KANNA_MOBILE__", false);
     const { default: App } = await import("./App.vue");

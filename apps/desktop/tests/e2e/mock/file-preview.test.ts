@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { setTimeout as sleep } from "node:timers/promises";
 import { buildGlobalKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
@@ -38,6 +39,42 @@ describe("file preview", () => {
     return await client.getText(element);
   }
 
+  async function isPreviewVisible(): Promise<boolean> {
+    return await client.executeSync<boolean>(
+      `const modal = document.querySelector(".preview-modal");
+       if (!modal) return false;
+       const rect = modal.getBoundingClientRect();
+       const style = getComputedStyle(modal);
+       return style.display !== "none" &&
+         style.visibility !== "hidden" &&
+         rect.width > 0 &&
+         rect.height > 0;`,
+    );
+  }
+
+  async function waitForPreviewHidden(): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (!(await isPreviewVisible())) return;
+      await sleep(200);
+    }
+    throw new Error("preview modal remained visible");
+  }
+
+  async function waitForPreviewVisible(): Promise<void> {
+    await client.waitForElement(".preview-modal", 5000);
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (await isPreviewVisible()) return;
+      await sleep(200);
+    }
+    throw new Error("preview modal did not become visible");
+  }
+
+  async function waitForRenderedMarkdown(): Promise<void> {
+    await client.waitForElement(".preview-content.markdown-rendered h1", 5000);
+  }
+
   it("opens the picker from preview, selects another file, and recalls it with Option+Command+P", async () => {
     await pressKey("p", { meta: true });
     await client.waitForElement(".picker-modal", 5000);
@@ -70,10 +107,19 @@ describe("file preview", () => {
     await pressKey("π", { meta: true, alt: true, code: "KeyP" });
     expect(await previewedFilePath()).toBe("README.md");
 
-    await pressKey("π", { meta: true, alt: true, code: "KeyP" });
-    await client.waitForNoElement(".preview-modal", 5000);
+    const modeBadge = await client.waitForElement(".preview-modal .mode-badge", 5000);
+    await client.click(modeBadge);
+    await waitForRenderedMarkdown();
+    expect(await client.getText(modeBadge)).toBe("Rendered");
 
     await pressKey("π", { meta: true, alt: true, code: "KeyP" });
+    await waitForPreviewHidden();
+
+    await pressKey("π", { meta: true, alt: true, code: "KeyP" });
+    await waitForPreviewVisible();
     expect(await previewedFilePath()).toBe("README.md");
+    const restoredModeBadge = await client.waitForElement(".preview-modal .mode-badge", 5000);
+    expect(await client.getText(restoredModeBadge)).toBe("Rendered");
+    await waitForRenderedMarkdown();
   });
 });
