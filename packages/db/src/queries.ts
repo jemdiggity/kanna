@@ -50,6 +50,10 @@ export async function unhideRepo(db: DbHandle, id: string): Promise<void> {
   await db.execute("UPDATE repo SET hidden = 0 WHERE id = ?", [id]);
 }
 
+export async function updateRepoName(db: DbHandle, id: string, name: string): Promise<void> {
+  await db.execute("UPDATE repo SET name = ? WHERE id = ?", [name, id]);
+}
+
 export async function reorderRepos(db: DbHandle, orderedIds: string[]): Promise<void> {
   for (const [index, id] of orderedIds.entries()) {
     await db.execute("UPDATE repo SET sort_order = ? WHERE id = ?", [index, id]);

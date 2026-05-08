@@ -355,4 +355,19 @@ describe("Sidebar", () => {
 
     expect(wrapper.emitted("reorder-repos")).toBeUndefined();
   });
+
+  it("renames a repository from an inline editor opened by double-clicking the repo name", async () => {
+    const wrapper = mountSidebar([], null);
+
+    await wrapper.get(".repo-name").trigger("dblclick");
+    await nextTick();
+
+    const input = wrapper.get<HTMLInputElement>(".repo-rename-input");
+    expect(input.element.value).toBe("kanna-v2");
+
+    await input.setValue("Kanna Desktop");
+    await input.trigger("keydown.enter");
+
+    expect(wrapper.emitted("rename-repo")).toEqual([["repo-1", "Kanna Desktop"]]);
+  });
 });
