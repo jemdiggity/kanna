@@ -294,6 +294,55 @@ describe("createMobileController", () => {
     expect(store.getState().taskTerminalOutput).toContain("Second line");
   });
 
+  it("selects a desktop and refreshes status through the active client", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.getStatus)
+      .mockResolvedValueOnce({
+        state: "running",
+        desktopId: "desktop-1",
+        desktopName: "Studio Mac",
+        lanHost: "0.0.0.0",
+        lanPort: 48120,
+        pairingCode: null
+      })
+      .mockResolvedValueOnce({
+        state: "running",
+        desktopId: "desktop-2",
+        desktopName: "Laptop",
+        lanHost: "0.0.0.0",
+        lanPort: 48120,
+        pairingCode: null
+      });
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+    await controller.selectDesktop("desktop-2");
+
+    expect(store.getState()).toMatchObject({
+      selectedDesktopId: "desktop-2",
+      desktopName: "Laptop",
+      connectionState: "connected"
+    });
+    expect(client.getStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces no-selected-desktop errors during bootstrap", async () => {
+    const store = createSessionStore();
+    const client = createClientMock();
+    vi.mocked(client.getStatus).mockRejectedValueOnce(
+      new Error("Select a desktop before connecting remotely.")
+    );
+    const controller = createMobileController(client, store);
+
+    await controller.bootstrap();
+
+    expect(store.getState()).toMatchObject({
+      connectionState: "error",
+      errorMessage: "Select a desktop before connecting remotely."
+    });
+  });
+
   it("refreshes desktop-originated task list changes in the background", async () => {
     vi.useFakeTimers();
     const store = createSessionStore();
