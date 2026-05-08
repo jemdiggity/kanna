@@ -776,6 +776,7 @@ pub fn run() {
             commands::fs::read_builtin_resource,
             commands::fs::list_builtin_resources,
             commands::fs::read_clipboard_image_png,
+            commands::sqlite::backup_sqlite_database,
             // Mobile commands
             commands::mobile::mobile_server_status,
             commands::mobile::create_mobile_pairing_session,

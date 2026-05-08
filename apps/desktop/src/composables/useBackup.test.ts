@@ -62,6 +62,13 @@ describe("useBackup", () => {
       expect(ts!.getMinutes()).toBe(30);
     });
 
+    it("parses a valid backup filename with a collision suffix", () => {
+      const ts = parseBackupTimestamp("kanna-v2.db.backup-2026-03-21T10-30-00-1");
+      expect(ts).toBeInstanceOf(Date);
+      expect(ts!.getFullYear()).toBe(2026);
+      expect(ts!.getMinutes()).toBe(30);
+    });
+
     it("returns null for non-backup filenames", () => {
       expect(parseBackupTimestamp("kanna-v2.db")).toBeNull();
       expect(parseBackupTimestamp("random-file.txt")).toBeNull();
@@ -82,58 +89,39 @@ describe("useBackup", () => {
   });
 
   describe("createBackup", () => {
-    it("copies the DB file with a backup timestamp", async () => {
+    it("creates the backup through the SQLite backup command", async () => {
       await createBackup("kanna-v2.db");
 
-      const copyCall = testState.invokeCalls.find((c) => c.cmd === "copy_file" && !String((c.args as { src: string }).src).includes("-wal") && !String((c.args as { src: string }).src).includes("-shm"));
-      expect(copyCall).toBeTruthy();
-      expect((copyCall!.args as { src: string }).src).toBe("/mock/data/dir/kanna-v2.db");
-      expect((copyCall!.args as { dst: string }).dst).toMatch(/\/mock\/data\/dir\/kanna-v2\.db\.backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
+      const backupCall = testState.invokeCalls.find((c) => c.cmd === "backup_sqlite_database");
+      expect(backupCall).toBeTruthy();
+      expect(backupCall!.args).toEqual({ dbName: "kanna-v2.db" });
     });
 
-    it("checks for WAL and SHM sidecars", async () => {
+    it("does not copy WAL and SHM sidecars from a live database", async () => {
       await createBackup("kanna-v2.db");
 
-      const walCheck = testState.invokeCalls.find(
-        (c) => c.cmd === "file_exists" && (c.args as { path?: string }).path?.includes("-wal")
+      const liveCopyCall = testState.invokeCalls.find((c) =>
+        c.cmd === "copy_file" && String((c.args as { src?: string }).src).includes("kanna-v2.db")
       );
-      const shmCheck = testState.invokeCalls.find(
-        (c) => c.cmd === "file_exists" && (c.args as { path?: string }).path?.includes("-shm")
-      );
-      expect(walCheck).toBeTruthy();
-      expect(shmCheck).toBeTruthy();
-    });
-
-    it("copies WAL sidecar when it exists", async () => {
-      testState.invokeResults.file_exists = () => {
-        // All files exist
-        return true;
-      };
-      await createBackup("kanna-v2.db");
-
-      const walCopy = testState.invokeCalls.find(
-        (c) => c.cmd === "copy_file" && (c.args as { src?: string }).src?.includes("-wal")
-      );
-      expect(walCopy).toBeTruthy();
-      expect((walCopy!.args as { src: string }).src).toBe("/mock/data/dir/kanna-v2.db-wal");
+      expect(liveCopyCall).toBeUndefined();
     });
 
     it("skips backup if DB file does not exist", async () => {
       testState.invokeResults.file_exists = false;
       await createBackup("kanna-v2.db");
 
-      const copyCall = testState.invokeCalls.find((c) => c.cmd === "copy_file");
-      expect(copyCall).toBeUndefined();
+      const backupCall = testState.invokeCalls.find((c) => c.cmd === "backup_sqlite_database");
+      expect(backupCall).toBeUndefined();
     });
 
-      it("flushes WAL when db handle is provided", async () => {
+    it("does not truncate WAL while an independent server writer may be active", async () => {
       const mockDb = {
         execute: vi.fn(async () => ({ rowsAffected: 0 })),
         select: vi.fn(async () => []),
       };
       await createBackup("kanna-v2.db", mockDb as never);
 
-      expect(mockDb.execute).toHaveBeenCalledWith("PRAGMA wal_checkpoint(TRUNCATE)");
+      expect(mockDb.execute).not.toHaveBeenCalledWith("PRAGMA wal_checkpoint(TRUNCATE)");
     });
 
     it("triggers cleanup after backup", async () => {
@@ -265,8 +253,8 @@ describe("useBackup", () => {
     it("calls createBackup", async () => {
       await backupOnStartup("kanna-v2.db");
 
-      const copyCall = testState.invokeCalls.find((c) => c.cmd === "copy_file");
-      expect(copyCall).toBeTruthy();
+      const backupCall = testState.invokeCalls.find((c) => c.cmd === "backup_sqlite_database");
+      expect(backupCall).toBeTruthy();
     });
 
     it("does not throw on failure", async () => {

@@ -7,6 +7,10 @@ interface AppliedMigrationRow {
   id: string;
 }
 
+interface QuickCheckRow {
+  quick_check?: unknown;
+}
+
 export async function resolveDbName(): Promise<string> {
   if (!tauriMock.isTauri) return "mock";
 
@@ -34,7 +38,32 @@ export async function loadDatabase(): Promise<{ db: DbHandle; dbName: string }> 
   await backupOnStartup(dbName);
   const { default: Database } = await import("@tauri-apps/plugin-sql");
   const db = (await Database.load(`sqlite:${dbName}`)) as unknown as DbHandle;
+  await checkDatabaseHealth(db, "startup");
   return { db, dbName };
+}
+
+export async function checkDatabaseHealth(db: DbHandle, context: string): Promise<void> {
+  let rows: QuickCheckRow[];
+  try {
+    rows = await db.select<QuickCheckRow>("PRAGMA quick_check");
+  } catch (error) {
+    throw new Error(databaseHealthErrorMessage(context, String(error)));
+  }
+
+  const results = rows.map((row) => String(row.quick_check ?? ""));
+  if (results.length > 0 && results.every((result) => result === "ok")) {
+    return;
+  }
+
+  throw new Error(databaseHealthErrorMessage(context, results.join("; ") || "no quick_check rows"));
+}
+
+function databaseHealthErrorMessage(context: string, detail: string): string {
+  return [
+    `Database health check failed during ${context}.`,
+    `SQLite reported: ${detail}.`,
+    "Stop all Kanna processes, preserve the current database files, and restore from a recent backup or a vetted .recover output before continuing.",
+  ].join(" ");
 }
 
 export async function runMigrations(db: DbHandle): Promise<void> {

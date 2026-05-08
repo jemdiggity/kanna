@@ -5,6 +5,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 #[cfg(test)]
 use std::path::PathBuf;
+use std::time::Duration;
+
+const SQLITE_BUSY_TIMEOUT_MS: u64 = 10_000;
+const SQLITE_WAL_AUTOCHECKPOINT_PAGES: i64 = 100;
 
 #[derive(Debug, Serialize)]
 pub struct PipelineItem {
@@ -67,16 +71,49 @@ pub struct NewPipelineItem<'a> {
     pub base_ref: Option<&'a str>,
 }
 
+#[derive(Debug)]
 pub struct Db {
     conn: Connection,
 }
 
+fn database_open_flags() -> OpenFlags {
+    OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_FULL_MUTEX
+}
+
+#[cfg(test)]
+fn database_create_flags() -> OpenFlags {
+    database_open_flags() | OpenFlags::SQLITE_OPEN_CREATE
+}
+
+fn configure_shared_database_connection(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.busy_timeout(Duration::from_millis(SQLITE_BUSY_TIMEOUT_MS))?;
+    let journal_mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
+    if !journal_mode.eq_ignore_ascii_case("wal") {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "expected SQLite journal_mode WAL, got {journal_mode}"
+        )));
+    }
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.pragma_update(None, "wal_autocheckpoint", SQLITE_WAL_AUTOCHECKPOINT_PAGES)?;
+    run_quick_check(conn)?;
+    Ok(())
+}
+
+fn run_quick_check(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let result: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+    if result == "ok" {
+        return Ok(());
+    }
+
+    Err(rusqlite::Error::InvalidParameterName(format!(
+        "SQLite quick_check failed: {result}"
+    )))
+}
+
 impl Db {
     pub fn open(path: &str) -> Result<Self, rusqlite::Error> {
-        let conn = Connection::open_with_flags(
-            path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
+        let conn = Connection::open_with_flags(path, database_open_flags())?;
+        configure_shared_database_connection(&conn)?;
         Ok(Self { conn })
     }
 
@@ -92,12 +129,8 @@ impl Db {
     pub fn open_for_tests(path: &str) -> Result<Self, rusqlite::Error> {
         let path_buf = PathBuf::from(path);
         let _ = std::fs::remove_file(&path_buf);
-        let conn = Connection::open_with_flags(
-            &path_buf,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
+        let conn = Connection::open_with_flags(&path_buf, database_create_flags())?;
+        configure_shared_database_connection(&conn)?;
         let db = Self { conn };
         db.init_test_schema()?;
         Ok(db)
@@ -645,8 +678,9 @@ fn sqlite_value_to_json(value: rusqlite::types::ValueRef<'_>) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{Db, NewPipelineItem};
+    use super::{database_open_flags, Db, NewPipelineItem};
     use rusqlite::Connection;
+    use rusqlite::OpenFlags;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -659,6 +693,109 @@ mod tests {
             .as_nanos();
         let counter = TEMP_DB_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("kanna-server-db-{suffix}-{counter}.sqlite"))
+    }
+
+    #[test]
+    fn database_open_flags_use_sqlite_mutexes_for_shared_desktop_db() {
+        let flags = database_open_flags();
+
+        assert!(flags.contains(OpenFlags::SQLITE_OPEN_FULL_MUTEX));
+        assert!(!flags.contains(OpenFlags::SQLITE_OPEN_NO_MUTEX));
+    }
+
+    #[test]
+    fn open_applies_desktop_compatible_pragmas() {
+        let path = temp_db_path();
+        let conn = Connection::open(&path).expect("open temp db");
+        conn.execute_batch("CREATE TABLE probe (id INTEGER PRIMARY KEY);")
+            .expect("seed db");
+        drop(conn);
+
+        let db = Db::open(path.to_str().expect("utf8 path")).expect("open db");
+
+        let journal_mode: String = db
+            .conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("journal mode");
+        let foreign_keys: i64 = db
+            .conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("foreign keys");
+        let busy_timeout: i64 = db
+            .conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .expect("busy timeout");
+        let wal_autocheckpoint: i64 = db
+            .conn
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))
+            .expect("wal autocheckpoint");
+
+        assert_eq!(journal_mode, "wal");
+        assert_eq!(foreign_keys, 1);
+        assert!(busy_timeout >= 10_000);
+        assert_eq!(wal_autocheckpoint, 100);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn server_connection_opens_with_desktop_like_wal_client_active() {
+        let path = temp_db_path();
+        let desktop_conn = Connection::open(&path).expect("open desktop-like db");
+        desktop_conn
+            .busy_timeout(std::time::Duration::from_millis(10_000))
+            .expect("set busy timeout");
+        desktop_conn
+            .execute_batch(
+                r#"
+                PRAGMA journal_mode = WAL;
+                PRAGMA foreign_keys = ON;
+                PRAGMA wal_autocheckpoint = 100;
+                CREATE TABLE pipeline_item (
+                  id TEXT PRIMARY KEY,
+                  stage TEXT NOT NULL,
+                  previous_stage TEXT,
+                  closed_at TEXT,
+                  updated_at TEXT
+                );
+                INSERT INTO pipeline_item (id, stage) VALUES ('task-1', 'in progress');
+                "#,
+            )
+            .expect("seed desktop-like db");
+
+        let db = Db::open(path.to_str().expect("utf8 path")).expect("open server db");
+        db.close_pipeline_item("task-1").expect("server write");
+
+        let stage: String = desktop_conn
+            .query_row(
+                "SELECT stage FROM pipeline_item WHERE id = 'task-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("desktop-like read");
+        assert_eq!(stage, "done");
+
+        drop(db);
+        drop(desktop_conn);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn open_fails_with_clear_error_when_quick_check_cannot_read_database() {
+        let path = temp_db_path();
+        std::fs::write(&path, b"this is not a sqlite database").expect("write corrupt db");
+
+        let err = Db::open(path.to_str().expect("utf8 path")).expect_err("corrupt db should fail");
+        let message = err.to_string();
+
+        assert!(
+            message.contains("database disk image is malformed")
+                || message.contains("file is not a database")
+                || message.contains("quick_check"),
+            "unexpected error: {message}"
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

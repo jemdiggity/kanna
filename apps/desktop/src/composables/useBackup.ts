@@ -4,7 +4,7 @@ import type { Ref } from "vue";
 import type { DbHandle } from "@kanna/db";
 
 const RETENTION_DAYS = 7;
-const BACKUP_SUFFIX_REGEX = /\.backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})$/;
+const BACKUP_SUFFIX_REGEX = /\.backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})(?:-\d+)?$/;
 const LEGACY_APP_DATA_DIR_NAME = "com.kanna.app";
 
 function backupTimestamp(): string {
@@ -62,31 +62,13 @@ export async function migrateLegacyDatabaseIfNeeded(dbName: string): Promise<voi
 
 export async function createBackup(
   dbName: string,
-  db?: DbHandle | null
+  _db?: DbHandle | null
 ): Promise<void> {
   const dbPath = await resolveDbPath(dbName);
   const exists = await invoke<boolean>("file_exists", { path: dbPath });
   if (!exists) return;
 
-  // Flush WAL before copying. TRUNCATE checkpoints and empties the WAL file,
-  // preventing it from accumulating to several MB between backups.
-  if (db) {
-    try {
-      await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
-    } catch (e) {
-      console.warn("[backup] WAL checkpoint failed (non-fatal):", e);
-    }
-  }
-
-  const ts = backupTimestamp();
-  const backupPath = `${dbPath}.backup-${ts}`;
-
-  // Copy main DB file
-  await invoke("copy_file", { src: dbPath, dst: backupPath });
-
-  // Copy WAL/SHM sidecars if they exist
-  await copyIfExists(`${dbPath}-wal`, `${backupPath}-wal`);
-  await copyIfExists(`${dbPath}-shm`, `${backupPath}-shm`);
+  const backupPath = await invoke<string>("backup_sqlite_database", { dbName });
 
   console.log(`[backup] created: ${backupPath}`);
 
