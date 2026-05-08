@@ -557,6 +557,44 @@ impl Db {
         Ok(())
     }
 
+    pub fn clear_pipeline_item_stage_result(&self, id: &str) -> Result<(), rusqlite::Error> {
+        let rows_affected = self.conn.execute(
+            "UPDATE pipeline_item SET stage_result = NULL, updated_at = datetime('now') WHERE id = ?",
+            [id],
+        )?;
+        if rows_affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub fn update_pipeline_item_stage(&self, id: &str, stage: &str) -> Result<(), rusqlite::Error> {
+        let rows_affected = self.conn.execute(
+            "UPDATE pipeline_item SET stage = ?, updated_at = datetime('now') WHERE id = ?",
+            (stage, id),
+        )?;
+        if rows_affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub fn update_pipeline_item_stage_state(
+        &self,
+        id: &str,
+        stage: &str,
+        stage_result: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        let rows_affected = self.conn.execute(
+            "UPDATE pipeline_item SET stage = ?, stage_result = ?, updated_at = datetime('now') WHERE id = ?",
+            (stage, stage_result, id),
+        )?;
+        if rows_affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
     pub fn list_task_ports(&self) -> Result<Vec<i64>, rusqlite::Error> {
         let mut stmt = self
             .conn

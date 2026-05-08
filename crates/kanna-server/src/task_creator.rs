@@ -31,6 +31,14 @@ struct PipelineStage {
     prompt: Option<String>,
     agent_provider: Option<String>,
     transition: Option<String>,
+    mode: Option<PipelineStageMode>,
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PipelineStageMode {
+    NewTask,
+    Continue,
 }
 
 #[derive(Default, Deserialize)]
@@ -99,7 +107,7 @@ pub(crate) fn prepare_advance_stage_for_api(
     db: &Db,
     config: &Config,
     source_task_id: &str,
-) -> Result<PreparedTaskSpawn, String> {
+) -> Result<PreparedStageTransition, String> {
     let source_task = db
         .get_task_stage_source(source_task_id)
         .map_err(|e| format!("db error: {}", e))?
@@ -142,8 +150,20 @@ pub(crate) fn prepare_advance_stage_for_api(
     let explicit_provider = if next_stage.agent.is_some() {
         None
     } else {
-        source_task.agent_provider
+        source_task.agent_provider.clone()
     };
+
+    if next_stage.mode == Some(PipelineStageMode::Continue) {
+        return Ok(PreparedStageTransition::Continue(prepare_continue_stage(
+            source_task_id,
+            &current_stage_name,
+            &next_stage.name,
+            source_task.stage_result.clone(),
+            &task_prompt,
+            source_task.branch.as_deref(),
+            source_task.agent_provider.as_deref(),
+        )?));
+    }
 
     prepare_task_spawn(
         db,
@@ -162,13 +182,14 @@ pub(crate) fn prepare_advance_stage_for_api(
             allowed_tools: Vec::new(),
         },
     )
+    .map(PreparedStageTransition::Spawn)
 }
 
 pub(crate) fn prepare_auto_stage_completion_for_api(
     db: &Db,
     config: &Config,
     source_task_id: &str,
-) -> Result<Option<PreparedTaskSpawn>, String> {
+) -> Result<Option<PreparedStageTransition>, String> {
     let source_task = db
         .get_task_stage_source(source_task_id)
         .map_err(|e| format!("db error: {}", e))?
@@ -217,8 +238,22 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
     let explicit_provider = if next_stage.agent.is_some() {
         None
     } else {
-        source_task.agent_provider
+        source_task.agent_provider.clone()
     };
+
+    if next_stage.mode == Some(PipelineStageMode::Continue) {
+        return prepare_continue_stage(
+            source_task_id,
+            &current_stage_name,
+            &next_stage.name,
+            source_task.stage_result.clone(),
+            &task_prompt,
+            source_task.branch.as_deref(),
+            source_task.agent_provider.as_deref(),
+        )
+        .map(PreparedStageTransition::Continue)
+        .map(Some);
+    }
 
     prepare_task_spawn(
         db,
@@ -237,6 +272,7 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
             allowed_tools: Vec::new(),
         },
     )
+    .map(PreparedStageTransition::Spawn)
     .map(Some)
 }
 
@@ -333,6 +369,19 @@ pub(crate) struct PreparedTaskSpawn {
     cols: u16,
     rows: u16,
     agent_provider: DaemonAgentProvider,
+}
+
+pub(crate) enum PreparedStageTransition {
+    Spawn(PreparedTaskSpawn),
+    Continue(PreparedStageContinue),
+}
+
+pub(crate) struct PreparedStageContinue {
+    task_id: String,
+    previous_stage: String,
+    next_stage: String,
+    previous_stage_result: Option<String>,
+    input: Vec<u8>,
 }
 
 pub(crate) fn prepare_task_for_api(
@@ -583,6 +632,73 @@ pub(crate) async fn spawn_prepared_task_for_api(
     })
 }
 
+pub(crate) async fn continue_prepared_stage_for_api(
+    db_path: &str,
+    daemon: &mut DaemonClient,
+    prepared: PreparedStageContinue,
+) -> Result<crate::mobile_api::TaskActionResponse, String> {
+    {
+        let db = Db::open(db_path).map_err(|e| format!("db error: {}", e))?;
+        db.update_pipeline_item_stage(&prepared.task_id, &prepared.next_stage)
+            .map_err(|e| format!("db error: {}", e))?;
+        if let Err(err) = db.clear_pipeline_item_stage_result(&prepared.task_id) {
+            let _ = db.update_pipeline_item_stage(&prepared.task_id, &prepared.previous_stage);
+            return Err(format!("db error: {}", err));
+        }
+    }
+
+    let event = daemon
+        .send_command(&DaemonCommand::Input {
+            session_id: prepared.task_id.clone(),
+            data: prepared.input,
+        })
+        .await
+        .map_err(|e| {
+            let _ = rollback_continue_stage(
+                db_path,
+                &prepared.task_id,
+                &prepared.previous_stage,
+                prepared.previous_stage_result.as_deref(),
+            );
+            format!("daemon error: {}", e)
+        })?;
+
+    match event {
+        DaemonEvent::Ok => Ok(crate::mobile_api::TaskActionResponse {
+            task_id: prepared.task_id,
+        }),
+        DaemonEvent::Error { message, .. } => {
+            let _ = rollback_continue_stage(
+                db_path,
+                &prepared.task_id,
+                &prepared.previous_stage,
+                prepared.previous_stage_result.as_deref(),
+            );
+            Err(format!("daemon error: {}", message))
+        }
+        other => {
+            let _ = rollback_continue_stage(
+                db_path,
+                &prepared.task_id,
+                &prepared.previous_stage,
+                prepared.previous_stage_result.as_deref(),
+            );
+            Err(format!("unexpected daemon response: {:?}", other))
+        }
+    }
+}
+
+fn rollback_continue_stage(
+    db_path: &str,
+    task_id: &str,
+    previous_stage: &str,
+    previous_stage_result: Option<&str>,
+) -> Result<(), String> {
+    let db = Db::open(db_path).map_err(|e| format!("db error: {}", e))?;
+    db.update_pipeline_item_stage_state(task_id, previous_stage, previous_stage_result)
+        .map_err(|e| format!("db error: {}", e))
+}
+
 fn read_repo_config(repo_path: &str) -> Result<RepoConfig, String> {
     let path = Path::new(repo_path).join(".kanna/config.json");
     match std::fs::read_to_string(&path) {
@@ -642,6 +758,34 @@ fn build_target_stage_prompt(
     }
 
     Ok(task_prompt.to_string())
+}
+
+fn prepare_continue_stage(
+    source_task_id: &str,
+    previous_stage: &str,
+    next_stage: &str,
+    previous_stage_result: Option<String>,
+    prompt: &str,
+    source_branch: Option<&str>,
+    agent_provider: Option<&str>,
+) -> Result<PreparedStageContinue, String> {
+    source_branch.ok_or_else(|| format!("task has no branch: {}", source_task_id))?;
+    Ok(PreparedStageContinue {
+        task_id: source_task_id.to_string(),
+        previous_stage: previous_stage.to_string(),
+        next_stage: next_stage.to_string(),
+        previous_stage_result,
+        input: encode_agent_stage_input(prompt, agent_provider),
+    })
+}
+
+fn encode_agent_stage_input(stage_prompt: &str, agent_provider: Option<&str>) -> Vec<u8> {
+    let submit = if agent_provider == Some("claude") {
+        "\u{1b}[13u"
+    } else {
+        "\r"
+    };
+    format!("\u{1b}[200~{stage_prompt}\u{1b}[201~{submit}").into_bytes()
 }
 
 fn resolve_current_source_worktree_branch(
@@ -1181,13 +1325,17 @@ fn short_socket_path(dir: &PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_stage_prompt, prepare_advance_stage_for_api, prepare_revision_task_for_api,
-        prepare_task_for_api, read_default_agent_provider_setting, PromptContext,
+        build_stage_prompt, continue_prepared_stage_for_api, prepare_advance_stage_for_api,
+        prepare_revision_task_for_api, prepare_task_for_api, read_default_agent_provider_setting,
+        PreparedStageTransition, PromptContext,
     };
     use crate::config::Config;
+    use crate::daemon_client::DaemonClient;
     use crate::db::Db;
     use crate::mobile_api::CreateTaskRequest;
     use std::process::Command;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
 
     #[test]
     fn build_stage_prompt_replaces_base_ref() {
@@ -1207,6 +1355,37 @@ mod tests {
             prompt,
             "Review changes since origin/main.\n\nCurrent branch task-source."
         );
+    }
+
+    fn test_daemon_socket_path(daemon_dir: &str) -> std::path::PathBuf {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let dir = std::path::PathBuf::from(daemon_dir);
+        let mut hasher = DefaultHasher::new();
+        dir.hash(&mut hasher);
+        let hash = hasher.finish() as u32;
+        std::path::PathBuf::from(format!("/tmp/kanna-{:08x}.sock", hash))
+    }
+
+    async fn spawn_fake_daemon_once(
+        daemon_dir: String,
+    ) -> tokio::task::JoinHandle<kanna_daemon::protocol::Command> {
+        let socket_path = test_daemon_socket_path(&daemon_dir);
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let command: kanna_daemon::protocol::Command =
+                serde_json::from_str(line.trim()).unwrap();
+            let response = serde_json::to_string(&kanna_daemon::protocol::Event::Ok).unwrap();
+            write_half.write_all(response.as_bytes()).await.unwrap();
+            write_half.write_all(b"\n").await.unwrap();
+            command
+        })
     }
 
     #[test]
@@ -1322,7 +1501,10 @@ mod tests {
         db.update_test_pipeline_item_base_ref("task-1", "origin/main")
             .unwrap();
 
-        let prepared = prepare_advance_stage_for_api(&db, &config, "task-1").unwrap();
+        let prepared = match prepare_advance_stage_for_api(&db, &config, "task-1").unwrap() {
+            PreparedStageTransition::Spawn(prepared) => prepared,
+            PreparedStageTransition::Continue(_) => panic!("expected new task transition"),
+        };
         let created_source = db
             .get_task_stage_source(&prepared.created_task.task_id)
             .unwrap()
@@ -1435,7 +1617,10 @@ mod tests {
             firebase_project_id: "kanna-local".to_string(),
             firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
             firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
-            daemon_dir: "/tmp/kanna-daemon".to_string(),
+            daemon_dir: std::env::temp_dir()
+                .join(format!("kanna-daemon-continue-{}", std::process::id()))
+                .to_string_lossy()
+                .to_string(),
             db_path: Db::test_db_path("advance-stage-renamed-source"),
             desktop_id: "desktop-1".to_string(),
             desktop_secret: Some("desktop-secret".to_string()),
@@ -1467,7 +1652,10 @@ mod tests {
         db.update_test_pipeline_item_base_ref("task-1", "origin/dev")
             .unwrap();
 
-        let prepared = prepare_advance_stage_for_api(&db, &config, "task-1").unwrap();
+        let prepared = match prepare_advance_stage_for_api(&db, &config, "task-1").unwrap() {
+            PreparedStageTransition::Spawn(prepared) => prepared,
+            PreparedStageTransition::Continue(_) => panic!("expected new task transition"),
+        };
 
         assert_eq!(prepared.created_task.repo_id, "repo-1");
         assert_eq!(prepared.created_task.stage, "pr");
@@ -1476,6 +1664,309 @@ mod tests {
             "Review task: Fix the mobile shell\n\nReview branch renamed/source-branch against origin/dev"
         );
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[tokio::test]
+    async fn prepare_advance_stage_continues_commit_stage_in_same_task_and_worktree() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "kanna-stage-advance-continue-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&repo_root);
+        std::fs::create_dir_all(repo_root.join(".kanna/pipelines")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna/agents/commit")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna-worktrees")).unwrap();
+        std::fs::write(repo_root.join("README.md"), "test repo").unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/pipelines/default.json"),
+            r#"{
+  "stages": [
+    { "name": "in progress", "transition": "manual" },
+    { "name": "commit", "transition": "auto", "mode": "continue", "agent": "commit", "prompt": "Commit $TASK_PROMPT from $BRANCH after $PREV_RESULT" },
+    { "name": "pr", "transition": "manual" }
+  ]
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/agents/commit/AGENT.md"),
+            "---\nagent_provider: claude\n---\nCommit agent",
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "README.md", ".kanna"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "task-source"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        let source_worktree = repo_root.join(".kanna-worktrees/task-source");
+        assert!(Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                source_worktree.to_string_lossy().as_ref(),
+                "task-source",
+            ])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: "/tmp/kanna-daemon".to_string(),
+            db_path: Db::test_db_path("advance-stage-continue"),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "0.0.0.0".to_string(),
+            lan_port: 48120,
+            pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.insert_test_pipeline_item(
+            "task-1",
+            "repo-1",
+            "Fix stage promotion",
+            Some("Fix stage promotion"),
+            "in progress",
+            "2026-04-17 07:00:00",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_stage_context(
+            "task-1",
+            "task-source",
+            "default",
+            Some("{\"status\":\"success\",\"summary\":\"implemented\"}"),
+            "claude",
+        )
+        .unwrap();
+
+        let prepared = prepare_advance_stage_for_api(&db, &config, "task-1").unwrap();
+        let continuation = match prepared {
+            PreparedStageTransition::Continue(continuation) => continuation,
+            PreparedStageTransition::Spawn(_) => panic!("expected continue transition"),
+        };
+
+        assert_eq!(continuation.task_id, "task-1");
+        assert_eq!(continuation.previous_stage, "in progress");
+        assert_eq!(continuation.next_stage, "commit");
+        assert_eq!(
+            String::from_utf8(continuation.input.clone()).unwrap(),
+            "\u{1b}[200~Commit agent\n\nCommit Fix stage promotion from task-source after {\"status\":\"success\",\"summary\":\"implemented\"}\u{1b}[201~\u{1b}[13u"
+        );
+        assert_eq!(db.list_pipeline_items("repo-1").unwrap().len(), 1);
+
+        let fake_daemon = spawn_fake_daemon_once(config.daemon_dir.clone()).await;
+        let mut daemon = DaemonClient::connect(&config.daemon_dir).await.unwrap();
+        let continued = continue_prepared_stage_for_api(&config.db_path, &mut daemon, continuation)
+            .await
+            .unwrap();
+        let command = fake_daemon.await.unwrap();
+        assert_eq!(continued.task_id, "task-1");
+        match command {
+            kanna_daemon::protocol::Command::Input { session_id, data } => {
+                assert_eq!(session_id, "task-1");
+                assert_eq!(
+                    String::from_utf8(data).unwrap(),
+                    "\u{1b}[200~Commit agent\n\nCommit Fix stage promotion from task-source after {\"status\":\"success\",\"summary\":\"implemented\"}\u{1b}[201~\u{1b}[13u"
+                );
+            }
+            other => panic!("expected daemon input command, got {:?}", other),
+        }
+        let updated_source = db.get_task_stage_source("task-1").unwrap().unwrap();
+        assert_eq!(updated_source.stage.as_deref(), Some("commit"));
+        assert_eq!(updated_source.branch.as_deref(), Some("task-source"));
+        assert_eq!(updated_source.stage_result, None);
+        assert_eq!(updated_source.closed_at, None);
+        assert_eq!(db.list_pipeline_items("repo-1").unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn prepare_auto_stage_completion_from_commit_creates_pr_task_from_original_branch() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "kanna-stage-auto-pr-after-continue-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&repo_root);
+        std::fs::create_dir_all(repo_root.join(".kanna/pipelines")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna/agents/pr")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna-worktrees")).unwrap();
+        std::fs::write(repo_root.join("README.md"), "test repo").unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/pipelines/default.json"),
+            r#"{
+  "stages": [
+    { "name": "in progress", "transition": "manual" },
+    { "name": "commit", "transition": "auto", "mode": "continue" },
+    { "name": "pr", "transition": "manual", "agent": "pr", "prompt": "Create PR for $BRANCH from $SOURCE_WORKTREE after $PREV_RESULT" }
+  ]
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/agents/pr/AGENT.md"),
+            "---\nagent_provider: claude\n---\nPR agent for $TASK_PROMPT",
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "README.md", ".kanna"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "task-source"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        let source_worktree = repo_root.join(".kanna-worktrees/task-source");
+        assert!(Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                source_worktree.to_string_lossy().as_ref(),
+                "task-source",
+            ])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: "/tmp/kanna-daemon".to_string(),
+            db_path: Db::test_db_path("auto-pr-after-continue"),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "0.0.0.0".to_string(),
+            lan_port: 48120,
+            pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.insert_test_pipeline_item(
+            "task-1",
+            "repo-1",
+            "Fix stage promotion",
+            Some("Fix stage promotion"),
+            "commit",
+            "2026-04-17 07:00:00",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_stage_context(
+            "task-1",
+            "task-source",
+            "default",
+            Some("{\"status\":\"success\",\"summary\":\"committed\"}"),
+            "claude",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_base_ref("task-1", "origin/main")
+            .unwrap();
+
+        let prepared =
+            super::prepare_auto_stage_completion_for_api(&db, &config, "task-1").unwrap();
+        let spawn = match prepared {
+            Some(PreparedStageTransition::Spawn(spawn)) => spawn,
+            Some(PreparedStageTransition::Continue(_)) => panic!("expected pr task spawn"),
+            None => panic!("expected auto transition"),
+        };
+
+        assert_eq!(spawn.created_task.repo_id, "repo-1");
+        assert_eq!(spawn.created_task.stage, "pr");
+        assert_ne!(spawn.created_task.task_id, "task-1");
+        assert_eq!(
+            spawn.created_task.title,
+            format!(
+                "PR agent for Fix stage promotion\n\nCreate PR for task-source from {} after {{\"status\":\"success\",\"summary\":\"committed\"}}",
+                source_worktree.to_string_lossy()
+            )
+        );
+        assert!(spawn.cwd.contains(".kanna-worktrees/task-"));
+        assert!(!spawn.cwd.ends_with("task-source"));
+        let created_source = db
+            .get_task_stage_source(&spawn.created_task.task_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(created_source.base_ref.as_deref(), Some("origin/main"));
+
         let _ = std::fs::remove_dir_all(&repo_root);
     }
 

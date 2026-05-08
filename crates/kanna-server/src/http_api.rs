@@ -519,7 +519,7 @@ async fn advance_stage(
             .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e));
     }
 
-    let prepared = {
+    let transition = {
         let db = Db::open(&state.config.db_path).map_err(|e| {
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -537,25 +537,39 @@ async fn advance_stage(
                 format!("daemon error: {}", e),
             )
         })?;
-    let created = crate::task_creator::spawn_prepared_task_for_api(&mut daemon, prepared)
-        .await
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let db = Db::open(&state.config.db_path).map_err(|e| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("db error: {}", e),
-        )
-    })?;
-    db.close_pipeline_item(&task_id).map_err(|e| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("db error: {}", e),
-        )
-    })?;
+    match transition {
+        crate::task_creator::PreparedStageTransition::Spawn(prepared) => {
+            let created = crate::task_creator::spawn_prepared_task_for_api(&mut daemon, prepared)
+                .await
+                .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            let db = Db::open(&state.config.db_path).map_err(|e| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("db error: {}", e),
+                )
+            })?;
+            db.close_pipeline_item(&task_id).map_err(|e| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("db error: {}", e),
+                )
+            })?;
 
-    Ok(Json(crate::mobile_api::TaskActionResponse {
-        task_id: created.task_id,
-    }))
+            Ok(Json(crate::mobile_api::TaskActionResponse {
+                task_id: created.task_id,
+            }))
+        }
+        crate::task_creator::PreparedStageTransition::Continue(prepared) => {
+            let continued = crate::task_creator::continue_prepared_stage_for_api(
+                &state.config.db_path,
+                &mut daemon,
+                prepared,
+            )
+            .await
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            Ok(Json(continued))
+        }
+    }
 }
 
 async fn complete_stage(
@@ -605,7 +619,7 @@ async fn complete_stage(
         return Ok(Json(crate::mobile_api::TaskActionResponse { task_id }));
     }
 
-    let prepared = {
+    let transition = {
         let db = Db::open(&state.config.db_path).map_err(|e| {
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -615,7 +629,7 @@ async fn complete_stage(
         crate::task_creator::prepare_auto_stage_completion_for_api(&db, &state.config, &task_id)
             .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?
     };
-    let Some(prepared) = prepared else {
+    let Some(transition) = transition else {
         return Ok(Json(crate::mobile_api::TaskActionResponse { task_id }));
     };
 
@@ -627,25 +641,39 @@ async fn complete_stage(
                 format!("daemon error: {}", e),
             )
         })?;
-    let created = crate::task_creator::spawn_prepared_task_for_api(&mut daemon, prepared)
-        .await
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let db = Db::open(&state.config.db_path).map_err(|e| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("db error: {}", e),
-        )
-    })?;
-    db.close_pipeline_item(&task_id).map_err(|e| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("db error: {}", e),
-        )
-    })?;
+    match transition {
+        crate::task_creator::PreparedStageTransition::Spawn(prepared) => {
+            let created = crate::task_creator::spawn_prepared_task_for_api(&mut daemon, prepared)
+                .await
+                .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            let db = Db::open(&state.config.db_path).map_err(|e| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("db error: {}", e),
+                )
+            })?;
+            db.close_pipeline_item(&task_id).map_err(|e| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("db error: {}", e),
+                )
+            })?;
 
-    Ok(Json(crate::mobile_api::TaskActionResponse {
-        task_id: created.task_id,
-    }))
+            Ok(Json(crate::mobile_api::TaskActionResponse {
+                task_id: created.task_id,
+            }))
+        }
+        crate::task_creator::PreparedStageTransition::Continue(prepared) => {
+            let continued = crate::task_creator::continue_prepared_stage_for_api(
+                &state.config.db_path,
+                &mut daemon,
+                prepared,
+            )
+            .await
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            Ok(Json(continued))
+        }
+    }
 }
 
 async fn request_revision(
