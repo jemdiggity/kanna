@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { buildGlobalKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
@@ -15,6 +17,18 @@ describe("file preview", () => {
     await client.createSession();
     await resetDatabase(client);
     fixtureRepoPath = await createSeedFixtureRepo("task-switch-minimal");
+    const scrollFixtureDir = join(fixtureRepoPath, "docs", "scroll");
+    await mkdir(scrollFixtureDir, { recursive: true });
+    await Promise.all(
+      Array.from({ length: 80 }, (_, index) => {
+        const paddedIndex = String(index).padStart(2, "0");
+        return writeFile(
+          join(scrollFixtureDir, `entry-${paddedIndex}.md`),
+          `# Scroll fixture ${paddedIndex}\n`,
+          "utf8",
+        );
+      }),
+    );
     fixtureRepoId = await importTestRepo(client, fixtureRepoPath, "file-preview-fixture");
   });
 
@@ -54,6 +68,19 @@ describe("file preview", () => {
     );
   }
 
+  async function isPickerVisible(): Promise<boolean> {
+    return await client.executeSync<boolean>(
+      `const modal = document.querySelector(".picker-modal");
+       if (!modal) return false;
+       const rect = modal.getBoundingClientRect();
+       const style = getComputedStyle(modal);
+       return style.display !== "none" &&
+         style.visibility !== "hidden" &&
+         rect.width > 0 &&
+         rect.height > 0;`,
+    );
+  }
+
   async function waitForPreviewHidden(): Promise<void> {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
@@ -71,6 +98,41 @@ describe("file preview", () => {
       await sleep(200);
     }
     throw new Error("preview modal did not become visible");
+  }
+
+  async function waitForPickerHidden(): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (!(await isPickerVisible())) return;
+      await sleep(200);
+    }
+    throw new Error("picker modal remained visible");
+  }
+
+  async function waitForPickerVisible(): Promise<void> {
+    await client.waitForElement(".picker-modal", 5000);
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (await isPickerVisible()) return;
+      await sleep(200);
+    }
+    throw new Error("picker modal did not become visible");
+  }
+
+  async function setPickerScrollTop(scrollTop: number): Promise<number> {
+    return await client.executeSync<number>(
+      `const list = document.querySelector(".file-list");
+       if (!(list instanceof HTMLElement)) return -1;
+       list.scrollTop = ${scrollTop};
+       return list.scrollTop;`,
+    );
+  }
+
+  async function pickerScrollTop(): Promise<number> {
+    return await client.executeSync<number>(
+      `const list = document.querySelector(".file-list");
+       return list instanceof HTMLElement ? list.scrollTop : -1;`,
+    );
   }
 
   async function waitForRenderedMarkdown(): Promise<void> {
@@ -109,10 +171,10 @@ describe("file preview", () => {
     await client.click(secondFile);
 
     expect(await previewedFilePath()).toBe("README.md");
-    await client.waitForNoElement(".picker-modal", 5000);
+    await waitForPickerHidden();
 
     await pressKey("p", { meta: true });
-    await client.waitForElement(".picker-modal", 5000);
+    await waitForPickerVisible();
 
     await pressKey("Escape");
     await client.waitForNoElement(".picker-modal", 5000);
@@ -140,7 +202,6 @@ describe("file preview", () => {
     expect(await client.getText(restoredModeBadge)).toBe("Rendered");
     await waitForRenderedMarkdown();
   });
-
   it("keeps file preview recall scoped to the selected task", async () => {
     await pressKey("Escape");
     await client.waitForNoElement(".picker-modal", 5000);
@@ -205,5 +266,42 @@ describe("file preview", () => {
     await selectTask(taskAId);
     await pressKey("π", { meta: true, alt: true, code: "KeyP" });
     expect(await previewedFilePath()).toBe("README.md");
+  });
+
+  it("preserves picker scroll position while preview hides and resumes it", async () => {
+    await pressKey("p", { meta: true });
+    await waitForPickerVisible();
+
+    expect(await setPickerScrollTop(320)).toBeGreaterThan(0);
+
+    await client.executeSync(
+      `const item = Array.from(document.querySelectorAll(".file-item"))
+         .find((element) => element.textContent?.includes("docs/scroll/entry-30.md"));
+       if (!(item instanceof HTMLElement)) {
+         throw new Error("scroll fixture file item was not rendered");
+       }
+       item.click();`,
+    );
+
+    await waitForPreviewVisible();
+    await waitForPickerHidden();
+
+    await client.executeSync(
+      `const overlay = document.querySelector(".preview-modal")?.parentElement;
+       if (!(overlay instanceof HTMLElement)) {
+         throw new Error("preview overlay was not rendered");
+       }
+       overlay.dispatchEvent(new MouseEvent("click", {
+         bubbles: true,
+         cancelable: true,
+         view: window,
+       }));`,
+    );
+    await waitForPreviewHidden();
+    await waitForPickerVisible();
+    expect(await pickerScrollTop()).toBe(320);
+
+    await pressKey("Escape");
+    await client.waitForNoElement(".picker-modal", 5000);
   });
 });
