@@ -34,6 +34,11 @@ export type RemoteDesktopInvoker = (
   request: RemoteDesktopInvocationRequest
 ) => Promise<unknown>;
 
+export type RemoteTaskTerminalObserver = (
+  request: { desktopId: string; taskId: string },
+  listener: (event: TaskTerminalStreamEvent) => void
+) => TaskTerminalSubscription;
+
 export type RemoteTransportErrorCode =
   | "no_selected_desktop"
   | "remote_invocation_failed"
@@ -59,42 +64,33 @@ export interface RemoteTransportDependencies {
   listDesktopRecords(): Promise<RemoteDesktopRecord[]>;
   getSelectedDesktopId(): string | null;
   invokeDesktop: RemoteDesktopInvoker;
+  observeTaskTerminal?: RemoteTaskTerminalObserver;
 }
 
 export function createRemoteTransport({
   listDesktopRecords,
   getSelectedDesktopId,
-  invokeDesktop
+  invokeDesktop,
+  observeTaskTerminal
 }: RemoteTransportDependencies): KannaTransport {
+  const request = async <T>(
+    method: RemoteDesktopInvocationRequest["method"],
+    path: string,
+    body: unknown | null
+  ): Promise<T> => {
+    const response = await invokeSelectedDesktop({
+      getSelectedDesktopId,
+      invokeDesktop,
+      method,
+      path,
+      body
+    });
+    return response as T;
+  };
+
   return {
     async getStatus(): Promise<MobileServerStatus> {
-      const desktopId = getSelectedDesktopId();
-      if (!desktopId) {
-        throw new RemoteTransportError(
-          "no_selected_desktop",
-          "Select a desktop before connecting remotely."
-        );
-      }
-
-      try {
-        const response = await invokeDesktop({
-          desktopId,
-          method: "GET",
-          path: "/v1/status",
-          body: null
-        });
-        return mapMobileServerStatus(response);
-      } catch (error) {
-        if (error instanceof RemoteTransportError) {
-          throw error;
-        }
-
-        throw new RemoteTransportError(
-          "remote_invocation_failed",
-          `Remote desktop request failed: ${formatErrorMessage(error)}`,
-          error
-        );
-      }
+      return mapMobileServerStatus(await request("GET", "/v1/status", null));
     },
     async listDesktops(): Promise<DesktopSummary[]> {
       const records = await listDesktopRecords();
@@ -108,38 +104,61 @@ export function createRemoteTransport({
         lastSeenAt: record.lastSeenAt ?? null,
       }));
     },
-    async listRepos(): Promise<RepoSummary[]> {
-      throw new Error("Remote repos transport not implemented yet");
+    listRepos: () => request<RepoSummary[]>("GET", "/v1/repos", null),
+    listRepoTasks: (repoId: string) =>
+      request<TaskSummary[]>(
+        "GET",
+        `/v1/repos/${encodeURIComponent(repoId)}/tasks`,
+        null
+      ),
+    listRecentTasks: () => request<TaskSummary[]>("GET", "/v1/tasks/recent", null),
+    searchTasks: (query) =>
+      request<TaskSummary[]>(
+        "GET",
+        `/v1/tasks/search?query=${encodeURIComponent(query)}`,
+        null
+      ),
+    createTask: (input: CreateTaskRequest) =>
+      request<CreateTaskResponse>("POST", "/v1/tasks", input),
+    runMergeAgent: (taskId: string) =>
+      request<TaskActionResponse>(
+        "POST",
+        `/v1/tasks/${encodeURIComponent(taskId)}/actions/run-merge-agent`,
+        null
+      ),
+    advanceTaskStage: (taskId: string) =>
+      request<TaskActionResponse>(
+        "POST",
+        `/v1/tasks/${encodeURIComponent(taskId)}/actions/advance-stage`,
+        null
+      ),
+    closeTask: async (taskId: string) => {
+      await request<void>(
+        "POST",
+        `/v1/tasks/${encodeURIComponent(taskId)}/actions/close`,
+        null
+      );
     },
-    async listRepoTasks(_repoId: string): Promise<TaskSummary[]> {
-      throw new Error("Remote repo tasks transport not implemented yet");
-    },
-    async listRecentTasks(): Promise<TaskSummary[]> {
-      throw new Error("Remote recent tasks transport not implemented yet");
-    },
-    async searchTasks(_query: string): Promise<TaskSummary[]> {
-      throw new Error("Remote search transport not implemented yet");
-    },
-    async createTask(_input: CreateTaskRequest): Promise<CreateTaskResponse> {
-      throw new Error("Remote create task transport not implemented yet");
-    },
-    async runMergeAgent(_taskId: string): Promise<TaskActionResponse> {
-      throw new Error("Remote merge-agent transport not implemented yet");
-    },
-    async advanceTaskStage(_taskId: string): Promise<TaskActionResponse> {
-      throw new Error("Remote advance-stage transport not implemented yet");
-    },
-    async closeTask(_taskId: string): Promise<void> {
-      throw new Error("Remote close-task transport not implemented yet");
-    },
-    async sendTaskInput(_taskId: string, _input: string): Promise<void> {
-      throw new Error("Remote task input transport not implemented yet");
+    sendTaskInput: async (taskId: string, input: string) => {
+      await request<void>(
+        "POST",
+        `/v1/tasks/${encodeURIComponent(taskId)}/input`,
+        { input }
+      );
     },
     observeTaskTerminal(
-      _taskId: string,
-      _listener: (event: TaskTerminalStreamEvent) => void
+      taskId: string,
+      listener: (event: TaskTerminalStreamEvent) => void
     ): TaskTerminalSubscription {
-      throw new Error("Remote terminal transport not implemented yet");
+      const desktopId = getSelectedDesktopOrThrow(getSelectedDesktopId);
+      if (!observeTaskTerminal) {
+        throw new RemoteTransportError(
+          "remote_invocation_failed",
+          "Remote terminal transport is not available."
+        );
+      }
+
+      return observeTaskTerminal({ desktopId, taskId }, listener);
     },
     async createPairingSession(): Promise<PairingSession> {
       throw new Error(
@@ -147,6 +166,55 @@ export function createRemoteTransport({
       );
     },
   };
+}
+
+async function invokeSelectedDesktop({
+  getSelectedDesktopId,
+  invokeDesktop,
+  method,
+  path,
+  body
+}: {
+  getSelectedDesktopId(): string | null;
+  invokeDesktop: RemoteDesktopInvoker;
+  method: RemoteDesktopInvocationRequest["method"];
+  path: string;
+  body: unknown | null;
+}): Promise<unknown> {
+  const desktopId = getSelectedDesktopOrThrow(getSelectedDesktopId);
+
+  try {
+    return await invokeDesktop({
+      desktopId,
+      method,
+      path,
+      body
+    });
+  } catch (error) {
+    if (error instanceof RemoteTransportError) {
+      throw error;
+    }
+
+    throw new RemoteTransportError(
+      "remote_invocation_failed",
+      `Remote desktop request failed: ${formatErrorMessage(error)}`,
+      error
+    );
+  }
+}
+
+function getSelectedDesktopOrThrow(
+  getSelectedDesktopId: () => string | null
+): string {
+  const desktopId = getSelectedDesktopId();
+  if (!desktopId) {
+    throw new RemoteTransportError(
+      "no_selected_desktop",
+      "Select a desktop before connecting remotely."
+    );
+  }
+
+  return desktopId;
 }
 
 function mapMobileServerStatus(response: unknown): MobileServerStatus {
