@@ -70,6 +70,7 @@ function item(id: string, overrides: Partial<PipelineItem>): PipelineItem {
     pipeline: "default",
     stage: "in progress",
     stage_result: null,
+    active_post_action: null,
     tags: "[]",
     pr_number: null,
     pr_url: null,
@@ -157,13 +158,41 @@ function mountSidebarWithRepos(
 
 describe("Sidebar", () => {
   beforeEach(() => {
-    getStageOrder.mockReturnValue(["merge", "pr", "review", "commit", "in progress"]);
+    getStageOrder.mockReturnValue(["merge", "pr", "review", "in progress"]);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     getStageOrder.mockReset();
-    getStageOrder.mockReturnValue(["merge", "pr", "review", "commit", "in progress"]);
+    getStageOrder.mockReturnValue(["merge", "pr", "review", "in progress"]);
+  });
+
+  it("prefixes active post-action tasks with an ASCII ellipsis and keeps the stage group", () => {
+    getStageOrder.mockReturnValue(["merge", "pr", "review", "in progress"]);
+    const wrapper = mountSidebar([
+      item("task-1", {
+        display_name: "Fix sidebar task ordering",
+        active_post_action: "commit",
+        stage: "in progress",
+      }),
+    ]);
+
+    expect(wrapper.text()).toContain("in progress");
+    expect(wrapper.text()).toContain("... Fix sidebar task ordering");
+    expect(wrapper.text()).not.toContain("commit");
+  });
+
+  it("prefixes pinned active post-action tasks", () => {
+    const wrapper = mountSidebar([
+      item("task-1", {
+        display_name: "Pinned task",
+        active_post_action: "commit",
+        pinned: 1,
+        pin_order: 0,
+      }),
+    ]);
+
+    expect(wrapper.text()).toContain("... Pinned task");
   });
 
   it("switches the sidebar into a filtered visual state and shows filtered repo counts", async () => {

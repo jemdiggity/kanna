@@ -169,7 +169,8 @@ function repoCountLabel(repoId: string): string {
 
 function itemTitle(item: PipelineItem): string {
   const raw = item.display_name || item.issue_title || item.prompt || t('tasks.untitled');
-  return raw.length > 40 ? raw.slice(0, 40) + "..." : raw;
+  const truncated = raw.length > 40 ? raw.slice(0, 40) + "..." : raw;
+  return item.active_post_action ? `... ${truncated}` : truncated;
 }
 
 const editingItemId = ref<string | null>(null);

@@ -60,6 +60,7 @@ function createItem(overrides: Partial<PipelineItem> = {}): PipelineItem {
     pipeline: "default",
     stage: "in progress",
     stage_result: null,
+    active_post_action: null,
     tags: "[]",
     pr_number: null,
     pr_url: null,
@@ -195,11 +196,11 @@ describe("createSelectionApi", () => {
 
     const api = createSelectionApi(context);
 
-    expect(api.getStageOrder("repo-1")).toEqual(["merge", "pr", "review", "commit", "in progress"]);
+    expect(api.getStageOrder("repo-1")).toEqual(["merge", "pr", "review", "in progress"]);
     expect(api.sortedItemsForCurrentRepo.value.map((item) => item.id)).toEqual([
       "task-review",
-      "task-commit",
       "task-progress",
+      "task-commit",
     ]);
   });
 });

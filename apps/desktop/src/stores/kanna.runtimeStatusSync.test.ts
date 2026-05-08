@@ -31,6 +31,7 @@ const mockState = vi.hoisted(() => {
       pipeline: "default",
       stage: "in progress",
       stage_result: null,
+      active_post_action: null,
       tags: "[]",
       pr_number: null,
       pr_url: null,
@@ -181,7 +182,7 @@ vi.mock("../listen", () => ({
 vi.mock("@kanna/core", () => ({
   parseRepoConfig: vi.fn(() => ({})),
   parseAgentMd: vi.fn(() => null),
-  DEFAULT_STAGE_ORDER: ["merge", "pr", "review", "commit", "in progress"],
+  DEFAULT_STAGE_ORDER: ["merge", "pr", "review", "in progress"],
 }));
 
 vi.mock("../../../../packages/core/src/pipeline/agent-loader", () => ({
@@ -292,6 +293,7 @@ vi.mock("@kanna/db", () => ({
   reorderPinnedItems: vi.fn(async () => {}),
   updatePipelineItemDisplayName: vi.fn(async () => {}),
   clearPipelineItemStageResult: vi.fn(async () => {}),
+  clearPipelineItemActivePostAction: vi.fn(async () => {}),
   closePipelineItem: vi.fn(async (_db: DbHandle, itemId: string) => {
     const item = mockState.pipelineItems.find((candidate) => candidate.id === itemId);
     if (!item) return;
