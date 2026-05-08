@@ -4,16 +4,18 @@ import { buildGlobalKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo } from "../helpers/reset";
 import { cleanupFixtureRepos, createSeedFixtureRepo } from "../helpers/fixture-repo";
+import { callVueMethod, execDb } from "../helpers/vue";
 
 describe("file preview", () => {
   const client = new WebDriverClient();
   let fixtureRepoPath = "";
+  let fixtureRepoId = "";
 
   beforeAll(async () => {
     await client.createSession();
     await resetDatabase(client);
     fixtureRepoPath = await createSeedFixtureRepo("task-switch-minimal");
-    await importTestRepo(client, fixtureRepoPath, "file-preview-fixture");
+    fixtureRepoId = await importTestRepo(client, fixtureRepoPath, "file-preview-fixture");
   });
 
   afterAll(async () => {
@@ -75,6 +77,22 @@ describe("file preview", () => {
     await client.waitForElement(".preview-content.markdown-rendered h1", 5000);
   }
 
+  function isVueCallError(result: unknown): result is { __error: string } {
+    return Boolean(
+      result &&
+      typeof result === "object" &&
+      "__error" in result &&
+      typeof (result as { __error?: unknown }).__error === "string",
+    );
+  }
+
+  async function selectTask(taskId: string): Promise<void> {
+    const result = await callVueMethod(client, "store.selectItem", taskId);
+    if (isVueCallError(result)) {
+      throw new Error(result.__error);
+    }
+  }
+
   it("opens the picker from preview, selects another file, and recalls it with Option+Command+P", async () => {
     await pressKey("p", { meta: true });
     await client.waitForElement(".picker-modal", 5000);
@@ -121,5 +139,71 @@ describe("file preview", () => {
     const restoredModeBadge = await client.waitForElement(".preview-modal .mode-badge", 5000);
     expect(await client.getText(restoredModeBadge)).toBe("Rendered");
     await waitForRenderedMarkdown();
+  });
+
+  it("keeps file preview recall scoped to the selected task", async () => {
+    await pressKey("Escape");
+    await client.waitForNoElement(".picker-modal", 5000);
+    await client.waitForNoElement(".preview-modal", 5000);
+
+    const taskAId = "file-preview-recall-task-a";
+    const taskBId = "file-preview-recall-task-b";
+    await execDb(
+      client,
+      `INSERT OR REPLACE INTO pipeline_item
+         (id, repo_id, prompt, stage, tags, branch, agent_type, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        taskAId,
+        fixtureRepoId,
+        "File preview recall task A",
+        "in progress",
+        "[]",
+        null,
+        "sdk",
+        "2026-05-08T00:00:00.000Z",
+        "2026-05-08T00:00:00.000Z",
+        taskBId,
+        fixtureRepoId,
+        "File preview recall task B",
+        "in progress",
+        "[]",
+        null,
+        "sdk",
+        "2026-05-08T00:01:00.000Z",
+        "2026-05-08T00:01:00.000Z",
+      ],
+    );
+
+    const refreshResult = await callVueMethod(client, "refreshAllItems");
+    if (isVueCallError(refreshResult)) {
+      throw new Error(refreshResult.__error);
+    }
+
+    await selectTask(taskAId);
+    await pressKey("p", { meta: true });
+    await client.waitForElement(".picker-modal", 5000);
+    const readme = await client.waitForText(".file-item", "README.md", 5000);
+    await client.click(readme);
+    expect(await previewedFilePath()).toBe("README.md");
+
+    await pressKey("Escape");
+    await client.waitForNoElement(".preview-modal", 5000);
+
+    await selectTask(taskBId);
+    await pressKey("π", { meta: true, alt: true, code: "KeyP" });
+    await client.waitForElement(".picker-modal", 5000);
+    expect(await isPreviewVisible()).toBe(false);
+
+    const indexFile = await client.waitForText(".file-item", "src/index.txt", 5000);
+    await client.click(indexFile);
+    expect(await previewedFilePath()).toBe("src/index.txt");
+
+    await pressKey("Escape");
+    await client.waitForNoElement(".preview-modal", 5000);
+
+    await selectTask(taskAId);
+    await pressKey("π", { meta: true, alt: true, code: "KeyP" });
+    expect(await previewedFilePath()).toBe("README.md");
   });
 });
