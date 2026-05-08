@@ -2112,6 +2112,45 @@ describe("kanna store task base branch integration", () => {
     expect(clearCallOrder).toBeLessThan(sendInputOrder);
   });
 
+  it("reruns the active post-action prompt instead of the parent stage prompt", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        {
+          name: "in progress",
+          transition: "manual",
+          agent: "implement",
+          prompt: "Implement $TASK_PROMPT",
+          post_action: {
+            name: "commit",
+            transition: "auto",
+            agent: "commit",
+            prompt: "Commit $TASK_PROMPT",
+          },
+        },
+        { name: "pr", transition: "manual" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        active_post_action: "commit",
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.rerunStage("item-source");
+
+    expect(buildStagePrompt).toHaveBeenCalledWith(
+      "Agent prompt",
+      "Commit $TASK_PROMPT",
+      expect.objectContaining({ taskPrompt: "Ship it" }),
+    );
+  });
+
   it("does not auto-select a created task when selectOnCreate is false", async () => {
     mockState.pipelineItems = [
       mockState.makeItem({

@@ -448,6 +448,12 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       context.toast.error(context.tt("toasts.stageNotFound"));
       return;
     }
+    const activePostAction = item.active_post_action
+      ? currentStage.post_action?.name === item.active_post_action
+        ? currentStage.post_action
+        : null
+      : null;
+    const execution = activePostAction ?? currentStage;
 
     await clearPipelineItemStageResult(context.requireDb(), taskId);
 
@@ -479,10 +485,10 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       }
     }
 
-    if (currentStage.agent) {
+    if (execution.agent) {
       try {
-        const agent = await loadAgent(repo.path, currentStage.agent);
-        const stagePrompt = buildStagePrompt(agent.prompt, currentStage.prompt, {
+        const agent = await loadAgent(repo.path, execution.agent);
+        const stagePrompt = buildStagePrompt(agent.prompt, execution.prompt, {
           taskPrompt: item.prompt ?? "",
           branch: item.branch ?? undefined,
           baseRef: item.base_ref ?? undefined,
@@ -490,7 +496,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
         });
         const worktreePath = buildWorktreePath(repo.path, item.branch);
         const preferredProviders = getPreferredAgentProviders({
-          stage: currentStage.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
+          stage: execution.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
           agent: agent.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
           item: item.agent_provider,
         });
