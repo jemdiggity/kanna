@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS pipeline_item (
   pinned INTEGER NOT NULL DEFAULT 0, pin_order INTEGER,
   display_name TEXT, unread_at TEXT, closed_at TEXT,
   base_ref TEXT,
+  teardown_started_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

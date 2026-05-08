@@ -30,6 +30,7 @@ function makeItem(overrides: Partial<PipelineItem> = {}): PipelineItem {
     base_ref: null,
     agent_session_id: null,
     previous_stage: null,
+    teardown_started_at: null,
     created_at: "2026-04-08T00:00:00.000Z",
     updated_at: "2026-04-08T00:00:00.000Z",
     ...overrides,

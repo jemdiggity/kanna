@@ -38,7 +38,7 @@ import { useAppUpdate } from "./composables/useAppUpdate";
 import { isTopModal } from "./composables/useModalZIndex";
 import { selectTaskByActivity } from "./utils/selectTaskByActivity";
 import { getDefaultBaseBranch } from "./utils/baseBranchPicker";
-import { isTeardownStage } from "./stores/taskStages";
+import { isTaskTearingDown } from "./stores/taskStages";
 import {
   parseIncomingTransferRequest,
   parsePairingCompletedEvent,
@@ -70,8 +70,9 @@ function hasTag(item: { tags: string }, tag: string): boolean {
   catch { return false; }
 }
 
-function isActivityShortcutCandidate(item: { stage?: string }): boolean {
-  return typeof item.stage !== "string" || !isTeardownStage(item.stage);
+function isActivityShortcutCandidate(item: { stage?: string; teardown_started_at?: string | null }): boolean {
+  if (typeof item.stage !== "string") return true;
+  return !isTaskTearingDown({ stage: item.stage, teardown_started_at: item.teardown_started_at });
 }
 
 function firstSupportedAgentProvider(agentProvider: AgentProvider | AgentProvider[] | string | string[] | undefined): AgentProvider | undefined {

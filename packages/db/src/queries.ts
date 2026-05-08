@@ -103,7 +103,7 @@ export async function deleteTaskPortsForItem(
 
 export async function insertPipelineItem(
   db: DbHandle,
-  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "agent_session_id" | "previous_stage" | "last_output_preview"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
+  item: Omit<PipelineItem, "created_at" | "updated_at" | "activity_changed_at" | "unread_at" | "pinned" | "pin_order" | "display_name" | "closed_at" | "pipeline" | "stage" | "stage_result" | "tags" | "base_ref" | "agent_session_id" | "previous_stage" | "teardown_started_at" | "last_output_preview"> & { pipeline?: string; stage?: string; tags?: string[]; activity?: PipelineItem["activity"]; display_name?: string | null; base_ref?: string | null }
 ): Promise<void> {
   if (!item.agent_provider) {
     throw new Error("No agent provider configured for pipeline item insertion.");
@@ -144,6 +144,19 @@ export async function updatePipelineItemStage(
   await db.execute(
     `UPDATE pipeline_item SET stage = ?, updated_at = datetime('now') WHERE id = ?`,
     [stage, id]
+  );
+}
+
+export async function markPipelineItemTearingDown(
+  db: DbHandle,
+  id: string,
+): Promise<void> {
+  await db.execute(
+    `UPDATE pipeline_item SET
+       teardown_started_at = COALESCE(teardown_started_at, datetime('now')),
+       updated_at = datetime('now')
+     WHERE id = ?`,
+    [id],
   );
 }
 
@@ -276,6 +289,7 @@ export async function closePipelineItem(
     `UPDATE pipeline_item SET
        previous_stage = COALESCE(?, previous_stage, stage),
        stage = 'done',
+       teardown_started_at = NULL,
        closed_at = datetime('now'),
        updated_at = datetime('now')
      WHERE id = ?`,
@@ -291,6 +305,7 @@ export async function reopenPipelineItem(
     `UPDATE pipeline_item SET
        stage = COALESCE(previous_stage, 'in progress'),
        previous_stage = NULL,
+       teardown_started_at = NULL,
        closed_at = NULL,
        updated_at = datetime('now')
      WHERE id = ?`,

@@ -358,13 +358,13 @@ describe("keyboard shortcuts", () => {
        const ctx = window.__KANNA_E2E__.setupState;
        const db = ctx.db.value || ctx.db;
        const rows = [
-         ["shortcut-teardown-old", "${repoId}", "Teardown old unread", "teardown", "unread", "2026-03-31T00:00:00.000Z"],
-         ["shortcut-normal-old", "${repoId}", "Normal old unread", "in progress", "unread", "2026-03-31T01:00:00.000Z"],
+         ["shortcut-teardown-old", "${repoId}", "Teardown old unread", "pr", "unread", "2026-03-31T00:00:00.000Z", "2026-05-08T00:00:00.000Z"],
+         ["shortcut-normal-old", "${repoId}", "Normal old unread", "in progress", "unread", "2026-03-31T01:00:00.000Z", null],
        ];
        Promise.all(rows.map(function(row) {
          return db.execute(
-           "INSERT OR REPLACE INTO pipeline_item (id, repo_id, prompt, stage, activity, created_at, agent_type, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-           [row[0], row[1], row[2], row[3], row[4], row[5], "sdk", "[]"]
+           "INSERT OR REPLACE INTO pipeline_item (id, repo_id, prompt, stage, activity, created_at, teardown_started_at, agent_type, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+           [row[0], row[1], row[2], row[3], row[4], row[5], row[6], "sdk", "[]"]
          );
        }))
          .then(function() { return ctx.loadItems("${repoId}"); })

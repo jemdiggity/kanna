@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import draggable from "vuedraggable";
 import { taskSearchMatch } from "../utils/taskSearch";
 import { useKannaStore } from "../stores/kanna";
-import { isTeardownStage } from "../stores/taskStages";
+import { isTaskTearingDown } from "../stores/taskStages";
 import { macOsTextInputAttrs } from "../utils/textInput";
 
 function hasTag(item: { tags: string }, tag: string): boolean {
@@ -488,8 +488,8 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch, emit
                   :style="{
                     fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
                     fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                    textDecoration: isTeardownStage(element.stage) ? 'line-through' : 'none',
-                    opacity: isTeardownStage(element.stage) ? 0.5 : 1,
+                    textDecoration: isTaskTearingDown(element) ? 'line-through' : 'none',
+                    opacity: isTaskTearingDown(element) ? 0.5 : 1,
                   }"
                 >{{ itemTitle(element) }}</span>
               </div>
@@ -541,8 +541,8 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch, emit
                     :style="{
                       fontWeight: element.activity === 'unread' ? 'bold' : 'normal',
                       fontStyle: element.activity === 'working' ? 'italic' : 'normal',
-                      textDecoration: isTeardownStage(element.stage) ? 'line-through' : 'none',
-                      opacity: isTeardownStage(element.stage) ? 0.5 : 1,
+                      textDecoration: isTaskTearingDown(element) ? 'line-through' : 'none',
+                      opacity: isTaskTearingDown(element) ? 0.5 : 1,
                     }"
                   >{{ itemTitle(element) }}</span>
                 </div>
@@ -578,7 +578,11 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch, emit
               <div v-else class="blocked-item-content">
                 <span
                   class="item-title"
-                  style="color: #666;"
+                  :style="{
+                    color: '#666',
+                    textDecoration: isTaskTearingDown(element) ? 'line-through' : 'none',
+                    opacity: isTaskTearingDown(element) ? 0.5 : 1,
+                  }"
                 >{{ itemTitle(element) }}</span>
                 <span
                   v-if="blockerNames?.[element.id]"

@@ -49,6 +49,7 @@ const mockState = vi.hoisted(() => {
       base_ref: null,
       agent_session_id: null,
       previous_stage: null,
+      teardown_started_at: null,
       created_at: now,
       updated_at: now,
       ...overrides,
@@ -284,6 +285,7 @@ vi.mock("@kanna/db", () => ({
   ),
   insertPipelineItem: vi.fn(async () => {}),
   updatePipelineItemActivity: mockState.updatePipelineItemActivityMock,
+  markPipelineItemTearingDown: vi.fn(async () => {}),
   updatePipelineItemStage: vi.fn(async () => {}),
   pinPipelineItem: vi.fn(async () => {}),
   unpinPipelineItem: vi.fn(async () => {}),
@@ -295,6 +297,7 @@ vi.mock("@kanna/db", () => ({
     if (!item) return;
     item.previous_stage = item.previous_stage ?? item.stage;
     item.stage = "done";
+    item.teardown_started_at = null;
     item.closed_at = "2026-04-16T00:00:00.000Z";
     item.updated_at = "2026-04-16T00:00:00.000Z";
   }),
@@ -459,7 +462,8 @@ describe("kanna runtime status reconciliation", () => {
         ...mockState.pipelineItems[0]!,
         id: "task-closing",
         repo_id: "repo-1",
-        stage: "teardown",
+        stage: "in progress",
+        teardown_started_at: "2026-04-16T00:04:00.000Z",
         created_at: "2026-04-16T00:03:00.000Z",
       },
       {
@@ -515,7 +519,8 @@ describe("kanna runtime status reconciliation", () => {
         ...mockState.pipelineItems[0]!,
         id: "task-closing",
         repo_id: "repo-1",
-        stage: "teardown",
+        stage: "in progress",
+        teardown_started_at: "2026-04-16T00:03:00.000Z",
         created_at: "2026-04-16T00:02:00.000Z",
       },
       {

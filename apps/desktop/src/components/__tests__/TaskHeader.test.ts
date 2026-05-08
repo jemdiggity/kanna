@@ -50,6 +50,7 @@ function makeItem(overrides: Partial<PipelineItem> = {}): PipelineItem {
     pin_order: null,
     base_ref: null,
     previous_stage: null,
+    teardown_started_at: null,
     created_at: "2026-04-20T00:00:00.000Z",
     updated_at: "2026-04-20T00:00:00.000Z",
     ...overrides,

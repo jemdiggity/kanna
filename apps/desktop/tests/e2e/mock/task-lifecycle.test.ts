@@ -98,15 +98,24 @@ describe("task lifecycle", () => {
     await sleep(300);
     const stageRows = (await queryDb(
       client,
-      "SELECT stage FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
+      "SELECT stage, teardown_started_at FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
       [repoId, "Say OK"],
-    )) as Array<{ stage: string }>;
-    expect(stageRows[0]?.stage).toBe("teardown");
+    )) as Array<{ stage: string; teardown_started_at: string | null }>;
+    expect(stageRows[0]?.stage).toBe("in progress");
+    expect(stageRows[0]?.teardown_started_at).toBeTruthy();
 
     const sidebarText = await client.executeSync<string>(
       `return document.querySelector(".sidebar")?.textContent || "";`
     );
     expect(sidebarText).toContain("Say OK");
+    expect(sidebarText).not.toContain("teardown");
+
+    const titleStyle = await client.executeSync<string>(
+      `const titles = Array.from(document.querySelectorAll(".pipeline-item .item-title"));
+       const title = titles.find((el) => (el.textContent || "").includes("Say OK"));
+       return title ? window.getComputedStyle(title).textDecorationLine : "";`
+    );
+    expect(titleStyle).toContain("line-through");
   });
 
   it("closes directly to done and disappears when teardown commands do not exist", async () => {

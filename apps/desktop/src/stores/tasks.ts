@@ -18,7 +18,7 @@ import {
   updatePipelineItemActivity,
   updateAgentSessionId,
   updatePipelineItemDisplayName,
-  updatePipelineItemStage,
+  markPipelineItemTearingDown,
   updatePipelineItemTags,
   updateRepoName,
   pinPipelineItem,
@@ -51,7 +51,7 @@ import {
   reportCloseSessionError,
   reportPrewarmSessionError,
 } from "./kannaCleanup";
-import { isTeardownStage, TEARDOWN_STAGE } from "./taskStages";
+import { isTaskTearingDown } from "./taskStages";
 import { resolveDbName } from "./db";
 import { readRepoConfig, requireService, type CreateItemOptions, type StoreContext, type WorktreeBootstrapResult } from "./state";
 
@@ -757,7 +757,7 @@ export function createTasksApi(
 
       const wasBlocked = JSON.parse(item.tags).includes("blocked");
       const ownsLiveTaskResources = hasLiveTaskResources(item);
-      const existingTeardown = isTeardownStage(item.stage);
+      const existingTeardown = isTaskTearingDown(item);
       const teardownCmds = existingTeardown || !ownsLiveTaskResources
         ? []
         : await collectTeardownCommands(item, repo);
@@ -765,6 +765,7 @@ export function createTasksApi(
         wasBlocked,
         hasLiveTaskResources: ownsLiveTaskResources,
         currentStage: item.stage,
+        isTearingDown: existingTeardown,
         hasTeardownCommands: teardownCmds.length > 0,
       });
 
@@ -852,12 +853,12 @@ export function createTasksApi(
         await invoke("attach_session_with_snapshot", { sessionId: tdSessionId });
       }
 
-      await updatePipelineItemStage(context.requireDb(), item.id, TEARDOWN_STAGE);
+      await markPipelineItemTearingDown(context.requireDb(), item.id);
       if (shouldSelectNextOnCloseTransition({
         selectNext: opts?.selectNext !== false,
         wasBlocked,
         previousStage: item.stage,
-        nextStage: TEARDOWN_STAGE,
+        nextStage: "tearing_down",
       })) {
         await selectReplacementAfterTaskRemoval(item);
       }

@@ -21,6 +21,9 @@ interface PipelineItemRow {
   stage: string;
   tags: string;
   closed_at: string | null;
+  previous_stage?: string | null;
+  teardown_started_at?: string | null;
+  updated_at?: string | null;
 }
 
 interface SchemaMigrationRow {
@@ -124,6 +127,14 @@ function createMigrationDb(
         for (const item of pipelineItems) {
           if (item.stage === "torndown") item.stage = "teardown";
         }
+      } else if (sql === "UPDATE pipeline_item SET teardown_started_at = COALESCE(teardown_started_at, updated_at, datetime('now')), stage = COALESCE(previous_stage, 'in progress'), updated_at = datetime('now') WHERE stage IN ('teardown', 'torndown') AND closed_at IS NULL") {
+        for (const item of pipelineItems) {
+          if (["teardown", "torndown"].includes(item.stage) && item.closed_at === null) {
+            item.teardown_started_at = item.teardown_started_at ?? item.updated_at ?? "now";
+            item.stage = item.previous_stage ?? "in progress";
+            item.updated_at = "now";
+          }
+        }
       }
 
       return { rowsAffected: 1 };
@@ -205,14 +216,44 @@ describe("runMigrations", () => {
     expect(db.pipelineItems[1]?.stage).toBe("merge");
   });
 
-  it("renames legacy torndown rows to teardown", async () => {
+  it("migrates open legacy torndown rows to teardown state", async () => {
     db = createMigrationDb([
       { stage: "torndown", tags: "[]", closed_at: null },
     ]);
 
     await runMigrations(db);
 
-    expect(db.pipelineItems[0]?.stage).toBe("teardown");
+    expect(db.pipelineItems[0]).toMatchObject({
+      stage: "in progress",
+      teardown_started_at: "now",
+    });
+  });
+
+  it("migrates open teardown stage rows to teardown state while preserving their prior stage", async () => {
+    db = createMigrationDb([
+      {
+        stage: "teardown",
+        previous_stage: "pr",
+        tags: "[]",
+        closed_at: null,
+        updated_at: "2026-05-01T00:00:00.000Z",
+      },
+      {
+        stage: "teardown",
+        previous_stage: "merge",
+        tags: "[]",
+        closed_at: "2026-05-02T00:00:00.000Z",
+      },
+    ]);
+
+    await runMigrations(db);
+
+    expect(db.pipelineItems[0]).toMatchObject({
+      stage: "pr",
+      teardown_started_at: "2026-05-01T00:00:00.000Z",
+    });
+    expect(db.pipelineItems[1]?.stage).toBe("teardown");
+    expect(db.pipelineItems[1]?.teardown_started_at).toBeUndefined();
   });
 
   it("backfills repo sort_order by creation time for existing databases", async () => {

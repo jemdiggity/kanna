@@ -858,7 +858,7 @@ describe("App", () => {
 
   it("skips teardown tasks when navigating to unread tasks", async () => {
     store.sortedItemsForCurrentRepo = [
-      { id: "teardown-unread", activity: "unread", created_at: "2026-03-31T00:00:00.000Z", tags: "[]", stage: "teardown" },
+      { id: "teardown-unread", activity: "unread", created_at: "2026-03-31T00:00:00.000Z", tags: "[]", stage: "pr", teardown_started_at: "2026-05-08T00:00:00.000Z" },
       { id: "normal-unread", activity: "unread", created_at: "2026-03-31T01:00:00.000Z", tags: "[]", stage: "in progress" },
     ];
 
