@@ -160,11 +160,12 @@ function createMigrationDb(
 
 describe("runMigrations", () => {
   let runMigrations: typeof import("./db")["runMigrations"];
+  let checkDatabaseHealth: typeof import("./db")["checkDatabaseHealth"];
   let resolveDbName: typeof import("./db")["resolveDbName"];
   let db: ReturnType<typeof createMigrationDb>;
 
   beforeAll(async () => {
-    ({ runMigrations, resolveDbName } = await import("./db"));
+    ({ runMigrations, checkDatabaseHealth, resolveDbName } = await import("./db"));
   });
 
   beforeEach(() => {
@@ -184,6 +185,28 @@ describe("runMigrations", () => {
 
   it("falls back to the default database name when KANNA_DB_NAME is unset", async () => {
     await expect(resolveDbName()).resolves.toBe("kanna-v2.db");
+  });
+
+  it("passes startup health checks when quick_check returns ok", async () => {
+    const checkedDb = {
+      execute: vi.fn(async () => ({ rowsAffected: 0 })),
+      select: vi.fn(async () => [{ quick_check: "ok" }]),
+    } satisfies DbHandle;
+
+    await expect(checkDatabaseHealth(checkedDb, "startup")).resolves.toBeUndefined();
+
+    expect(checkedDb.select).toHaveBeenCalledWith("PRAGMA quick_check");
+  });
+
+  it("surfaces clear recovery guidance when quick_check reports corruption", async () => {
+    const checkedDb = {
+      execute: vi.fn(async () => ({ rowsAffected: 0 })),
+      select: vi.fn(async () => [{ quick_check: "*** in database main *** On tree page 12 cell 0" }]),
+    } satisfies DbHandle;
+
+    await expect(checkDatabaseHealth(checkedDb, "startup")).rejects.toThrow(
+      /Database health check failed during startup.*restore from a recent backup/s,
+    );
   });
 
   it("records one-time data migrations so repeated startup does not reapply them", async () => {

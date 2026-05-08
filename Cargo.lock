@@ -3106,6 +3106,7 @@ dependencies = [
  "libc",
  "objc2",
  "reqwest 0.12.28",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",
