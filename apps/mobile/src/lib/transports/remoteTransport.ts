@@ -14,7 +14,7 @@ import type {
   TaskSummary,
 } from "../api/types";
 
-interface RemoteDesktopRecord {
+export interface RemoteDesktopRecord {
   desktopId: string;
   displayName: string;
   online: boolean;
@@ -23,12 +23,78 @@ interface RemoteDesktopRecord {
   lastSeenAt?: string | null;
 }
 
-export function createRemoteTransport(
-  listDesktopRecords: () => Promise<RemoteDesktopRecord[]>
-): KannaTransport {
+export interface RemoteDesktopInvocationRequest {
+  desktopId: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  body: unknown | null;
+}
+
+export type RemoteDesktopInvoker = (
+  request: RemoteDesktopInvocationRequest
+) => Promise<unknown>;
+
+export type RemoteTransportErrorCode =
+  | "no_selected_desktop"
+  | "remote_invocation_failed"
+  | "invalid_status_response";
+
+export class RemoteTransportError extends Error {
+  readonly code: RemoteTransportErrorCode;
+  readonly cause: unknown;
+
+  constructor(
+    code: RemoteTransportErrorCode,
+    message: string,
+    cause?: unknown
+  ) {
+    super(message);
+    this.name = "RemoteTransportError";
+    this.code = code;
+    this.cause = cause;
+  }
+}
+
+export interface RemoteTransportDependencies {
+  listDesktopRecords(): Promise<RemoteDesktopRecord[]>;
+  getSelectedDesktopId(): string | null;
+  invokeDesktop: RemoteDesktopInvoker;
+}
+
+export function createRemoteTransport({
+  listDesktopRecords,
+  getSelectedDesktopId,
+  invokeDesktop
+}: RemoteTransportDependencies): KannaTransport {
   return {
     async getStatus(): Promise<MobileServerStatus> {
-      throw new Error("Remote status transport not implemented yet");
+      const desktopId = getSelectedDesktopId();
+      if (!desktopId) {
+        throw new RemoteTransportError(
+          "no_selected_desktop",
+          "Select a desktop before connecting remotely."
+        );
+      }
+
+      try {
+        const response = await invokeDesktop({
+          desktopId,
+          method: "GET",
+          path: "/v1/status",
+          body: null
+        });
+        return mapMobileServerStatus(response);
+      } catch (error) {
+        if (error instanceof RemoteTransportError) {
+          throw error;
+        }
+
+        throw new RemoteTransportError(
+          "remote_invocation_failed",
+          `Remote desktop request failed: ${formatErrorMessage(error)}`,
+          error
+        );
+      }
     },
     async listDesktops(): Promise<DesktopSummary[]> {
       const records = await listDesktopRecords();
@@ -81,4 +147,82 @@ export function createRemoteTransport(
       );
     },
   };
+}
+
+function mapMobileServerStatus(response: unknown): MobileServerStatus {
+  if (!isRecord(response)) {
+    throw new RemoteTransportError(
+      "invalid_status_response",
+      "Remote desktop returned an invalid status response."
+    );
+  }
+
+  const state = getStringField(response, "state");
+  const desktopId = getStringField(response, "desktopId");
+  const desktopName = getStringField(response, "desktopName");
+  const lanHost = getStringField(response, "lanHost");
+  const lanPort = getNumberField(response, "lanPort");
+  const pairingCode = getNullableStringField(response, "pairingCode");
+
+  if (
+    state === null ||
+    desktopId === null ||
+    desktopName === null ||
+    lanHost === null ||
+    lanPort === null
+  ) {
+    throw new RemoteTransportError(
+      "invalid_status_response",
+      "Remote desktop returned an invalid status response."
+    );
+  }
+
+  return {
+    state,
+    desktopId,
+    desktopName,
+    lanHost,
+    lanPort,
+    pairingCode
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getStringField(
+  record: Record<string, unknown>,
+  field: string
+): string | null {
+  const value = record[field];
+  return typeof value === "string" ? value : null;
+}
+
+function getNumberField(
+  record: Record<string, unknown>,
+  field: string
+): number | null {
+  const value = record[field];
+  return typeof value === "number" ? value : null;
+}
+
+function getNullableStringField(
+  record: Record<string, unknown>,
+  field: string
+): string | null {
+  const value = record[field];
+  return typeof value === "string" ? value : null;
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  return "unknown error";
 }

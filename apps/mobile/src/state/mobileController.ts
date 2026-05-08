@@ -11,7 +11,7 @@ export interface MobileController {
   getIdToken(forceRefresh?: boolean): Promise<string | null>;
   refresh(): Promise<void>;
   showView(view: MobileView): void;
-  selectDesktop(desktopId: string): void;
+  selectDesktop(desktopId: string): Promise<void>;
   selectRepo(repoId: string): Promise<void>;
   openTask(taskId: string): void;
   closeTask(): void;
@@ -278,11 +278,12 @@ export function createMobileController(
       store.setActiveView(view);
     },
 
-    selectDesktop(desktopId) {
+    async selectDesktop(desktopId) {
       stopTaskTerminal();
       store.selectDesktop(desktopId);
       store.setSelectedTask(null);
       store.clearTaskTerminal();
+      await this.bootstrap();
     },
 
     async selectRepo(repoId) {
