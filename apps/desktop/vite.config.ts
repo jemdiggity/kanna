@@ -1,10 +1,32 @@
-import { defineConfig } from "vite";
+import { readFileSync, realpathSync } from "node:fs";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import vue from "@vitejs/plugin-vue";
 import path from "path";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 // @ts-expect-error process is a nodejs global
 const port = parseInt(process.env.KANNA_DEV_PORT || "1420", 10);
+
+interface PackageExportEntry {
+  import?: string;
+}
+
+interface PierreDiffsPackageJson {
+  exports: Record<string, PackageExportEntry | string>;
+}
+
+function resolvePierreDiffsWorkerAllowDir(): string {
+  const packageRoot = realpathSync(path.resolve(__dirname, "node_modules/@pierre/diffs"));
+  const packageJson = JSON.parse(
+    readFileSync(path.resolve(__dirname, "node_modules/@pierre/diffs/package.json"), "utf8"),
+  ) as PierreDiffsPackageJson;
+  const workerExport = packageJson.exports["./worker/worker-portable.js"];
+  const workerPath = typeof workerExport === "string" ? workerExport : workerExport.import;
+  if (!workerPath) {
+    throw new Error("@pierre/diffs does not export worker-portable.js");
+  }
+  return path.dirname(path.resolve(packageRoot, workerPath));
+}
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -48,6 +70,9 @@ export default defineConfig(async () => ({
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
+    },
+    fs: {
+      allow: [searchForWorkspaceRoot(__dirname), resolvePierreDiffsWorkerAllowDir()],
     },
   },
 }));
