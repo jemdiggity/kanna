@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS pipeline_item (
     issue_title TEXT,
     prompt TEXT,
     stage TEXT NOT NULL DEFAULT 'queued',
+    active_post_action TEXT,
     pr_number INTEGER,
     pr_url TEXT,
     branch TEXT,

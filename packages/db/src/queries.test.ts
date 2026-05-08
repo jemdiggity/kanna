@@ -18,6 +18,8 @@ import {
   updatePipelineItemTags,
   updatePipelineItemStageResult,
   clearPipelineItemStageResult,
+  updatePipelineItemActivePostAction,
+  clearPipelineItemActivePostAction,
   updatePipelineItemPR,
   getSetting,
   setSetting,
@@ -124,6 +126,7 @@ function createMockDb(): DbHandle & {
           pipeline: (pipeline as string) || "default",
           stage: (stage as string) || "in progress",
           stage_result: null,
+          active_post_action: null,
           tags: (tagsJson as string) || "[]",
           pr_number: (pr_number as number | null),
           pr_url: (pr_url as string | null),
@@ -268,6 +271,20 @@ function createMockDb(): DbHandle & {
         const item = tables.pipeline_item.find((p) => p.id === id);
         if (item) {
           item.stage_result = result;
+          item.updated_at = new Date().toISOString();
+        }
+      } else if (q.startsWith("UPDATE PIPELINE_ITEM SET ACTIVE_POST_ACTION = NULL")) {
+        const [id] = bindValues as string[];
+        const item = tables.pipeline_item.find((p) => p.id === id);
+        if (item) {
+          item.active_post_action = null;
+          item.updated_at = new Date().toISOString();
+        }
+      } else if (q.startsWith("UPDATE PIPELINE_ITEM SET ACTIVE_POST_ACTION =")) {
+        const [activePostAction, id] = bindValues as string[];
+        const item = tables.pipeline_item.find((p) => p.id === id);
+        if (item) {
+          item.active_post_action = activePostAction;
           item.updated_at = new Date().toISOString();
         }
       } else if (q.startsWith("UPDATE PIPELINE_ITEM SET PR_NUMBER")) {
@@ -726,6 +743,7 @@ describe("pipeline_item queries", () => {
     expect(item?.pipeline).toBe("default");
     expect(item?.stage).toBe("in progress");
     expect(item?.stage_result).toBeNull();
+    expect(item?.active_post_action).toBeNull();
   });
 
   it("insertPipelineItem accepts explicit pipeline and stage", async () => {
@@ -809,6 +827,14 @@ describe("stage queries", () => {
     await clearPipelineItemStageResult(db, "pi1");
     const item = db.tables.pipeline_item.find((p) => p.id === "pi1");
     expect(item?.stage_result).toBeNull();
+  });
+
+  it("sets and clears the active post-action", async () => {
+    await updatePipelineItemActivePostAction(db, "pi1", "commit");
+    expect(db.tables.pipeline_item.find((p) => p.id === "pi1")?.active_post_action).toBe("commit");
+
+    await clearPipelineItemActivePostAction(db, "pi1");
+    expect(db.tables.pipeline_item.find((p) => p.id === "pi1")?.active_post_action).toBeNull();
   });
 });
 

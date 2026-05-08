@@ -20,6 +20,7 @@ export interface PipelineItem {
   pipeline: string;             // pipeline name (e.g., "default")
   stage: string;                // current stage name (e.g., "in progress")
   stage_result: string | null;  // JSON from stage-complete signal
+  active_post_action: string | null; // stage-local action currently running
   tags: string;                 // JSON array of tag strings, e.g. '["pr"]' or '[]'
   pr_number: number | null;
   pr_url: string | null;

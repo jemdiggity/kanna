@@ -275,7 +275,11 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     await addColumn("pipeline_item", "last_output_preview", "TEXT");
   });
 
-  await runMigration("012_task_transfer_tables", async () => {
+  await runMigration("012_pipeline_item_active_post_action", async () => {
+    await addColumn("pipeline_item", "active_post_action", "TEXT");
+  });
+
+  await runMigration("013_task_transfer_tables", async () => {
     await db.execute(`CREATE TABLE IF NOT EXISTS trusted_peer (
       id TEXT PRIMARY KEY,
       peer_id TEXT NOT NULL UNIQUE,
@@ -308,11 +312,11 @@ export async function runMigrations(db: DbHandle): Promise<void> {
       imported_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
   });
-  await runMigration("013_task_transfer_payload_json", async () => {
+  await runMigration("014_task_transfer_payload_json", async () => {
     await addColumn("task_transfer", "payload_json", "TEXT");
   });
 
-  await runMigration("014_agent_session_id_rename", async () => {
+  await runMigration("015_agent_session_id_rename", async () => {
     await addColumn("pipeline_item", "agent_session_id", "TEXT");
     try {
       await db.execute(
@@ -326,7 +330,7 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     }
   });
 
-  await runMigration("015_repo_sort_order", async () => {
+  await runMigration("016_repo_sort_order", async () => {
     await addColumn("repo", "sort_order", "INTEGER NOT NULL DEFAULT 0");
     const repos = await db.select<{ id: string }>("SELECT id FROM repo ORDER BY created_at ASC");
     for (const [index, repo] of repos.entries()) {
