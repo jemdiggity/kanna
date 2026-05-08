@@ -1,5 +1,14 @@
 import { getFirebaseServices, isAuthBypassed } from "./firebase.js";
 
+function bypassUserIdFromToken(token: string): string {
+  const separator = token.indexOf(":");
+  if (separator > 0) {
+    return token.slice(0, separator);
+  }
+
+  return "test-user";
+}
+
 /**
  * Verify a Firebase Auth ID token (sent by the phone client).
  * Returns the userId or null if verification fails.
@@ -8,7 +17,7 @@ export async function verifyPhoneToken(
   idToken: string
 ): Promise<string | null> {
   if (isAuthBypassed()) {
-    return "test-user";
+    return bypassUserIdFromToken(idToken);
   }
 
   try {
@@ -30,7 +39,7 @@ export async function verifyDeviceToken(
   deviceToken: string
 ): Promise<string | null> {
   if (isAuthBypassed()) {
-    return "test-user";
+    return bypassUserIdFromToken(deviceToken);
   }
 
   try {

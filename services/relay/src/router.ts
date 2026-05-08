@@ -5,8 +5,45 @@ interface ConnectionPair {
   desktops: Map<string, WebSocket>;
 }
 
+interface RelayMessage {
+  type?: unknown;
+  id?: unknown;
+  desktopId?: unknown;
+}
+
 /** In-memory map of userId → {phone, server} WebSocket connections. */
 const connections = new Map<string, ConnectionPair>();
+
+function parseRelayMessage(data: string): RelayMessage | null {
+  try {
+    const parsed: unknown = JSON.parse(data);
+    if (parsed && typeof parsed === "object") {
+      return parsed as RelayMessage;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function sendErrorResponse(
+  phone: WebSocket | undefined,
+  id: unknown,
+  error: string
+): void {
+  if (id == null || !phone || phone.readyState !== 1) {
+    return;
+  }
+
+  phone.send(
+    JSON.stringify({
+      type: "response",
+      id,
+      error,
+    })
+  );
+}
 
 /**
  * Store the phone-side WebSocket for a user.
@@ -97,36 +134,35 @@ export function routeMessage(
 
   if (from === "phone") {
     let target: WebSocket | undefined;
+    let error: string | undefined;
+    const parsed = parseRelayMessage(data);
+    const desktopId =
+      typeof parsed?.desktopId === "string" ? parsed.desktopId : undefined;
+    const desktopCount = pair?.desktops.size ?? 0;
 
-    try {
-      const parsed = JSON.parse(data) as { desktopId?: string; id?: unknown };
-      if (parsed.desktopId) {
-        target = pair?.desktops.get(parsed.desktopId);
-      } else if ((pair?.desktops.size ?? 0) === 1) {
-        target = Array.from(pair!.desktops.values())[0];
+    if (desktopId) {
+      target = pair?.desktops.get(desktopId);
+      if (!target) {
+        error = "Desktop offline";
       }
-    } catch {
-      target = undefined;
+    } else if (desktopCount === 1) {
+      target = Array.from(pair!.desktops.values())[0];
+    } else if (desktopCount > 1) {
+      error = "Multiple desktops connected; desktopId required";
+    } else {
+      error = "Desktop offline";
     }
 
     if (target && target.readyState === 1) {
       target.send(data);
     } else {
-      // Server is offline — send error response back to phone
-      try {
-        const parsed = JSON.parse(data);
-        if (parsed.id != null) {
-          const errorResponse = JSON.stringify({
-            type: "response",
-            id: parsed.id,
-            error: "Desktop offline",
-          });
-          const phone = pair?.phone;
-          if (phone && phone.readyState === 1) {
-            phone.send(errorResponse);
-          }
-        }
-      } catch {
+      if (target && target.readyState !== 1) {
+        error = "Desktop offline";
+      }
+
+      sendErrorResponse(pair?.phone, parsed?.id, error ?? "Desktop offline");
+
+      if (!parsed) {
         // Not valid JSON or no id — can't send error response
         console.warn(
           `[router] Phone message to offline server for ${userId}, could not parse for error response`
