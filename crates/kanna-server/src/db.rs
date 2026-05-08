@@ -179,6 +179,11 @@ impl Db {
                 port_env TEXT,
                 base_ref TEXT
             );
+
+            CREATE TABLE settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             "#,
         )?;
         Ok(())
@@ -273,6 +278,16 @@ impl Db {
         self.conn.execute(
             "UPDATE pipeline_item SET base_ref = ? WHERE id = ?",
             (base_ref, id),
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn set_test_setting(&self, key: &str, value: &str) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
         )?;
         Ok(())
     }
@@ -602,6 +617,14 @@ impl Db {
             (port_offset, port_env_json, item_id),
         )?;
         Ok(())
+    }
+
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>, rusqlite::Error> {
+        self.conn
+            .query_row("SELECT value FROM settings WHERE key = ?", [key], |row| {
+                row.get(0)
+            })
+            .optional()
     }
 
     pub fn select_raw(&self, query: &str, bind_values: &[Value]) -> Result<Value, rusqlite::Error> {
