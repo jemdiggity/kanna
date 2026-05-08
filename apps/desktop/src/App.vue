@@ -272,6 +272,7 @@ function selectReadTask(mode: "oldest" | "newest") {
     store.sortedItemsForCurrentRepo.filter((item) => isActivityShortcutCandidate(item) && !hasTag(item, "blocked")),
     mode,
     "idle",
+    store.currentItem?.created_at,
   );
   if (target) void store.selectItem(target.id);
 }
