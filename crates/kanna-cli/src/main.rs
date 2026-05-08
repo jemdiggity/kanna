@@ -65,6 +65,22 @@ enum RepoCommands {
 
 #[derive(Subcommand)]
 enum TaskCommands {
+    /// List recent tasks from the running desktop server
+    List {
+        /// Override the local Kanna server base URL
+        #[arg(long)]
+        server_url: Option<String>,
+    },
+    /// Show one recent task by exact ID
+    Status {
+        /// The task/pipeline_item ID
+        #[arg(long)]
+        task_id: String,
+
+        /// Override the local Kanna server base URL
+        #[arg(long)]
+        server_url: Option<String>,
+    },
     /// Create a task in a repo known to the running desktop server
     Create {
         /// The target repo ID
@@ -139,6 +155,25 @@ enum TaskCommands {
 struct RepoSummary {
     id: String,
     name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct TaskSummary {
+    id: String,
+    repo_id: String,
+    title: String,
+    stage: Option<String>,
+    snippet: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct TaskStatusRow {
+    id: String,
+    repo_id: String,
+    stage: String,
+    title: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -360,6 +395,10 @@ fn join_server_url(base_url: &str, path: &str) -> String {
     format!("{}{}", base_url.trim_end_matches('/'), path)
 }
 
+fn task_list_path() -> &'static str {
+    "/v1/tasks/recent"
+}
+
 async fn get_json<T: DeserializeOwned>(base_url: &str, path: &str) -> Result<T, String> {
     let response = reqwest::Client::new()
         .get(join_server_url(base_url, path))
@@ -397,6 +436,10 @@ async fn post_json<B: Serialize, T: DeserializeOwned>(
 
 async fn list_repos_via_api(base_url: &str) -> Result<Vec<RepoSummary>, String> {
     get_json(base_url, "/v1/repos").await
+}
+
+async fn list_tasks_via_api(base_url: &str) -> Result<Vec<TaskSummary>, String> {
+    get_json(base_url, task_list_path()).await
 }
 
 async fn create_task_via_api(
@@ -437,6 +480,39 @@ fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
         serde_json::to_string_pretty(value).map_err(|e| format!("failed to render json: {e}"))?;
     println!("{rendered}");
     Ok(())
+}
+
+fn task_status_row(task: &TaskSummary) -> TaskStatusRow {
+    TaskStatusRow {
+        id: task.id.clone(),
+        repo_id: task.repo_id.clone(),
+        stage: task.stage.clone().unwrap_or_default(),
+        title: task.title.clone(),
+    }
+}
+
+fn task_status_rows(tasks: &[TaskSummary]) -> Vec<TaskStatusRow> {
+    tasks.iter().map(task_status_row).collect()
+}
+
+fn format_task_list(tasks: &[TaskSummary]) -> Result<String, String> {
+    serde_json::to_string_pretty(&task_status_rows(tasks))
+        .map_err(|e| format!("failed to render json: {e}"))
+}
+
+fn find_task_status_row(tasks: &[TaskSummary], task_id: &str) -> Option<TaskStatusRow> {
+    tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .map(task_status_row)
+}
+
+fn format_task_status(task: &TaskStatusRow) -> Result<String, String> {
+    serde_json::to_string_pretty(task).map_err(|e| format!("failed to render json: {e}"))
+}
+
+fn task_not_found_error(task_id: &str) -> String {
+    format!("Task '{task_id}' was not found in recent tasks")
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -551,6 +627,37 @@ async fn main() {
             }
         },
         Commands::Task { command } => match command {
+            TaskCommands::List { server_url } => {
+                let base_url = resolve_server_base_url_from_env(server_url.as_deref());
+                let tasks = list_tasks_via_api(&base_url).await.unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                });
+                let rendered = format_task_list(&tasks).unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                });
+                println!("{rendered}");
+            }
+            TaskCommands::Status {
+                task_id,
+                server_url,
+            } => {
+                let base_url = resolve_server_base_url_from_env(server_url.as_deref());
+                let tasks = list_tasks_via_api(&base_url).await.unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                });
+                let row = find_task_status_row(&tasks, &task_id).unwrap_or_else(|| {
+                    eprintln!("Error: {}", task_not_found_error(&task_id));
+                    process::exit(1);
+                });
+                let rendered = format_task_status(&row).unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                });
+                println!("{rendered}");
+            }
             TaskCommands::Create {
                 repo_id,
                 prompt,
@@ -633,8 +740,9 @@ async fn main() {
 mod tests {
     use super::{
         build_complete_stage_request, build_create_task_request, build_request_revision_request,
+        find_task_status_row, format_task_list, format_task_status,
         resolve_optional_server_base_url, resolve_server_base_url, resolve_stage_db_path,
-        TaskCreateOptions,
+        task_list_path, task_not_found_error, TaskCreateOptions, TaskSummary,
     };
     use serde_json::json;
 
@@ -757,6 +865,90 @@ mod tests {
                 "permissionMode": "dontAsk",
                 "allowedTools": ["Bash", "Edit"],
             })
+        );
+    }
+
+    #[test]
+    fn task_list_uses_recent_tasks_endpoint() {
+        assert_eq!(task_list_path(), "/v1/tasks/recent");
+    }
+
+    #[test]
+    fn parses_task_summary_response_shape() {
+        let task: TaskSummary = serde_json::from_value(json!({
+            "id": "task-1",
+            "repoId": "repo-1",
+            "title": "Add status command",
+            "stage": "in progress",
+            "snippet": "working...",
+        }))
+        .unwrap();
+
+        assert_eq!(task.id, "task-1");
+        assert_eq!(task.repo_id, "repo-1");
+        assert_eq!(task.stage.as_deref(), Some("in progress"));
+        assert_eq!(task.title, "Add status command");
+    }
+
+    #[test]
+    fn formats_task_list_as_script_friendly_json_rows() {
+        let tasks = vec![TaskSummary {
+            id: "task-1".to_string(),
+            repo_id: "repo-1".to_string(),
+            title: "Add status command".to_string(),
+            stage: Some("in progress".to_string()),
+            snippet: Some("working...".to_string()),
+        }];
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&format_task_list(&tasks).unwrap()).unwrap(),
+            json!([
+                {
+                    "id": "task-1",
+                    "repoId": "repo-1",
+                    "stage": "in progress",
+                    "title": "Add status command",
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn formats_task_status_for_exact_task_id_only() {
+        let tasks = vec![
+            TaskSummary {
+                id: "task-123".to_string(),
+                repo_id: "repo-1".to_string(),
+                title: "Wanted".to_string(),
+                stage: Some("pr".to_string()),
+                snippet: None,
+            },
+            TaskSummary {
+                id: "task-123-extra".to_string(),
+                repo_id: "repo-1".to_string(),
+                title: "Wrong".to_string(),
+                stage: Some("merge".to_string()),
+                snippet: None,
+            },
+        ];
+
+        let row = find_task_status_row(&tasks, "task-123").unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&format_task_status(&row).unwrap()).unwrap(),
+            json!({
+                "id": "task-123",
+                "repoId": "repo-1",
+                "stage": "pr",
+                "title": "Wanted",
+            })
+        );
+    }
+
+    #[test]
+    fn reports_clear_task_not_found_error() {
+        assert_eq!(
+            task_not_found_error("missing-task"),
+            "Task 'missing-task' was not found in recent tasks".to_string()
         );
     }
 }
