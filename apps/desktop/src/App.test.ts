@@ -738,6 +738,27 @@ describe("App", () => {
     expect(store.selectItem).toHaveBeenCalledWith("read-newest");
   });
 
+  it("navigates to the closest read task relative to the selected task", async () => {
+    store.currentItem = { id: "current", created_at: "2026-03-31T03:00:00.000Z" };
+    store.sortedItemsForCurrentRepo = [
+      { id: "read-oldest", activity: "idle", created_at: "2026-03-31T00:00:00.000Z", tags: "[]" },
+      { id: "read-near-older", activity: "idle", created_at: "2026-03-31T02:00:00.000Z", tags: "[]" },
+      { id: "current", activity: "working", created_at: "2026-03-31T03:00:00.000Z", tags: "[]" },
+      { id: "read-near-newer", activity: "idle", created_at: "2026-03-31T04:00:00.000Z", tags: "[]" },
+      { id: "read-newest", activity: "idle", created_at: "2026-03-31T05:00:00.000Z", tags: "[]" },
+    ];
+
+    await mountApp(SidebarWithRepoStub);
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.goToOldestRead();
+    expect(store.selectItem).toHaveBeenCalledWith("read-near-older");
+
+    store.selectItem.mockClear();
+    capturedKeyboardActions?.goToNewestRead();
+    expect(store.selectItem).toHaveBeenCalledWith("read-near-newer");
+  });
+
   it("opens a new window through the workspace controller using the current selection", async () => {
     store.selectedRepoId = "repo-1";
     store.selectedItemId = "task-1";
@@ -848,11 +869,35 @@ describe("App", () => {
     expect(store.selectItem).toHaveBeenCalledWith("normal-unread");
   });
 
-  it("falls back to read tasks when unread shortcut navigation has no unread task", async () => {
+  it("navigates to the closest unread task relative to the selected task", async () => {
+    store.currentItem = { id: "current", created_at: "2026-03-31T03:00:00.000Z" };
+    store.sortedItemsForCurrentRepo = [
+      { id: "unread-oldest", activity: "unread", created_at: "2026-03-31T00:00:00.000Z", tags: "[]" },
+      { id: "unread-near-older", activity: "unread", created_at: "2026-03-31T02:00:00.000Z", tags: "[]" },
+      { id: "current", activity: "idle", created_at: "2026-03-31T03:00:00.000Z", tags: "[]" },
+      { id: "unread-near-newer", activity: "unread", created_at: "2026-03-31T04:00:00.000Z", tags: "[]" },
+      { id: "unread-newest", activity: "unread", created_at: "2026-03-31T05:00:00.000Z", tags: "[]" },
+    ];
+
+    await mountApp(SidebarWithRepoStub);
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.goToOldestUnread();
+    expect(store.selectItem).toHaveBeenCalledWith("unread-near-older");
+
+    store.selectItem.mockClear();
+    capturedKeyboardActions?.goToNewestUnread();
+    expect(store.selectItem).toHaveBeenCalledWith("unread-near-newer");
+  });
+
+  it("falls back to relative read tasks when unread shortcut navigation has no unread task", async () => {
+    store.currentItem = { id: "current", created_at: "2026-03-31T02:30:00.000Z" };
     store.sortedItemsForCurrentRepo = [
       { id: "blocked-oldest", activity: "idle", created_at: "2026-03-31T00:00:00.000Z", tags: '["blocked"]' },
       { id: "read-oldest", activity: "idle", created_at: "2026-03-31T01:00:00.000Z", tags: "[]" },
-      { id: "working-newest", activity: "working", created_at: "2026-03-31T02:00:00.000Z", tags: "[]" },
+      { id: "read-near-older", activity: "idle", created_at: "2026-03-31T02:00:00.000Z", tags: "[]" },
+      { id: "current", activity: "idle", created_at: "2026-03-31T02:30:00.000Z", tags: "[]" },
+      { id: "read-near-newer", activity: "idle", created_at: "2026-03-31T02:45:00.000Z", tags: "[]" },
       { id: "read-newest", activity: "idle", created_at: "2026-03-31T03:00:00.000Z", tags: "[]" },
       { id: "blocked-newest", activity: "idle", created_at: "2026-03-31T04:00:00.000Z", tags: '["blocked"]' },
     ];
@@ -861,11 +906,11 @@ describe("App", () => {
     expect(capturedKeyboardActions).not.toBeNull();
 
     capturedKeyboardActions?.goToOldestUnread();
-    expect(store.selectItem).toHaveBeenCalledWith("read-oldest");
+    expect(store.selectItem).toHaveBeenCalledWith("read-near-older");
 
     store.selectItem.mockClear();
     capturedKeyboardActions?.goToNewestUnread();
-    expect(store.selectItem).toHaveBeenCalledWith("read-newest");
+    expect(store.selectItem).toHaveBeenCalledWith("read-near-newer");
   });
 
   it("reopens the diff modal with the last saved diff view state", async () => {
