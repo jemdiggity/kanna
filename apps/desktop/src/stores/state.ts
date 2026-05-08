@@ -58,6 +58,7 @@ export interface WorktreeBootstrapResult {
 
 export interface AdvanceStageOptions {
   initiatedBy?: "manual" | "auto";
+  skipPostAction?: boolean;
 }
 
 export interface RepoSnapshotEntry {
