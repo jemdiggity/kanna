@@ -20,6 +20,7 @@ import {
   updatePipelineItemDisplayName,
   updatePipelineItemStage,
   updatePipelineItemTags,
+  updateRepoName,
   pinPipelineItem,
   reorderRepos as reorderReposQuery,
   unpinPipelineItem,
@@ -80,6 +81,7 @@ export interface TasksApi {
   createRepo: (name: string, path: string) => Promise<void>;
   cloneAndImportRepo: (url: string, destination: string) => Promise<void>;
   hideRepo: (repoId: string) => Promise<void>;
+  renameRepo: (repoId: string, name: string) => Promise<void>;
   reorderRepos: (orderedIds: string[]) => Promise<void>;
   createItem: (
     repoId: string,
@@ -254,6 +256,12 @@ export function createTasksApi(
     context.state.lastHiddenRepoId.value = repoId;
     await reloadSnapshot();
     await invalidateWindowWorkspace("hideRepo");
+  }
+
+  async function renameRepo(repoId: string, name: string) {
+    await updateRepoName(context.requireDb(), repoId, name);
+    await reloadSnapshot();
+    await invalidateWindowWorkspace("renameRepo");
   }
 
   async function reorderRepos(orderedIds: string[]) {
@@ -1190,6 +1198,7 @@ export function createTasksApi(
     createRepo,
     cloneAndImportRepo,
     hideRepo,
+    renameRepo,
     reorderRepos,
     createItem,
     closeTask,

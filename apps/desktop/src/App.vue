@@ -1484,6 +1484,7 @@ onBeforeUnmount(() => {
       @rename-item="store.renameItem"
       @rename-done="focusAgentTerminal"
       @hide-repo="store.hideRepo"
+      @rename-repo="store.renameRepo"
       @reorder-repos="store.reorderRepos"
     />
     <div v-if="!isMobile || store.selectedItemId" class="main-column">

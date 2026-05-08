@@ -905,6 +905,7 @@ Use this branch as the default when the user does not specify a target branch. B
     createRepo: tasks.createRepo,
     cloneAndImportRepo: tasks.cloneAndImportRepo,
     hideRepo: tasks.hideRepo,
+    renameRepo: tasks.renameRepo,
     reorderRepos: tasks.reorderRepos,
 
     createItem: tasks.createItem,

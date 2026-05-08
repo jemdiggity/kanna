@@ -6,6 +6,7 @@ import {
   deleteRepo,
   hideRepo,
   unhideRepo,
+  updateRepoName,
   findRepoByPath,
   listPipelineItems,
   listTaskPorts,
@@ -106,6 +107,10 @@ function createMockDb(): DbHandle & {
         const [sortOrder, id] = bindValues as [number, string];
         const repo = tables.repo.find((r) => r.id === id);
         if (repo) repo.sort_order = sortOrder;
+      } else if (q.startsWith("UPDATE REPO SET NAME")) {
+        const [name, id] = bindValues as [string, string];
+        const repo = tables.repo.find((r) => r.id === id);
+        if (repo) repo.name = name;
       } else if (q.startsWith("INSERT INTO PIPELINE_ITEM")) {
         const [id, repo_id, issue_number, issue_title, prompt, pipeline, stage, tagsJson, pr_number, pr_url, branch, agent_type, agent_provider, port_offset, port_env, activity] =
           bindValues as unknown[];
@@ -458,6 +463,22 @@ describe("repo queries", () => {
 
     const repos = await listRepos(db);
     expect(repos.map((repo) => repo.id)).toEqual(["r3", "r1", "r2"]);
+  });
+
+  it("updateRepoName changes only the repository display name", async () => {
+    await insertRepo(db, {
+      id: "r1",
+      path: "/home/user/project",
+      name: "project",
+      default_branch: "main",
+    });
+
+    await updateRepoName(db, "r1", "Client App");
+
+    const updated = await getRepo(db, "r1");
+    expect(updated?.name).toBe("Client App");
+    expect(updated?.path).toBe("/home/user/project");
+    expect(updated?.default_branch).toBe("main");
   });
 
   it("getRepo returns the correct repo", async () => {

@@ -37,6 +37,7 @@ const emit = defineEmits<{
   (e: "reorder-pinned", repoId: string, orderedIds: string[]): void;
   (e: "reorder-repos", orderedIds: string[]): void;
   (e: "rename-item", itemId: string, displayName: string | null): void;
+  (e: "rename-repo", repoId: string, name: string): void;
   (e: "hide-repo", repoId: string): void;
   (e: "rename-done"): void;
 }>();
@@ -173,8 +174,11 @@ function itemTitle(item: PipelineItem): string {
 
 const editingItemId = ref<string | null>(null);
 const editingValue = ref("");
+const editingRepoId = ref<string | null>(null);
+const editingRepoValue = ref("");
 
 function startRename(item: PipelineItem) {
+  editingRepoId.value = null;
   editingItemId.value = item.id;
   editingValue.value = item.display_name || item.issue_title || item.prompt || "";
   nextTick(() => {
@@ -184,6 +188,34 @@ function startRename(item: PipelineItem) {
       input.select();
     }
   });
+}
+
+function startRepoRename(repo: Repo) {
+  editingItemId.value = null;
+  editingRepoId.value = repo.id;
+  editingRepoValue.value = repo.name;
+  nextTick(() => {
+    const input = document.querySelector('.repo-rename-input') as HTMLInputElement | null;
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  });
+}
+
+function commitRepoRename(repoId: string) {
+  const trimmed = editingRepoValue.value.trim();
+  const repo = props.repos.find((candidate) => candidate.id === repoId);
+  if (trimmed && trimmed !== repo?.name) {
+    emit("rename-repo", repoId, trimmed);
+  }
+  editingRepoId.value = null;
+  emit("rename-done");
+}
+
+function cancelRepoRename() {
+  editingRepoId.value = null;
+  emit("rename-done");
 }
 
 function commitRename(itemId: string) {
@@ -290,7 +322,7 @@ function handleRepoDragEnd(event: MouseEvent) {
 
 function startRepoDrag(repoId: string, event: MouseEvent) {
   if (isSearchActive() || event.button !== 0) return;
-  if (event.target instanceof HTMLElement && event.target.closest(".collapse-btn,.btn-icon")) return;
+  if (event.target instanceof HTMLElement && event.target.closest(".collapse-btn,.btn-icon,.repo-rename-input")) return;
   repoDrag.value = { repoId, startY: event.clientY, active: false, overRepoId: null };
   document.addEventListener("mousemove", handleRepoDragMove);
   document.addEventListener("mouseup", handleRepoDragEnd);
@@ -389,7 +421,22 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch, emit
             >
               {{ collapsedRepos.has(repo.id) ? ">" : "v" }}
             </button>
-            <span class="repo-name" :class="{ 'filtered-label': hasActiveSearch }">{{ repo.name }}</span>
+            <input
+              v-if="editingRepoId === repo.id"
+              class="repo-rename-input"
+              v-model="editingRepoValue"
+              v-bind="macOsTextInputAttrs"
+              @keydown.enter="commitRepoRename(repo.id)"
+              @keydown.escape="cancelRepoRename()"
+              @blur="commitRepoRename(repo.id)"
+              @click.stop
+            />
+            <span
+              v-else
+              class="repo-name"
+              :class="{ 'filtered-label': hasActiveSearch }"
+              @dblclick.stop="startRepoRename(repo)"
+            >{{ repo.name }}</span>
             <span class="repo-count">{{ repoCountLabel(repo.id) }}</span>
             <button
               class="btn-icon btn-add-task"
@@ -684,6 +731,20 @@ defineExpose({ renameSelectedItem, focusSearch, searchQuery, matchesSearch, emit
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.repo-rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #eee;
+  background: #2a2a2a;
+  border: 1px solid #0066cc;
+  border-radius: 2px;
+  padding: 1px 4px;
+  outline: none;
+  font-family: inherit;
 }
 
 .repo-count {
