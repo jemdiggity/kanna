@@ -18,12 +18,14 @@ FAKE_BIN="$TMPDIR_ROOT/bin"
 TMUX_STATE="$TMPDIR_ROOT/tmux-state"
 TMUX_LOG="$TMPDIR_ROOT/tmux-log"
 SQLITE_LOG="$TMPDIR_ROOT/sqlite-log"
+SQLITE_INPUT_LOG="$TMPDIR_ROOT/sqlite-input-log"
 RM_LOG="$TMPDIR_ROOT/rm-log"
 
 mkdir -p "$FAKE_BIN"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 : > "$SQLITE_LOG"
+: > "$SQLITE_INPUT_LOG"
 : > "$RM_LOG"
 
 setup_worktree_fixture() {
@@ -45,6 +47,14 @@ mkdir -p "$REPO_ONE_ROOT/.git" "$REPO_TWO_ROOT/.git" "$ROOT_CHECKOUT/.git"
 cat > "$FAKE_BIN/git" <<EOF
 #!/bin/bash
 set -euo pipefail
+if [ "\${1:-}" = "-C" ]; then
+  shift 2
+  case "\${1:-}" in
+    init|config|add|commit|branch|checkout|update-ref|worktree)
+      exit 0
+      ;;
+  esac
+fi
 case "\$*" in
   "rev-parse --show-toplevel")
     printf '%s\n' "\${GIT_FAKE_TOPLEVEL:?}"
@@ -208,7 +218,7 @@ cat > "$FAKE_BIN/sqlite3" <<EOF
 #!/bin/bash
 set -euo pipefail
 printf '%s\n' "\$1" >> "$SQLITE_LOG"
-cat >/dev/null
+cat >> "$SQLITE_INPUT_LOG"
 EOF
 
 cat > "$FAKE_BIN/rm" <<EOF
@@ -620,6 +630,7 @@ if ! grep -Fq "KANNA_TRANSFER_PORT=4567" "$TMUX_LOG"; then
 fi
 
 : > "$SQLITE_LOG"
+: > "$SQLITE_INPUT_LOG"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed env KANNA_DB_NAME=shared.db)"
 expect_success "dev.sh seed with KANNA_DB_NAME" "$RESULT" >/dev/null
 
@@ -628,8 +639,19 @@ if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-
   cat "$SQLITE_LOG" >&2
   exit 1
 fi
+if ! grep -Fq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/seed-repos/kanna-wt-v0.0.30/example-app" "$SQLITE_INPUT_LOG"; then
+  printf 'expected seed to rewrite example-app to a real generated fixture repo, got SQL:\n' >&2
+  cat "$SQLITE_INPUT_LOG" >&2
+  exit 1
+fi
+if ! grep -Fq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/seed-repos/kanna-wt-v0.0.30/example-app/.kanna-worktrees/task-seed-auth-refactor" "$SQLITE_INPUT_LOG"; then
+  printf 'expected seed to rewrite auth worktree to a real generated worktree, got SQL:\n' >&2
+  cat "$SQLITE_INPUT_LOG" >&2
+  exit 1
+fi
 
 : > "$SQLITE_LOG"
+: > "$SQLITE_INPUT_LOG"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed -- --db /tmp/e2e/seed.db)"
 expect_success "dev.sh seed --db" "$RESULT" >/dev/null
 
@@ -640,6 +662,7 @@ if ! grep -Fxq "/tmp/e2e/seed.db" "$SQLITE_LOG"; then
 fi
 
 : > "$SQLITE_LOG"
+: > "$SQLITE_INPUT_LOG"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed -- --db seed.db)"
 expect_success "dev.sh seed --db filename" "$RESULT" >/dev/null
 

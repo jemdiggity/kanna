@@ -459,6 +459,122 @@ delete_db() {
   rm -f "$KANNA_DB_PATH" "${KANNA_DB_PATH}-wal" "${KANNA_DB_PATH}-shm"
 }
 
+sqlite_quote() {
+  printf '%s' "$1" | sed "s/'/''/g"
+}
+
+seed_repo_root() {
+  local db_stem="${KANNA_DB_NAME%.db}"
+  printf '%s/seed-repos/%s\n' "$(dirname "$KANNA_DB_PATH")" "$db_stem"
+}
+
+seed_commit_file() {
+  local repo_path="$1"
+  local file_path="$2"
+  local message="$3"
+  local body="$4"
+  local absolute_file="$repo_path/$file_path"
+
+  mkdir -p "$(dirname "$absolute_file")"
+  printf '%s\n' "$body" > "$absolute_file"
+  git -C "$repo_path" add "$file_path"
+  git -C "$repo_path" commit -q -m "$message"
+}
+
+seed_task_worktree() {
+  local repo_path="$1"
+  local branch="$2"
+  local file_path="$3"
+  local message="$4"
+  local body="$5"
+
+  git -C "$repo_path" checkout -q main
+  git -C "$repo_path" checkout -q -b "$branch"
+  seed_commit_file "$repo_path" "$file_path" "$message" "$body"
+  git -C "$repo_path" checkout -q main
+  mkdir -p "$repo_path/.kanna-worktrees"
+  git -C "$repo_path" worktree add -q "$repo_path/.kanna-worktrees/$branch" "$branch"
+}
+
+seed_git_repo() {
+  local repo_path="$1"
+  local repo_name="$2"
+  shift 2
+  local branches=("$@")
+
+  rm -rf "$repo_path"
+  mkdir -p "$repo_path"
+  git -C "$repo_path" init -q
+  git -C "$repo_path" config user.name "Kanna Seed"
+  git -C "$repo_path" config user.email "seed@example.com"
+  seed_commit_file "$repo_path" "README.md" "seed ${repo_name}" "# ${repo_name}"
+  git -C "$repo_path" branch -M main
+  git -C "$repo_path" update-ref refs/remotes/origin/main HEAD
+
+  local branch
+  for branch in "${branches[@]}"; do
+    seed_task_worktree \
+      "$repo_path" \
+      "$branch" \
+      "tasks/${branch}.md" \
+      "$branch" \
+      "Seeded commit for ${branch} in ${repo_name}."
+  done
+}
+
+seed_git_repos() {
+  local root
+  root="$(seed_repo_root)"
+  rm -rf "$root"
+  mkdir -p "$root"
+
+  seed_git_repo "$root/example-app" "example-app" \
+    task-seed-auth-refactor \
+    task-seed-dashboard \
+    task-seed-onboarding \
+    task-seed-perf-audit \
+    task-seed-blocked-migration
+
+  seed_git_repo "$root/example-api" "example-api" \
+    task-seed-search \
+    task-seed-rate-limit \
+    task-seed-webhooks
+
+  seed_git_repo "$root/example-docs" "example-docs" \
+    task-seed-api-docs \
+    task-seed-tutorials \
+    task-seed-changelog
+}
+
+rewrite_seed_paths() {
+  local root
+  root="$(seed_repo_root)"
+  local app_repo api_repo docs_repo
+  app_repo="$root/example-app"
+  api_repo="$root/example-api"
+  docs_repo="$root/example-docs"
+
+  sqlite3 "$KANNA_DB_PATH" <<SQL
+UPDATE repo SET path = '$(sqlite_quote "$app_repo")' WHERE id = 'repo-seed-app';
+UPDATE repo SET path = '$(sqlite_quote "$api_repo")' WHERE id = 'repo-seed-api';
+UPDATE repo SET path = '$(sqlite_quote "$docs_repo")' WHERE id = 'repo-seed-docs';
+
+UPDATE worktree SET path = '$(sqlite_quote "$app_repo/.kanna-worktrees/task-seed-auth-refactor")'
+  WHERE id = 'wt-seed-auth';
+UPDATE worktree SET path = '$(sqlite_quote "$app_repo/.kanna-worktrees/task-seed-dashboard")'
+  WHERE id = 'wt-seed-dashboard';
+UPDATE worktree SET path = '$(sqlite_quote "$api_repo/.kanna-worktrees/task-seed-search")'
+  WHERE id = 'wt-seed-search';
+
+UPDATE terminal_session SET cwd = '$(sqlite_quote "$app_repo/.kanna-worktrees/task-seed-auth-refactor")'
+  WHERE id = 'ts-seed-auth';
+UPDATE terminal_session SET cwd = '$(sqlite_quote "$app_repo/.kanna-worktrees/task-seed-dashboard")'
+  WHERE id = 'ts-seed-dashboard';
+UPDATE terminal_session SET cwd = '$(sqlite_quote "$api_repo/.kanna-worktrees/task-seed-search")'
+  WHERE id = 'ts-seed-search';
+SQL
+}
+
 seed() {
   # SAFETY: never seed the production database
   if [ "$KANNA_DB_NAME" = "kanna-v2.db" ]; then
@@ -476,7 +592,10 @@ seed() {
 
   mkdir -p "$(dirname "$KANNA_DB_PATH")"
   sqlite3 "$KANNA_DB_PATH" < "$SEED_SQL"
+  seed_git_repos
+  rewrite_seed_paths
   echo "Seeded $KANNA_DB_PATH"
+  echo "Seeded git repos under $(seed_repo_root)"
 }
 
 ATTACH=${ATTACH:-false}
