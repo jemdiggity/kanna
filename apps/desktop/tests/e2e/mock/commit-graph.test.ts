@@ -29,6 +29,12 @@ describe("commit graph", () => {
 
     await client.waitForElement(".graph-modal", 5000);
     await client.waitForElement(".graph-scroll", 5000);
+    await client.waitForText(".graph-modal .head-pill", "HEAD", 5000);
+
+    const headMarkerCount = await client.executeSync<number>(
+      `return document.querySelectorAll(".graph-modal .head-node-marker").length;`
+    );
+    expect(headMarkerCount).toBe(1);
 
     await client.executeSync(buildGlobalKeydownScript({ key: "/" }));
 

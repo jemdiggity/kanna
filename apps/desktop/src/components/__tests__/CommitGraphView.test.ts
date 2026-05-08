@@ -184,6 +184,23 @@ describe("CommitGraphView", () => {
     expect(wrapper.findAll(".commit-row.is-search-active")).toHaveLength(1);
   });
 
+  it("marks the current HEAD commit in the graph and row text", async () => {
+    invokeMock.mockResolvedValue(graphResult());
+
+    const wrapper = mount(CommitGraphView, {
+      props: { repoPath: "/repo" },
+      attachTo: document.body,
+    });
+
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.findAll(".head-node-marker")).toHaveLength(1);
+    const headRow = wrapper.get(".commit-row.is-head");
+    expect(headRow.get(".head-pill").text()).toBe("HEAD");
+    expect(headRow.text()).toContain("aaa1111");
+  });
+
   it("dismiss closes search before allowing the modal to close", async () => {
     invokeMock.mockResolvedValue(graphResult());
 
