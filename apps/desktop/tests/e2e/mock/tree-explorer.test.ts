@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { buildGlobalKeydownScript } from "../helpers/keyboard";
+import { buildGlobalKeydownScript, buildSelectorKeydownScript } from "../helpers/keyboard";
 import { WebDriverClient } from "../helpers/webdriver";
 import { cleanupFixtureRepos, createSeedFixtureRepo } from "../helpers/fixture-repo";
 
@@ -20,6 +20,20 @@ async function pressKey(
     shift: opts.shift,
     alt: opts.alt,
   }));
+}
+
+async function pressTreeKey(client: WebDriverClient, key: string): Promise<void> {
+  await client.executeSync(buildSelectorKeydownScript(".tree-modal", { key }));
+}
+
+async function pressActiveElementKey(client: WebDriverClient, key: string): Promise<void> {
+  await client.executeSync(
+    `document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", {
+       key: ${JSON.stringify(key)},
+       bubbles: true,
+       cancelable: true,
+     }));`,
+  );
 }
 
 async function textContent(client: WebDriverClient, selector: string): Promise<string> {
@@ -111,5 +125,33 @@ describe("tree explorer", () => {
 
     await pressKey(client, "Escape");
     await client.waitForNoElement(".tree-modal", 5_000);
+  });
+
+  it("keeps tree explorer keyboard shortcuts active after closing a file preview", async () => {
+    await ensureRepoImported();
+
+    await client.executeSync(
+      `window.__KANNA_E2E__.setupState.showTreeExplorer = false;
+       window.__KANNA_E2E__.setupState.showFilePreviewModal = false;`,
+    );
+
+    await pressKey(client, "E", { meta: true, shift: true });
+    await client.waitForElement(".tree-modal", 5_000);
+    await waitForExplorerText(client, "README.md");
+
+    expect(await textContent(client, ".tree-modal")).not.toContain(IGNORED_FILE);
+
+    await pressTreeKey(client, "j");
+    await pressTreeKey(client, "j");
+    await pressTreeKey(client, "l");
+    await client.waitForText(".preview-modal .file-path", "README.md", 5_000);
+
+    await pressKey(client, "Escape");
+    await client.waitForNoElement(".preview-modal", 5_000);
+    await client.waitForElement(".tree-modal", 5_000);
+
+    await pressActiveElementKey(client, "a");
+    await waitForExplorerText(client, IGNORED_FILE);
+    expect(await textContent(client, ".show-all-toggle")).toContain("showing all");
   });
 });
