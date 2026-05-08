@@ -484,7 +484,10 @@ describe("App", () => {
     store.selectItem.mockClear();
     store.repos = [{ id: "repo-1", path: "/tmp/repo", name: "repo" }];
     store.selectedRepoId = "repo-1";
+    store.selectedItemId = null;
     store.selectedRepo = { id: "repo-1", path: "/tmp/repo", name: "repo" };
+    store.currentItem = null;
+    store.items = [];
     store.sortedItemsForCurrentRepo = [];
     store.sortedItemsAllRepos = [];
     listenHandlers.clear();
@@ -1784,6 +1787,106 @@ describe("App", () => {
 
     expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+  });
+
+  it("keeps recalled file previews scoped to the selected task", async () => {
+    store.currentItem = {
+      id: "task-a",
+      stage: "in progress",
+      branch: "task-a",
+      prompt: "Task A",
+      tags: "[]",
+    };
+    store.selectedItemId = "task-a";
+
+    const TaskAwareFilePickerModalTestStub = defineComponent({
+      name: "FilePickerModal",
+      emits: ["select"],
+      template: `
+        <div data-testid="file-picker-modal">
+          <button data-testid="file-picker-select-a" @click="$emit('select', 'src/task-a.ts')">task a</button>
+          <button data-testid="file-picker-select-b" @click="$emit('select', 'src/task-b.ts')">task b</button>
+        </div>
+      `,
+    });
+
+    const FilePathPreviewModalTestStub = defineComponent({
+      name: "FilePreviewModal",
+      props: {
+        filePath: {
+          type: String,
+          required: true,
+        },
+      },
+      emits: ["close"],
+      setup(_props, { emit, expose }) {
+        function dismiss() {
+          emit("close");
+          return true;
+        }
+
+        expose({ dismiss, zIndex: 1000, bringToFront: vi.fn() });
+
+        return {};
+      },
+      template: `
+        <div data-testid="file-preview-modal" :data-file-path="filePath">
+          <button data-testid="file-preview-close" @click="$emit('close')">close</button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      FilePickerModal: TaskAwareFilePickerModalTestStub,
+      FilePreviewModal: FilePathPreviewModalTestStub,
+    });
+
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    await wrapper.get('[data-testid="file-picker-select-a"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-file-path")).toBe("src/task-a.ts");
+
+    capturedKeyboardActions?.dismiss();
+    await flushPromises();
+
+    store.currentItem = {
+      id: "task-b",
+      stage: "in progress",
+      branch: "task-b",
+      prompt: "Task B",
+      tags: "[]",
+    };
+    store.selectedItemId = "task-b";
+
+    capturedKeyboardActions?.toggleFilePreview();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(true);
+
+    await wrapper.get('[data-testid="file-picker-select-b"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-file-path")).toBe("src/task-b.ts");
+
+    capturedKeyboardActions?.dismiss();
+    await flushPromises();
+
+    store.currentItem = {
+      id: "task-a",
+      stage: "in progress",
+      branch: "task-a",
+      prompt: "Task A",
+      tags: "[]",
+    };
+    store.selectedItemId = "task-a";
+
+    capturedKeyboardActions?.toggleFilePreview();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-file-path")).toBe("src/task-a.ts");
   });
 
   it("preserves file preview component state when hiding and showing the last preview", async () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, inject, onMounted, onBeforeUnmount, onUnmounted, nextTick, type Ref } from "vue";
+import { ref, reactive, computed, inject, onMounted, onBeforeUnmount, onUnmounted, nextTick, watch, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { computedAsync } from "@vueuse/core";
@@ -110,8 +110,6 @@ const showFilePickerModal = ref(false);
 const showFilePreviewModal = ref(false);
 const previewFilePath = ref("");
 const previewInitialLine = ref<number | undefined>(undefined);
-const lastPreviewFilePath = ref("");
-const lastPreviewInitialLine = ref<number | undefined>(undefined);
 const previewHidden = ref(false);
 const previewFromPicker = ref(false);
 const showDiffModal = ref(false);
@@ -173,7 +171,13 @@ interface DiffViewState {
   scrollPositions?: DiffScrollPositions;
 }
 
+interface FilePreviewRecallState {
+  filePath: string;
+  initialLine?: number;
+}
+
 const diffViewStates = reactive<Record<string, DiffViewState>>({});
+const filePreviewRecallStates = reactive<Record<string, FilePreviewRecallState>>({});
 const currentDiffViewKey = computed(() => {
   if (store.currentItem) return `item:${store.currentItem.id}`;
   if (store.selectedRepo) return `repo:${store.selectedRepo.id}`;
@@ -189,6 +193,25 @@ function updateCurrentDiffViewState(partial: DiffViewState) {
   if (!key) return;
   const current = diffViewStates[key] ?? {};
   diffViewStates[key] = { ...current, ...partial };
+}
+
+function buildCurrentFileFlowKey(): string | undefined {
+  if (store.currentItem) return `item:${store.currentItem.id}`;
+  if (store.selectedRepo) return `repo:${store.selectedRepo.id}`;
+  return undefined;
+}
+
+const currentFileFlowKey = computed(() => buildCurrentFileFlowKey());
+
+function rememberCurrentPreview(filePath: string, initialLine: number | undefined) {
+  const key = buildCurrentFileFlowKey();
+  if (!key) return;
+  filePreviewRecallStates[key] = { filePath, initialLine };
+}
+
+function getCurrentPreviewRecall(): FilePreviewRecallState | undefined {
+  const key = buildCurrentFileFlowKey();
+  return key ? filePreviewRecallStates[key] : undefined;
 }
 
 const sidebarHidden = ref(false);
@@ -639,11 +662,15 @@ function closeFileFlow() {
   previewFromPicker.value = false;
 }
 
+watch(currentFileFlowKey, (newKey, oldKey) => {
+  if (!oldKey || newKey === oldKey) return;
+  closeFileFlow();
+});
+
 function openFilePreview(filePath: string, initialLine: number | undefined, fromPicker: boolean) {
   previewFilePath.value = filePath;
   previewInitialLine.value = initialLine;
-  lastPreviewFilePath.value = filePath;
-  lastPreviewInitialLine.value = initialLine;
+  rememberCurrentPreview(filePath, initialLine);
   previewFromPicker.value = fromPicker;
   previewHidden.value = false;
   showFilePreviewModal.value = true;
@@ -833,9 +860,14 @@ const keyboardActions = {
       showFilePreviewModal.value = false;
       previewHidden.value = true;
       previewFromPicker.value = false;
-    } else if (lastPreviewFilePath.value) {
-      openFilePreview(lastPreviewFilePath.value, lastPreviewInitialLine.value, false);
     } else {
+      const recalledPreview = getCurrentPreviewRecall();
+      if (recalledPreview) {
+        openFilePreview(recalledPreview.filePath, recalledPreview.initialLine, false);
+        return;
+      }
+      previewHidden.value = false;
+      previewFromPicker.value = false;
       showFilePickerModal.value = true;
     }
   },
