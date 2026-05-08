@@ -1638,6 +1638,7 @@ onBeforeUnmount(() => {
       :repo-root="store.selectedRepo?.path ?? treeExplorerRoot"
       :home-path="homePath"
       :maximized="maximizedModal === 'tree'"
+      :suspended="showFilePreviewModal"
       @close="closeTreeExplorer"
       @open-file="(f: string) => openFilePreview(f, undefined, false)"
     />

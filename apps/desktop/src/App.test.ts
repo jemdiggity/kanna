@@ -311,17 +311,22 @@ const TreeExplorerModalTestStub = defineComponent({
   name: "TreeExplorerModal",
   props: {
     maximized: Boolean,
+    suspended: Boolean,
     worktreePath: {
       type: String,
       required: true,
     },
   },
+  emits: ["open-file"],
   template: `
     <div
       data-testid="tree-explorer-modal"
       :data-maximized="String(maximized)"
+      :data-suspended="String(suspended)"
       :data-worktree-path="worktreePath"
-    />
+    >
+      <button data-testid="tree-open-file" @click="$emit('open-file', 'src/example.ts')">open</button>
+    </div>
   `,
 });
 
@@ -2097,6 +2102,33 @@ describe("App", () => {
     await flushPromises();
 
     expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-maximized")).toBe("true");
+  });
+
+  it("suspends and resumes the tree explorer while a file preview opened from it is active", async () => {
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      TreeExplorerModal: TreeExplorerModalTestStub,
+      FilePreviewModal: FilePreviewModalTestStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.toggleTreeExplorer();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-suspended")).toBe("false");
+
+    await wrapper.get('[data-testid="tree-open-file"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-suspended")).toBe("true");
+
+    await wrapper.get('[data-testid="file-preview-close"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-suspended")).toBe("false");
   });
 
   it("clears tree explorer maximize state when the modal closes", async () => {
