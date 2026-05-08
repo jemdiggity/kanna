@@ -27,23 +27,24 @@ function isVueCallError(value: unknown): value is { __error: string } {
   );
 }
 
-async function waitForStage(
+async function waitForActivePostAction(
   client: WebDriverClient,
   taskId: string,
-  expectedStage: string,
+  expectedPostAction: string,
   timeoutMs = 5_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const rows = (await queryDb(
       client,
-      "SELECT stage FROM pipeline_item WHERE id = ?",
+      "SELECT stage, active_post_action FROM pipeline_item WHERE id = ?",
       [taskId],
-    )) as Array<{ stage: string | null }>;
-    if (rows[0]?.stage === expectedStage) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    )) as Array<{ stage: string | null; active_post_action: string | null }>;
+    const row = rows[0];
+    if (row?.stage === "in progress" && row.active_post_action === expectedPostAction) return;
+    await sleep(100);
   }
-  throw new Error(`timed out waiting for ${taskId} to reach stage ${expectedStage}`);
+  throw new Error(`timed out waiting for ${taskId} to enter post-action ${expectedPostAction}`);
 }
 
 async function waitForClosedTask(
@@ -293,14 +294,17 @@ describe("stage advance", () => {
       JSON.stringify({
         name: pipelineName,
         stages: [
-          { name: "in progress", transition: "manual" },
           {
-            name: "commit",
-            transition: "auto",
-            mode: "continue",
-            agent: "commit-e2e",
-            prompt: "Commit stage marker for $TASK_PROMPT",
+            name: "in progress",
+            transition: "manual",
+            post_action: {
+              name: "commit",
+              transition: "auto",
+              agent: "commit-e2e",
+              prompt: "Commit stage marker for $TASK_PROMPT",
+            },
           },
+          { name: "pr", transition: "manual" },
         ],
       }),
     );
@@ -329,7 +333,7 @@ describe("stage advance", () => {
       [
         "---",
         "name: Commit E2E",
-        "description: Verifies continue-mode stage advancement.",
+        "description: Verifies post-action advancement.",
         "---",
         "Commit agent generated prompt marker.",
         "",
@@ -343,6 +347,7 @@ describe("stage advance", () => {
     await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-task" }).catch(() => undefined);
     await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-claude-enter-task" }).catch(() => undefined);
     await tauriInvoke(client, "kill_session", { sessionId: "continue-stage-copilot-task" }).catch(() => undefined);
+    await tauriInvoke(client, "kill_session", { sessionId: "server-continue-stage-task" }).catch(() => undefined);
     if (renamedStageTaskId) {
       await tauriInvoke(client, "kill_session", { sessionId: renamedStageTaskId }).catch(() => undefined);
     }
@@ -492,7 +497,7 @@ describe("stage advance", () => {
     expect(await readFile(createdMarkerPath, "utf8")).toBe(markerContent);
   });
 
-  it("advances a live task into a continue-mode commit stage through the daemon input command", async () => {
+  it("starts a live task commit post-action through the daemon input command", async () => {
     const taskId = "continue-stage-task";
     const inputCapturePath = join(testRepoPath, ".kanna", "continue-stage-input.bin");
     const expectedPrompt = [
@@ -541,12 +546,12 @@ describe("stage advance", () => {
     const advanceResult = await callVueMethod(client, "store.advanceStage", taskId);
     if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
 
-    await waitForStage(client, taskId, "commit");
+    await waitForActivePostAction(client, taskId, "commit");
     await waitForFileSize(inputCapturePath, expectedInput.length);
     expect(await readFile(inputCapturePath)).toEqual(expectedInput);
   });
 
-  it("advances a continue-mode stage through the server API without creating a new task", async () => {
+  it("advances a commit post-action through the server API without creating a new task", async () => {
     const taskId = "server-continue-stage-task";
     const branch = "task-server-continue-stage";
     const worktreePath = join(testRepoPath, ".kanna-worktrees", branch);
@@ -610,18 +615,25 @@ describe("stage advance", () => {
       }
       expect(await response.json()).toEqual({ taskId });
 
-      await waitForStage(client, taskId, "commit");
+      await waitForActivePostAction(client, taskId, "commit");
       await waitForFileSize(inputCapturePath, expectedInput.length);
       expect(await readFile(inputCapturePath)).toEqual(expectedInput);
 
       const rows = (await queryDb(
         client,
-        "SELECT stage, stage_result, closed_at, branch FROM pipeline_item WHERE repo_id = ? ORDER BY id",
+        "SELECT stage, active_post_action, stage_result, closed_at, branch FROM pipeline_item WHERE repo_id = ? ORDER BY id",
         [repoId],
-      )) as Array<{ stage: string | null; stage_result: string | null; closed_at: string | null; branch: string | null }>;
+      )) as Array<{
+        stage: string | null;
+        active_post_action: string | null;
+        stage_result: string | null;
+        closed_at: string | null;
+        branch: string | null;
+      }>;
       const row = rows.find((candidate) => candidate.branch === branch);
       expect(row).toEqual({
-        stage: "commit",
+        stage: "in progress",
+        active_post_action: "commit",
         stage_result: null,
         closed_at: null,
         branch,
@@ -632,7 +644,7 @@ describe("stage advance", () => {
     }
   });
 
-  it("submits a continue-mode Claude stage with the terminal Enter sequence", async () => {
+  it("submits a Claude commit post-action with the terminal Enter sequence", async () => {
     const taskId = "continue-stage-claude-enter-task";
     const inputCapturePath = join(testRepoPath, ".kanna", "continue-stage-claude-enter-input.bin");
     const expectedPrompt = [
@@ -681,12 +693,12 @@ describe("stage advance", () => {
     const advanceResult = await callVueMethod(client, "store.advanceStage", taskId);
     if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
 
-    await waitForStage(client, taskId, "commit");
+    await waitForActivePostAction(client, taskId, "commit");
     await waitForFileSize(inputCapturePath, expectedInput.length);
     expect(await readFile(inputCapturePath)).toEqual(expectedInput);
   });
 
-  it("submits a continue-mode Copilot stage with carriage return", async () => {
+  it("submits a Copilot commit post-action with carriage return", async () => {
     const taskId = "continue-stage-copilot-task";
     const inputCapturePath = join(testRepoPath, ".kanna", "continue-stage-copilot-input.bin");
     const expectedPrompt = [
@@ -735,9 +747,54 @@ describe("stage advance", () => {
     const advanceResult = await callVueMethod(client, "store.advanceStage", taskId);
     if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
 
-    await waitForStage(client, taskId, "commit");
+    await waitForActivePostAction(client, taskId, "commit");
     await waitForFileSize(inputCapturePath, expectedInput.length);
     expect(await readFile(inputCapturePath)).toEqual(expectedInput);
+  });
+
+  it("clears a successful commit post-action and creates the PR task", async () => {
+    const taskId = "post-action-complete-task";
+    const branch = "task-post-action-complete";
+    await tauriInvoke(client, "git_worktree_add", {
+      repoPath: testRepoPath,
+      branch,
+      path: join(testRepoPath, ".kanna-worktrees", branch),
+      startPoint: "main",
+    });
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, active_post_action, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [
+        taskId,
+        repoId,
+        "Complete commit post-action",
+        "continue-e2e",
+        "in progress",
+        "commit",
+        JSON.stringify({ status: "success", summary: "committed" }),
+        "[]",
+        branch,
+        "pty",
+        "codex",
+        "idle",
+        null,
+      ],
+    );
+    await hydrateStoreItem(client, taskId);
+
+    await sendPipelineStageComplete(client, taskId);
+
+    const prTaskId = await waitForCreatedStageTask(client, repoId, "pr");
+    expect(prTaskId).not.toBe(taskId);
+    const rows = (await queryDb(
+      client,
+      "SELECT active_post_action FROM pipeline_item WHERE id = ?",
+      [taskId],
+    )) as Array<{ active_post_action: string | null }>;
+    expect(rows[0]?.active_post_action).toBeNull();
   });
 
   it("closes a final-stage task through the Cmd+S shortcut", async () => {

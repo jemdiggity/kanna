@@ -78,21 +78,6 @@ describe("stage order", () => {
       `INSERT INTO pipeline_item (id, repo_id, prompt, stage, activity, agent_type, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        "stage-order-commit-task",
-        repoId,
-        "Commit marker",
-        "commit",
-        "idle",
-        "sdk",
-        "2026-04-29T00:02:00.000Z",
-        "2026-04-29T00:02:00.000Z",
-      ],
-    );
-    await execDb(
-      client,
-      `INSERT INTO pipeline_item (id, repo_id, prompt, stage, activity, agent_type, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
         "stage-order-review-task",
         repoId,
         "Review marker",
@@ -105,15 +90,15 @@ describe("stage order", () => {
     );
 
     await callVueMethod(client, "loadItems");
-    await client.waitForText(".sidebar", "Commit marker", 5000);
-    await waitForStageLabels(client, repoId, ["review", "commit", "in progress"]);
+    await client.waitForText(".sidebar", "In progress marker", 5000);
+    await waitForStageLabels(client, repoId, ["review", "in progress"]);
 
     const taskPositions = await visibleTaskPositions(client, repoId);
-    const commitTop = taskPositions.find((entry) => entry.text === "Commit marker")?.top;
+    const reviewTop = taskPositions.find((entry) => entry.text === "Review marker")?.top;
     const progressTop = taskPositions.find((entry) => entry.text === "In progress marker")?.top;
 
-    expect(commitTop).toBeDefined();
+    expect(reviewTop).toBeDefined();
     expect(progressTop).toBeDefined();
-    expect(commitTop).toBeLessThan(progressTop ?? Number.POSITIVE_INFINITY);
+    expect(reviewTop).toBeLessThan(progressTop ?? Number.POSITIVE_INFINITY);
   });
 });
