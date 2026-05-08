@@ -254,7 +254,7 @@ describe("validatePipeline", () => {
         {
           name: "in progress",
           transition: "manual" as const,
-          post_action: { transition: "auto" as const },
+          post_action: { name: "", transition: "auto" as const },
         },
       ],
     };
