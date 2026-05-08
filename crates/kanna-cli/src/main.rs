@@ -149,6 +149,20 @@ enum TaskCommands {
         #[arg(long)]
         server_url: Option<String>,
     },
+    /// Send feedback or instructions to a running agent task
+    SendInput {
+        /// The target task/pipeline_item ID
+        #[arg(long)]
+        task_id: String,
+
+        /// Message to send to the running agent session
+        #[arg(long)]
+        message: String,
+
+        /// Override the local Kanna server base URL
+        #[arg(long)]
+        server_url: Option<String>,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -223,6 +237,18 @@ struct RequestRevisionRequest {
     prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct TaskInputRequest {
+    input: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct TaskInputResponse {
+    ok: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -382,6 +408,15 @@ fn build_request_revision_request(
     }
 }
 
+fn build_send_task_input_request(message: String) -> TaskInputRequest {
+    let input = if message.ends_with('\n') {
+        message
+    } else {
+        format!("{message}\n")
+    };
+    TaskInputRequest { input }
+}
+
 fn parse_metadata_json(metadata: &Option<String>) -> Result<Option<Value>, String> {
     match metadata {
         Some(json_str) => serde_json::from_str(json_str)
@@ -434,6 +469,29 @@ async fn post_json<B: Serialize, T: DeserializeOwned>(
         .map_err(|e| format!("failed to decode response: {e}"))
 }
 
+async fn post_no_content_json<B: Serialize>(
+    base_url: &str,
+    path: &str,
+    body: &B,
+) -> Result<(), String> {
+    let response = reqwest::Client::new()
+        .post(join_server_url(base_url, path))
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("failed to read error body: {e}"));
+        return Err(format!("request failed with status {status}: {body}"));
+    }
+
+    Ok(())
+}
+
 async fn list_repos_via_api(base_url: &str) -> Result<Vec<RepoSummary>, String> {
     get_json(base_url, "/v1/repos").await
 }
@@ -473,6 +531,16 @@ async fn request_revision_via_api(
         request,
     )
     .await
+}
+
+async fn send_task_input_via_api(
+    base_url: &str,
+    task_id: &str,
+    request: &TaskInputRequest,
+) -> Result<TaskInputResponse, String> {
+    post_no_content_json(base_url, &format!("/v1/tasks/{task_id}/input"), request)
+        .await
+        .map(|_| TaskInputResponse { ok: true })
 }
 
 fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
@@ -732,6 +800,24 @@ async fn main() {
                     }
                 }
             }
+            TaskCommands::SendInput {
+                task_id,
+                message,
+                server_url,
+            } => {
+                let base_url = resolve_server_base_url_from_env(server_url.as_deref());
+                let request = build_send_task_input_request(message);
+                let response = send_task_input_via_api(&base_url, &task_id, &request)
+                    .await
+                    .unwrap_or_else(|e| {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    });
+                if let Err(e) = print_json(&response) {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                }
+            }
         },
     }
 }
@@ -740,11 +826,14 @@ async fn main() {
 mod tests {
     use super::{
         build_complete_stage_request, build_create_task_request, build_request_revision_request,
-        find_task_status_row, format_task_list, format_task_status,
-        resolve_optional_server_base_url, resolve_server_base_url, resolve_stage_db_path,
-        task_list_path, task_not_found_error, TaskCreateOptions, TaskSummary,
+        build_send_task_input_request, find_task_status_row, format_task_list,
+        format_task_status, resolve_optional_server_base_url, resolve_server_base_url,
+        resolve_stage_db_path, send_task_input_via_api, task_list_path, task_not_found_error,
+        TaskCreateOptions, TaskInputResponse, TaskSummary,
     };
     use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     #[test]
     fn prefers_cli_specific_db_path() {
@@ -835,6 +924,88 @@ mod tests {
                 "summary": "missing e2e coverage",
                 "prompt": "Add e2e coverage for task creation.",
             })
+        );
+    }
+
+    #[test]
+    fn builds_send_task_input_payload() {
+        let request = build_send_task_input_request("Please fix the failing typecheck".to_string());
+
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            json!({
+                "input": "Please fix the failing typecheck\n",
+            })
+        );
+    }
+
+    #[test]
+    fn preserves_existing_send_task_input_newline() {
+        let request = build_send_task_input_request("continue\n".to_string());
+
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            json!({
+                "input": "continue\n",
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn send_task_input_posts_input_to_task_endpoint() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 4096];
+            let bytes_read = stream.read(&mut buffer).unwrap();
+            let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+            assert!(request.starts_with("POST /v1/tasks/task-1/input HTTP/1.1"));
+            assert!(request.contains(r#"{"input":"continue\n"}"#));
+
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                .unwrap();
+        });
+
+        let response = send_task_input_via_api(
+            &format!("http://{address}"),
+            "task-1",
+            &build_send_task_input_request("continue".to_string()),
+        )
+        .await;
+
+        server.join().unwrap();
+        assert_eq!(response, Ok(TaskInputResponse { ok: true }));
+    }
+
+    #[tokio::test]
+    async fn send_task_input_preserves_http_error_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 4096];
+            let _ = stream.read(&mut buffer).unwrap();
+
+            stream
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\ncontent-length: 21\r\n\r\ntask task-1 not found",
+                )
+                .unwrap();
+        });
+
+        let response = send_task_input_via_api(
+            &format!("http://{address}"),
+            "task-1",
+            &build_send_task_input_request("continue".to_string()),
+        )
+        .await;
+
+        server.join().unwrap();
+        assert_eq!(
+            response,
+            Err("request failed with status 404 Not Found: task task-1 not found".to_string())
         );
     }
 
