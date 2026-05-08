@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildFirebaseEmulatorArgs, writeFirebaseEmulatorConfig } from "../src/runtime/firebase";
+import {
+  buildFirebaseCommandEnv,
+  buildFirebaseEmulatorArgs,
+  writeFirebaseEmulatorConfig,
+} from "../src/runtime/firebase";
 import { readDesktopBundleIdentifier, writeTauriLocalConfig } from "../src/runtime/tauri";
 
 describe("runtime config generation", () => {
@@ -71,5 +75,13 @@ describe("runtime config generation", () => {
       "/repo/.firebase-8080.kanna.json"
     ]);
     expect(buildFirebaseEmulatorArgs("/repo/.firebase-8080.kanna.json", ["--only", "auth"])).toContain("--only");
+  });
+
+  it("adds repo node_modules to Firebase command NODE_PATH", () => {
+    expect(buildFirebaseCommandEnv("/repo", { FOO: "bar" })).toMatchObject({
+      FOO: "bar",
+      NODE_PATH: "/repo/node_modules"
+    });
+    expect(buildFirebaseCommandEnv("/repo", { NODE_PATH: "/existing" }).NODE_PATH).toBe("/repo/node_modules:/existing");
   });
 });

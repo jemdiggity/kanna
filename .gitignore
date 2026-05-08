@@ -19,3 +19,5 @@ apps/mobile/ios/
 .claude/settings.local.json
 .superpowers/
 bazel-*
+.firebase-*.kanna.json
+firestore-debug.log

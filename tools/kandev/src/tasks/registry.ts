@@ -7,7 +7,7 @@ import { assertNotProductionDb, resetSqliteDb, seedSqliteDb, type DevDbTarget } 
 import { killWorkspaceDaemons } from "../runtime/daemon";
 import { checkRequiredCommands } from "../runtime/doctor";
 import { writeCargoConfig } from "../runtime/env-sync";
-import { buildFirebaseEmulatorArgs, writeFirebaseEmulatorConfig } from "../runtime/firebase";
+import { buildFirebaseCommandEnv, buildFirebaseEmulatorArgs, writeFirebaseEmulatorConfig } from "../runtime/firebase";
 import { resolveMobileServerUrl } from "../runtime/mobile";
 import { buildMobileDeviceSmokeCommand, buildMobileTestCommand } from "../runtime/mobile-commands";
 import { getPortStatuses } from "../runtime/port-status";
@@ -307,7 +307,7 @@ export const taskDefinitions = [
       const configPath = writeFirebaseEmulatorConfig(context.repoRoot, context.ports);
       const result = await nodeCommandRunner.run("pnpm", buildFirebaseEmulatorArgs(configPath, []), {
         cwd: context.repoRoot,
-        env: context.env
+        env: buildFirebaseCommandEnv(context.repoRoot, context.env)
       });
       return {
         ok: result.exitCode === 0,
@@ -327,7 +327,7 @@ export const taskDefinitions = [
       const result = await nodeCommandRunner.run(
         "pnpm",
         ["exec", "firebase", "emulators:exec", "--project", "kanna-local", "--only", "auth,firestore,functions", "--config", configPath, parsed.extraArgs.join(" ")],
-        { cwd: context.repoRoot, env: context.env }
+        { cwd: context.repoRoot, env: buildFirebaseCommandEnv(context.repoRoot, context.env) }
       );
       return {
         ok: result.exitCode === 0,
