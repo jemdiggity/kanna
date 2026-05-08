@@ -2,12 +2,45 @@ use crate::config::Config;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
 pub type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RelayId {
+    String(String),
+    Number(u64),
+}
+
+impl fmt::Display for RelayId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::String(id) => f.write_str(id),
+            Self::Number(id) => write!(f, "{id}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RelayInvoke {
+    Command {
+        command: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
+    Http {
+        method: String,
+        path: String,
+        #[serde(default)]
+        body: serde_json::Value,
+    },
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -23,17 +56,21 @@ pub enum RelayMessage {
     },
     #[serde(rename = "invoke")]
     Invoke {
-        id: u64,
-        command: String,
-        args: serde_json::Value,
+        id: RelayId,
+        #[serde(flatten)]
+        request: RelayInvoke,
     },
     #[serde(rename = "response")]
     Response {
-        id: u64,
+        id: RelayId,
         #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<serde_json::Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        body: Option<serde_json::Value>,
     },
     #[serde(rename = "event")]
     Event {
@@ -131,6 +168,98 @@ mod tests {
                 "type": "auth",
                 "desktop_id": "desktop-1",
                 "desktop_secret": "desktop-secret"
+            })
+        );
+    }
+
+    #[test]
+    fn numeric_invoke_id_round_trips_in_response() {
+        let invoke: super::RelayMessage = serde_json::from_value(serde_json::json!({
+            "type": "invoke",
+            "id": 42,
+            "command": "list_repos",
+            "args": {}
+        }))
+        .expect("numeric relay invoke should deserialize");
+
+        let super::RelayMessage::Invoke { id, .. } = invoke else {
+            panic!("expected invoke message");
+        };
+
+        let response = super::RelayMessage::Response {
+            id,
+            data: Some(serde_json::json!([])),
+            error: None,
+            status: None,
+            body: None,
+        };
+        let serialized = serde_json::to_value(response).unwrap();
+
+        assert_eq!(serialized["id"], 42);
+    }
+
+    #[tokio::test]
+    async fn http_style_invoke_dispatches_status_and_echoes_string_id() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let invoke: super::RelayMessage = serde_json::from_value(serde_json::json!({
+            "type": "invoke",
+            "id": "http-1",
+            "method": "GET",
+            "path": "/v1/status",
+            "body": null
+        }))
+        .expect("HTTP-style relay invoke should deserialize");
+
+        let super::RelayMessage::Invoke { id, request } = invoke else {
+            panic!("expected invoke message");
+        };
+        let super::RelayInvoke::Http { method, path, body } = request else {
+            panic!("expected HTTP invoke message");
+        };
+        assert_eq!(method, "GET");
+        assert_eq!(path, "/v1/status");
+        assert_eq!(body, serde_json::Value::Null);
+
+        let app = crate::http_api::router(std::sync::Arc::new(crate::http_api::AppState::new(
+            test_config(),
+        )));
+        let status_response = app
+            .oneshot(Request::get("/v1/status").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(status_response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(status_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let status_body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let response = super::RelayMessage::Response {
+            id,
+            data: None,
+            error: None,
+            status: Some(200),
+            body: Some(status_body),
+        };
+        let serialized = serde_json::to_value(response).unwrap();
+
+        assert_eq!(
+            serialized,
+            serde_json::json!({
+                "type": "response",
+                "id": "http-1",
+                "status": 200,
+                "body": {
+                    "state": "running",
+                    "desktopId": "desktop-1",
+                    "desktopName": "Studio Mac",
+                    "lanHost": "127.0.0.1",
+                    "lanPort": 48120,
+                    "pairingCode": null
+                }
             })
         );
     }
