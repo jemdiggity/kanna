@@ -79,6 +79,12 @@ const visibleCommits = computed(() => {
   return layout.value.commits.filter((c) => c.y >= first && c.y <= last);
 });
 
+const visibleHeadCommits = computed(() =>
+  headCommit.value
+    ? visibleCommits.value.filter((commit) => commit.hash === headCommit.value)
+    : []
+);
+
 const visibleBranches = computed(() => {
   const { first, last } = visibleRange.value;
   return layout.value.branches.filter(
@@ -405,6 +411,15 @@ onMounted(() => {
             :fill="commit.color"
             filter="url(#glow)"
           />
+
+          <circle
+            v-for="commit in visibleHeadCommits"
+            :key="'head-' + commit.hash"
+            class="head-node-marker"
+            :cx="px(commit.x)"
+            :cy="py(commit.y)"
+            :r="NODE_RADIUS + 4"
+          />
         </svg>
 
         <div class="commit-text-layer" :style="{ left: textStartX + 'px' }">
@@ -413,11 +428,13 @@ onMounted(() => {
             :key="'t' + commit.hash"
             class="commit-row"
             :class="{
+              'is-head': headCommit === commit.hash,
               'is-search-match': matchedHashes.has(commit.hash),
               'is-search-active': activeMatchHash === commit.hash,
             }"
             :style="{ top: py(commit.y) - 8 + 'px' }"
           >
+            <span v-if="headCommit === commit.hash" class="head-pill">HEAD</span>
             <span
               v-for="r in commit.refs"
               :key="r"
@@ -544,6 +561,13 @@ onMounted(() => {
   left: 0;
 }
 
+.head-node-marker {
+  fill: none;
+  stroke: #f0b429;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 5px rgba(240, 180, 41, 0.9));
+}
+
 .commit-text-layer {
   position: absolute;
   top: 0;
@@ -569,6 +593,32 @@ onMounted(() => {
 .commit-row.is-search-active {
   background: rgba(88, 166, 255, 0.18);
   box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.35);
+}
+
+.commit-row.is-head {
+  background: rgba(240, 180, 41, 0.1);
+  border-radius: 4px;
+}
+
+.commit-row.is-head.is-search-match,
+.commit-row.is-head.is-search-active {
+  background: rgba(240, 180, 41, 0.16);
+  box-shadow:
+    0 0 0 1px rgba(240, 180, 41, 0.35),
+    0 0 0 3px rgba(88, 166, 255, 0.18);
+}
+
+.head-pill {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid rgba(240, 180, 41, 0.48);
+  border-radius: 3px;
+  background: rgba(240, 180, 41, 0.16);
+  color: #f0b429;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
 }
 
 .ref-pill {

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/dev.sh"
 MOBILE_SCRIPT="$ROOT_DIR/scripts/mobile-dev.sh"
 TMPDIR_ROOT="$(mktemp -d)"
+ORIG_PATH="$PATH"
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
 REPO_ONE_ROOT="$TMPDIR_ROOT/repo-one"
@@ -18,12 +19,14 @@ FAKE_BIN="$TMPDIR_ROOT/bin"
 TMUX_STATE="$TMPDIR_ROOT/tmux-state"
 TMUX_LOG="$TMPDIR_ROOT/tmux-log"
 SQLITE_LOG="$TMPDIR_ROOT/sqlite-log"
+SQLITE_INPUT_LOG="$TMPDIR_ROOT/sqlite-input-log"
 RM_LOG="$TMPDIR_ROOT/rm-log"
 
 mkdir -p "$FAKE_BIN"
 : > "$TMUX_STATE"
 : > "$TMUX_LOG"
 : > "$SQLITE_LOG"
+: > "$SQLITE_INPUT_LOG"
 : > "$RM_LOG"
 
 setup_worktree_fixture() {
@@ -45,6 +48,14 @@ mkdir -p "$REPO_ONE_ROOT/.git" "$REPO_TWO_ROOT/.git" "$ROOT_CHECKOUT/.git"
 cat > "$FAKE_BIN/git" <<EOF
 #!/bin/bash
 set -euo pipefail
+if [ "\${1:-}" = "-C" ]; then
+  shift 2
+  case "\${1:-}" in
+    init|config|add|commit|branch|checkout|update-ref|worktree)
+      exit 0
+      ;;
+  esac
+fi
 case "\$*" in
   "rev-parse --show-toplevel")
     printf '%s\n' "\${GIT_FAKE_TOPLEVEL:?}"
@@ -208,7 +219,7 @@ cat > "$FAKE_BIN/sqlite3" <<EOF
 #!/bin/bash
 set -euo pipefail
 printf '%s\n' "\$1" >> "$SQLITE_LOG"
-cat >/dev/null
+cat >> "$SQLITE_INPUT_LOG"
 EOF
 
 cat > "$FAKE_BIN/rm" <<EOF
@@ -320,6 +331,21 @@ run_mobile_dev_sh() {
       KANNA_DEV_PORT=1452 \
       "$@" \
       bash "$MOBILE_SCRIPT" 2>&1
+  )"
+  local status=$?
+  set -e
+  printf '%s\n===STATUS:%s===\n' "$output" "$status"
+}
+
+run_real_dev_sh() {
+  set +e
+  local output
+  output="$(
+    env -i \
+      PATH="$ORIG_PATH" \
+      HOME="$TMPDIR_ROOT/real-home" \
+      KANNA_DEV_PORT=1452 \
+      bash "$SCRIPT" "$@" 2>&1
   )"
   local status=$?
   set -e
@@ -620,6 +646,7 @@ if ! grep -Fq "KANNA_TRANSFER_PORT=4567" "$TMUX_LOG"; then
 fi
 
 : > "$SQLITE_LOG"
+: > "$SQLITE_INPUT_LOG"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed env KANNA_DB_NAME=shared.db)"
 expect_success "dev.sh seed with KANNA_DB_NAME" "$RESULT" >/dev/null
 
@@ -628,8 +655,19 @@ if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/kanna-
   cat "$SQLITE_LOG" >&2
   exit 1
 fi
+if ! grep -Fq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/seed-repos/kanna-wt-v0.0.30/example-app" "$SQLITE_INPUT_LOG"; then
+  printf 'expected seed to rewrite example-app to a real generated fixture repo, got SQL:\n' >&2
+  cat "$SQLITE_INPUT_LOG" >&2
+  exit 1
+fi
+if ! grep -Fq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/seed-repos/kanna-wt-v0.0.30/example-app/.kanna-worktrees/task-seed-auth-refactor" "$SQLITE_INPUT_LOG"; then
+  printf 'expected seed to rewrite auth worktree to a real generated worktree, got SQL:\n' >&2
+  cat "$SQLITE_INPUT_LOG" >&2
+  exit 1
+fi
 
 : > "$SQLITE_LOG"
+: > "$SQLITE_INPUT_LOG"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed -- --db /tmp/e2e/seed.db)"
 expect_success "dev.sh seed --db" "$RESULT" >/dev/null
 
@@ -640,12 +678,65 @@ if ! grep -Fxq "/tmp/e2e/seed.db" "$SQLITE_LOG"; then
 fi
 
 : > "$SQLITE_LOG"
+: > "$SQLITE_INPUT_LOG"
 RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" seed -- --db seed.db)"
 expect_success "dev.sh seed --db filename" "$RESULT" >/dev/null
 
 if ! grep -Fxq "$TMPDIR_ROOT/home/Library/Application Support/build.kanna/seed.db" "$SQLITE_LOG"; then
   printf 'expected filename-only seed --db to target the app data dir, got:\n' >&2
   cat "$SQLITE_LOG" >&2
+  exit 1
+fi
+
+REAL_SEED_DB="$TMPDIR_ROOT/real-seed/seed.db"
+RESULT="$(run_real_dev_sh seed --db "$REAL_SEED_DB")"
+expect_success "dev.sh seed creates real git fixtures" "$RESULT" >/dev/null
+
+APP_REPO="$(sqlite3 "$REAL_SEED_DB" "SELECT path FROM repo WHERE id = 'repo-seed-app';")"
+AUTH_WORKTREE="$(sqlite3 "$REAL_SEED_DB" "SELECT path FROM worktree WHERE id = 'wt-seed-auth';")"
+AUTH_SESSION_CWD="$(sqlite3 "$REAL_SEED_DB" "SELECT cwd FROM terminal_session WHERE id = 'ts-seed-auth';")"
+EXPECTED_APP_REPO="$TMPDIR_ROOT/real-seed/seed-repos/seed/example-app"
+EXPECTED_AUTH_WORKTREE="$EXPECTED_APP_REPO/.kanna-worktrees/task-seed-auth-refactor"
+
+if [ "$APP_REPO" != "$EXPECTED_APP_REPO" ]; then
+  printf 'expected seeded app repo path %s, got %s\n' "$EXPECTED_APP_REPO" "$APP_REPO" >&2
+  exit 1
+fi
+
+if [ "$AUTH_WORKTREE" != "$EXPECTED_AUTH_WORKTREE" ]; then
+  printf 'expected seeded auth worktree path %s, got %s\n' "$EXPECTED_AUTH_WORKTREE" "$AUTH_WORKTREE" >&2
+  exit 1
+fi
+
+if [ "$AUTH_SESSION_CWD" != "$EXPECTED_AUTH_WORKTREE" ]; then
+  printf 'expected auth terminal cwd %s, got %s\n' "$EXPECTED_AUTH_WORKTREE" "$AUTH_SESSION_CWD" >&2
+  exit 1
+fi
+
+if [ ! -d "$APP_REPO/.git" ]; then
+  printf 'expected seeded app repo to be a git repository at %s\n' "$APP_REPO" >&2
+  exit 1
+fi
+
+if [ ! -e "$AUTH_WORKTREE/.git" ]; then
+  printf 'expected seeded auth worktree to exist at %s\n' "$AUTH_WORKTREE" >&2
+  exit 1
+fi
+
+if ! git -C "$APP_REPO" rev-parse --verify refs/remotes/origin/main >/dev/null; then
+  printf 'expected seeded app repo to include origin/main\n' >&2
+  exit 1
+fi
+
+AUTH_BRANCH="$(git -C "$AUTH_WORKTREE" rev-parse --abbrev-ref HEAD)"
+if [ "$AUTH_BRANCH" != "task-seed-auth-refactor" ]; then
+  printf 'expected auth worktree branch task-seed-auth-refactor, got %s\n' "$AUTH_BRANCH" >&2
+  exit 1
+fi
+
+AUTH_SUBJECT="$(git -C "$AUTH_WORKTREE" log -1 --pretty=%s)"
+if [ "$AUTH_SUBJECT" != "task-seed-auth-refactor" ]; then
+  printf 'expected auth worktree HEAD subject task-seed-auth-refactor, got %s\n' "$AUTH_SUBJECT" >&2
   exit 1
 fi
 
