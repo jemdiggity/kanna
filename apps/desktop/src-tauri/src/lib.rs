@@ -126,7 +126,7 @@ fn setup_fn_f_fullscreen(app: tauri::AppHandle) {
     use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject};
-    use std::ffi::{CStr, c_char};
+    use std::ffi::{c_char, CStr};
     use std::ptr::{self, NonNull};
 
     let block = block2::RcBlock::new(move |event: NonNull<AnyObject>| -> *mut AnyObject {
@@ -591,9 +591,10 @@ pub fn run() {
     builder
         .manage(Arc::new(DashMap::new()) as AgentState)
         .manage(Arc::new(Mutex::new(None)) as DaemonState)
-        .manage(
-            Arc::new(Mutex::new(std::collections::HashSet::<String>::new())) as AttachedSessions,
-        )
+        .manage(Arc::new(Mutex::new(std::collections::HashMap::<
+            String,
+            std::collections::HashSet<String>,
+        >::new())) as AttachedSessions)
         .manage(Arc::new(Mutex::new(std::collections::HashMap::<
             String,
             ActiveAttachedStream,
@@ -802,14 +803,14 @@ pub fn run() {
 #[cfg(all(test, debug_assertions))]
 mod tests {
     use super::{
+        resolve_native_workspace_menu_action, resolve_webdriver_port, NativeWorkspaceMenuAction,
         MENU_ID_CLOSE_WINDOW, MENU_ID_NAVIGATE_REPO_DOWN, MENU_ID_NAVIGATE_REPO_UP,
         MENU_ID_NAVIGATE_TASK_DOWN, MENU_ID_NAVIGATE_TASK_UP, MENU_ID_NEW_WINDOW,
-        NativeWorkspaceMenuAction, WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
+        WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
         WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
         WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
         WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
         WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT, WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
-        resolve_native_workspace_menu_action, resolve_webdriver_port,
     };
 
     #[test]

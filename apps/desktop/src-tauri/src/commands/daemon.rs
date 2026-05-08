@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use crate::daemon_client::DaemonClient;
 
 pub type DaemonState = Arc<Mutex<Option<DaemonClient>>>;
-pub type AttachedSessions = Arc<Mutex<HashSet<String>>>;
+pub type AttachedSessions = Arc<Mutex<HashMap<String, HashSet<String>>>>;
 pub type ActiveAttachedStreams = Arc<Mutex<HashMap<String, ActiveAttachedStream>>>;
 
 pub struct ActiveAttachedStream {
@@ -78,6 +78,47 @@ fn default_sequence() -> u64 {
 }
 
 static NEXT_ATTACH_ID: AtomicU64 = AtomicU64::new(1);
+
+fn register_attached_owner(
+    attached: &mut HashMap<String, HashSet<String>>,
+    session_id: &str,
+    owner_label: &str,
+) {
+    attached
+        .entry(session_id.to_string())
+        .or_default()
+        .insert(owner_label.to_string());
+}
+
+fn unregister_attached_owner(
+    attached: &mut HashMap<String, HashSet<String>>,
+    session_id: &str,
+    owner_label: &str,
+) -> bool {
+    let Some(owners) = attached.get_mut(session_id) else {
+        return true;
+    };
+
+    owners.remove(owner_label);
+    if owners.is_empty() {
+        attached.remove(session_id);
+        true
+    } else {
+        false
+    }
+}
+
+fn clear_attached_owners(attached: &mut HashMap<String, HashSet<String>>, session_id: &str) {
+    attached.remove(session_id);
+}
+
+fn attached_owner_count(attached: &HashMap<String, HashSet<String>>, session_id: &str) -> usize {
+    attached
+        .get(session_id)
+        .map(HashSet::len)
+        .unwrap_or_default()
+}
+
 /// Read the Ok/Error ack while already holding the lock.
 fn parse_error_event(event: &serde_json::Value) -> DaemonCommandError {
     DaemonCommandError {
@@ -144,7 +185,12 @@ fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, Da
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_snapshot_response, require_option_mut, TerminalSnapshotPayload};
+    use super::{
+        attached_owner_count, clear_attached_owners, parse_snapshot_response,
+        register_attached_owner, require_option_mut, unregister_attached_owner,
+        TerminalSnapshotPayload,
+    };
+    use std::collections::HashMap;
 
     #[test]
     fn parse_snapshot_response_defaults_cursor_visible_for_older_payloads() {
@@ -209,6 +255,45 @@ mod tests {
             .expect_err("missing option should return an error");
         assert_eq!(error, "daemon client unavailable");
     }
+
+    #[test]
+    fn detaching_one_window_keeps_shared_session_attached_for_other_windows() {
+        let mut attached = HashMap::new();
+        register_attached_owner(&mut attached, "task-1", "main");
+        register_attached_owner(&mut attached, "task-1", "window-2");
+
+        assert!(!unregister_attached_owner(&mut attached, "task-1", "main"));
+        assert_eq!(attached["task-1"].len(), 1);
+        assert!(attached["task-1"].contains("window-2"));
+
+        assert!(unregister_attached_owner(
+            &mut attached,
+            "task-1",
+            "window-2"
+        ));
+        assert!(!attached.contains_key("task-1"));
+    }
+
+    #[test]
+    fn clearing_a_session_removes_all_window_owners_after_exit() {
+        let mut attached = HashMap::new();
+        register_attached_owner(&mut attached, "task-1", "main");
+        register_attached_owner(&mut attached, "task-1", "window-2");
+
+        clear_attached_owners(&mut attached, "task-1");
+
+        assert!(attached.is_empty());
+    }
+
+    #[test]
+    fn attached_owner_count_reports_current_window_owners() {
+        let mut attached = HashMap::new();
+        register_attached_owner(&mut attached, "task-1", "main");
+        register_attached_owner(&mut attached, "task-1", "window-2");
+
+        assert_eq!(attached_owner_count(&attached, "task-1"), 2);
+        assert_eq!(attached_owner_count(&attached, "missing-task"), 0);
+    }
 }
 
 fn daemon_socket_path() -> PathBuf {
@@ -233,7 +318,6 @@ async fn spawn_attached_stream_task(
     active_streams: ActiveAttachedStreams,
     initial_snapshot: Option<TerminalSnapshotPayload>,
 ) {
-    attached.lock().await.insert(session_id.clone());
     let attach_id = NEXT_ATTACH_ID.fetch_add(1, Ordering::Relaxed);
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
     if let Some(previous) = active_streams.lock().await.insert(
@@ -319,7 +403,10 @@ async fn spawn_attached_stream_task(
                     }
                 }
                 Some("Exit") => {
-                    attached_clone.lock().await.remove(&sid);
+                    {
+                        let mut attached_guard = attached_clone.lock().await;
+                        clear_attached_owners(&mut attached_guard, &sid);
+                    }
                     eprintln!("[attach] exit event session={}", sid);
                     let _ = app.emit("session_exit", &event);
                     exited_normally = true;
@@ -331,7 +418,10 @@ async fn spawn_attached_stream_task(
                 _ => {}
             }
         }
-        attached_clone.lock().await.remove(&sid);
+        {
+            let mut attached_guard = attached_clone.lock().await;
+            clear_attached_owners(&mut attached_guard, &sid);
+        }
         let removed = active_streams_clone.lock().await.remove(&sid);
         if removed
             .as_ref()
@@ -586,10 +676,12 @@ pub async fn list_sessions(
 #[tauri::command]
 pub async fn attach_session_with_snapshot(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     attached: tauri::State<'_, AttachedSessions>,
     active_streams: tauri::State<'_, ActiveAttachedStreams>,
     session_id: String,
 ) -> Result<(), DaemonCommandError> {
+    let owner_label = window.label().to_string();
     let socket_path = daemon_socket_path();
     let mut stream_client = DaemonClient::connect(&socket_path).await?;
     let cmd = serde_json::json!({
@@ -603,6 +695,29 @@ pub async fn attach_session_with_snapshot(
 
     let response = stream_client.read_event().await?;
     let snapshot = parse_snapshot_response(&response)?;
+    let owner_count = {
+        let mut attached_guard = attached.lock().await;
+        register_attached_owner(&mut attached_guard, &session_id, &owner_label);
+        attached_owner_count(&attached_guard, &session_id)
+    };
+    eprintln!(
+        "[attach] owner_added session={} window={} owners={}",
+        session_id, owner_label, owner_count
+    );
+
+    if active_streams.lock().await.contains_key(&session_id) {
+        eprintln!(
+            "[attach] reuse_stream session={} window={} owners={}",
+            session_id, owner_label, owner_count
+        );
+        let payload = serde_json::json!({
+            "session_id": &session_id,
+            "snapshot": snapshot,
+        });
+        let _ = window.emit("terminal_snapshot", &payload);
+        return Ok(());
+    }
+
     spawn_attached_stream_task(
         app,
         stream_client,
@@ -617,13 +732,28 @@ pub async fn attach_session_with_snapshot(
 
 #[tauri::command]
 pub async fn detach_session(
+    window: tauri::WebviewWindow,
     attached: tauri::State<'_, AttachedSessions>,
     active_streams: tauri::State<'_, ActiveAttachedStreams>,
     session_id: String,
 ) -> Result<(), DaemonCommandError> {
-    attached.lock().await.remove(&session_id);
-    if let Some(active_stream) = active_streams.lock().await.remove(&session_id) {
-        let _ = active_stream.shutdown.send(());
+    let owner_label = window.label().to_string();
+    let (should_shutdown, owner_count) = {
+        let mut attached_guard = attached.lock().await;
+        let should_shutdown =
+            unregister_attached_owner(&mut attached_guard, &session_id, &owner_label);
+        let owner_count = attached_owner_count(&attached_guard, &session_id);
+        (should_shutdown, owner_count)
+    };
+    eprintln!(
+        "[attach] owner_removed session={} window={} owners={} shutdown={}",
+        session_id, owner_label, owner_count, should_shutdown
+    );
+    if should_shutdown {
+        if let Some(active_stream) = active_streams.lock().await.remove(&session_id) {
+            eprintln!("[attach] shutdown_stream session={}", session_id);
+            let _ = active_stream.shutdown.send(());
+        }
     }
     Ok(())
 }
