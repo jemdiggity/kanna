@@ -107,6 +107,7 @@ const showShortcutsModal = ref(false);
 const shortcutsStartFull = ref(false);
 const shortcutsContext = ref<ShortcutContext>("main");
 const showFilePickerModal = ref(false);
+const filePickerHidden = ref(false);
 const showFilePreviewModal = ref(false);
 const previewFilePath = ref("");
 const previewInitialLine = ref<number | undefined>(undefined);
@@ -657,6 +658,7 @@ function closeTreeExplorer() {
 function closeFileFlow() {
   showFilePreviewModal.value = false;
   showFilePickerModal.value = false;
+  filePickerHidden.value = false;
   maximizedModal.value = maximizedModal.value === "file" ? null : maximizedModal.value;
   previewHidden.value = false;
   previewFromPicker.value = false;
@@ -666,6 +668,11 @@ watch(currentFileFlowKey, (newKey, oldKey) => {
   if (!oldKey || newKey === oldKey) return;
   closeFileFlow();
 });
+
+function closeFilePicker() {
+  showFilePickerModal.value = false;
+  filePickerHidden.value = false;
+}
 
 function openFilePreview(filePath: string, initialLine: number | undefined, fromPicker: boolean) {
   previewFilePath.value = filePath;
@@ -679,6 +686,7 @@ function openFilePreview(filePath: string, initialLine: number | undefined, from
 
 function selectFileFromPicker(filePath: string) {
   showFilePickerModal.value = false;
+  filePickerHidden.value = true;
   openFilePreview(filePath, undefined, true);
 }
 
@@ -692,6 +700,7 @@ function closeFilePreview(reopenPicker: boolean) {
 
   if (shouldReopenPicker) {
     showFilePickerModal.value = true;
+    filePickerHidden.value = false;
   }
 }
 
@@ -847,12 +856,14 @@ const keyboardActions = {
       const z = filePickerRef.value?.zIndex ?? 0;
       if (isTopModal(z)) {
         showFilePickerModal.value = false;
+        filePickerHidden.value = true;
       } else {
         filePickerRef.value?.bringToFront();
       }
     } else {
       previewHidden.value = false;
       showFilePickerModal.value = true;
+      filePickerHidden.value = false;
     }
   },
   toggleFilePreview: () => {
@@ -910,7 +921,7 @@ const keyboardActions = {
     if (showCommandPalette.value) { showCommandPalette.value = false; return true; }
     if (showShortcutsModal.value) { showShortcutsModal.value = false; return true; }
     if (showPeerPicker.value) { closePeerPicker(); return true; }
-    if (showFilePickerModal.value) { showFilePickerModal.value = false; return true; }
+    if (showFilePickerModal.value) { closeFilePicker(); return true; }
     if (showFilePreviewModal.value) {
       const shouldCloseFileFlow = filePreviewRef.value?.dismiss() ?? true;
       if (shouldCloseFileFlow) closeFileFlow();
@@ -1607,14 +1618,19 @@ onBeforeUnmount(() => {
       :worktree-path="store.currentItem?.branch ? activeWorktreePath : undefined"
       @close="showCommitGraphModal = false"
     />
-    <FilePickerModal
-      ref="filePickerRef"
-      v-if="showFilePickerModal && !isMobile && store.selectedRepo?.path"
-      :worktree-path="activeWorktreePath"
-      :repo-root="store.selectedRepo?.path ?? ''"
-      @close="showFilePickerModal = false"
-      @select="selectFileFromPicker"
-    />
+    <div
+      v-if="(showFilePickerModal || filePickerHidden) && !isMobile && store.selectedRepo?.path"
+      v-show="showFilePickerModal"
+    >
+      <FilePickerModal
+        ref="filePickerRef"
+        :key="activeWorktreePath"
+        :worktree-path="activeWorktreePath"
+        :repo-root="store.selectedRepo?.path ?? ''"
+        @close="closeFilePicker"
+        @select="selectFileFromPicker"
+      />
+    </div>
     <TreeExplorerModal
       ref="treeExplorerRef"
       v-if="showTreeExplorer && treeExplorerRoot"

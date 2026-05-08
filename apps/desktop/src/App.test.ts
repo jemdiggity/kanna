@@ -1723,7 +1723,7 @@ describe("App", () => {
     await flushPromises();
 
     expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
-    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(true);
 
     const handled = capturedKeyboardActions?.dismiss();
     await flushPromises();
@@ -1946,6 +1946,50 @@ describe("App", () => {
     expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-mode")).toBe("rendered");
   });
 
+  it("preserves file picker scroll state when preview hides and resumes the picker", async () => {
+    const StatefulFilePickerModalTestStub = defineComponent({
+      name: "FilePickerModal",
+      emits: ["select"],
+      setup(_props, { emit }) {
+        const scrollTop = ref(0);
+
+        return { emit, scrollTop };
+      },
+      template: `
+        <div data-testid="file-picker-modal" :data-scroll-top="String(scrollTop)">
+          <button data-testid="file-picker-scroll" @click="scrollTop = 320">scroll</button>
+          <button data-testid="file-picker-select" @click="emit('select', 'docs/example.md')">select</button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      FilePickerModal: StatefulFilePickerModalTestStub,
+      FilePreviewModal: FilePreviewModalTestStub,
+    });
+
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    await wrapper.get('[data-testid="file-picker-scroll"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="file-picker-modal"]').attributes("data-scroll-top")).toBe("320");
+
+    await wrapper.get('[data-testid="file-picker-select"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(true);
+
+    await wrapper.get('[data-testid="file-preview-close"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="file-picker-modal"]').isVisible()).toBe(true);
+    expect(wrapper.get('[data-testid="file-picker-modal"]').attributes("data-scroll-top")).toBe("320");
+  });
+
   it("opens the file picker over the file preview and dismisses the picker first", async () => {
     vi.stubGlobal("__KANNA_MOBILE__", false);
     const { default: App } = await import("./App.vue");
@@ -1988,7 +2032,7 @@ describe("App", () => {
     await flushPromises();
 
     expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
-    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-picker-modal"]').exists()).toBe(true);
 
     capturedKeyboardActions?.openFile();
     await flushPromises();
