@@ -34,8 +34,7 @@ Local mobile development points the React Native client at the LAN URL exposed b
 Consumers such as `kanna-cli` and `kanna-cli mcp serve` target the same route surface so product behavior stays consistent across clients.
 The CLI remains the shell/script interface; MCP is the structured agent-tool interface.
 
-Example:
+## CLI Task Actions
 
-```bash
-kanna-cli task send-input --task-id "$KANNA_TASK_ID" --message "Please fix the failing typecheck"
-```
+- `kanna-cli task send-input --task-id <TASK_ID> --message <MESSAGE> [--server-url <URL>]` calls `POST /v1/tasks/{task_id}/input` and prints `{ "ok": true }` as JSON.
+- `kanna-cli task advance-stage --task-id <TASK_ID> [--server-url <URL>]` calls `POST /v1/tasks/{task_id}/actions/advance-stage` and prints the action response as JSON.
