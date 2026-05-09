@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createInstanceConfig } from "./runConfig";
 
 describe("createInstanceConfig", () => {
-  it("uses the explicit daemon dir for both start and stop commands", () => {
+  it("uses kd for lifecycle commands and passes explicit launch directories", () => {
     const config = createInstanceConfig({
       daemonDir: "/tmp/e2e-daemon",
       dbName: "test-task-primary.db",
@@ -15,8 +15,9 @@ describe("createInstanceConfig", () => {
     });
 
     expect(config.startCommand).toEqual([
-      "./scripts/dev.sh",
-      "start",
+      "./kd",
+      "dev",
+      "up",
       "--db",
       "test-task-primary.db",
       "--delete-db",
@@ -26,11 +27,10 @@ describe("createInstanceConfig", () => {
       "/tmp/e2e-daemon/transfer-root",
     ]);
     expect(config.stopCommand).toEqual([
-      "./scripts/dev.sh",
-      "stop",
+      "./kd",
+      "dev",
+      "down",
       "--kill-daemon",
-      "--daemon-dir",
-      "/tmp/e2e-daemon",
     ]);
   });
 });

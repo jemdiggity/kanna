@@ -3,8 +3,8 @@
 --
 -- Usage:
 --   sqlite3 path/to/kanna.db < seed.sql
---   ./scripts/dev.sh seed          # seed the current instance's DB
---   ./scripts/dev.sh start --seed  # start dev server + seed
+--   ./kd dev seed                  # seed the current instance's DB
+--   ./kd dev up --seed             # start dev environment + seed
 
 PRAGMA foreign_keys = ON;
 

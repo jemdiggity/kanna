@@ -13,7 +13,7 @@ describe("full-bundle app update E2E script", () => {
 
   it("is exposed as an explicit opt-in desktop test script", () => {
     expect(desktopPkg.scripts["test:e2e:app-update:bundle"]).toBe(
-      "bash ../../scripts/app-update-full-bundle-e2e.sh",
+      "pnpm -C ../.. exec kd test app-update-bundle",
     );
   });
 

@@ -15,7 +15,7 @@ assert_contains() {
 assert_contains "\"pnpm install\""
 assert_contains "\"./kd env sync\""
 assert_contains "\"./kd dev down --kill-daemon\""
-assert_contains "\"/bin/bash ./scripts/clean.sh --all\""
+assert_contains "\"./kd clean --all\""
 assert_contains "\"\$schema\": \"https://schemas.kanna.build/config.schema.json\""
 assert_contains "\"workspace\""
 assert_contains "\"prepend\": [\"./node_modules/.bin\"]"

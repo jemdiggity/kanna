@@ -25,13 +25,13 @@ Requires [Claude CLI](https://docs.anthropic.com/en/docs/claude-code).
 Development uses the normal Tauri path:
 
 ```sh
-./scripts/dev.sh
+./kd dev up
 ```
 
 Use that for:
 
 - local UI iteration
-- worktree-aware dev server startup
+- worktree-aware dev environment startup
 - WebDriver-backed E2E runs
 - Tauri/Vite development behavior
 
@@ -42,7 +42,7 @@ Release packaging uses the Bazel path:
 - unsigned `.app` assembly
 - signing, DMG creation, and notarization
 
-The two paths are intentionally separate. `./scripts/dev.sh` is the dev entry point, and Bazel is the release entry point.
+The two paths are intentionally separate. `./kd dev up` is the dev entry point, and Bazel is the release entry point.
 
 ## Bazel Build
 
@@ -70,7 +70,7 @@ This path now follows the `rules_tauri` Tauri + Vite + Vue example shape:
 - Bazel builds the Rust/Tauri binary at `//apps/desktop/src-tauri:kanna_desktop`
 - `rules_tauri` assembles the unsigned macOS `.app`
 
-This is the release path. It is not intended to replace `./scripts/dev.sh` for local development.
+This is the release path. It is not intended to replace `./kd dev up` for local development.
 
 Release packaging remains available on top of that app graph:
 
@@ -105,8 +105,17 @@ Then run the `--config=notarize` build from that shell so Bazel forwards the cre
 The release script uses the Bazel graph too:
 
 ```sh
-./scripts/ship.sh --dry-run
-./scripts/ship.sh --release
+./kd release ship --dry-run
+./kd release ship --release
+```
+
+Local maintenance workflows also go through `kd`:
+
+```sh
+./kd setup --check
+./kd clean --all
+./kd build desktop
+./kd build sidecars
 ```
 
 ## License

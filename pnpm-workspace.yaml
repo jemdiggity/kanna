@@ -16,6 +16,7 @@ allowBuilds:
   protobufjs: false
   re2: false
   sharp: false
+onlyBuiltDependencies: []
 packageExtensions:
   "@expo/cli@0.24.24":
     dependencies:

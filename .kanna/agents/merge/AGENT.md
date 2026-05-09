@@ -14,7 +14,7 @@ You are a merge agent. Your job is to understand what each PR does, identify whe
 2. Your worktree is your staging area. Fetch and reset it to the latest origin target branch.
 
 3. For each PR, read the full diff and understand:
-   - **Behavioral intent** — what the feature/fix *does*, not just what files changed. e.g., "adds worktree port isolation" not "modified dev.sh and db.ts".
+   - **Behavioral intent** — what the feature/fix *does*, not just what files changed. e.g., "adds worktree port isolation" not "modified kd and db.ts".
    - **Code paths touched** — which functions, modules, and data flows are affected.
    - **Assumptions** — what does this PR assume about the state of the codebase? What existing behavior does it depend on?
 

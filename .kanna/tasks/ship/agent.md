@@ -69,10 +69,10 @@ This means the tag always lands on main. If the build needs hotfixes before rele
 
 The ship script uses `gh` CLI and `git push`, which require network access outside the sandbox. Run with `dangerouslyDisableSandbox: true`.
 
-Before rerunning after any failed `ship.sh` attempt, check `git status`. The script may leave version files modified after a partial failure; clean up or account for those changes before rerunning so the next bump is computed intentionally.
+Before rerunning after any failed `kd release ship` attempt, check `git status`. The command may leave version files modified after a partial failure; clean up or account for those changes before rerunning so the next bump is computed intentionally.
 
 ```bash
-./scripts/ship.sh [OPTIONS]
+./kd release ship [OPTIONS]
 ```
 
 Options:

@@ -26,8 +26,9 @@ export function createInstanceConfig(input: CreateInstanceConfigInput): Instance
     daemonDir: input.daemonDir,
     env: input.env,
     startCommand: [
-      "./scripts/dev.sh",
-      "start",
+      "./kd",
+      "dev",
+      "up",
       "--db",
       input.dbName,
       "--delete-db",
@@ -37,11 +38,10 @@ export function createInstanceConfig(input: CreateInstanceConfigInput): Instance
       join(input.daemonDir, "transfer-root"),
     ],
     stopCommand: [
-      "./scripts/dev.sh",
-      "stop",
+      "./kd",
+      "dev",
+      "down",
       "--kill-daemon",
-      "--daemon-dir",
-      input.daemonDir,
     ],
     webDriverPort: input.effectiveWebDriverPort,
   };

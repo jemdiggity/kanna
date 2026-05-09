@@ -209,7 +209,7 @@ export async function resetDatabase(client: WebDriverClient): Promise<void> {
   if (!currentDb || currentDb === "kanna-v2.db") {
     throw new Error(
       `REFUSING to wipe database "${currentDb}" — production DB is not allowed.\n` +
-      `Start the app from a worktree with: ./scripts/dev.sh start -a`
+      `Start the app from a worktree with: ./kd dev up --attach`
     );
   }
 

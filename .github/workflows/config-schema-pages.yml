@@ -7,7 +7,7 @@ on:
     paths:
       - ".kanna/config.schema.json"
       - ".github/workflows/config-schema-pages.yml"
-      - "scripts/build-pages-schema.sh"
+      - "tools/kandev/**"
   workflow_dispatch:
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - name: Build Pages artifact
-        run: scripts/build-pages-schema.sh .build/pages-schema
+        run: ./kd pages build-schema --out-dir .build/pages-schema
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .build/pages-schema
