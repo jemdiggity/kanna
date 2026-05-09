@@ -8,6 +8,7 @@ enableGlobalVirtualStore: true
 hoist: false
 confirmModulesPurge: false
 allowBuilds:
+  '@firebase/util': false
   appium: false
   edgedriver: false
   esbuild: false
