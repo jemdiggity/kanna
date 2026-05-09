@@ -45,6 +45,7 @@ pub struct Repo {
 
 pub struct TaskStageSource {
     pub repo_id: String,
+    pub issue_title: Option<String>,
     pub prompt: Option<String>,
     pub display_name: Option<String>,
     pub stage: Option<String>,
@@ -61,6 +62,7 @@ pub struct NewPipelineItem<'a> {
     pub id: &'a str,
     pub repo_id: &'a str,
     pub prompt: &'a str,
+    pub display_name: Option<&'a str>,
     pub pipeline: &'a str,
     pub stage: &'a str,
     pub tags_json: &'a str,
@@ -71,7 +73,6 @@ pub struct NewPipelineItem<'a> {
     pub port_offset: Option<i64>,
     pub port_env_json: Option<&'a str>,
     pub base_ref: Option<&'a str>,
-    pub display_name: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -508,22 +509,23 @@ impl Db {
         id: &str,
     ) -> Result<Option<TaskStageSource>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT repo_id, prompt, display_name, stage, stage_result, active_post_action, branch, base_ref, pipeline, agent_provider, closed_at
+            "SELECT repo_id, issue_title, prompt, display_name, stage, stage_result, active_post_action, branch, base_ref, pipeline, agent_provider, closed_at
              FROM pipeline_item WHERE id = ?",
         )?;
         let mut rows = stmt.query_map([id], |row| {
             Ok(TaskStageSource {
                 repo_id: row.get(0)?,
-                prompt: row.get(1)?,
-                display_name: row.get(2)?,
-                stage: row.get(3)?,
-                stage_result: row.get(4)?,
-                active_post_action: row.get(5)?,
-                branch: row.get(6)?,
-                base_ref: row.get(7)?,
-                pipeline: row.get(8)?,
-                agent_provider: row.get(9)?,
-                closed_at: row.get(10)?,
+                issue_title: row.get(1)?,
+                prompt: row.get(2)?,
+                display_name: row.get(3)?,
+                stage: row.get(4)?,
+                stage_result: row.get(5)?,
+                active_post_action: row.get(6)?,
+                branch: row.get(7)?,
+                base_ref: row.get(8)?,
+                pipeline: row.get(9)?,
+                agent_provider: row.get(10)?,
+                closed_at: row.get(11)?,
             })
         })?;
         match rows.next() {
@@ -535,13 +537,14 @@ impl Db {
     pub fn insert_pipeline_item(&self, item: NewPipelineItem<'_>) -> Result<(), rusqlite::Error> {
         self.conn.execute(
             "INSERT INTO pipeline_item
-             (id, repo_id, prompt, pipeline, stage, tags, branch, agent_type, agent_provider,
-              activity, activity_changed_at, port_offset, port_env, base_ref, display_name)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)",
+             (id, repo_id, prompt, display_name, pipeline, stage, tags, branch, agent_type, agent_provider,
+              activity, activity_changed_at, port_offset, port_env, base_ref)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)",
             (
                 item.id,
                 item.repo_id,
                 item.prompt,
+                item.display_name,
                 item.pipeline,
                 item.stage,
                 item.tags_json,
@@ -1047,16 +1050,16 @@ mod tests {
             port_offset: Some(1422),
             port_env_json: Some("{\"KANNA_DEV_PORT\":\"1422\"}"),
             base_ref: None,
-            display_name: None,
+            display_name: Some("Merge queue"),
         })
         .expect("insert pipeline item");
 
         let conn = Connection::open(&path).expect("re-open db");
-        let row: (String, String, String, String, String, Option<i64>) = conn
+        let row: (String, String, String, String, String, Option<i64>, Option<String>) = conn
             .query_row(
-                "SELECT repo_id, prompt, pipeline, stage, activity, port_offset FROM pipeline_item WHERE id = 'task-2'",
+                "SELECT repo_id, prompt, pipeline, stage, activity, port_offset, display_name FROM pipeline_item WHERE id = 'task-2'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
             )
             .expect("query row");
 
@@ -1066,6 +1069,7 @@ mod tests {
         assert_eq!(row.3, "in progress");
         assert_eq!(row.4, "working");
         assert_eq!(row.5, Some(1422));
+        assert_eq!(row.6.as_deref(), Some("Merge queue"));
 
         let _ = std::fs::remove_file(path);
     }
