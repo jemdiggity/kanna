@@ -23,6 +23,10 @@ interface TerminalBufferStats {
   tailLines?: string[];
 }
 
+interface SessionRecoveryState {
+  serialized?: string;
+}
+
 describe("terminal recovery", () => {
   const client = new WebDriverClient();
   let testRepoPath = "";
@@ -72,15 +76,7 @@ describe("terminal recovery", () => {
     await waitForTerminalEndMarker(client, taskId, "[Process exited with code 0]", "\\[Process exited", 15_000);
 
     const recoverySnapshot = buildRecoverySnapshot(2_000);
-    await strictTauriInvoke(client, "seed_session_recovery_state", {
-      sessionId: taskId,
-      serialized: recoverySnapshot,
-      cols: 80,
-      rows: 24,
-      cursorRow: 23,
-      cursorCol: 0,
-      cursorVisible: true,
-    });
+    await seedAndWaitForRecoveryState(client, taskId, recoverySnapshot);
 
     await emitTauriEvent(client, "daemon_ready");
 
@@ -106,6 +102,40 @@ describe("terminal recovery", () => {
     expect(respawnStats.hasEndMarker).toBe(true);
   });
 });
+
+async function seedAndWaitForRecoveryState(
+  client: WebDriverClient,
+  sessionId: string,
+  serialized: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  let latest: unknown = null;
+  while (Date.now() < deadline) {
+    await strictTauriInvoke(client, "seed_session_recovery_state", {
+      sessionId,
+      serialized,
+      cols: 80,
+      rows: 24,
+      cursorRow: 23,
+      cursorCol: 0,
+      cursorVisible: true,
+    });
+    latest = await strictTauriInvoke(client, "get_session_recovery_state", { sessionId });
+    if (isRecoverySnapshotWithMarker(latest, "RECOVERY_DONE")) return;
+    await sleep(100);
+  }
+
+  throw new Error(`seeded recovery snapshot was not observable for ${sessionId}: ${JSON.stringify(latest)}`);
+}
+
+function isRecoverySnapshotWithMarker(value: unknown, marker: string): value is SessionRecoveryState {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as SessionRecoveryState).serialized === "string" &&
+    (value as SessionRecoveryState).serialized?.includes(marker) === true
+  );
+}
 
 async function createRecoverableTask(
   client: WebDriverClient,

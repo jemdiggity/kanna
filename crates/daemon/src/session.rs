@@ -46,6 +46,11 @@ impl StreamControl {
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::SeqCst)
     }
+
+    pub fn is_same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.stop_requested, &other.stop_requested)
+            && Arc::ptr_eq(&self.stopped, &other.stopped)
+    }
 }
 
 pub struct SessionRecord {
