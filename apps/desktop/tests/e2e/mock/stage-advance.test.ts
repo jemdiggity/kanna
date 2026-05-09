@@ -123,21 +123,53 @@ async function sendPipelineStageComplete(client: WebDriverClient, taskId: string
   });
 }
 
+interface CreatedStageTaskRow {
+  id: string | null;
+  display_name: string | null;
+  base_ref: string | null;
+}
+
+interface WaitForCreatedStageTaskOptions {
+  excludeIds?: Iterable<string>;
+  displayName?: string;
+  baseRef?: string;
+}
+
+async function getStageTaskIds(
+  client: WebDriverClient,
+  repoId: string,
+  stage: string,
+): Promise<Set<string>> {
+  const rows = (await queryDb(
+    client,
+    "SELECT id FROM pipeline_item WHERE repo_id = ? AND stage = ? AND closed_at IS NULL",
+    [repoId, stage],
+  )) as Array<{ id: string | null }>;
+  return new Set(rows.flatMap((row) => (row.id ? [row.id] : [])));
+}
+
 async function waitForCreatedStageTask(
   client: WebDriverClient,
   repoId: string,
   stage: string,
+  options: WaitForCreatedStageTaskOptions = {},
   timeoutMs = 10_000,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
+  const excludeIds = new Set(options.excludeIds ?? []);
   while (Date.now() < deadline) {
     const rows = (await queryDb(
       client,
-      "SELECT id FROM pipeline_item WHERE repo_id = ? AND stage = ? AND closed_at IS NULL ORDER BY created_at DESC LIMIT 1",
+      "SELECT id, display_name, base_ref FROM pipeline_item WHERE repo_id = ? AND stage = ? AND closed_at IS NULL ORDER BY created_at DESC, id DESC",
       [repoId, stage],
-    )) as Array<{ id: string | null }>;
-    const id = rows[0]?.id;
-    if (id) return id;
+    )) as CreatedStageTaskRow[];
+    const row = rows.find((candidate) => {
+      if (!candidate.id || excludeIds.has(candidate.id)) return false;
+      if (options.displayName !== undefined && candidate.display_name !== options.displayName) return false;
+      if (options.baseRef !== undefined && candidate.base_ref !== options.baseRef) return false;
+      return true;
+    });
+    if (row?.id) return row.id;
     await sleep(100);
   }
   throw new Error(`timed out waiting for a ${stage} task`);
@@ -427,9 +459,14 @@ describe("stage advance", () => {
       "UPDATE pipeline_item SET stage_result = ?, updated_at = datetime('now') WHERE id = ?",
       [JSON.stringify({ status: "success", summary: "ready for review" }), sourceTaskId],
     );
+    const existingReviewTaskIds = await getStageTaskIds(client, repoId, "review");
     await sendPipelineStageComplete(client, sourceTaskId);
 
-    const reviewTaskId = await waitForCreatedStageTask(client, repoId, "review");
+    const reviewTaskId = await waitForCreatedStageTask(client, repoId, "review", {
+      excludeIds: existingReviewTaskIds,
+      displayName: "Automatically spawn review",
+      baseRef: sourceBranch,
+    });
     expect(reviewTaskId).not.toBe(sourceTaskId);
     await sleep(500);
     expect(await getVueState(client, "selectedItemId")).toBe(activeTaskId);
@@ -477,10 +514,15 @@ describe("stage advance", () => {
     );
     await hydrateStoreItem(client, sourceTaskId);
 
+    const existingReviewTaskIds = await getStageTaskIds(client, repoId, "review");
     const advanceResult = await callVueMethod(client, "store.advanceStage", sourceTaskId);
     if (isVueCallError(advanceResult)) throw new Error(advanceResult.__error);
 
-    renamedStageTaskId = await waitForCreatedStageTask(client, repoId, "review");
+    renamedStageTaskId = await waitForCreatedStageTask(client, repoId, "review", {
+      excludeIds: existingReviewTaskIds,
+      displayName: "Advance from renamed source",
+      baseRef: actualSourceBranch,
+    });
     expect(renamedStageTaskId).not.toBe(sourceTaskId);
 
     const rows = (await queryDb(
@@ -785,9 +827,14 @@ describe("stage advance", () => {
     );
     await hydrateStoreItem(client, taskId);
 
+    const existingPrTaskIds = await getStageTaskIds(client, repoId, "pr");
     await sendPipelineStageComplete(client, taskId);
 
-    const prTaskId = await waitForCreatedStageTask(client, repoId, "pr");
+    const prTaskId = await waitForCreatedStageTask(client, repoId, "pr", {
+      excludeIds: existingPrTaskIds,
+      displayName: "Complete commit post-action",
+      baseRef: branch,
+    });
     expect(prTaskId).not.toBe(taskId);
     const rows = (await queryDb(
       client,
