@@ -376,51 +376,60 @@ function handleKeydown(e: KeyboardEvent) {
 
         <div class="pipeline-row">
           <label :id="pipelineLabelId" class="pipeline-label">Pipeline</label>
-          <div class="base-branch-row pipeline-value-row">
-            <span :id="pipelineActionLabelId" class="sr-only">{{ $t("addRepo.change") }}</span>
-            <span :id="pipelineValueId" class="base-branch-value" data-testid="pipeline-value">{{ selectedPipeline }}</span>
-            <button
-              :id="pipelineToggleId"
-              type="button"
-              class="change-link"
-              data-testid="pipeline-toggle"
-              :aria-controls="pipelinePickerId"
-              :aria-expanded="showPipelinePicker"
-              aria-haspopup="listbox"
-              :aria-labelledby="`${pipelineActionLabelId} ${pipelineLabelId} ${pipelineValueId}`"
-              @mousedown.prevent
-              @click="handlePipelineToggle"
-              @keydown="handlePipelineToggleKeydown"
-            >
-              {{ $t("addRepo.change") }}
-            </button>
-          </div>
-        </div>
+          <div class="base-branch-dropdown-shell">
+            <div class="base-branch-row pipeline-value-row">
+              <span :id="pipelineActionLabelId" class="sr-only">{{ $t("addRepo.change") }}</span>
+              <span :id="pipelineValueId" class="base-branch-value" data-testid="pipeline-value">{{ selectedPipeline }}</span>
+              <button
+                :id="pipelineToggleId"
+                type="button"
+                class="change-link"
+                data-testid="pipeline-toggle"
+                :aria-controls="pipelinePickerId"
+                :aria-expanded="showPipelinePicker"
+                aria-haspopup="listbox"
+                :aria-labelledby="`${pipelineActionLabelId} ${pipelineLabelId} ${pipelineValueId}`"
+                @mousedown.prevent
+                @click="handlePipelineToggle"
+                @keydown="handlePipelineToggleKeydown"
+              >
+                {{ $t("addRepo.change") }}
+              </button>
+            </div>
 
-        <div
-          v-if="showPipelinePicker"
-          :id="pipelinePickerId"
-          class="base-branch-picker"
-          role="listbox"
-          :aria-labelledby="pipelineLabelId"
-        >
-          <button
-            v-for="(name, index) in pipelineOptions"
-            :key="name"
-            :id="`pipeline-option-${name}`"
-            type="button"
-            class="pipeline-picker-option"
-            role="option"
-            :class="{ selected: name === selectedPipeline }"
-            :aria-selected="name === selectedPipeline"
-            :data-testid="`pipeline-option-${name}`"
-            :tabindex="name === selectedPipeline ? 0 : -1"
-            @mousedown.prevent
-            @click="handlePipelineSelect(name)"
-            @keydown="handlePipelineOptionKeydown($event, index)"
-          >
-            {{ name }}
-          </button>
+            <div
+              v-if="showPipelinePicker"
+              :id="pipelinePickerId"
+              class="base-branch-dropdown"
+              data-testid="pipeline-dropdown"
+              role="listbox"
+              :aria-labelledby="pipelineLabelId"
+            >
+              <div
+                class="base-branch-options"
+                :style="{ maxHeight: baseBranchOptionsMaxHeight }"
+                data-testid="pipeline-options"
+              >
+                <button
+                  v-for="(name, index) in pipelineOptions"
+                  :key="name"
+                  :id="`pipeline-option-${name}`"
+                  type="button"
+                  class="base-branch-option"
+                  role="option"
+                  :class="{ selected: name === selectedPipeline }"
+                  :aria-selected="name === selectedPipeline"
+                  :data-testid="`pipeline-option-${name}`"
+                  :tabindex="name === selectedPipeline ? 0 : -1"
+                  @mousedown.prevent
+                  @click="handlePipelineSelect(name)"
+                  @keydown="handlePipelineOptionKeydown($event, index)"
+                >
+                  {{ name }}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -652,25 +661,6 @@ function handleKeydown(e: KeyboardEvent) {
 .base-branch-option.selected {
   color: #e0e0e0;
   font-weight: 600;
-}
-
-.pipeline-picker-option {
-  width: 100%;
-  padding: 6px 8px;
-  background: #1a1a1a;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #b8b8b8;
-  cursor: pointer;
-  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
-  font-size: 12px;
-  text-align: left;
-}
-
-.pipeline-picker-option:hover,
-.pipeline-picker-option.selected {
-  border-color: #0066cc;
-  color: #e0e0e0;
 }
 
 .modal-footer {
