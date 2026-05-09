@@ -1,9 +1,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebDriverClient } from "../helpers/webdriver";
 import { resetDatabase, importTestRepo, cleanupWorktrees } from "../helpers/reset";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
-import { queryDb, tauriInvoke } from "../helpers/vue";
+import { tauriInvoke } from "../helpers/vue";
 
 interface DaemonSessionInfo {
   session_id?: string;
@@ -33,6 +35,7 @@ describe("terminal recovery", () => {
     await client.executeSync("location.reload()");
     await client.waitForAppReady();
     testRepoPath = await createFixtureRepo("terminal-recovery-test");
+    await configureTerminalRecoveryFixture(testRepoPath);
     repoId = await importTestRepo(client, testRepoPath, "terminal-recovery-test");
   });
 
@@ -61,9 +64,6 @@ describe("terminal recovery", () => {
     await selectTask(client, taskId);
     await client.waitForElement(".main-panel .terminal-container", 15_000);
     await waitForTerminalEndMarker(client, taskId, "ORIGINAL_READY", "^ORIGINAL_READY$", 15_000);
-
-    const worktreePath = await waitForTaskWorktreePath(client, taskId);
-    await writeRespawnSetupConfig(client, worktreePath);
 
     await strictTauriInvoke(client, "kill_session", { sessionId: taskId });
     await waitForSessionPresence(client, taskId, false);
@@ -115,7 +115,6 @@ async function createRecoverableTask(
     prompt: string;
   },
 ): Promise<string> {
-  const setupCommand = "printf 'ORIGINAL_READY\\n'; while true; do sleep 60; done";
   const taskId = await client.executeAsync<string>(
     `const cb = arguments[arguments.length - 1];
      const ctx = window.__KANNA_E2E__.setupState;
@@ -123,11 +122,6 @@ async function createRecoverableTask(
        ctx.createItem(${JSON.stringify(options.repoId)}, ${JSON.stringify(options.repoPath)}, ${JSON.stringify(options.prompt)}, "pty", {
          selectOnCreate: false,
          agentProvider: "claude",
-         customTask: {
-           executionMode: "pty",
-           agentProvider: "claude",
-           setup: [${JSON.stringify(setupCommand)}],
-         },
        })
      ).then((id) => cb(id)).catch((error) => cb("__error:" + (error?.message || String(error))));`,
   );
@@ -135,6 +129,56 @@ async function createRecoverableTask(
     throw new Error(`recoverable task creation failed: ${taskId}`);
   }
   return taskId;
+}
+
+async function configureTerminalRecoveryFixture(repoPath: string): Promise<void> {
+  const setupCommand = [
+    "if [ -f .kanna/terminal-recovery-respawn.ready ]; then",
+    "printf 'RESPAWN_READY\\n';",
+    "else",
+    "touch .kanna/terminal-recovery-respawn.ready;",
+    "printf 'ORIGINAL_READY\\n';",
+    "fi;",
+    "while true; do sleep 60; done",
+  ].join(" ");
+
+  await writeFile(
+    `${repoPath}/.kanna/config.json`,
+    JSON.stringify({ setup: [setupCommand] }, null, 2),
+  );
+  await runCommand(["git", "add", ".kanna/config.json"], repoPath);
+  await runCommand(["git", "commit", "-m", "configure terminal recovery fixture"], repoPath);
+  await runCommand(["git", "push", "origin", "main"], repoPath);
+}
+
+async function runCommand(command: string[], cwd: string): Promise<void> {
+  const [file, ...args] = command;
+  const proc = spawn(file, args, { cwd, stdio: "pipe" });
+  let stderr = "";
+  proc.stderr.setEncoding("utf8");
+  proc.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    proc.once("error", reject);
+    proc.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      if (signal) {
+        reject(new Error(`${command.join(" ")} exited with signal ${signal}`));
+        return;
+      }
+      const details = stderr.trim();
+      reject(new Error(
+        details.length > 0
+          ? `${command.join(" ")} failed: ${details}`
+          : `${command.join(" ")} exited with code ${code ?? "unknown"}`,
+      ));
+    });
+  });
 }
 
 async function selectTask(client: WebDriverClient, taskId: string): Promise<void> {
@@ -148,53 +192,6 @@ async function selectTask(client: WebDriverClient, taskId: string): Promise<void
   if (result !== "ok") {
     throw new Error(`select task failed: ${result}`);
   }
-}
-
-async function waitForTaskWorktreePath(
-  client: WebDriverClient,
-  taskId: string,
-  timeoutMs = 15_000,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const rows = await queryDb(
-      client,
-      `SELECT r.path AS repo_path, p.branch AS branch
-         FROM pipeline_item p
-         JOIN repo r ON r.id = p.repo_id
-        WHERE p.id = ?`,
-      [taskId],
-    ) as Array<{ repo_path?: string | null; branch?: string | null }>;
-    const repoPath = rows[0]?.repo_path;
-    const branch = rows[0]?.branch;
-    if (
-      typeof repoPath === "string" &&
-      repoPath.length > 0 &&
-      typeof branch === "string" &&
-      branch.length > 0
-    ) {
-      const worktreePath = `${repoPath}/.kanna-worktrees/${branch}`;
-      const exists = await tauriInvoke(client, "file_exists", { path: worktreePath });
-      if (exists === true) return worktreePath;
-    }
-    await sleep(100);
-  }
-  throw new Error(`timed out waiting for worktree path for ${taskId}`);
-}
-
-async function writeRespawnSetupConfig(
-  client: WebDriverClient,
-  worktreePath: string,
-): Promise<void> {
-  const kannaDir = `${worktreePath}/.kanna`;
-  const configPath = `${kannaDir}/config.json`;
-  await strictTauriInvoke(client, "ensure_directory", { path: kannaDir });
-  await strictTauriInvoke(client, "write_text_file", {
-    path: configPath,
-    content: JSON.stringify({
-      setup: ["printf 'RESPAWN_READY\\n'; while true; do sleep 60; done"],
-    }),
-  });
 }
 
 function buildRecoverySnapshot(lineCount: number): string {
