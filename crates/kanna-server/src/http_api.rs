@@ -2,8 +2,10 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::mobile_api::MobileApi;
 use crate::pairing::{self, PairingSession};
+use axum::body::Body;
 use axum::extract::ws::{Message as WebSocketMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::http::Request;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use kanna_daemon::protocol::{Command as DaemonCommand, Event as DaemonEvent};
@@ -11,6 +13,7 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tower::ServiceExt;
 use tower_http::cors::CorsLayer;
 
 #[derive(Clone)]
@@ -89,6 +92,14 @@ enum TaskTerminalStreamEvent {
     Output { task_id: String, text: String },
     Exit { task_id: String, code: i32 },
     Error { task_id: String, message: String },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpInvokeResponse {
+    pub status: u16,
+    pub body: Option<serde_json::Value>,
+    pub error: Option<String>,
 }
 
 fn db_write_error(message_prefix: &str, err: rusqlite::Error) -> (axum::http::StatusCode, String) {
@@ -1126,6 +1137,111 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+pub async fn dispatch_http_invoke(
+    state: Arc<AppState>,
+    method: &str,
+    path: &str,
+    body: serde_json::Value,
+) -> HttpInvokeResponse {
+    let method = match method.parse::<axum::http::Method>() {
+        Ok(method) => method,
+        Err(error) => {
+            return HttpInvokeResponse {
+                status: axum::http::StatusCode::BAD_REQUEST.as_u16(),
+                body: None,
+                error: Some(format!("invalid HTTP method: {error}")),
+            };
+        }
+    };
+
+    if !path.starts_with('/') {
+        return HttpInvokeResponse {
+            status: axum::http::StatusCode::BAD_REQUEST.as_u16(),
+            body: None,
+            error: Some("HTTP invoke path must start with /".to_string()),
+        };
+    }
+
+    let body = if body.is_null() {
+        Body::empty()
+    } else {
+        match serde_json::to_vec(&body) {
+            Ok(bytes) => Body::from(bytes),
+            Err(error) => {
+                return HttpInvokeResponse {
+                    status: axum::http::StatusCode::BAD_REQUEST.as_u16(),
+                    body: None,
+                    error: Some(format!("invalid HTTP invoke body: {error}")),
+                };
+            }
+        }
+    };
+
+    let request = match Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .body(body)
+    {
+        Ok(request) => request,
+        Err(error) => {
+            return HttpInvokeResponse {
+                status: axum::http::StatusCode::BAD_REQUEST.as_u16(),
+                body: None,
+                error: Some(format!("invalid HTTP invoke request: {error}")),
+            };
+        }
+    };
+
+    match router(state).oneshot(request).await {
+        Ok(response) => response_to_http_invoke(response).await,
+        Err(error) => HttpInvokeResponse {
+            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+            body: None,
+            error: Some(format!("HTTP invoke dispatch failed: {error}")),
+        },
+    }
+}
+
+async fn response_to_http_invoke(response: axum::response::Response) -> HttpInvokeResponse {
+    let status = response.status();
+    let bytes = match axum::body::to_bytes(response.into_body(), usize::MAX).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return HttpInvokeResponse {
+                status: axum::http::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                body: None,
+                error: Some(format!("failed to read HTTP invoke response: {error}")),
+            };
+        }
+    };
+
+    let body = if bytes.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_else(|_| {
+                serde_json::Value::String(String::from_utf8_lossy(&bytes).into_owned())
+            }),
+        )
+    };
+    let error = if status.is_success() {
+        None
+    } else {
+        Some(match &body {
+            Some(serde_json::Value::String(message)) => message.clone(),
+            Some(value) => value.to_string(),
+            None => status.to_string(),
+        })
+    };
+
+    HttpInvokeResponse {
+        status: status.as_u16(),
+        body,
+        error,
+    }
+}
+
 pub async fn serve(state: Arc<AppState>) -> Result<(), String> {
     let bind_addr = format!("{}:{}", state.config.lan_host, state.config.lan_port);
     let listener = tokio::net::TcpListener::bind(&bind_addr)
@@ -1188,6 +1304,69 @@ fn test_router_with_seed(desktop_id: &str, desktop_name: &str, seed: impl FnOnce
     let db = Db::open_for_tests(&config.db_path).expect("open test db");
     seed(&db);
     router(Arc::new(AppState::new(config)))
+}
+
+#[cfg(test)]
+fn test_state_with_seed(
+    desktop_id: &str,
+    desktop_name: &str,
+    seed: impl FnOnce(&Db),
+) -> Arc<AppState> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEST_DB_ID: AtomicUsize = AtomicUsize::new(6_000);
+    let test_db_id = NEXT_TEST_DB_ID.fetch_add(1, Ordering::Relaxed);
+    let config = Config {
+        relay_url: "wss://relay.example".to_string(),
+        device_token: "device-token".to_string(),
+        cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+        firebase_project_id: "kanna-local".to_string(),
+        firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+        firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+        daemon_dir: "/tmp/kanna-daemon".to_string(),
+        db_path: Db::test_db_path(&format!("http-invoke-{desktop_id}-{test_db_id}")),
+        desktop_id: desktop_id.to_string(),
+        desktop_secret: Some("desktop-secret".to_string()),
+        desktop_name: desktop_name.to_string(),
+        lan_host: "0.0.0.0".to_string(),
+        lan_port: 48120,
+        pairing_store_path: format!("/tmp/kanna-pairings-invoke-{desktop_id}-{test_db_id}.json"),
+    };
+    let db = Db::open_for_tests(&config.db_path).expect("open test db");
+    seed(&db);
+    Arc::new(AppState::new(config))
+}
+
+#[cfg(test)]
+fn test_state_with_task_input_sender(
+    desktop_id: &str,
+    desktop_name: &str,
+    task_input_sender: TestTaskInputSender,
+) -> Arc<AppState> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEST_DB_ID: AtomicUsize = AtomicUsize::new(7_000);
+    let test_db_id = NEXT_TEST_DB_ID.fetch_add(1, Ordering::Relaxed);
+    let config = Config {
+        relay_url: "wss://relay.example".to_string(),
+        device_token: "device-token".to_string(),
+        cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+        firebase_project_id: "kanna-local".to_string(),
+        firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+        firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+        daemon_dir: "/tmp/kanna-daemon".to_string(),
+        db_path: Db::test_db_path(&format!("http-invoke-input-{desktop_id}-{test_db_id}")),
+        desktop_id: desktop_id.to_string(),
+        desktop_secret: Some("desktop-secret".to_string()),
+        desktop_name: desktop_name.to_string(),
+        lan_host: "0.0.0.0".to_string(),
+        lan_port: 48120,
+        pairing_store_path: format!(
+            "/tmp/kanna-pairings-invoke-input-{desktop_id}-{test_db_id}.json"
+        ),
+    };
+    let _ = Db::open_for_tests(&config.db_path).expect("open test db");
+    Arc::new(AppState::with_task_input_sender(config, task_input_sender))
 }
 
 #[cfg(test)]
@@ -1660,6 +1839,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_invoke_dispatches_shared_mobile_get_routes() {
+        let state = super::test_state_with_seed("desktop-1", "Studio Mac", |db| {
+            db.insert_test_repo("repo-1", "Repo One").unwrap();
+            db.insert_test_pipeline_item(
+                "task-newer",
+                "repo-1",
+                "newer prompt",
+                Some("Newer Task"),
+                "in progress",
+                "2026-04-17 07:00:00",
+            )
+            .unwrap();
+        });
+
+        let repos = super::dispatch_http_invoke(
+            Arc::clone(&state),
+            "GET",
+            "/v1/repos",
+            serde_json::Value::Null,
+        )
+        .await;
+        assert_eq!(repos.status, 200);
+        assert_eq!(
+            repos.body,
+            Some(serde_json::json!([
+                {
+                    "id": "repo-1",
+                    "name": "Repo One"
+                }
+            ]))
+        );
+        assert_eq!(repos.error, None);
+
+        let recent = super::dispatch_http_invoke(
+            Arc::clone(&state),
+            "GET",
+            "/v1/tasks/recent",
+            serde_json::Value::Null,
+        )
+        .await;
+        assert_eq!(recent.status, 200);
+        assert_eq!(recent.body.as_ref().unwrap()[0]["id"], "task-newer");
+        assert_eq!(recent.error, None);
+    }
+
+    #[tokio::test]
     async fn search_tasks_route_filters_by_query_text() {
         let app = super::test_router_with_seed("desktop-1", "Studio Mac", |db| {
             db.insert_test_repo("repo-1", "Repo One").unwrap();
@@ -2026,6 +2251,38 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn http_invoke_dispatches_shared_mobile_post_routes_with_json_body() {
+        let received = Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let received_for_sender = Arc::clone(&received);
+        let state = super::test_state_with_task_input_sender(
+            "desktop-1",
+            "Studio Mac",
+            Arc::new(move |task_id, input| {
+                received_for_sender.lock().unwrap().push((task_id, input));
+                Ok(())
+            }),
+        );
+
+        let response = super::dispatch_http_invoke(
+            state,
+            "POST",
+            "/v1/tasks/task-1/input",
+            serde_json::json!({
+                "input": "continue"
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status, 204);
+        assert_eq!(response.body, None);
+        assert_eq!(response.error, None);
+        assert_eq!(
+            *received.lock().unwrap(),
+            vec![("task-1".to_string(), "continue".to_string())]
+        );
     }
 
     #[tokio::test]
