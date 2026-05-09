@@ -14,6 +14,7 @@ interface MobileAppConfig {
 
 export interface MobileE2eEnv {
   appiumPort: number;
+  wdaLocalPort: number;
   bundleId: string;
   desktopServerUrl: string;
   metroPort: number;
@@ -46,6 +47,20 @@ export function resolveRequiredMobileE2eEnv(
     throw new Error(`KANNA_APPIUM_PORT must be an integer, got: ${rawAppiumPort}`);
   }
 
+  const rawWdaLocalPort = env.KANNA_IOS_WDA_PORT?.trim();
+  if (!rawWdaLocalPort) {
+    throw new Error(
+      "KANNA_IOS_WDA_PORT is required. Add it to .kanna/config.json ports and start Kanna with ./scripts/dev.sh --mobile."
+    );
+  }
+
+  const wdaLocalPort = Number.parseInt(rawWdaLocalPort, 10);
+  if (Number.isNaN(wdaLocalPort)) {
+    throw new Error(
+      `KANNA_IOS_WDA_PORT must be an integer, got: ${rawWdaLocalPort}`
+    );
+  }
+
   const rawMetroPort = env.KANNA_MOBILE_PORT?.trim();
   const metroPort = rawMetroPort ? Number.parseInt(rawMetroPort, 10) : 8081;
   if (Number.isNaN(metroPort)) {
@@ -72,6 +87,7 @@ export function resolveRequiredMobileE2eEnv(
 
   return {
     appiumPort,
+    wdaLocalPort,
     bundleId,
     desktopServerUrl,
     metroPort,

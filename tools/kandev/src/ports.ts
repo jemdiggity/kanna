@@ -5,6 +5,7 @@ export interface KandevPorts {
   KANNA_MOBILE_SERVER_PORT: number;
   KANNA_MOBILE_PORT: number;
   KANNA_APPIUM_PORT: number;
+  KANNA_IOS_WDA_PORT: number;
   KANNA_TRANSFER_PORT: number;
   KANNA_FIREBASE_AUTH_PORT: number;
   KANNA_FIREBASE_FIRESTORE_PORT: number;
@@ -19,6 +20,7 @@ export const defaultPorts: KandevPorts = {
   KANNA_MOBILE_SERVER_PORT: 48120,
   KANNA_MOBILE_PORT: 8081,
   KANNA_APPIUM_PORT: 4723,
+  KANNA_IOS_WDA_PORT: 4724,
   KANNA_TRANSFER_PORT: 4455,
   KANNA_FIREBASE_AUTH_PORT: 9099,
   KANNA_FIREBASE_FIRESTORE_PORT: 8080,
@@ -31,6 +33,10 @@ export interface ResolvePortsInput {
   configPorts: Record<string, number>;
 }
 
+function isKannaProvidedEnv(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env.KANNA_TASK_ID?.trim() || env.KANNA_SOCKET_PATH?.trim());
+}
+
 function resolvePort(name: keyof KandevPorts, input: ResolvePortsInput): number {
   const envValue = input.env[name];
   if (envValue?.trim()) {
@@ -39,6 +45,11 @@ function resolvePort(name: keyof KandevPorts, input: ResolvePortsInput): number 
       throw new Error(`${name} must be an integer port between 1 and 65535`);
     }
     return parsed;
+  }
+  if (isKannaProvidedEnv(input.env) && name in input.configPorts) {
+    throw new Error(
+      `${name} is declared in .kanna/config.json but missing from the Kanna-provided environment. Recreate or refresh the workspace so Kanna assigns it.`
+    );
   }
   return input.configPorts[name] ?? defaultPorts[name];
 }
@@ -51,6 +62,7 @@ export function resolvePorts(input: ResolvePortsInput): KandevPorts {
     KANNA_MOBILE_SERVER_PORT: resolvePort("KANNA_MOBILE_SERVER_PORT", input),
     KANNA_MOBILE_PORT: resolvePort("KANNA_MOBILE_PORT", input),
     KANNA_APPIUM_PORT: resolvePort("KANNA_APPIUM_PORT", input),
+    KANNA_IOS_WDA_PORT: resolvePort("KANNA_IOS_WDA_PORT", input),
     KANNA_TRANSFER_PORT: resolvePort("KANNA_TRANSFER_PORT", input),
     KANNA_FIREBASE_AUTH_PORT: resolvePort("KANNA_FIREBASE_AUTH_PORT", input),
     KANNA_FIREBASE_FIRESTORE_PORT: resolvePort("KANNA_FIREBASE_FIRESTORE_PORT", input),

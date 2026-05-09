@@ -149,6 +149,7 @@ We develop Kanna **in and on** Kanna — Claude Code agents run from one of thre
 Worktrees are fully isolated from the main branch instance:
 
 - **Separate Vite port** — main uses `localhost:1420`, worktrees get a unique port automatically. The app reads base ports from `.kanna/config.json` `ports` field (e.g., `"KANNA_DEV_PORT": 1420`), picks the next unused offset (1, 2, 3…), and stores the computed port (e.g., `1421`) as `port_env` in the DB. When the worktree's agent session spawns, `KANNA_DEV_PORT` is passed as an env var — no manual editing of `config.json` is needed. `dev.sh` then writes `tauri.conf.local.json` with the port override and passes `--config` to Tauri — the committed `tauri.conf.json` is never modified. Vite also reads `KANNA_DEV_PORT` to set its server port.
+- **No undeclared local ports** — do not derive, probe, or reserve "nearby" ports such as `KANNA_APPIUM_PORT + 1`. If a dev tool listens on localhost or forwards to a device, give it its own named entry in `.kanna/config.json` `ports` and require that env var at runtime. This includes Appium's WebDriverAgent tunnel, which uses `KANNA_IOS_WDA_PORT`. Existing workspaces created before a new port was added will not have that env var; refresh the workspace assignment instead of substituting the base port by hand.
 - **Separate daemon** — worktrees use `{worktree}/.kanna-daemon/` instead of `~/Library/Application Support/Kanna/`
 - **Separate database** — each instance uses its own SQLite DB
 - **Separate tmux server** — `dev.sh` uses a tmux server named `kanna-{worktree-dir}` instead of the default `kanna`, and creates the desktop/mobile windows inside a same-named session on that server
@@ -199,6 +200,8 @@ cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignore
 # Physical device: pnpm --dir apps/mobile run test:e2e:device:preflight
 # Physical device: pnpm --dir apps/mobile run test:e2e:device:smoke
 # Physical-device runs assume local Xcode signing already works and the app is installed.
+# Appium and WebDriverAgent must both use assigned ports: KANNA_APPIUM_PORT and
+# KANNA_IOS_WDA_PORT. Never derive the WDA port from the Appium port.
 # Device smoke now starts or reuses Metro on KANNA_MOBILE_PORT automatically and
 # force-relaunches the app so stale Expo bundles do not leak across runs.
 # If the app is missing on the device, install it with the same Metro port:
@@ -575,6 +578,7 @@ Single `VERSION` file is the source of truth for packaged app versioning. `ship.
 - `tauri-plugin-webdriver` on port 4445 for E2E testing. Only works in debug builds on macOS WKWebView.
 - Daemon must be detached from app process group (`setsid` via `pre_exec`) or Ctrl+C kills it.
 - End-to-end mobile runs must start from `./scripts/dev.sh --mobile` or `./scripts/mobile-dev.sh`. Launching Expo directly from `apps/mobile` does not start the desktop-side `kanna-server`, so `http://127.0.0.1:48120` will be down unless the desktop app is already running.
+- Any local port used by dev, mobile, E2E, relay, emulator, WebDriver, Appium, or WebDriverAgent flows must come from an env var assigned by Kanna from `.kanna/config.json`. Do not use adjacent ports, hard-coded fallbacks, base-port fallbacks in an already-assigned workspace, or "port + 1" conventions; add a new named port to `.kanna/config.json` and plumb that env through the caller. `kd` should inherit Kanna-provided port env values; in a Kanna-launched task, a declared port that is missing from env is a workspace assignment problem, not permission to fall back to the base port.
 - Frontend console logs are written to `/tmp/kanna-webview-*.log` via the log forwarding in [`apps/desktop/src/main.ts`](apps/desktop/src/main.ts) and the Tauri `append_log` command in [`apps/desktop/src-tauri/src/commands/fs.rs`](apps/desktop/src-tauri/src/commands/fs.rs). Each instance gets its own log file: worktrees use the directory name (for this worktree: `/tmp/kanna-webview-task-348cf000.log`), while main instances use a cwd path hash (for example `kanna-webview-1a2b3c4d.log`).
 - Prefer the most correct architecture over the shortest patch. Use temporary safety fallbacks only when necessary, and document them as fallbacks rather than as the intended steady state.
 - Rust build artifacts go to `.build/` (not `target/`) — configured in `.cargo/config.toml`.

@@ -6,6 +6,7 @@ describe("resolveRequiredMobileE2eEnv", () => {
     expect(
       resolveRequiredMobileE2eEnv({
         KANNA_APPIUM_PORT: "4723",
+        KANNA_IOS_WDA_PORT: "4730",
         EXPO_PUBLIC_KANNA_SERVER_URL: "http://127.0.0.1:48120"
       })
     ).toMatchObject({
@@ -21,15 +22,26 @@ describe("resolveRequiredMobileE2eEnv", () => {
     ).toThrow("KANNA_APPIUM_PORT");
   });
 
+  it("throws a clear error when KANNA_IOS_WDA_PORT is missing", () => {
+    expect(() =>
+      resolveRequiredMobileE2eEnv({
+        KANNA_APPIUM_PORT: "4723",
+        EXPO_PUBLIC_KANNA_SERVER_URL: "http://127.0.0.1:48120"
+      })
+    ).toThrow("KANNA_IOS_WDA_PORT");
+  });
+
   it("parses the appium port and server URL", () => {
     expect(
       resolveRequiredMobileE2eEnv({
         KANNA_APPIUM_PORT: "4723",
+        KANNA_IOS_WDA_PORT: "4730",
         KANNA_MOBILE_PORT: "1430",
         EXPO_PUBLIC_KANNA_SERVER_URL: "http://127.0.0.1:48120"
       })
     ).toMatchObject({
       appiumPort: 4723,
+      wdaLocalPort: 4730,
       metroPort: 1430,
       bundleId: "build.kanna.mobile",
       desktopServerUrl: "http://127.0.0.1:48120"
@@ -40,6 +52,7 @@ describe("resolveRequiredMobileE2eEnv", () => {
     expect(
       resolveRequiredMobileE2eEnv({
         KANNA_APPIUM_PORT: "4723",
+        KANNA_IOS_WDA_PORT: "4730",
         EXPO_PUBLIC_KANNA_SERVER_URL: "http://127.0.0.1:48120"
       })
     ).toMatchObject({
@@ -51,6 +64,7 @@ describe("resolveRequiredMobileE2eEnv", () => {
     expect(
       resolveRequiredMobileE2eEnv({
         KANNA_APPIUM_PORT: "4723",
+        KANNA_IOS_WDA_PORT: "4730",
         EXPO_PUBLIC_KANNA_SERVER_URL: "http://127.0.0.1:48120",
         KANNA_IOS_E2E_TARGET: "device",
         KANNA_IOS_DEVICE_UDID: "00008110-001234560E10801E",
@@ -73,6 +87,7 @@ describe("resolveRequiredMobileE2eEnv", () => {
     expect(
       resolveRequiredMobileE2eEnv({
         KANNA_APPIUM_PORT: "4723",
+        KANNA_IOS_WDA_PORT: "4730",
         EXPO_PUBLIC_KANNA_SERVER_URL: "http://127.0.0.1:48120",
         KANNA_IOS_E2E_TARGET: "device"
       })

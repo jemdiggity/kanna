@@ -1,12 +1,12 @@
 export interface SimulatorCapabilityInput {
-  appiumPort: number;
+  wdaLocalPort: number;
   bundleId: string;
   deviceName: string;
   platformVersion?: string;
 }
 
 export interface PhysicalDeviceCapabilityInput {
-  appiumPort: number;
+  wdaLocalPort: number;
   bundleId: string;
   deviceName: string;
   deviceUdid: string;
@@ -16,17 +16,13 @@ export interface PhysicalDeviceCapabilityInput {
   updatedWdaBundleId?: string;
 }
 
-export function deriveWdaLocalPort(appiumPort: number): number {
-  return appiumPort + 1;
-}
-
 export function createSimulatorCapabilities(input: SimulatorCapabilityInput) {
   return {
     platformName: "iOS",
     "appium:automationName": "XCUITest",
     "appium:deviceName": input.deviceName,
     "appium:bundleId": input.bundleId,
-    "appium:wdaLocalPort": deriveWdaLocalPort(input.appiumPort),
+    "appium:wdaLocalPort": input.wdaLocalPort,
     "appium:newCommandTimeout": 120,
     "appium:noReset": true,
     ...(input.platformVersion
@@ -46,7 +42,7 @@ export function createPhysicalDeviceCapabilities(
     "appium:udid": input.deviceUdid,
     "appium:deviceName": input.deviceName,
     "appium:bundleId": input.bundleId,
-    "appium:wdaLocalPort": deriveWdaLocalPort(input.appiumPort),
+    "appium:wdaLocalPort": input.wdaLocalPort,
     "appium:newCommandTimeout": 120,
     "appium:noReset": true,
     "appium:forceAppLaunch": true,

@@ -47,6 +47,7 @@ async function main(): Promise<void> {
         {
           target: env.target,
           appiumPort: env.appiumPort,
+          wdaLocalPort: env.wdaLocalPort,
           metroPort: env.metroPort,
           bundleId: env.bundleId,
           desktopServerUrl,
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
       {
         target: env.target,
         appiumPort: env.appiumPort,
+        wdaLocalPort: env.wdaLocalPort,
         metroPort: env.metroPort,
         bundleId: env.bundleId,
         desktopServerUrl,

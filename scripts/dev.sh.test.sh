@@ -415,6 +415,7 @@ assert_tmux_log_contains "KANNA_DB_PATH=$TMPDIR_ROOT/home/Library/Application Su
 assert_tmux_log_contains "KANNA_DB_NAME=kanna-wt-v0.0.30.db"
 assert_tmux_log_contains "KANNA_DAEMON_DIR=$WORKTREE_ONE/.kanna-daemon"
 assert_tmux_log_contains "KANNA_WEBDRIVER_PORT=4445"
+assert_tmux_log_contains "KANNA_IOS_WDA_PORT=4724"
 assert_tmux_log_contains "CARGO_BUILD_BUILD_DIR=$(shared_build_dir)"
 
 if grep -Fq "CARGO_TARGET_DIR=" "$TMUX_LOG"; then
@@ -792,6 +793,12 @@ RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_APPIU
 expect_success "dev.sh with KANNA_APPIUM_PORT" "$RESULT" >/dev/null
 
 assert_tmux_log_contains "KANNA_APPIUM_PORT=4780"
+
+reset_logs
+RESULT="$(run_dev_sh "$WORKTREE_ONE" "$REPO_ONE_ROOT/.git" start env KANNA_IOS_WDA_PORT=4781)"
+expect_success "dev.sh with KANNA_IOS_WDA_PORT" "$RESULT" >/dev/null
+
+assert_tmux_log_contains "KANNA_IOS_WDA_PORT=4781"
 
 reset_logs
 printf '%s\n' 'kanna-v0_0_30|kanna-v0_0_30' > "$TMUX_STATE"

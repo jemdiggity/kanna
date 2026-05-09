@@ -76,7 +76,7 @@ async function main(): Promise<void> {
       );
       await assertPhysicalDeviceAppInstalled(device, env.bundleId, env.metroPort);
       capabilities = createPhysicalDeviceCapabilities({
-        appiumPort: env.appiumPort,
+        wdaLocalPort: env.wdaLocalPort,
         bundleId: env.bundleId,
         deviceName: device.name,
         deviceUdid: device.udid,
@@ -90,7 +90,7 @@ async function main(): Promise<void> {
       await bootSimulator(device);
       await assertSimulatorAppInstalled(device, env.bundleId);
       capabilities = createSimulatorCapabilities({
-        appiumPort: env.appiumPort,
+        wdaLocalPort: env.wdaLocalPort,
         bundleId: env.bundleId,
         deviceName: device.name
       });
