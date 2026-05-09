@@ -34,6 +34,7 @@ const mockState = vi.hoisted(() => {
       pipeline: "default",
       stage: "in progress",
       stage_result: null,
+      active_post_action: null,
       tags: "[]",
       pr_number: null,
       pr_url: null,
@@ -194,6 +195,22 @@ const mockState = vi.hoisted(() => {
     }
   });
 
+  const updatePipelineItemActivePostActionMock = vi.fn(async (_db: DbHandle, itemId: string, activePostAction: string) => {
+    const item = pipelineItems.find((candidate) => candidate.id === itemId);
+    if (item) {
+      item.active_post_action = activePostAction;
+      item.updated_at = now;
+    }
+  });
+
+  const clearPipelineItemActivePostActionMock = vi.fn(async (_db: DbHandle, itemId: string) => {
+    const item = pipelineItems.find((candidate) => candidate.id === itemId);
+    if (item) {
+      item.active_post_action = null;
+      item.updated_at = now;
+    }
+  });
+
   const closePipelineItemMock = vi.fn(async (_db: DbHandle, itemId: string) => {
     const item = pipelineItems.find((candidate) => candidate.id === itemId);
     if (item) {
@@ -223,6 +240,8 @@ const mockState = vi.hoisted(() => {
     updatePipelineItemStageMock.mockClear();
     updatePipelineItemActivityMock.mockClear();
     clearPipelineItemStageResultMock.mockClear();
+    updatePipelineItemActivePostActionMock.mockClear();
+    clearPipelineItemActivePostActionMock.mockClear();
     closePipelineItemMock.mockClear();
     listBlockersForItemMock.mockClear();
     listBlockedByItemMock.mockClear();
@@ -298,6 +317,8 @@ const mockState = vi.hoisted(() => {
     updatePipelineItemStageMock,
     updatePipelineItemActivityMock,
     clearPipelineItemStageResultMock,
+    updatePipelineItemActivePostActionMock,
+    clearPipelineItemActivePostActionMock,
     closePipelineItemMock,
     makeItem,
     makeRepo,
@@ -340,7 +361,7 @@ vi.mock("@kanna/core", () => ({
     return mockState.repoConfig;
   }),
   parseAgentMd: vi.fn(() => null),
-  DEFAULT_STAGE_ORDER: ["merge", "pr", "review", "commit", "in progress"],
+  DEFAULT_STAGE_ORDER: ["merge", "pr", "review", "in progress"],
 }));
 
 vi.mock("../../../../packages/core/src/pipeline/agent-loader", () => ({
@@ -477,6 +498,8 @@ vi.mock("@kanna/db", () => ({
   markPipelineItemTearingDown: vi.fn(async () => {}),
   updatePipelineItemStage: mockState.updatePipelineItemStageMock,
   updatePipelineItemTags: mockState.updatePipelineItemTagsMock,
+  updatePipelineItemActivePostAction: mockState.updatePipelineItemActivePostActionMock,
+  clearPipelineItemActivePostAction: mockState.clearPipelineItemActivePostActionMock,
   pinPipelineItem: vi.fn(async () => {}),
   unpinPipelineItem: vi.fn(async () => {}),
   reorderPinnedItems: vi.fn(async () => {}),
@@ -1836,6 +1859,90 @@ describe("kanna store task base branch integration", () => {
     );
   });
 
+  it("starts a stage post-action without changing the task stage", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        {
+          name: "in progress",
+          transition: "manual",
+          post_action: {
+            name: "commit",
+            transition: "auto",
+            agent: "commit",
+            prompt: "Commit $TASK_PROMPT",
+          },
+        },
+        { name: "pr", transition: "manual" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        stage_result: JSON.stringify({ status: "success", summary: "implemented" }),
+        agent_provider: "codex",
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source");
+
+    expect(mockState.updatePipelineItemActivePostActionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "item-source",
+      "commit",
+    );
+    expect(mockState.updatePipelineItemStageMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "item-source",
+      "commit",
+    );
+    expect(mockState.pipelineItems[0].stage).toBe("in progress");
+    expect(mockState.closePipelineItemMock).not.toHaveBeenCalled();
+    expect(mockState.insertPipelineItemMock).not.toHaveBeenCalled();
+    expect(mockState.clearPipelineItemStageResultMock).toHaveBeenCalledWith(expect.anything(), "item-source");
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("\x1b[200~Stage prompt\x1b[201~\r")),
+    });
+  });
+
+  it("skips the post-action and advances to the next real stage when requested", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        {
+          name: "in progress",
+          transition: "manual",
+          post_action: { name: "commit", transition: "auto", agent: "commit" },
+        },
+        { name: "pr", transition: "manual", agent: "pr" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        stage_result: JSON.stringify({ status: "success", summary: "committed" }),
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source", { initiatedBy: "auto", skipPostAction: true });
+
+    expect(mockState.updatePipelineItemActivePostActionMock).not.toHaveBeenCalled();
+    expect(mockState.closePipelineItemMock).toHaveBeenCalledWith(expect.anything(), "item-source");
+    expect(mockState.insertPipelineItemMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ stage: "pr", prompt: "Stage prompt" }),
+    );
+  });
+
   it("continues the same task and sends the next stage prompt when stage mode is continue", async () => {
     mockState.pipelineDefinition = {
       name: "default",
@@ -2003,6 +2110,45 @@ describe("kanna store task base branch integration", () => {
       "item-source",
     );
     expect(clearCallOrder).toBeLessThan(sendInputOrder);
+  });
+
+  it("reruns the active post-action prompt instead of the parent stage prompt", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        {
+          name: "in progress",
+          transition: "manual",
+          agent: "implement",
+          prompt: "Implement $TASK_PROMPT",
+          post_action: {
+            name: "commit",
+            transition: "auto",
+            agent: "commit",
+            prompt: "Commit $TASK_PROMPT",
+          },
+        },
+        { name: "pr", transition: "manual" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        active_post_action: "commit",
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.rerunStage("item-source");
+
+    expect(buildStagePrompt).toHaveBeenCalledWith(
+      "Agent prompt",
+      "Commit $TASK_PROMPT",
+      expect.objectContaining({ taskPrompt: "Ship it" }),
+    );
   });
 
   it("does not auto-select a created task when selectOnCreate is false", async () => {

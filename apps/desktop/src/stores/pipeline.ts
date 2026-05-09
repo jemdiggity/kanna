@@ -2,8 +2,8 @@ import { parseAgentDefinition } from "../../../../packages/core/src/pipeline/age
 import { parsePipelineJson } from "../../../../packages/core/src/pipeline/pipeline-loader";
 import { buildStagePrompt } from "../../../../packages/core/src/pipeline/prompt-builder";
 import { getNextStage } from "../../../../packages/core/src/pipeline/types";
-import type { AgentDefinition, PipelineDefinition } from "../../../../packages/core/src/pipeline/pipeline-types";
-import { clearPipelineItemStageResult, getRepo, updatePipelineItemStage } from "@kanna/db";
+import type { AgentDefinition, PipelineDefinition, PipelinePostAction } from "../../../../packages/core/src/pipeline/pipeline-types";
+import { clearPipelineItemActivePostAction, clearPipelineItemStageResult, getRepo, updatePipelineItemActivePostAction, updatePipelineItemStage } from "@kanna/db";
 import { invoke } from "../invoke";
 import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
 import { encodeAgentStageInput } from "./daemonInput";
@@ -133,6 +133,74 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     }
   }
 
+  async function buildPostActionPrompt(
+    repoPath: string,
+    item: import("@kanna/db").PipelineItem,
+    sourceBranch: string,
+    sourceWorktree: string | undefined,
+    postAction: PipelinePostAction,
+  ): Promise<{ prompt: string; agentProvider: import("@kanna/db").AgentProvider }> {
+    if (!postAction.agent) {
+      return { prompt: "", agentProvider: item.agent_provider };
+    }
+
+    const agent = await loadAgent(repoPath, postAction.agent);
+    const prompt = buildStagePrompt(agent.prompt, postAction.prompt, {
+      taskPrompt: item.prompt ?? "",
+      prevResult: item.stage_result ?? undefined,
+      branch: sourceBranch,
+      baseRef: item.base_ref ?? undefined,
+      sourceWorktree,
+    });
+    const preferredProviders = getPreferredAgentProviders({
+      stage: postAction.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
+      agent: agent.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
+      item: item.agent_provider,
+    });
+    const agentProvider = resolveAgentProvider(
+      preferredProviders,
+      await requireService(context.services.getAgentProviderAvailability, "getAgentProviderAvailability")(),
+    );
+
+    return { prompt, agentProvider };
+  }
+
+  async function enterPostAction(
+    item: import("@kanna/db").PipelineItem,
+    postAction: PipelinePostAction,
+    stagePrompt: string,
+    agentProvider: import("@kanna/db").AgentProvider,
+  ): Promise<void> {
+    let hasLiveSession = false;
+    try {
+      hasLiveSession = await hasLiveDaemonSession(item.id);
+    } catch (error) {
+      console.error("[store] enterPostAction: failed to list daemon sessions:", error);
+    }
+
+    if (!hasLiveSession) {
+      context.toast.error(context.tt("toasts.agentStartFailed"));
+      return;
+    }
+
+    try {
+      await updatePipelineItemActivePostAction(context.requireDb(), item.id, postAction.name);
+      await clearPipelineItemStageResult(context.requireDb(), item.id);
+      await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+      await invoke("send_input", {
+        sessionId: item.id,
+        data: encodeAgentStageInput(stagePrompt, {
+          agentProvider,
+          kittyKeyboard: item.agent_provider === "claude" && Boolean(item.prompt),
+        }),
+      });
+    } catch (error) {
+      await clearPipelineItemActivePostAction(context.requireDb(), item.id);
+      await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+      context.toast.error(`${context.tt("toasts.agentStartFailed")}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
   async function loadPipeline(repoPath: string, pipelineName: string): Promise<PipelineDefinition> {
     const cacheKey = `${repoPath}::${pipelineName}`;
     const cached = context.state.pipelineCache.get(cacheKey);
@@ -248,6 +316,24 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
     let agentOpts: Record<string, unknown> = { agentProvider: item.agent_provider };
     const sourceBranch = await resolveCurrentSourceBranch(repo.path, item.branch);
     const sourceWorktree = resolveSourceWorktree(repo.path, item.branch);
+    const currentStage = pipeline.stages.find((stage) => stage.name === item.stage);
+
+    if (!options.skipPostAction && !item.active_post_action && currentStage?.post_action) {
+      try {
+        const postActionPrompt = await buildPostActionPrompt(
+          repo.path,
+          item,
+          sourceBranch,
+          sourceWorktree,
+          currentStage.post_action,
+        );
+        await enterPostAction(item, currentStage.post_action, postActionPrompt.prompt, postActionPrompt.agentProvider);
+      } catch (error) {
+        console.error("[store] advanceStage: failed to enter post-action:", error);
+        context.toast.error(`${context.tt("toasts.agentStartFailed")}: ${error instanceof Error ? error.message : error}`);
+      }
+      return;
+    }
 
     if (nextStage.agent) {
       try {
@@ -362,6 +448,12 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       context.toast.error(context.tt("toasts.stageNotFound"));
       return;
     }
+    const activePostAction = item.active_post_action
+      ? currentStage.post_action?.name === item.active_post_action
+        ? currentStage.post_action
+        : null
+      : null;
+    const execution = activePostAction ?? currentStage;
 
     await clearPipelineItemStageResult(context.requireDb(), taskId);
 
@@ -393,10 +485,10 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
       }
     }
 
-    if (currentStage.agent) {
+    if (execution.agent) {
       try {
-        const agent = await loadAgent(repo.path, currentStage.agent);
-        const stagePrompt = buildStagePrompt(agent.prompt, currentStage.prompt, {
+        const agent = await loadAgent(repo.path, execution.agent);
+        const stagePrompt = buildStagePrompt(agent.prompt, execution.prompt, {
           taskPrompt: item.prompt ?? "",
           branch: item.branch ?? undefined,
           baseRef: item.base_ref ?? undefined,
@@ -404,7 +496,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
         });
         const worktreePath = buildWorktreePath(repo.path, item.branch);
         const preferredProviders = getPreferredAgentProviders({
-          stage: currentStage.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
+          stage: execution.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
           agent: agent.agent_provider as import("@kanna/db").AgentProvider | import("@kanna/db").AgentProvider[] | undefined,
           item: item.agent_provider,
         });

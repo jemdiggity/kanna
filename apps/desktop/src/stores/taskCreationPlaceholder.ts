@@ -30,6 +30,7 @@ export function buildPendingTaskPlaceholder(
     pipeline: options.pipelineName ?? "default",
     stage,
     stage_result: null,
+    active_post_action: null,
     tags: JSON.stringify([stage]),
     pr_number: null,
     pr_url: null,

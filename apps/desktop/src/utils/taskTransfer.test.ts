@@ -16,6 +16,7 @@ function buildPayload(overrides: Partial<OutgoingTransferPayload> = {}): Outgoin
       source_task_id: "task-source",
       prompt: "Fix handoff",
       stage: "in progress",
+      active_post_action: null,
       branch: "task-source",
       pipeline: "default",
       display_name: null,
