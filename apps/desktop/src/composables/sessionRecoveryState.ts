@@ -34,15 +34,9 @@ function isSessionRecoveryState(value: unknown): value is SessionRecoveryState {
 
 export function shouldApplyRecoverySnapshot(
   snapshot: SessionRecoveryState | null | undefined,
-  geometry: Partial<TerminalGeometry>,
+  _geometry: Partial<TerminalGeometry>,
 ): boolean {
   if (!snapshot?.serialized) return false;
-  if (geometry.cols && geometry.cols > 0 && snapshot.cols !== geometry.cols) {
-    return false;
-  }
-  if (geometry.rows && geometry.rows > 0 && snapshot.rows !== geometry.rows) {
-    return false;
-  }
   return true;
 }
 

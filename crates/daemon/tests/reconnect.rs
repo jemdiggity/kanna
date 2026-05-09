@@ -294,6 +294,40 @@ fn spawn_echo_session(conn: &mut ClientConn, session_id: &str) {
     }
 }
 
+fn spawn_shell_session(conn: &mut ClientConn, session_id: &str, script: &str) {
+    conn.send(&Cmd::Spawn {
+        session_id: session_id.to_string(),
+        executable: "/bin/sh".to_string(),
+        args: vec!["-c".to_string(), script.to_string()],
+        cwd: "/tmp".to_string(),
+        env: HashMap::new(),
+        cols: 80,
+        rows: 24,
+    });
+
+    match conn.recv() {
+        Evt::SessionCreated { session_id: sid } => assert_eq!(sid, session_id),
+        other => panic!("expected SessionCreated, got: {:?}", other),
+    }
+}
+
+fn kill_session(conn: &mut ClientConn, session_id: &str) {
+    conn.send(&Cmd::Kill {
+        session_id: session_id.to_string(),
+    });
+
+    loop {
+        match conn.recv() {
+            Evt::Ok => break,
+            Evt::Output { .. } => continue,
+            Evt::StatusChanged { .. } => continue,
+            Evt::Exit { .. } => continue,
+            Evt::Error { message } => panic!("kill failed: {}", message),
+            other => panic!("expected Ok for kill, got: {:?}", other),
+        }
+    }
+}
+
 fn attach(conn: &mut ClientConn, session_id: &str) {
     conn.send(&Cmd::AttachSnapshot {
         session_id: session_id.to_string(),
@@ -490,6 +524,52 @@ fn test_spawn_attach_io() {
         String::from_utf8_lossy(&output).contains("hello"),
         "expected 'hello' in output, got: {:?}",
         String::from_utf8_lossy(&output)
+    );
+}
+
+#[test]
+fn test_stale_reader_does_not_remove_respawned_session_with_same_id() {
+    let daemon = DaemonHandle::start();
+    let mut shared = daemon.connect();
+
+    spawn_shell_session(
+        &mut shared,
+        "sess-respawn",
+        "printf 'OLD_READY\\r\\n'; while true; do sleep 1; done",
+    );
+
+    let mut first_attach = daemon.connect();
+    attach(&mut first_attach, "sess-respawn");
+    let old_output = first_attach.collect_output_until_contains("OLD_READY");
+    assert!(
+        String::from_utf8_lossy(&old_output).contains("OLD_READY"),
+        "old session precondition failed: {:?}",
+        String::from_utf8_lossy(&old_output)
+    );
+
+    kill_session(&mut shared, "sess-respawn");
+
+    spawn_shell_session(
+        &mut shared,
+        "sess-respawn",
+        "printf 'NEW_READY\\r\\n'; while true; do sleep 1; done",
+    );
+
+    let mut second_attach = daemon.connect();
+    attach(&mut second_attach, "sess-respawn");
+    let new_output = second_attach.collect_output_until_contains("NEW_READY");
+    assert!(
+        String::from_utf8_lossy(&new_output).contains("NEW_READY"),
+        "respawned session output should remain visible, got {:?}",
+        String::from_utf8_lossy(&new_output)
+    );
+
+    std::thread::sleep(Duration::from_millis(250));
+    let snapshot = request_snapshot(&mut shared, "sess-respawn");
+    assert!(
+        snapshot.vt.contains("NEW_READY"),
+        "respawned session should survive stale cleanup, got {:?}",
+        snapshot.vt
     );
 }
 

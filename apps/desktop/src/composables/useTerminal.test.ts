@@ -523,6 +523,86 @@ describe("useTerminal", () => {
     ).toBe(false);
   });
 
+  it("does not block task respawn on recovery scrollback replay", async () => {
+    const spawnFn = vi.fn(async () => {});
+    const { useTerminal } = await import("./useTerminal");
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "file_exists") {
+        return true;
+      }
+      if (cmd === "get_session_recovery_state") {
+        return {
+          serialized: "large restored scrollback",
+          cols: 80,
+          rows: 24,
+          cursorRow: 1,
+          cursorCol: 0,
+          cursorVisible: true,
+          savedAt: 1,
+          sequence: 7,
+        };
+      }
+      if (cmd === "attach_session_with_snapshot") {
+        if (spawnFn.mock.calls.length === 0) {
+          throw new AppError("session not found: session-1", "session_not_found");
+        }
+        emitTerminalSnapshot("session-1", "fresh session output");
+        return null;
+      }
+      return null;
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening } = useTerminal(
+          "session-1",
+          {
+            cwd: "/tmp/task",
+            prompt: "hello",
+            spawnFn,
+          },
+          {
+            agentProvider: "codex",
+            worktreePath: "/tmp/task",
+          },
+        );
+
+        return { init, startListening };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    await wrapper.vm.startListening();
+
+    const terminal = terminals[0];
+    expect(terminal).toBeDefined();
+    const daemonReadyListeners = eventListeners.get("daemon_ready") ?? [];
+    expect(daemonReadyListeners).toHaveLength(1);
+    daemonReadyListeners[0]({ payload: {} });
+
+    for (let attempt = 0; attempt < 20 && spawnFn.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(terminal.pendingStringWrites.some((write) => write.data === "large restored scrollback")).toBe(true);
+    expect(terminal.pendingStringWrites.some((write) => write.data === "fresh session output")).toBe(true);
+    expect(terminal.reset).toHaveBeenCalledTimes(2);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
+  });
+
   it("leaves a terminal message when the first task attach cannot find a live PTY", async () => {
     const spawnFn = vi.fn(async () => {});
     const { useTerminal } = await import("./useTerminal");

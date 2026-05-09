@@ -1676,6 +1676,24 @@ fn stream_output(
                     stream_control.mark_stopped();
                     return;
                 }
+                let owns_current_session = rt.block_on(async {
+                    let mgr = sessions.lock().await;
+                    mgr.sessions
+                        .get(&session_id)
+                        .and_then(|session| session.stream_control.as_ref())
+                        .is_some_and(|current| current.is_same_instance(&stream_control))
+                });
+                if !owns_current_session {
+                    log::info!(
+                        "[stream] stale reader stopped before mirroring session={} bytes={}",
+                        session_id,
+                        n
+                    );
+                    status_flush_stop.store(true, Ordering::SeqCst);
+                    let _ = status_flush_thread.join();
+                    stream_control.mark_stopped();
+                    return;
+                }
                 chunk_count += 1;
                 if chunk_count <= 5 {
                     log::info!(
@@ -1831,11 +1849,25 @@ fn stream_output(
 
     let exit_code = {
         let mut mgr = rt.block_on(sessions.lock());
-        let code = match mgr.get_mut(&session_id) {
-            Some(session) => session.pty.try_wait().unwrap_or(0),
-            None => 0,
-        };
-        code
+        match mgr.get_mut(&session_id) {
+            Some(session)
+                if session
+                    .stream_control
+                    .as_ref()
+                    .is_some_and(|current| current.is_same_instance(&stream_control)) =>
+            {
+                session.pty.try_wait().unwrap_or(0)
+            }
+            _ => {
+                log::info!(
+                    "[stream] stale reader skipped exit cleanup session={} chunks={}",
+                    session_id,
+                    chunk_count
+                );
+                stream_control.mark_stopped();
+                return;
+            }
+        }
     };
     let resume_session_id = rt.block_on(async {
         let mut mgr = sessions.lock().await;

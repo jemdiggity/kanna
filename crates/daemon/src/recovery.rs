@@ -130,7 +130,7 @@ enum WorkerMessage {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedRecoverySnapshot {
     session_id: String,
@@ -313,7 +313,7 @@ impl RecoveryManager {
 
     pub async fn get_snapshot(&self, session_id: &str) -> Result<Option<RecoverySnapshot>, String> {
         if self.launcher.is_none() {
-            return Ok(None);
+            return self.read_persisted_snapshot(session_id);
         }
 
         match self
@@ -351,10 +351,42 @@ impl RecoveryManager {
                     sequence,
                 }))
             }
-            RecoveryResponse::NotFound => Ok(None),
+            RecoveryResponse::NotFound => self.read_persisted_snapshot(session_id),
             RecoveryResponse::Error { message } => Err(message),
             RecoveryResponse::Ok => Err("unexpected recovery response to GetSnapshot".to_string()),
         }
+    }
+
+    fn read_persisted_snapshot(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RecoverySnapshot>, String> {
+        let path = self.snapshot_file(session_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let payload = std::fs::read(&path)
+            .map_err(|error| format!("failed to read recovery snapshot {:?}: {}", path, error))?;
+        let snapshot: PersistedRecoverySnapshot = serde_json::from_slice(&payload)
+            .map_err(|error| format!("failed to parse recovery snapshot {:?}: {}", path, error))?;
+        if snapshot.session_id != session_id {
+            return Err(format!(
+                "persisted recovery snapshot mismatched session: expected {}, got {}",
+                session_id, snapshot.session_id
+            ));
+        }
+
+        Ok(Some(RecoverySnapshot {
+            serialized: snapshot.serialized,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            cursor_row: snapshot.cursor_row,
+            cursor_col: snapshot.cursor_col,
+            cursor_visible: snapshot.cursor_visible,
+            saved_at: snapshot.saved_at,
+            sequence: snapshot.sequence,
+        }))
     }
 
     pub async fn flush_and_shutdown(&self) {
@@ -921,5 +953,36 @@ mod tests {
         assert!(launcher.args.is_empty());
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn seeded_snapshot_is_readable_without_live_recovery_worker() {
+        let snapshot_dir = unique_test_snapshot_dir();
+        let manager = RecoveryManager::new(snapshot_dir.clone(), None);
+
+        manager
+            .seed_snapshot(
+                "seeded-session",
+                &SeededRecoverySnapshot {
+                    serialized: "RECOVERY_DONE\r\n".to_string(),
+                    cols: 80,
+                    rows: 24,
+                    cursor_row: 23,
+                    cursor_col: 0,
+                    cursor_visible: true,
+                },
+            )
+            .unwrap();
+
+        let snapshot = manager
+            .get_snapshot("seeded-session")
+            .await
+            .unwrap()
+            .expect("seeded snapshot should be readable");
+        assert_eq!(snapshot.serialized, "RECOVERY_DONE\r\n");
+        assert_eq!(snapshot.cols, 80);
+        assert_eq!(snapshot.rows, 24);
+
+        let _ = std::fs::remove_dir_all(&snapshot_dir);
     }
 }
