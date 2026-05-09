@@ -48,6 +48,7 @@ pub struct TaskStageSource {
     pub prompt: Option<String>,
     pub stage: Option<String>,
     pub stage_result: Option<String>,
+    pub active_post_action: Option<String>,
     pub branch: Option<String>,
     pub base_ref: Option<String>,
     pub pipeline: Option<String>,
@@ -173,6 +174,7 @@ impl Db {
                 closed_at TEXT,
                 pipeline TEXT,
                 stage_result TEXT,
+                active_post_action TEXT,
                 tags TEXT,
                 agent_provider TEXT,
                 port_offset INTEGER,
@@ -479,7 +481,7 @@ impl Db {
         id: &str,
     ) -> Result<Option<TaskStageSource>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT repo_id, prompt, stage, stage_result, branch, base_ref, pipeline, agent_provider, closed_at
+            "SELECT repo_id, prompt, stage, stage_result, active_post_action, branch, base_ref, pipeline, agent_provider, closed_at
              FROM pipeline_item WHERE id = ?",
         )?;
         let mut rows = stmt.query_map([id], |row| {
@@ -488,11 +490,12 @@ impl Db {
                 prompt: row.get(1)?,
                 stage: row.get(2)?,
                 stage_result: row.get(3)?,
-                branch: row.get(4)?,
-                base_ref: row.get(5)?,
-                pipeline: row.get(6)?,
-                agent_provider: row.get(7)?,
-                closed_at: row.get(8)?,
+                active_post_action: row.get(4)?,
+                branch: row.get(5)?,
+                base_ref: row.get(6)?,
+                pipeline: row.get(7)?,
+                agent_provider: row.get(8)?,
+                closed_at: row.get(9)?,
             })
         })?;
         match rows.next() {
@@ -588,6 +591,48 @@ impl Db {
         let rows_affected = self.conn.execute(
             "UPDATE pipeline_item SET stage = ?, stage_result = ?, updated_at = datetime('now') WHERE id = ?",
             (stage, stage_result, id),
+        )?;
+        if rows_affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub fn update_pipeline_item_active_post_action(
+        &self,
+        id: &str,
+        active_post_action: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let rows_affected = self.conn.execute(
+            "UPDATE pipeline_item SET active_post_action = ?, updated_at = datetime('now') WHERE id = ?",
+            (active_post_action, id),
+        )?;
+        if rows_affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub fn clear_pipeline_item_active_post_action(&self, id: &str) -> Result<(), rusqlite::Error> {
+        let rows_affected = self.conn.execute(
+            "UPDATE pipeline_item SET active_post_action = NULL, updated_at = datetime('now') WHERE id = ?",
+            [id],
+        )?;
+        if rows_affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub fn update_pipeline_item_post_action_state(
+        &self,
+        id: &str,
+        active_post_action: Option<&str>,
+        stage_result: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        let rows_affected = self.conn.execute(
+            "UPDATE pipeline_item SET active_post_action = ?, stage_result = ?, updated_at = datetime('now') WHERE id = ?",
+            (active_post_action, stage_result, id),
         )?;
         if rows_affected == 0 {
             return Err(rusqlite::Error::QueryReturnedNoRows);

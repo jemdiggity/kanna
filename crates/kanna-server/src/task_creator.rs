@@ -32,6 +32,16 @@ struct PipelineStage {
     agent_provider: Option<String>,
     transition: Option<String>,
     mode: Option<PipelineStageMode>,
+    post_action: Option<PipelinePostAction>,
+}
+
+#[derive(Deserialize)]
+struct PipelinePostAction {
+    name: String,
+    agent: Option<String>,
+    prompt: Option<String>,
+    agent_provider: Option<String>,
+    transition: Option<String>,
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -131,12 +141,42 @@ pub(crate) fn prepare_advance_stage_for_api(
         .iter()
         .position(|stage| stage.name == current_stage_name)
         .ok_or_else(|| format!("stage not found in pipeline: {}", current_stage_name))?;
+    let current_stage = &pipeline.stages[current_stage_index];
+    let source_branch =
+        resolve_current_source_worktree_branch(&repo.path, source_task.branch.as_deref());
+
+    if source_task.active_post_action.is_none() {
+        if let Some(post_action) = current_stage.post_action.as_ref() {
+            let task_prompt = build_post_action_prompt(
+                &repo.path,
+                post_action,
+                source_task.prompt.as_deref().unwrap_or(""),
+                source_task.stage_result.as_deref(),
+                source_branch.as_deref(),
+                source_task.base_ref.as_deref(),
+                source_task.branch.as_deref(),
+            )?;
+            return Ok(PreparedStageTransition::Continue(
+                prepare_post_action_stage(
+                    source_task_id,
+                    &current_stage_name,
+                    post_action,
+                    source_task.stage_result.clone(),
+                    &task_prompt,
+                    source_task.branch.as_deref(),
+                    post_action
+                        .agent_provider
+                        .as_deref()
+                        .or(source_task.agent_provider.as_deref()),
+                )?,
+            ));
+        }
+    }
+
     let next_stage = pipeline
         .stages
         .get(current_stage_index + 1)
         .ok_or_else(|| format!("task already at final stage: {}", current_stage_name))?;
-    let source_branch =
-        resolve_current_source_worktree_branch(&repo.path, source_task.branch.as_deref());
 
     let task_prompt = build_target_stage_prompt(
         &repo.path,
@@ -217,7 +257,18 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
         .position(|stage| stage.name == current_stage_name)
         .ok_or_else(|| format!("stage not found in pipeline: {}", current_stage_name))?;
     let current_stage = &pipeline.stages[current_stage_index];
-    if current_stage.transition.as_deref() != Some("auto") {
+    if let Some(active_post_action) = source_task.active_post_action.as_deref() {
+        let Some(post_action) = current_stage.post_action.as_ref() else {
+            return Ok(None);
+        };
+        if post_action.name != active_post_action
+            || post_action.transition.as_deref() != Some("auto")
+        {
+            return Ok(None);
+        }
+        db.clear_pipeline_item_active_post_action(source_task_id)
+            .map_err(|e| format!("db error: {}", e))?;
+    } else if current_stage.transition.as_deref() != Some("auto") {
         return Ok(None);
     }
     let Some(next_stage) = pipeline.stages.get(current_stage_index + 1) else {
@@ -381,6 +432,8 @@ pub(crate) struct PreparedStageContinue {
     previous_stage: String,
     next_stage: String,
     previous_stage_result: Option<String>,
+    previous_active_post_action: Option<String>,
+    active_post_action: Option<String>,
     input: Vec<u8>,
 }
 
@@ -639,11 +692,24 @@ pub(crate) async fn continue_prepared_stage_for_api(
 ) -> Result<crate::mobile_api::TaskActionResponse, String> {
     {
         let db = Db::open(db_path).map_err(|e| format!("db error: {}", e))?;
-        db.update_pipeline_item_stage(&prepared.task_id, &prepared.next_stage)
-            .map_err(|e| format!("db error: {}", e))?;
-        if let Err(err) = db.clear_pipeline_item_stage_result(&prepared.task_id) {
-            let _ = db.update_pipeline_item_stage(&prepared.task_id, &prepared.previous_stage);
-            return Err(format!("db error: {}", err));
+        if let Some(active_post_action) = prepared.active_post_action.as_deref() {
+            db.update_pipeline_item_active_post_action(&prepared.task_id, active_post_action)
+                .map_err(|e| format!("db error: {}", e))?;
+            if let Err(err) = db.clear_pipeline_item_stage_result(&prepared.task_id) {
+                let _ = db.update_pipeline_item_post_action_state(
+                    &prepared.task_id,
+                    prepared.previous_active_post_action.as_deref(),
+                    prepared.previous_stage_result.as_deref(),
+                );
+                return Err(format!("db error: {}", err));
+            }
+        } else {
+            db.update_pipeline_item_stage(&prepared.task_id, &prepared.next_stage)
+                .map_err(|e| format!("db error: {}", e))?;
+            if let Err(err) = db.clear_pipeline_item_stage_result(&prepared.task_id) {
+                let _ = db.update_pipeline_item_stage(&prepared.task_id, &prepared.previous_stage);
+                return Err(format!("db error: {}", err));
+            }
         }
     }
 
@@ -659,6 +725,7 @@ pub(crate) async fn continue_prepared_stage_for_api(
                 &prepared.task_id,
                 &prepared.previous_stage,
                 prepared.previous_stage_result.as_deref(),
+                prepared.previous_active_post_action.as_deref(),
             );
             format!("daemon error: {}", e)
         })?;
@@ -673,6 +740,7 @@ pub(crate) async fn continue_prepared_stage_for_api(
                 &prepared.task_id,
                 &prepared.previous_stage,
                 prepared.previous_stage_result.as_deref(),
+                prepared.previous_active_post_action.as_deref(),
             );
             Err(format!("daemon error: {}", message))
         }
@@ -682,6 +750,7 @@ pub(crate) async fn continue_prepared_stage_for_api(
                 &prepared.task_id,
                 &prepared.previous_stage,
                 prepared.previous_stage_result.as_deref(),
+                prepared.previous_active_post_action.as_deref(),
             );
             Err(format!("unexpected daemon response: {:?}", other))
         }
@@ -693,10 +762,17 @@ fn rollback_continue_stage(
     task_id: &str,
     previous_stage: &str,
     previous_stage_result: Option<&str>,
+    previous_active_post_action: Option<&str>,
 ) -> Result<(), String> {
     let db = Db::open(db_path).map_err(|e| format!("db error: {}", e))?;
     db.update_pipeline_item_stage_state(task_id, previous_stage, previous_stage_result)
-        .map_err(|e| format!("db error: {}", e))
+        .map_err(|e| format!("db error: {}", e))?;
+    db.update_pipeline_item_post_action_state(
+        task_id,
+        previous_active_post_action,
+        previous_stage_result,
+    )
+    .map_err(|e| format!("db error: {}", e))
 }
 
 fn read_repo_config(repo_path: &str) -> Result<RepoConfig, String> {
@@ -760,6 +836,35 @@ fn build_target_stage_prompt(
     Ok(task_prompt.to_string())
 }
 
+fn build_post_action_prompt(
+    repo_path: &str,
+    post_action: &PipelinePostAction,
+    task_prompt: &str,
+    prev_result: Option<&str>,
+    branch: Option<&str>,
+    base_ref: Option<&str>,
+    source_worktree_branch: Option<&str>,
+) -> Result<String, String> {
+    let source_worktree =
+        source_worktree_branch.map(|branch| format!("{repo_path}/.kanna-worktrees/{branch}"));
+    if let Some(agent_name) = post_action.agent.as_deref() {
+        let agent = read_agent_definition(repo_path, agent_name)?;
+        return Ok(build_stage_prompt(
+            &agent.prompt,
+            post_action.prompt.as_deref(),
+            &PromptContext {
+                task_prompt: Some(task_prompt),
+                prev_result,
+                branch,
+                base_ref,
+                source_worktree: source_worktree.as_deref(),
+            },
+        ));
+    }
+
+    Ok(task_prompt.to_string())
+}
+
 fn prepare_continue_stage(
     source_task_id: &str,
     previous_stage: &str,
@@ -775,6 +880,29 @@ fn prepare_continue_stage(
         previous_stage: previous_stage.to_string(),
         next_stage: next_stage.to_string(),
         previous_stage_result,
+        previous_active_post_action: None,
+        active_post_action: None,
+        input: encode_agent_stage_input(prompt, agent_provider),
+    })
+}
+
+fn prepare_post_action_stage(
+    source_task_id: &str,
+    current_stage: &str,
+    post_action: &PipelinePostAction,
+    previous_stage_result: Option<String>,
+    prompt: &str,
+    source_branch: Option<&str>,
+    agent_provider: Option<&str>,
+) -> Result<PreparedStageContinue, String> {
+    source_branch.ok_or_else(|| format!("task has no branch: {}", source_task_id))?;
+    Ok(PreparedStageContinue {
+        task_id: source_task_id.to_string(),
+        previous_stage: current_stage.to_string(),
+        next_stage: current_stage.to_string(),
+        previous_stage_result,
+        previous_active_post_action: None,
+        active_post_action: Some(post_action.name.clone()),
         input: encode_agent_stage_input(prompt, agent_provider),
     })
 }
@@ -1817,6 +1945,174 @@ mod tests {
         let updated_source = db.get_task_stage_source("task-1").unwrap().unwrap();
         assert_eq!(updated_source.stage.as_deref(), Some("commit"));
         assert_eq!(updated_source.branch.as_deref(), Some("task-source"));
+        assert_eq!(updated_source.stage_result, None);
+        assert_eq!(updated_source.closed_at, None);
+        assert_eq!(db.list_pipeline_items("repo-1").unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[tokio::test]
+    async fn prepare_advance_stage_enters_post_action_without_changing_stage() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "kanna-stage-advance-post-action-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&repo_root);
+        std::fs::create_dir_all(repo_root.join(".kanna/pipelines")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna/agents/commit")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna-worktrees")).unwrap();
+        std::fs::write(repo_root.join("README.md"), "test repo").unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/pipelines/default.json"),
+            r#"{
+  "stages": [
+    {
+      "name": "in progress",
+      "transition": "manual",
+      "post_action": {
+        "name": "commit",
+        "transition": "auto",
+        "agent": "commit",
+        "prompt": "Commit $TASK_PROMPT from $BRANCH after $PREV_RESULT"
+      }
+    },
+    { "name": "pr", "transition": "manual" }
+  ]
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/agents/commit/AGENT.md"),
+            "---\nagent_provider: claude\n---\nCommit agent",
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "README.md", ".kanna"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "task-source"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        let source_worktree = repo_root.join(".kanna-worktrees/task-source");
+        assert!(Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                source_worktree.to_string_lossy().as_ref(),
+                "task-source",
+            ])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: std::env::temp_dir()
+                .join(format!("kanna-daemon-post-action-{}", std::process::id()))
+                .to_string_lossy()
+                .to_string(),
+            db_path: Db::test_db_path("advance-stage-post-action"),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            lan_host: "0.0.0.0".to_string(),
+            lan_port: 48120,
+            pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.insert_test_pipeline_item(
+            "task-1",
+            "repo-1",
+            "Fix stage promotion",
+            Some("Fix stage promotion"),
+            "in progress",
+            "2026-04-17 07:00:00",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_stage_context(
+            "task-1",
+            "task-source",
+            "default",
+            Some("{\"status\":\"success\",\"summary\":\"implemented\"}"),
+            "claude",
+        )
+        .unwrap();
+
+        let prepared = prepare_advance_stage_for_api(&db, &config, "task-1").unwrap();
+        let continuation = match prepared {
+            PreparedStageTransition::Continue(continuation) => continuation,
+            PreparedStageTransition::Spawn(_) => panic!("expected post-action continuation"),
+        };
+
+        assert_eq!(continuation.task_id, "task-1");
+        assert_eq!(continuation.previous_stage, "in progress");
+        assert_eq!(continuation.next_stage, "in progress");
+        assert_eq!(continuation.active_post_action.as_deref(), Some("commit"));
+        assert_eq!(
+            String::from_utf8(continuation.input.clone()).unwrap(),
+            "\u{1b}[200~Commit agent\n\nCommit Fix stage promotion from task-source after {\"status\":\"success\",\"summary\":\"implemented\"}\u{1b}[201~\u{1b}[13u"
+        );
+
+        let fake_daemon = spawn_fake_daemon_once(config.daemon_dir.clone()).await;
+        let mut daemon = DaemonClient::connect(&config.daemon_dir).await.unwrap();
+        let continued = continue_prepared_stage_for_api(&config.db_path, &mut daemon, continuation)
+            .await
+            .unwrap();
+        let command = fake_daemon.await.unwrap();
+        assert_eq!(continued.task_id, "task-1");
+        match command {
+            kanna_daemon::protocol::Command::Input { session_id, data } => {
+                assert_eq!(session_id, "task-1");
+                assert_eq!(
+                    String::from_utf8(data).unwrap(),
+                    "\u{1b}[200~Commit agent\n\nCommit Fix stage promotion from task-source after {\"status\":\"success\",\"summary\":\"implemented\"}\u{1b}[201~\u{1b}[13u"
+                );
+            }
+            other => panic!("expected daemon input command, got {:?}", other),
+        }
+        let updated_source = db.get_task_stage_source("task-1").unwrap().unwrap();
+        assert_eq!(updated_source.stage.as_deref(), Some("in progress"));
+        assert_eq!(updated_source.active_post_action.as_deref(), Some("commit"));
         assert_eq!(updated_source.stage_result, None);
         assert_eq!(updated_source.closed_at, None);
         assert_eq!(db.list_pipeline_items("repo-1").unwrap().len(), 1);
