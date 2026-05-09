@@ -31,7 +31,7 @@ describe("shouldApplyRecoverySnapshot", () => {
     ).toBe(true);
   });
 
-  it("rejects a snapshot when geometry mismatches", () => {
+  it("allows best-effort restore when geometry mismatches", () => {
     expect(
       shouldApplyRecoverySnapshot(
         {
@@ -46,7 +46,7 @@ describe("shouldApplyRecoverySnapshot", () => {
         },
         { cols: 80, rows: 24 },
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("allows restore before fitted geometry is available", () => {

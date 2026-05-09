@@ -887,15 +887,15 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       sequence: recoveryState.sequence,
       serializedLength: recoveryState.serialized.length,
     })
-    terminal.value.reset()
+    const recoveryTerminal = terminal.value
+    recoveryTerminal.reset()
     restoreTerminalModesFromSnapshot(recoveryState.serialized)
-    await new Promise<void>((resolve) => {
-      terminal.value?.write(recoveryState.serialized, resolve)
-    })
-    console.warn("[terminal][connect] recovery:applied", {
-      sessionId,
-      durationMs: Math.round(performance.now() - applyStartedAt),
-      sequence: recoveryState.sequence,
+    recoveryTerminal.write(recoveryState.serialized, () => {
+      console.warn("[terminal][connect] recovery:applied", {
+        sessionId,
+        durationMs: Math.round(performance.now() - applyStartedAt),
+        sequence: recoveryState.sequence,
+      })
     })
     return true
   }
