@@ -229,7 +229,7 @@ pnpm.pnpm(pnpm_version = "10.29.3")
 npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
 npm.npm_translate_lock(
     name = "kanna_npm",
-    npmrc = "//apps/desktop:.npmrc",
+    data = ["//:pnpm-workspace.yaml"],
     pnpm_lock = "//:pnpm-lock.yaml",
 )
 use_repo(npm, "kanna_npm")

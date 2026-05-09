@@ -22,7 +22,7 @@ if (!status?.ok) {
     [
       `WebDriver not available on port ${WD_PORT}.`,
       "Start the app with:",
-      `  TAURI_WEBDRIVER_PORT=${WD_PORT} KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start`,
+      `  KANNA_WEBDRIVER_PORT=${WD_PORT} ./kd dev up --db kanna-test.db`,
       "Or run:",
       "  pnpm test:e2e",
     ].join("\n")
@@ -82,7 +82,7 @@ if (typeof currentDb !== "string" || !currentDb.includes("test")) {
     [
       `REFUSING TO RUN: app is using database "${String(currentDb)}", not a test DB.`,
       "Start the app with:",
-      `  TAURI_WEBDRIVER_PORT=${WD_PORT} KANNA_DB_NAME=kanna-test.db ./scripts/dev.sh start`,
+      `  KANNA_WEBDRIVER_PORT=${WD_PORT} ./kd dev up --db kanna-test.db`,
     ].join("\n")
   );
 }

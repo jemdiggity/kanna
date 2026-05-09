@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { inflateSync } from "node:zlib";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -169,60 +169,40 @@ function alphaBounds(png: DecodedPng): AlphaBounds {
   };
 }
 
-describe("ship script release retry behavior", () => {
-  it("uses the VERSION file as the source of truth for the current version", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
+describe("kd release workflow", () => {
+  it("uses the VERSION file as the source of truth for the target version", () => {
+    const releaseRuntime = readFileSync(
+      resolve(repoRoot, "tools/kd/src/runtime/release.ts"),
       "utf8",
     );
 
-    expect(shipScript).toContain("SOURCE_VERSION=$(read_current_version)");
-    expect(shipScript).toContain('IFS=\'.\' read -r MAJOR MINOR PATCH <<< "$SOURCE_VERSION"');
-    expect(shipScript).not.toContain(
-      "IFS='.' read -r MAJOR MINOR PATCH <<< \"$LAST_VERSION\"",
-    );
+    expect(releaseRuntime).toContain("function readCurrentVersion");
+    expect(releaseRuntime).toContain('join(repoRoot, "VERSION")');
+    expect(releaseRuntime).toContain("bumpVersion(sourceVersion, input.bump)");
   });
 
-  it("checks for an existing release before rebuilding an already-synced version", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
+  it("resolves GitHub release metadata from gh and remote URLs", () => {
+    const releaseRuntime = readFileSync(
+      resolve(repoRoot, "tools/kd/src/runtime/release.ts"),
       "utf8",
     );
 
-    expect(shipScript).toContain('gh release view "v$VERSION"');
-  });
-
-  it("does not require a new version-bump commit when the target version is already staged", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
-      "utf8",
-    );
-
-    expect(shipScript).toContain('git -C "$ROOT" diff --cached --quiet');
-    expect(shipScript).toContain("No version file changes to commit");
-  });
-
-  it("reports the GitHub release URL from gh instead of a hardcoded repository path", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
-      "utf8",
-    );
-
-    expect(shipScript).toContain('gh release view "v$VERSION" --json url --jq \'.url\'');
-    expect(shipScript).not.toContain(
+    expect(releaseRuntime).toContain("releaseRepoSlug(remoteUrl)");
+    expect(releaseRuntime).toContain("releases/generate-notes");
+    expect(releaseRuntime).not.toContain(
       "https://github.com/jemdiggity/kanna-tauri/releases/tag/v$VERSION",
     );
   });
 
   it("resolves final Bazel outputs with cquery instead of assuming a bazel-bin path", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
+    const releaseRuntime = readFileSync(
+      resolve(repoRoot, "tools/kd/src/runtime/release.ts"),
       "utf8",
     );
 
-    expect(shipScript).toContain("bazel cquery");
-    expect(shipScript).toContain("--output=files");
-    expect(shipScript).not.toContain('DMG_SOURCE="$BAZEL_BIN/release/');
+    expect(releaseRuntime).toContain('"cquery"');
+    expect(releaseRuntime).toContain("--output=files");
+    expect(releaseRuntime).not.toContain('DMG_SOURCE="$BAZEL_BIN/release/');
   });
 
   it("sources desktop_crates from the narrow desktop workspace manifest", () => {
@@ -233,6 +213,41 @@ describe("ship script release retry behavior", () => {
     expect(moduleBazel).toContain('manifests = ["//:Cargo.desktop.toml"]');
     expect(moduleBazel).not.toContain('cargo_lockfile = "//apps/desktop/src-tauri:Cargo.lock"');
     expect(moduleBazel).not.toContain('manifests = ["//:Cargo.toml"]');
+  });
+
+  it("keeps the narrow desktop Cargo lock in sync with direct desktop dependencies", () => {
+    const desktopCargo = readFileSync(
+      resolve(repoRoot, "apps/desktop/src-tauri/Cargo.toml"),
+      "utf8",
+    );
+    const desktopLock = readFileSync(resolve(repoRoot, "Cargo.desktop.lock"), "utf8");
+
+    if (desktopCargo.includes("rusqlite =")) {
+      expect(desktopLock).toContain('"rusqlite"');
+      expect(desktopLock).toContain('name = "rusqlite"');
+    }
+  });
+
+  it("does not point npm lock translation at a missing npmrc file", () => {
+    const moduleBazel = readFileSync(resolve(repoRoot, "MODULE.bazel"), "utf8");
+    const npmrcLabelMatches = moduleBazel.matchAll(/npmrc\s*=\s*"\/\/([^:]+):([^"]+)"/g);
+
+    for (const match of npmrcLabelMatches) {
+      const [, packagePath, fileName] = match;
+      expect(
+        existsSync(resolve(repoRoot, packagePath, fileName)),
+        `${match[0]} must point at an existing file`,
+      ).toBe(true);
+    }
+  });
+
+  it("declares pnpm lifecycle hook policy for Bazel npm translation", () => {
+    const workspaceConfig = readFileSync(resolve(repoRoot, "pnpm-workspace.yaml"), "utf8");
+
+    expect(workspaceConfig).toMatch(/^onlyBuiltDependencies:/m);
+
+    const moduleBazel = readFileSync(resolve(repoRoot, "MODULE.bazel"), "utf8");
+    expect(moduleBazel).toContain('data = ["//:pnpm-workspace.yaml"]');
   });
 });
 
@@ -250,13 +265,13 @@ describe("release bundle naming", () => {
   });
 
   it("uses the same dmg asset name in dry-run and release without signed in the filename", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
+    const releaseRuntime = readFileSync(
+      resolve(repoRoot, "tools/kd/src/runtime/release.ts"),
       "utf8",
     );
 
-    expect(shipScript).toContain('echo "Kanna_${VERSION}_${suffix}.dmg"');
-    expect(shipScript).not.toContain('echo "Kanna_${VERSION}_${suffix}-signed.dmg"');
+    expect(releaseRuntime).toContain("Kanna_${version}_${label}.dmg");
+    expect(releaseRuntime).not.toContain("Kanna_${version}_${label}-signed.dmg");
   });
 
   it("does not emit signed in bazel dmg output filenames", () => {
@@ -395,53 +410,45 @@ describe("desktop version wiring", () => {
 
 describe("updater release assets", () => {
   it("requires updater signing inputs before publishing a release", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
+    const releaseRuntime = readFileSync(
+      resolve(repoRoot, "tools/kd/src/runtime/release.ts"),
       "utf8",
     );
 
-    expect(shipScript).toContain("KANNA_UPDATER_PUBKEY");
-    expect(shipScript).toContain("TAURI_PRIVATE_KEY_PATH");
-    expect(shipScript).toContain("TAURI_PRIVATE_KEY_PASSWORD");
+    expect(releaseRuntime).toContain("KANNA_UPDATER_PUBKEY");
+    expect(releaseRuntime).toContain("TAURI_PRIVATE_KEY_PATH");
+    expect(releaseRuntime).toContain("TAURI_PRIVATE_KEY_PASSWORD");
   });
 
   it("creates architecture-specific updater tarballs and signatures", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
+    const releaseRuntime = readFileSync(
+      resolve(repoRoot, "tools/kd/src/runtime/release.ts"),
       "utf8",
     );
 
-    expect(shipScript).toContain('echo "Kanna_${VERSION}_${suffix}.app.tar.gz"');
-    expect(shipScript).toContain("tauri signer sign");
-    expect(shipScript).toContain('local generated_sig="${bundle_path}.sig"');
-    expect(shipScript).toContain('mv "$generated_sig" "$signature_path"');
-    expect(shipScript).not.toContain(
+    expect(releaseRuntime).toContain("Kanna_${version}_${label}.app.tar.gz");
+    expect(releaseRuntime).toContain('"tauri", "signer", "sign"');
+    expect(releaseRuntime).toContain("const generatedSig = `${bundlePath}.sig`");
+    expect(releaseRuntime).toContain("generatedSig !== signaturePath");
+    expect(releaseRuntime).toContain("renameSync(generatedSig, signaturePath)");
+    expect(releaseRuntime).not.toContain(
       'pnpm --dir "$ROOT/apps/desktop" exec tauri signer sign "$bundle_path" > "$signature_path"',
     );
-    expect(shipScript).toContain(".app.tar.gz.sig");
+    expect(releaseRuntime).toContain("updaterSignatureName");
   });
 
   it("publishes a latest.json manifest alongside the release assets", () => {
-    const shipScript = readFileSync(
-      resolve(repoRoot, "scripts/ship.sh"),
+    const releaseRuntime = readFileSync(
+      resolve(repoRoot, "tools/kd/src/runtime/release.ts"),
       "utf8",
     );
 
-    expect(shipScript).toContain('gh release view "v$VERSION" --json body,publishedAt');
-    expect(shipScript).toContain('RELEASE_BODY="$(read_release_metadata_field "$release_metadata_json" body)"');
-    expect(shipScript).toContain(
-      'RELEASE_PUBLISHED_AT="$(read_release_metadata_field "$release_metadata_json" publishedAt)"',
-    );
-    expect(shipScript).toContain('write_latest_json "$RELEASE_BODY" "$RELEASE_PUBLISHED_AT"');
-    expect(shipScript).toContain('const notes = process.env.RELEASE_NOTES;');
-    expect(shipScript).toContain('const pubDate = process.env.PUBLISHED_AT;');
-    expect(shipScript).not.toContain("new Date().toISOString()");
-    expect(shipScript).toContain("latest.json");
-    expect(shipScript).toContain("darwin-aarch64");
-    expect(shipScript).toContain("darwin-x86_64");
-    expect(shipScript).toContain('gh release create "v$VERSION" "${DMG_PATHS[@]}" "${UPDATER_PATHS[@]}" \\');
-    expect(shipScript).not.toContain('gh release create "v$VERSION" "${DMG_PATHS[@]}" "${UPDATER_PATHS[@]}" "$LATEST_JSON"');
-    expect(shipScript).toContain('gh release upload "v$VERSION" "$LATEST_JSON" --clobber');
-    expect(shipScript).toContain("gh release upload");
+    expect(releaseRuntime).toContain("writeLatestJson");
+    expect(releaseRuntime).toContain("Dry-run updater manifest");
+    expect(releaseRuntime).toContain("latest.json");
+    expect(releaseRuntime).toContain("darwin-aarch64");
+    expect(releaseRuntime).toContain("darwin-x86_64");
+    expect(releaseRuntime).toContain('"release", "create"');
+    expect(releaseRuntime).toContain('"release", "upload"');
   });
 });

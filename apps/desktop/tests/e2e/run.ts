@@ -396,9 +396,9 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     console.error("\n[e2e] recent dev log:\n");
-    await runCommand(["./scripts/dev.sh", "log"], { cwd: repoRoot, env: primary.env }).catch(() => undefined);
+    await runCommand(["./kd", "dev", "log"], { cwd: repoRoot, env: primary.env }).catch(() => undefined);
     if (secondary) {
-      await runCommand(["./scripts/dev.sh", "log"], { cwd: repoRoot, env: secondary.env }).catch(() => undefined);
+      await runCommand(["./kd", "dev", "log"], { cwd: repoRoot, env: secondary.env }).catch(() => undefined);
     }
     throw error;
   } finally {

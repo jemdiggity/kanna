@@ -75,20 +75,19 @@ describe("desktop sidecar packaging", () => {
 
   it("exposes kd launcher metadata for task setup and local tool entrypoints", () => {
     const repoRoot = resolve(import.meta.dirname, "../../..");
-    const kandevPackagePath = resolve(repoRoot, "tools/kandev/package.json");
-    const kandevPackage = JSON.parse(readFileSync(kandevPackagePath, "utf8")) as {
+    const kdPackagePath = resolve(repoRoot, "tools/kd/package.json");
+    const kdPackage = JSON.parse(readFileSync(kdPackagePath, "utf8")) as {
       bin?: Record<string, string>;
     };
     const rootLauncher = resolve(repoRoot, "kd");
-    const kdBootstrapper = resolve(repoRoot, "tools/kandev/bin/kd");
-    const mcpBootstrapper = resolve(repoRoot, "tools/kandev/bin/kandev-mcp");
+    const kdBootstrapper = resolve(repoRoot, "tools/kd/bin/kd");
+    const mcpBootstrapper = resolve(repoRoot, "tools/kd/bin/kd-mcp");
 
-    expect(kandevPackage.bin?.kd).toBe("./bin/kd");
-    expect(kandevPackage.bin?.kandev).toBe("./bin/kd");
-    expect(kandevPackage.bin?.["kandev-mcp"]).toBe("./bin/kandev-mcp");
+    expect(kdPackage.bin?.kd).toBe("./bin/kd");
+    expect(kdPackage.bin?.["kd-mcp"]).toBe("./bin/kd-mcp");
     expect(existsSync(kdBootstrapper)).toBe(true);
     expect(existsSync(mcpBootstrapper)).toBe(true);
     expect(lstatSync(rootLauncher).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(rootLauncher)).toBe("tools/kandev/bin/kd");
+    expect(readlinkSync(rootLauncher)).toBe("tools/kd/bin/kd");
   });
 });

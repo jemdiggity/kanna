@@ -37,7 +37,7 @@ export function resolveRequiredMobileE2eEnv(
   const rawAppiumPort = env.KANNA_APPIUM_PORT?.trim();
   if (!rawAppiumPort) {
     throw new Error(
-      "KANNA_APPIUM_PORT is required. Start Kanna with ./scripts/dev.sh --mobile."
+      "KANNA_APPIUM_PORT is required. Start Kanna with ./kd dev up --mobile."
     );
   }
 
@@ -55,7 +55,7 @@ export function resolveRequiredMobileE2eEnv(
   const desktopServerUrl = env.EXPO_PUBLIC_KANNA_SERVER_URL?.trim();
   if (!desktopServerUrl) {
     throw new Error(
-      "EXPO_PUBLIC_KANNA_SERVER_URL is required. Start Kanna with ./scripts/dev.sh --mobile."
+      "EXPO_PUBLIC_KANNA_SERVER_URL is required. Start Kanna with ./kd dev up --mobile."
     );
   }
 

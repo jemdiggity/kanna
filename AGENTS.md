@@ -132,7 +132,8 @@ Use `pnpm` for all package management and script execution. Not npm.
 - `crates/kanna-hook/` — lightweight binary that signals events to the daemon
 - `crates/tauri-plugin-delta-updater/` — self-updater plugin (stub)
 - `tests/` — CLI contract tests (`cli-contract/`), PTY test utility (`pty-test/`)
-- `scripts/` — dev server, build, release, and setup scripts
+- `scripts/` — build, release, setup, and maintenance scripts
+- `tools/kd/` — `kd` CLI and `kd-mcp` self-development workflow server
 - `docs/` — planning and spec documents
 - `.cargo/config.toml` — sets `target-dir = ".build"` (shared Rust build cache)
 
@@ -148,36 +149,50 @@ We develop Kanna **in and on** Kanna — Claude Code agents run from one of thre
 
 Worktrees are fully isolated from the main branch instance:
 
-- **Separate Vite port** — main uses `localhost:1420`, worktrees get a unique port automatically. The app reads base ports from `.kanna/config.json` `ports` field (e.g., `"KANNA_DEV_PORT": 1420`), picks the next unused offset (1, 2, 3…), and stores the computed port (e.g., `1421`) as `port_env` in the DB. When the worktree's agent session spawns, `KANNA_DEV_PORT` is passed as an env var — no manual editing of `config.json` is needed. `dev.sh` then writes `tauri.conf.local.json` with the port override and passes `--config` to Tauri — the committed `tauri.conf.json` is never modified. Vite also reads `KANNA_DEV_PORT` to set its server port.
+- **Separate Vite port** — main uses `localhost:1420`, worktrees get a unique port automatically. The app reads base ports from `.kanna/config.json` `ports` field (e.g., `"KANNA_DEV_PORT": 1420`), picks the next unused offset (1, 2, 3…), and stores the computed port (e.g., `1421`) as `port_env` in the DB. When the worktree's agent session spawns, `KANNA_DEV_PORT` is passed as an env var — no manual editing of `config.json` is needed. `kd dev up` then writes `tauri.conf.local.json` with the port override and passes `--config` to Tauri — the committed `tauri.conf.json` is never modified. Vite also reads `KANNA_DEV_PORT` to set its server port.
 - **Separate daemon** — worktrees use `{worktree}/.kanna-daemon/` instead of `~/Library/Application Support/Kanna/`
 - **Separate database** — each instance uses its own SQLite DB
-- **Separate tmux server** — `dev.sh` uses a tmux server named `kanna-{worktree-dir}` instead of the default `kanna`, and creates the desktop/mobile windows inside a same-named session on that server
+- **Separate tmux server** — `kd dev up` uses a tmux server named `kanna-{worktree-dir}` instead of the default `kanna`, and creates the desktop/mobile windows inside a same-named session on that server
 
 This means the main Kanna app and a dev worktree can run simultaneously without port or data conflicts.
 
-### Launching the dev server
+### Launching the dev environment
 
-Always use `./scripts/dev.sh` to start the dev server — never run `pnpm run dev`, `pnpm exec tauri dev`, or `cargo tauri dev` directly. `pnpm run dev` bypasses the worktree-aware setup and can launch Vite/Tauri on the wrong port. `dev.sh` auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon/tmux server internally, and runs in a background tmux session.
+Always use `./kd dev up` to start the dev environment — never run `pnpm run dev`, `pnpm exec tauri dev`, or `cargo tauri dev` directly. `kd` is the canonical self-development surface for agents and humans. It auto-detects the worktree context, sets `KANNA_WORKTREE=1`, derives the worktree DB/daemon/tmux server internally, writes local Tauri config, and runs the desktop/mobile/emulator processes in a background tmux session.
+
+When an MCP client has `kd-mcp` configured, prefer the matching MCP tool over shelling out. The MCP surface mirrors the `kd` tasks for dev up/down/status/log/seed, emulator control, daemon kill, mobile device smoke, and doctor checks. Use the CLI when MCP is unavailable or when the workflow needs an option not exposed through MCP yet.
 
 Prefer the most correct architecture over the shortest patch. If there is a tradeoff between a quick local fix and preserving the right long-term boundary or source of truth, choose the more correct design unless the user explicitly asks for a temporary stopgap. Treat tactical safety fallbacks as temporary, not as the desired end state.
 
 One concrete example: when changing the desktop sidecar build pipeline, preserve shared Rust intermediates when possible, but keep final sidecar binaries and staged `externalBin` inputs private to the current build. Do not let Tauri packaging, daemon launch, or staging read contested final binaries directly from a shared `CARGO_TARGET_DIR`. If a sidecar fix gives every worktree its own full target dir, treat that as a temporary safety fallback, not the preferred end state.
 
-For mobile development, the same rule applies at the app level: use `./scripts/dev.sh --mobile` or `./scripts/mobile-dev.sh` for end-to-end testing instead of launching Expo directly from `apps/mobile`. The desktop app startup path is what spawns the desktop-side `kanna-server` LAN API on port `48120`. Running `pnpm run dev -- --ios` or `expo start` inside `apps/mobile` is only appropriate for UI-only work when the desktop-side mobile server is already running elsewhere; by itself it will not start `kanna-server`, so the mobile app will boot but fail to connect to desktop data.
+For mobile development, the same rule applies at the app level: use `./kd dev up --mobile` or `./kd mobile up` for end-to-end testing instead of launching Expo directly from `apps/mobile`. The desktop app startup path is what spawns the desktop-side `kanna-server` LAN API on the resolved `KANNA_MOBILE_SERVER_PORT`. Running `pnpm run dev -- --ios` or `expo start` inside `apps/mobile` is only appropriate for UI-only work when the desktop-side mobile server is already running elsewhere; by itself it will not start `kanna-server`, so the mobile app will boot but fail to connect to desktop data.
 
 ```bash
 # Development (from repo root or worktree root)
-./scripts/dev.sh             # start in tmux (auto-detects worktree)
-./scripts/dev.sh --mobile    # start desktop + Expo mobile app together
-./scripts/dev.sh start --seed # start with seed data (run from a worktree)
-./scripts/dev.sh stop        # stop the tmux session
-./scripts/dev.sh restart     # stop + start
-./scripts/dev.sh log         # print recent tmux output
-./scripts/dev.sh start -a    # start and attach to tmux session
-./scripts/mobile-dev.sh      # shorthand for ./scripts/dev.sh --mobile
+./kd dev up                  # start in tmux (auto-detects worktree)
+./kd dev up --mobile         # start desktop + Expo mobile app together
+./kd dev up --emulators      # start Firebase emulators + desktop
+./kd dev up --seed           # start with seed data (run from a worktree)
+./kd dev down                # stop the tmux session
+./kd dev down --kill-daemon  # stop tmux and kill workspace daemons
+./kd dev restart             # stop + start
+./kd dev status              # inspect tmux session status
+./kd dev log                 # print recent desktop tmux output
+./kd dev log mobile          # print recent mobile tmux output
+./kd dev up --attach         # start and attach to tmux session
+./kd env print               # print resolved ports, DB, daemon dir, transfer root
+./kd doctor                  # check local prerequisites
+./kd setup --check           # check prerequisites without installing
+./kd clean --all             # remove generated artifacts
 
 # Build
-cd apps/desktop && pnpm exec tauri build
+./kd build desktop           # workspace build
+./kd build sidecars          # sidecar-only build + staging
+
+# Release
+./kd release ship --dry-run  # build/sign release artifacts without publishing
+./kd release ship --release  # tag, publish, and upload updater manifest
 
 # Unit tests
 pnpm test                     # all packages via turborepo
@@ -190,7 +205,7 @@ cd crates/daemon && cargo test -- --test-threads=1
 cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignored --nocapture
 
 # E2E tests (needs app running in a worktree dev instance)
-# Terminal 1: cd {repo}/.kanna-worktrees/task-{uuid} && ./scripts/dev.sh start -a
+# Terminal 1: cd {repo}/.kanna-worktrees/task-{uuid} && ./kd dev up --attach
 # Terminal 2: cd apps/desktop && pnpm test:e2e
 
 # Mobile Appium E2E (local only)
@@ -213,7 +228,7 @@ cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignore
 
 ### First build in a worktree
 
-The first `./scripts/dev.sh start` in a fresh worktree compiles ~523 Rust crates (the daemon builds quickly, but the full Tauri app takes several minutes). Subsequent builds are incremental.
+The first `./kd dev up` in a fresh worktree compiles ~523 Rust crates (the daemon builds quickly, but the full Tauri app takes several minutes). Subsequent builds are incremental.
 
 ## Architecture
 
@@ -357,21 +372,20 @@ User makes PR → GitHub API → DB update → stage transition
 
 | Script | Purpose |
 |---|---|
-| `dev.sh` | Dev server in tmux, auto-detects worktree, manages daemon lifecycle, seed data |
-| `setup.sh` | Verify prerequisites (Xcode CLT, Rust, pnpm ≥11.0.0, tmux, etc.) |
-| `clean.sh` | Remove build artifacts (Rust targets, node_modules, dist, .turbo) |
 | `install.sh` | Download and install latest release from GitHub (DMG, arch auto-detect) |
-| `ship.sh` | Release automation: version bump, dual-arch build, sign, notarize, publish |
-| `stage-sidecars.sh` | Stage desktop sidecar binaries from the repo-local `.build` output into Tauri's `externalBin` directory |
+| `app-update-full-bundle-e2e.sh` | Specialized full-bundle updater E2E helper, invoked through `./kd test app-update-bundle` |
+| `setup-worktree.sh` | Minimal task setup helper used as repo-config fixture/input |
+| `stage-terminal-recovery-runtime.sh` | Low-level runtime staging helper for terminal recovery assets |
+| `repo-config.test.sh` / `setup-worktree.sh.test.sh` | Shell-level fixture tests for shell-specific helpers |
 
 ### Environment Variables
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `KANNA_DEV_PORT` | vite.config.ts, dev.sh | Dev server port (default 1420) |
-| `KANNA_WORKTREE` | dev.sh → runtime | Flag: running in a worktree |
-| `KANNA_DB_NAME` | dev.sh → stores/db.ts | Resolved SQLite filename for the current instance |
-| `KANNA_DAEMON_DIR` | dev.sh → daemon | Resolved daemon data directory for the current instance |
+| `KANNA_DEV_PORT` | vite.config.ts, kd | Dev server port (default 1420) |
+| `KANNA_WORKTREE` | kd → runtime | Flag: running in a worktree |
+| `KANNA_DB_NAME` | kd → stores/db.ts | Resolved SQLite filename for the current instance |
+| `KANNA_DAEMON_DIR` | kd → daemon | Resolved daemon data directory for the current instance |
 | `KANNA_GITHUB_TOKEN` | core/github | GitHub API auth |
 | `KANNA_SLACK_TOKEN` | core/slack | Slack API auth |
 | `KANNA_DISCORD_TOKEN` | core/discord | Discord API auth |
@@ -429,7 +443,7 @@ User makes PR → GitHub API → DB update → stage transition
 
 SQLite via `tauri-plugin-sql`. Schema defined inline in `stores/db.ts`'s `runMigrations()`. See the Database Tables inventory in the Codebase Overview section for the full table list.
 
-DB name is resolved by `dev.sh` from the current context: main instances use `kanna-v2.db`, and worktrees auto-name their DB `kanna-wt-{worktree-dir}.db` (for example `kanna-wt-task-10720bf8.db`). In the current checked-in dev build, Tauri's app identifier is `build.kanna`, so the default DB directory is `~/Library/Application Support/build.kanna/`. If the app identifier changes for another build flavor, the enclosing Application Support directory changes with it.
+DB name is resolved by `kd` from the current context: main instances use `kanna-v2.db`, and worktrees auto-name their DB `kanna-wt-{worktree-dir}.db` (for example `kanna-wt-task-10720bf8.db`). In the current checked-in dev build, Tauri's app identifier is `build.kanna`, so the default DB directory is `~/Library/Application Support/build.kanna/`. If the app identifier changes for another build flavor, the enclosing Application Support directory changes with it.
 
 ## Testing
 
@@ -529,7 +543,7 @@ When something doesn't work, find the architectural reason and fix it at the rig
 
 ## Versioning
 
-Single `VERSION` file is the source of truth for packaged app versioning. `ship.sh` updates `VERSION`, `tauri.conf.json`, and Rust package metadata for releases. Development builds may include separate branch/worktree metadata in the UI, but that metadata is not the packaged version. Package.json versions are all `0.0.0` (meaningless). The desktop app reads `VERSION` at compile time via `build.rs`.
+Single `VERSION` file is the source of truth for packaged app versioning. `kd release ship` updates `VERSION`, `tauri.conf.json`, and Rust package metadata for releases. Development builds may include separate branch/worktree metadata in the UI, but that metadata is not the packaged version. Package.json versions are all `0.0.0` (meaningless). The desktop app reads `VERSION` at compile time via `build.rs`.
 
 ## Common Pitfalls
 
@@ -539,7 +553,7 @@ Single `VERSION` file is the source of truth for packaged app versioning. `ship.
 - The agent SDK pipes stderr to capture (not null) — check stderr output when debugging silent CLI failures.
 - `tauri-plugin-webdriver` on port 4445 for E2E testing. Only works in debug builds on macOS WKWebView.
 - Daemon must be detached from app process group (`setsid` via `pre_exec`) or Ctrl+C kills it.
-- End-to-end mobile runs must start from `./scripts/dev.sh --mobile` or `./scripts/mobile-dev.sh`. Launching Expo directly from `apps/mobile` does not start the desktop-side `kanna-server`, so `http://127.0.0.1:48120` will be down unless the desktop app is already running.
+- End-to-end mobile runs must start from `./kd dev up --mobile` or `./kd mobile up`. Launching Expo directly from `apps/mobile` does not start the desktop-side `kanna-server`, so the resolved `KANNA_MOBILE_SERVER_PORT` will be down unless the desktop app is already running.
 - Frontend console logs are written to `/tmp/kanna-webview-*.log` via the log forwarding in [`apps/desktop/src/main.ts`](apps/desktop/src/main.ts) and the Tauri `append_log` command in [`apps/desktop/src-tauri/src/commands/fs.rs`](apps/desktop/src-tauri/src/commands/fs.rs). Each instance gets its own log file: worktrees use the directory name (for this worktree: `/tmp/kanna-webview-task-348cf000.log`), while main instances use a cwd path hash (for example `kanna-webview-1a2b3c4d.log`).
 - Prefer the most correct architecture over the shortest patch. Use temporary safety fallbacks only when necessary, and document them as fallbacks rather than as the intended steady state.
 - Rust build artifacts go to `.build/` (not `target/`) — configured in `.cargo/config.toml`.

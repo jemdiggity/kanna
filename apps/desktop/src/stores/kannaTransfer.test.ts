@@ -2565,7 +2565,7 @@ describe("outgoing transfer commit acknowledgment", () => {
         const path = args?.path as string | undefined;
         if (path === `${repo.path}/.kanna-worktrees/${sourceItem.branch}/.kanna/config.json`) {
           return JSON.stringify({
-            teardown: ["./scripts/dev.sh stop -k"],
+            teardown: ["./kd dev down --kill-daemon"],
           });
         }
         return "";
