@@ -25,6 +25,18 @@ interface TerminalBufferStats {
   lastMatchingLine: string | null;
 }
 
+interface WindowRectInput {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+}
+
+interface PtySize {
+  cols: number;
+  rows: number;
+}
+
 function getClientSessionId(client: WebDriverClient): string {
   const state = client as unknown as { sessionId?: string | null };
   if (!state.sessionId) {
@@ -59,6 +71,31 @@ async function switchToWindow(client: WebDriverClient, handle: string): Promise<
     body: JSON.stringify({ handle }),
   });
   const body = await response.json() as WebDriverResponse<null>;
+  if (
+    typeof body.value === "object" &&
+    body.value !== null &&
+    "error" in body.value
+  ) {
+    throw new Error(`WebDriver error: ${body.value.message ?? "unknown error"}`);
+  }
+}
+
+async function setWindowRect(
+  client: WebDriverClient,
+  rect: WindowRectInput,
+): Promise<void> {
+  const sessionId = getClientSessionId(client);
+  const response = await fetch(
+    `${client.getBaseUrl()}/session/${sessionId}/window/rect`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(rect),
+    },
+  );
+  const body = await response.json() as WebDriverResponse<unknown>;
   if (
     typeof body.value === "object" &&
     body.value !== null &&
@@ -143,6 +180,21 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function parsePtySize(line: string, marker: string): PtySize {
+  const match = line.match(new RegExp(`SIZE:${escapeRegExp(marker)}:(\\d+)x(\\d+)`));
+  if (!match) {
+    throw new Error(`Unable to parse PTY size from line: ${line}`);
+  }
+  return {
+    cols: Number(match[1]),
+    rows: Number(match[2]),
+  };
+}
+
+function samePtySize(left: PtySize, right: PtySize): boolean {
+  return left.cols === right.cols && left.rows === right.rows;
+}
+
 async function waitForTerminalBufferText(
   client: WebDriverClient,
   sessionId: string,
@@ -171,6 +223,105 @@ async function waitForTerminalBufferText(
 
   throw new Error(
     `Timed out waiting for terminal buffer text "${text}" in ${sessionId}: ${String(lastError)}`,
+  );
+}
+
+async function waitForTerminalBufferMatch(
+  client: WebDriverClient,
+  sessionId: string,
+  pattern: string,
+  timeoutMs = 10_000,
+): Promise<TerminalBufferStats> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const stats = await client.executeSync<TerminalBufferStats>(
+        `const hook = window.__KANNA_E2E__?.terminalBuffers;
+         if (!hook) throw new Error("terminal buffer hook unavailable");
+         return hook.stats(${JSON.stringify(sessionId)}, new RegExp(${JSON.stringify(pattern)}));`,
+      );
+      if (stats.matchingLineCount > 0) {
+        return stats;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(200);
+  }
+
+  throw new Error(
+    `Timed out waiting for terminal buffer pattern "${pattern}" in ${sessionId}: ${String(lastError)}`,
+  );
+}
+
+async function probePtySize(
+  client: WebDriverClient,
+  sessionId: string,
+  label: string,
+): Promise<PtySize> {
+  const marker = `${label}_${randomUUID().replaceAll("-", "")}`;
+  await sendKeysToActiveTerminal(client, `SIZE:${marker}`);
+  await client.pressKey("\uE007");
+  const stats = await waitForTerminalBufferMatch(
+    client,
+    sessionId,
+    `SIZE:${escapeRegExp(marker)}:\\d+x\\d+`,
+    10_000,
+  );
+  return parsePtySize(stats.lastMatchingLine ?? "", marker);
+}
+
+async function waitForPtySize(
+  client: WebDriverClient,
+  sessionId: string,
+  expected: PtySize,
+  timeoutMs = 10_000,
+): Promise<PtySize> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize: PtySize | null = null;
+
+  while (Date.now() < deadline) {
+    lastSize = await probePtySize(client, sessionId, "KWAIT_SIZE");
+    if (samePtySize(lastSize, expected)) {
+      return lastSize;
+    }
+    await sleep(250);
+  }
+
+  throw new Error(
+    `Timed out waiting for PTY size ${expected.cols}x${expected.rows}; last size was ${
+      lastSize ? `${lastSize.cols}x${lastSize.rows}` : "unknown"
+    }`,
+  );
+}
+
+async function waitForPtySizeDifferentFrom(
+  client: WebDriverClient,
+  sessionId: string,
+  original: PtySize,
+  timeoutMs = 10_000,
+): Promise<PtySize> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize: PtySize | null = null;
+
+  while (Date.now() < deadline) {
+    lastSize = await probePtySize(client, sessionId, "KWAIT_DIFF_SIZE");
+    if (
+      lastSize.cols <= original.cols &&
+      lastSize.rows <= original.rows &&
+      !samePtySize(lastSize, original)
+    ) {
+      return lastSize;
+    }
+    await sleep(250);
+  }
+
+  throw new Error(
+    `Timed out waiting for PTY size to differ from ${original.cols}x${original.rows}; last size was ${
+      lastSize ? `${lastSize.cols}x${lastSize.rows}` : "unknown"
+    }`,
   );
 }
 
@@ -241,7 +392,7 @@ describe("pty session (real CLI)", () => {
     const afterDetachMarker = `KAFTER_${randomUUID().replaceAll("-", "")}`;
     const script = [
       `printf '${readyMarker}\\n'`,
-      "while IFS= read -r line; do printf 'ECHO:%s\\n' \"$line\"; done",
+      "while IFS= read -r line; do case \"$line\" in SIZE:*) token=\"${line#SIZE:}\"; printf 'SIZE:%s:' \"$token\"; stty size | awk '{printf \"%sx%s\\\\n\", $2, $1}' ;; *) printf 'ECHO:%s\\n' \"$line\" ;; esac; done",
     ].join("; ");
 
     await execDb(
@@ -267,6 +418,12 @@ describe("pty session (real CLI)", () => {
     expect(initialHandles.length).toBeGreaterThanOrEqual(1);
     const sourceHandle = initialHandles[0];
 
+    await setWindowRect(client, { width: 1400, height: 900, x: 40, y: 40 });
+    await sleep(1_000);
+    const sourceSize = await probePtySize(client, deterministicSessionId, "KSOURCE_SIZE");
+    expect(sourceSize.cols).toBeGreaterThan(80);
+    expect(sourceSize.rows).toBeGreaterThan(24);
+
     await client.executeAsync(
       `const cb = arguments[arguments.length - 1];
        const ctx = window.__KANNA_E2E__.setupState;
@@ -284,13 +441,26 @@ describe("pty session (real CLI)", () => {
     expect(secondHandle).toBeTruthy();
 
     await switchToWindow(client, secondHandle ?? "");
+    await setWindowRect(client, { width: 800, height: 600, x: 80, y: 80 });
     await client.waitForAppReady();
     await dismissStartupShortcutsModal(client);
     await waitForCurrentItemId(client, deterministicSessionId);
     await waitForTerminalBufferText(client, deterministicSessionId, readyMarker, 15_000);
+    await setWindowRect(client, { width: 800, height: 600, x: 80, y: 80 });
+    await sleep(1_000);
 
     await switchToWindow(client, sourceHandle);
     await client.waitForAppReady();
+    const sharedSize = await waitForPtySizeDifferentFrom(
+      client,
+      deterministicSessionId,
+      sourceSize,
+      10_000,
+    );
+    expect(sharedSize.cols).toBeLessThanOrEqual(sourceSize.cols);
+    expect(sharedSize.rows).toBeLessThanOrEqual(sourceSize.rows);
+    expect(samePtySize(sharedSize, sourceSize)).toBe(false);
+
     await sendKeysToActiveTerminal(client, liveMarker);
     await client.pressKey("\uE007");
     await waitForTerminalBufferText(client, deterministicSessionId, `ECHO:${liveMarker}`, 10_000);
@@ -299,6 +469,15 @@ describe("pty session (real CLI)", () => {
     await client.waitForAppReady();
     await waitForTerminalBufferText(client, deterministicSessionId, `ECHO:${liveMarker}`, 10_000);
 
+    await invokeOrThrow(client, "detach_session", { sessionId: deterministicSessionId });
+
+    await switchToWindow(client, sourceHandle);
+    await client.waitForAppReady();
+    const restoredSize = await waitForPtySize(client, deterministicSessionId, sourceSize, 10_000);
+    expect(restoredSize).toEqual(sourceSize);
+
+    await switchToWindow(client, secondHandle ?? "");
+    await client.waitForAppReady();
     await closeFocusedWindowThroughAppAction(client);
 
     const remainingHandles = await waitForWindowCount(client, initialHandles.length);
@@ -307,6 +486,9 @@ describe("pty session (real CLI)", () => {
 
     await switchToWindow(client, sourceHandle);
     await client.waitForAppReady();
+    const afterCloseSize = await waitForPtySize(client, deterministicSessionId, sourceSize, 10_000);
+    expect(afterCloseSize).toEqual(sourceSize);
+
     await sendKeysToActiveTerminal(client, afterDetachMarker);
     await client.pressKey("\uE007");
 
