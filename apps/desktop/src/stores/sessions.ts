@@ -12,7 +12,6 @@ import {
   type AgentProviderAvailability,
 } from "./agent-provider";
 import { resolveActivityForRuntimeStatus, shouldIgnoreRuntimeStatusDuringSetup } from "./taskRuntimeStatus";
-import { isTeardownSessionId } from "./kannaCleanup";
 import { isReadableDirectory, resolveShellSpawnCwd } from "../utils/shellCwd";
 import { readRepoConfig, requireService, type PreparedPtySession, type PtySpawnOptions, type StoreContext } from "./state";
 
@@ -24,7 +23,6 @@ interface DaemonSessionInfo {
 export interface SessionsApi {
   applyTaskRuntimeStatus: (item: import("@kanna/db").PipelineItem, status: string) => Promise<void>;
   syncTaskStatusesFromDaemon: () => Promise<void>;
-  scheduleRuntimeStatusSync: (sessionId: string) => void;
   isAgentProviderAvailable: (provider: AgentProvider) => Promise<boolean>;
   getAgentProviderAvailability: () => Promise<AgentProviderAvailability>;
   waitForSessionExit: (sessionId: string) => Promise<void>;
@@ -60,7 +58,6 @@ export interface SessionsApi {
 
 export function createSessionsApi(context: StoreContext): SessionsApi {
   const sessionExitWaiters = new Map<string, Array<() => void>>();
-  const runtimeStatusSyncDelayMs = 250;
 
   function parsePortEnv(portEnv?: string | null): Record<string, string> {
     if (!portEnv) {
@@ -123,24 +120,6 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     } catch (error) {
       console.error("[store] failed to sync task statuses from daemon:", error);
     }
-  }
-
-  function scheduleRuntimeStatusSync(sessionId: string) {
-    if (!isTauri) return;
-    if (sessionId.startsWith("shell-") || isTeardownSessionId(sessionId)) {
-      return;
-    }
-
-    if (context.state.runtimeStatusSyncTimer.value != null) {
-      clearTimeout(context.state.runtimeStatusSyncTimer.value);
-    }
-
-    context.state.runtimeStatusSyncTimer.value = setTimeout(() => {
-      context.state.runtimeStatusSyncTimer.value = null;
-      void syncTaskStatusesFromDaemon().catch((error) => {
-        console.error("[store] failed scheduled runtime status sync:", error);
-      });
-    }, runtimeStatusSyncDelayMs);
   }
 
   async function isAgentProviderAvailable(provider: AgentProvider): Promise<boolean> {
@@ -432,7 +411,6 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
   return {
     applyTaskRuntimeStatus,
     syncTaskStatusesFromDaemon,
-    scheduleRuntimeStatusSync,
     isAgentProviderAvailable,
     getAgentProviderAvailability,
     waitForSessionExit,

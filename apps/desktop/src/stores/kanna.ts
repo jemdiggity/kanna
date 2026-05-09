@@ -236,7 +236,6 @@ export const useKannaStore = defineStore("kanna", () => {
 
   services.applyTaskRuntimeStatus = sessions.applyTaskRuntimeStatus;
   services.syncTaskStatusesFromDaemon = sessions.syncTaskStatusesFromDaemon;
-  services.scheduleRuntimeStatusSync = sessions.scheduleRuntimeStatusSync;
   services.getAgentProviderAvailability = sessions.getAgentProviderAvailability;
   services.waitForSessionExit = sessions.waitForSessionExit;
   services.resolveSessionExitWaiters = sessions.resolveSessionExitWaiters;
