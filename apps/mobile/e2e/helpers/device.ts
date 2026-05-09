@@ -144,7 +144,7 @@ export function buildPhysicalDeviceInstallCommand(
   deviceUdid: string,
   metroPort: number
 ): string {
-  return `pnpm --dir apps/mobile ios --device ${deviceUdid} --port ${metroPort} --no-bundler`;
+  return `RCT_METRO_PORT=${metroPort} pnpm --dir apps/mobile ios --device ${deviceUdid} --port ${metroPort}`;
 }
 
 export async function assertPhysicalDeviceAppInstalled(

@@ -19,21 +19,33 @@
     "android": "expo run:android"
   },
   "dependencies": {
+    "@babel/runtime": "7.29.2",
     "@react-native-async-storage/async-storage": "^3.0.2",
     "@react-navigation/bottom-tabs": "^7.0.0",
     "@react-navigation/native": "^7.0.0",
     "@xterm/addon-fit": "0.12.0-beta.195",
     "@xterm/xterm": "6.1.0-beta.195",
+    "@expo/vector-icons": "14.1.0",
     "expo": "~53.0.0",
+    "expo-asset": "11.1.7",
+    "expo-constants": "17.1.8",
+    "expo-file-system": "18.1.11",
+    "expo-font": "13.3.2",
+    "expo-keep-awake": "14.1.4",
+    "expo-modules-core": "2.5.0",
     "firebase": "^12.12.1",
     "react": "19.0.0",
     "react-native": "0.79.2",
+    "react-native-edge-to-edge": "1.6.0",
+    "whatwg-url-without-unicode": "8.0.0-3",
     "react-native-webview": "13.13.5"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "appium": "^2.19.0",
+    "babel-preset-expo": "13.2.5",
+    "metro-minify-terser": "0.82.5",
     "tsx": "^4.21.0",
     "webdriverio": "^9.20.0"
   }

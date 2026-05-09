@@ -202,7 +202,7 @@ cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignore
 # Device smoke now starts or reuses Metro on KANNA_MOBILE_PORT automatically and
 # force-relaunches the app so stale Expo bundles do not leak across runs.
 # If the app is missing on the device, install it with the same Metro port:
-# pnpm --dir apps/mobile ios --device <udid> --port "$KANNA_MOBILE_PORT" --no-bundler
+# RCT_METRO_PORT="$KANNA_MOBILE_PORT" pnpm --dir apps/mobile ios --device <udid> --port "$KANNA_MOBILE_PORT"
 # If EXPO_PUBLIC_KANNA_SERVER_URL points at loopback (for example 127.0.0.1),
 # the physical-device Appium harness rewrites it to the host Mac's LAN IP before
 # preflight and smoke checks so the phone can reach the desktop-side mobile server.
@@ -210,6 +210,41 @@ cd apps/desktop/src-tauri && cargo test --test agent_cli_integration -- --ignore
 # to target the visible phone name (for example "Jerome’s iPhone 15").
 # Set one of them when more than one iPhone is attached.
 ```
+
+Physical iOS debug builds compile React Native's Metro port into native code.
+Passing `--port` to Expo starts or targets Metro, but it is not enough for a
+physical-device build unless `RCT_METRO_PORT` is set to the same assigned
+`KANNA_MOBILE_PORT`. If the phone shows `No script URL provided` with
+`unsanitizedScriptURLString = (null)`, first verify the app was built with
+`RCT_METRO_PORT=$KANNA_MOBILE_PORT` and that `http://<host-lan-ip>:$KANNA_MOBILE_PORT/status`
+returns `packager-status:running` from the phone's network.
+
+Because the workspace uses `pnpm` with `hoist: false` and the global virtual
+store, Metro/Babel dependencies that are named directly from app-level config
+must be direct dependencies of `apps/mobile`. For example, `babel.config.js`
+names `babel-preset-expo`, so `@kanna/mobile` must declare `babel-preset-expo`
+explicitly instead of relying on Expo's transitive dependency graph. Likewise,
+if Metro crashes after `Failed to construct transformer` and then reports
+`transformFile` on `undefined`, inspect the first Metro error in the tmux log;
+with pnpm strict linking it may need app-resolved absolute paths for packages
+like `metro-minify-terser`. If a preset loaded from pnpm's store path cannot
+resolve its peer packages, add a `packageExtensions` entry rather than relying
+on hoisting.
+
+Expo and React Native source often execute from pnpm store paths. If Metro can
+resolve a package but then reports `Failed to get the SHA-1`, the resolved file
+is outside Metro's watched roots. The mobile Metro config should resolve
+app-owned packages from `apps/mobile/package.json`, resolve transitive imports
+relative to the importing store package, and include the pnpm `links` store root
+in `watchFolders`. Verify this from the Mac before touching the phone:
+`curl 'http://127.0.0.1:$KANNA_MOBILE_PORT/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false&modulesOnly=false&runModule=true'`
+should return JavaScript, not a JSON Metro error.
+
+After fixing Metro resolver issues, an already-running physical-device debug
+app can remain on a blank native bridge until the app process restarts. Prefer
+the physical-device Appium smoke path because it force-relaunches only the
+mobile app. If doing it manually, relaunch just `build.kanna.mobile`; do not
+restart the desktop app or change the assigned Kanna ports.
 
 ### First build in a worktree
 
