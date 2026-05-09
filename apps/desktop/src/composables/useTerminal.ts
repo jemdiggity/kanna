@@ -218,6 +218,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let connecting = false
   let disposed = false
   let hasAttachedOnce = false
+  let preserveRecoveredScrollbackForNextSnapshot = false
   let bracketedPasteMode = false
   let hasObservedBracketedPasteMode = false
   let kittyClipboardBuffer = ""
@@ -918,6 +919,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     })
     let recoveryState = null as Awaited<ReturnType<typeof loadSessionRecoveryState>>
     let shouldSpawnRecoverySession = false
+    let appliedRecoveryState = false
 
     try {
       const shouldHydrateFromSnapshot = true
@@ -980,7 +982,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           if (!getLiveTerminal()) return
           const recoveryFetchResult = await fetchDaemonSnapshot()
           recoveryState = recoveryFetchResult.snapshot
-          await applyRecoveryStateIfNeeded(
+          appliedRecoveryState = await applyRecoveryStateIfNeeded(
             recoveryState,
             true,
           )
@@ -1047,6 +1049,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
       }
       // No existing session — spawn a new one if we have spawn options
       if (shouldSpawnRecoverySession && spawnOptions && getLiveTerminal()) {
+        if (appliedRecoveryState) {
+          preserveRecoveredScrollbackForNextSnapshot = true
+        }
         await ensureFitted()
         const spawnTerminal = getLiveTerminal()
         if (!spawnTerminal) return
@@ -1054,6 +1059,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         try {
           await spawnOptions.spawnFn(sessionId, spawnOptions.cwd, spawnOptions.prompt, cols, rows)
         } catch (e) {
+          preserveRecoveredScrollbackForNextSnapshot = false
           const msg = e instanceof Error ? e.message : String(e)
           console.error("[terminal] PTY spawn failed:", e)
           spawnTerminal.write(`\r\n\x1b[31mFailed to start agent: ${msg}\x1b[0m\r\n`)
@@ -1147,7 +1153,12 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
         const sid = payload?.session_id
         if (!payload?.snapshot) return
         if ((sid === sessionId || sid === teardownId) && terminal.value) {
-          terminal.value.reset()
+          const preserveRecoveredScrollback =
+            sid === sessionId && preserveRecoveredScrollbackForNextSnapshot
+          preserveRecoveredScrollbackForNextSnapshot = false
+          if (!preserveRecoveredScrollback) {
+            terminal.value.reset()
+          }
           restoreTerminalModesFromSnapshot(payload.snapshot.vt)
           terminal.value.write(payload.snapshot.vt)
         }

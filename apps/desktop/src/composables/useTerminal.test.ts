@@ -597,6 +597,8 @@ describe("useTerminal", () => {
     }
 
     expect(terminal.pendingStringWrites.some((write) => write.data === "large restored scrollback")).toBe(true);
+    expect(terminal.pendingStringWrites.some((write) => write.data === "fresh session output")).toBe(true);
+    expect(terminal.reset).toHaveBeenCalledTimes(2);
     expect(spawnFn).toHaveBeenCalledTimes(1);
     expect(warningToastMock).toHaveBeenCalledWith("toasts.sessionRespawnedWithScrollback");
   });
