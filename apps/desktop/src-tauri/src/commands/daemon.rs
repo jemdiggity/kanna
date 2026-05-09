@@ -11,6 +11,7 @@ use crate::daemon_client::DaemonClient;
 pub type DaemonState = Arc<Mutex<Option<DaemonClient>>>;
 pub type AttachedSessions = Arc<Mutex<HashMap<String, HashSet<String>>>>;
 pub type ActiveAttachedStreams = Arc<Mutex<HashMap<String, ActiveAttachedStream>>>;
+pub type WindowSessionSizes = Arc<Mutex<HashMap<String, HashMap<String, (u16, u16)>>>>;
 
 pub struct ActiveAttachedStream {
     attach_id: u64,
@@ -119,6 +120,38 @@ fn attached_owner_count(attached: &HashMap<String, HashSet<String>>, session_id:
         .unwrap_or_default()
 }
 
+fn effective_window_session_size(window_sizes: &HashMap<String, (u16, u16)>) -> Option<(u16, u16)> {
+    let cols = window_sizes.values().map(|(cols, _)| *cols).min()?;
+    let rows = window_sizes.values().map(|(_, rows)| *rows).min()?;
+    Some((cols, rows))
+}
+
+fn update_window_session_size(
+    sizes: &mut HashMap<String, HashMap<String, (u16, u16)>>,
+    session_id: &str,
+    owner_label: &str,
+    cols: u16,
+    rows: u16,
+) -> Option<(u16, u16)> {
+    let window_sizes = sizes.entry(session_id.to_string()).or_default();
+    window_sizes.insert(owner_label.to_string(), (cols, rows));
+    effective_window_session_size(window_sizes)
+}
+
+fn remove_window_session_size(
+    sizes: &mut HashMap<String, HashMap<String, (u16, u16)>>,
+    session_id: &str,
+    owner_label: &str,
+) -> Option<(u16, u16)> {
+    let window_sizes = sizes.get_mut(session_id)?;
+    window_sizes.remove(owner_label);
+    let effective_size = effective_window_session_size(window_sizes);
+    if effective_size.is_none() {
+        sizes.remove(session_id);
+    }
+    effective_size
+}
+
 /// Read the Ok/Error ack while already holding the lock.
 fn parse_error_event(event: &serde_json::Value) -> DaemonCommandError {
     DaemonCommandError {
@@ -187,8 +220,8 @@ fn parse_snapshot_response(response: &str) -> Result<TerminalSnapshotPayload, Da
 mod tests {
     use super::{
         attached_owner_count, clear_attached_owners, parse_snapshot_response,
-        register_attached_owner, require_option_mut, unregister_attached_owner,
-        TerminalSnapshotPayload,
+        register_attached_owner, remove_window_session_size, require_option_mut,
+        unregister_attached_owner, update_window_session_size, TerminalSnapshotPayload,
     };
     use std::collections::HashMap;
 
@@ -294,6 +327,33 @@ mod tests {
         assert_eq!(attached_owner_count(&attached, "task-1"), 2);
         assert_eq!(attached_owner_count(&attached, "missing-task"), 0);
     }
+
+    #[test]
+    fn session_size_registry_aggregates_by_window_and_recomputes_on_detach() {
+        let mut sizes = HashMap::new();
+
+        assert_eq!(
+            update_window_session_size(&mut sizes, "task-1", "main", 120, 40),
+            Some((120, 40))
+        );
+        assert_eq!(
+            update_window_session_size(&mut sizes, "task-1", "window-2", 100, 50),
+            Some((100, 40))
+        );
+        assert_eq!(
+            update_window_session_size(&mut sizes, "task-1", "main", 90, 30),
+            Some((90, 30))
+        );
+        assert_eq!(
+            remove_window_session_size(&mut sizes, "task-1", "main"),
+            Some((100, 50))
+        );
+        assert_eq!(
+            remove_window_session_size(&mut sizes, "task-1", "window-2"),
+            None
+        );
+        assert!(!sizes.contains_key("task-1"));
+    }
 }
 
 fn daemon_socket_path() -> PathBuf {
@@ -316,6 +376,7 @@ async fn spawn_attached_stream_task(
     session_id: String,
     attached: AttachedSessions,
     active_streams: ActiveAttachedStreams,
+    window_sizes: WindowSessionSizes,
     initial_snapshot: Option<TerminalSnapshotPayload>,
 ) {
     let attach_id = NEXT_ATTACH_ID.fetch_add(1, Ordering::Relaxed);
@@ -334,6 +395,7 @@ async fn spawn_attached_stream_task(
     let app = app.clone();
     let attached_clone = attached.clone();
     let active_streams_clone = active_streams.clone();
+    let window_sizes_clone = window_sizes.clone();
     tauri::async_runtime::spawn(async move {
         let mut exited_normally = false;
         let mut detached_intentionally = false;
@@ -407,6 +469,10 @@ async fn spawn_attached_stream_task(
                         let mut attached_guard = attached_clone.lock().await;
                         clear_attached_owners(&mut attached_guard, &sid);
                     }
+                    {
+                        let mut sizes_guard = window_sizes_clone.lock().await;
+                        sizes_guard.remove(&sid);
+                    }
                     eprintln!("[attach] exit event session={}", sid);
                     let _ = app.emit("session_exit", &event);
                     exited_normally = true;
@@ -418,23 +484,28 @@ async fn spawn_attached_stream_task(
                 _ => {}
             }
         }
-        {
-            let mut attached_guard = attached_clone.lock().await;
-            clear_attached_owners(&mut attached_guard, &sid);
-        }
         let removed = active_streams_clone.lock().await.remove(&sid);
-        if removed
+        let replaced_by_newer_stream = removed
             .as_ref()
-            .is_some_and(|stream| stream.attach_id != attach_id)
-        {
+            .is_some_and(|stream| stream.attach_id != attach_id);
+        if replaced_by_newer_stream {
             if let Some(stream) = removed {
                 active_streams_clone
                     .lock()
                     .await
                     .insert(sid.clone(), stream);
             }
+        } else {
+            {
+                let mut attached_guard = attached_clone.lock().await;
+                clear_attached_owners(&mut attached_guard, &sid);
+            }
+            {
+                let mut sizes_guard = window_sizes_clone.lock().await;
+                sizes_guard.remove(&sid);
+            }
         }
-        if !exited_normally && !detached_intentionally {
+        if !replaced_by_newer_stream && !exited_normally && !detached_intentionally {
             let payload = serde_json::json!({
                 "session_id": &sid,
             });
@@ -583,11 +654,19 @@ pub async fn send_input(
 
 #[tauri::command]
 pub async fn resize_session(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, DaemonState>,
+    window_sizes: tauri::State<'_, WindowSessionSizes>,
     session_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), DaemonCommandError> {
+    let owner_label = window.label().to_string();
+    let (cols, rows) = {
+        let mut sizes = window_sizes.lock().await;
+        update_window_session_size(&mut sizes, &session_id, &owner_label, cols, rows)
+            .unwrap_or((cols, rows))
+    };
     let cmd = serde_json::json!({
         "type": "Resize",
         "session_id": session_id,
@@ -626,6 +705,7 @@ pub async fn signal_session(
 #[tauri::command]
 pub async fn kill_session(
     state: tauri::State<'_, DaemonState>,
+    window_sizes: tauri::State<'_, WindowSessionSizes>,
     session_id: String,
 ) -> Result<(), DaemonCommandError> {
     let cmd = serde_json::json!({
@@ -638,7 +718,12 @@ pub async fn kill_session(
     let client = require_option_mut(&mut guard, "daemon client")?;
     client.send_command(&json).await?;
     let response = client.read_event().await?;
-    parse_ack(&response)
+    let result = parse_ack(&response);
+    if result.is_ok() {
+        let mut sizes = window_sizes.lock().await;
+        sizes.remove(&session_id);
+    }
+    result
 }
 
 #[tauri::command]
@@ -679,6 +764,7 @@ pub async fn attach_session_with_snapshot(
     window: tauri::WebviewWindow,
     attached: tauri::State<'_, AttachedSessions>,
     active_streams: tauri::State<'_, ActiveAttachedStreams>,
+    window_sizes: tauri::State<'_, WindowSessionSizes>,
     session_id: String,
 ) -> Result<(), DaemonCommandError> {
     let owner_label = window.label().to_string();
@@ -724,6 +810,7 @@ pub async fn attach_session_with_snapshot(
         session_id,
         attached.inner().clone(),
         active_streams.inner().clone(),
+        window_sizes.inner().clone(),
         Some(snapshot),
     )
     .await;
@@ -733,11 +820,17 @@ pub async fn attach_session_with_snapshot(
 #[tauri::command]
 pub async fn detach_session(
     window: tauri::WebviewWindow,
+    state: tauri::State<'_, DaemonState>,
     attached: tauri::State<'_, AttachedSessions>,
     active_streams: tauri::State<'_, ActiveAttachedStreams>,
+    window_sizes: tauri::State<'_, WindowSessionSizes>,
     session_id: String,
 ) -> Result<(), DaemonCommandError> {
     let owner_label = window.label().to_string();
+    let remaining_size = {
+        let mut sizes = window_sizes.lock().await;
+        remove_window_session_size(&mut sizes, &session_id, &owner_label)
+    };
     let (should_shutdown, owner_count) = {
         let mut attached_guard = attached.lock().await;
         let should_shutdown =
@@ -754,6 +847,20 @@ pub async fn detach_session(
             eprintln!("[attach] shutdown_stream session={}", session_id);
             let _ = active_stream.shutdown.send(());
         }
+    } else if let Some((cols, rows)) = remaining_size {
+        let cmd = serde_json::json!({
+            "type": "Resize",
+            "session_id": session_id,
+            "cols": cols,
+            "rows": rows,
+        });
+        let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+        ensure_connected(&state).await?;
+        let mut guard = state.lock().await;
+        let client = require_option_mut(&mut guard, "daemon client")?;
+        client.send_command(&json).await?;
+        let response = client.read_event().await?;
+        parse_ack(&response)?;
     }
     Ok(())
 }

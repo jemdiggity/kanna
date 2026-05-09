@@ -6,7 +6,7 @@ mod transfer_sidecar;
 
 use commands::agent::AgentState;
 use commands::daemon::{
-    ActiveAttachedStream, ActiveAttachedStreams, AttachedSessions, DaemonState,
+    ActiveAttachedStream, ActiveAttachedStreams, AttachedSessions, DaemonState, WindowSessionSizes,
 };
 use daemon_client::DaemonClient;
 use dashmap::DashMap;
@@ -599,6 +599,10 @@ pub fn run() {
             String,
             ActiveAttachedStream,
         >::new())) as ActiveAttachedStreams)
+        .manage(Arc::new(Mutex::new(std::collections::HashMap::<
+            String,
+            std::collections::HashMap<String, (u16, u16)>,
+        >::new())) as WindowSessionSizes)
         .manage(Arc::new(Mutex::new(None)) as PipelineSocketState)
         .manage(Arc::new(Mutex::new(None)) as TransferServiceState)
         .setup(|app| {
