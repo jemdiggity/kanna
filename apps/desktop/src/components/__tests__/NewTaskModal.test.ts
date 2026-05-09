@@ -189,6 +189,27 @@ describe("NewTaskModal", () => {
     expect(wrapper.get('[data-testid="pipeline-option-review"]').classes()).toContain("selected");
   });
 
+  it("opens the pipeline selector as the same compact dropdown style as base branch", async () => {
+    const wrapper = mount(NewTaskModal, {
+      props: {
+        pipelines: ["default", "review", "release"],
+        defaultPipeline: "review",
+      },
+      global: { mocks: { $t: (key: string) => key } },
+    });
+
+    await flushPromises();
+    await wrapper.get('[data-testid="pipeline-toggle"]').trigger("click");
+
+    const dropdown = wrapper.get('[data-testid="pipeline-dropdown"]');
+    const options = wrapper.get('[data-testid="pipeline-options"]');
+
+    expect(dropdown.classes()).toContain("base-branch-dropdown");
+    expect(options.classes()).toContain("base-branch-options");
+    expect(options.attributes("style")).toContain("max-height");
+    expect(wrapper.find(".base-branch-picker").exists()).toBe(false);
+  });
+
   it("updates the selected pipeline through the inline picker before submit", async () => {
     const wrapper = mount(NewTaskModal, {
       props: {
