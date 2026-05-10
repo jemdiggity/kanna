@@ -139,6 +139,32 @@ describe("file preview", () => {
     await client.waitForElement(".preview-content.markdown-rendered h1", 5000);
   }
 
+  async function waitForPreviewModalFocus(): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const hasFocus = await client.executeSync<boolean>(
+        `const active = document.activeElement;
+         if (!(active instanceof HTMLElement) || !active.matches(".preview-modal")) return false;
+         const rect = active.getBoundingClientRect();
+         const style = getComputedStyle(active);
+         return style.display !== "none" &&
+           style.visibility !== "hidden" &&
+           rect.width > 0 &&
+           rect.height > 0;`,
+      );
+      if (hasFocus) return;
+      await sleep(200);
+    }
+
+    const focused = await client.executeSync<string>(
+      `const el = document.activeElement;
+       if (!el) return "<none>";
+       const className = el instanceof HTMLElement ? el.className : "";
+       return [el.tagName.toLowerCase(), className].filter(Boolean).join(".");`,
+    );
+    throw new Error(`preview modal did not own focus; activeElement=${focused}`);
+  }
+
   function isVueCallError(result: unknown): result is { __error: string } {
     return Boolean(
       result &&
@@ -197,6 +223,7 @@ describe("file preview", () => {
 
     await pressKey("π", { meta: true, alt: true, code: "KeyP" });
     await waitForPreviewVisible();
+    await waitForPreviewModalFocus();
     expect(await previewedFilePath()).toBe("README.md");
     const restoredModeBadge = await client.waitForElement(".preview-modal .mode-badge", 5000);
     expect(await client.getText(restoredModeBadge)).toBe("Rendered");
