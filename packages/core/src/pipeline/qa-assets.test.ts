@@ -36,4 +36,21 @@ describe("QA pipeline assets", () => {
     expect(prAgent).not.toContain("latest main");
     expect(prAgent).not.toContain("origin/main");
   });
+
+  it("keeps the ship agent on the canonical kd workflow", () => {
+    const shipAgent = readRepoFile(".kanna/tasks/ship/agent.md");
+
+    expect(shipAgent).toContain("kd-mcp");
+    expect(shipAgent).toContain("dev_up");
+    expect(shipAgent).toContain("build_desktop");
+    expect(shipAgent).toContain("build_sidecars");
+    expect(shipAgent).toContain("release_ship");
+    expect(shipAgent).toContain("./kd dev up");
+    expect(shipAgent).toContain("./kd build desktop");
+    expect(shipAgent).toContain("./kd build sidecars");
+    expect(shipAgent).toContain("./kd release ship");
+    expect(shipAgent).not.toMatch(/\bpnpm\s+(?:run|exec)\s+(?:dev|build|tauri|test:e2e)/);
+    expect(shipAgent).not.toMatch(/\bcargo\s+tauri\b/);
+    expect(shipAgent).not.toMatch(/\b(?:pnpm\s+exec\s+)?tauri\s+(?:dev|build)\b/);
+  });
 });

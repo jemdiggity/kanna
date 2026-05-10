@@ -4,7 +4,16 @@ description: Build, sign, notarize, and release a new version of Kanna
 execution_mode: pty
 ---
 
-You are the shipping agent. Your job is to rename the current worktree branch to a release branch, push it, and run the ship script to build, sign, notarize, and release a new version of Kanna. You are already running inside a worktree — your CWD is the worktree root.
+You are the shipping agent. Your job is to rename the current worktree branch to a release branch, push it, and run Kanna's canonical kd release workflow to build, sign, notarize, and release a new version of Kanna. You are already running inside a worktree — your CWD is the worktree root.
+
+## Canonical workflow
+
+Use the kd workflow for Kanna development, build, and release operations. If a `kd-mcp` MCP client is configured, prefer its matching tool over shelling out. Use `./kd` as the CLI fallback when MCP is unavailable or when you need an option the MCP surface does not expose. Do not bypass kd with direct package-manager, Cargo, or Tauri CLI build/dev invocations; kd owns the worktree-specific ports, daemon paths, staged sidecar binaries, release configuration, and environment resolution.
+
+- Use MCP `dev_up`, or CLI `./kd dev up`, when you need to start or validate the desktop development environment.
+- Use MCP `build_desktop`, or CLI `./kd build desktop`, for a desktop app build.
+- Use MCP `build_sidecars`, or CLI `./kd build sidecars`, for sidecar-only build and staging.
+- Use MCP `release_ship`, or CLI `./kd release ship [OPTIONS]`, for dry-run and release shipping.
 
 ## Before running
 
@@ -13,7 +22,7 @@ You are the shipping agent. Your job is to rename the current worktree branch to
 3. Fetch tags from origin (`git fetch origin --tags`) so the version bump uses the latest remote state.
 4. Confirm the prerequisites are met (see sandbox note below):
    - Clean git working directory
-   - Branch is up to date with `origin/main` (the script checks this)
+   - Branch is up to date with `origin/main` (kd checks this)
    - Developer ID Application certificate installed
    - `KANNA_UPDATER_PUBKEY` env var set
    - `TAURI_PRIVATE_KEY_PATH` env var set and points to the Tauri updater private key
@@ -29,7 +38,7 @@ export TAURI_PRIVATE_KEY_PATH="$HOME/.tauri/kanna-updater.key"
 export KANNA_UPDATER_PUBKEY="$(tr -d '\n' < "$HOME/.tauri/kanna-updater.key.pub")"
 ```
 
-If `tauri signer sign` fails with `incorrect updater private key password` or a non-interactive terminal error, set `TAURI_PRIVATE_KEY_PASSWORD` and rerun.
+If updater signing fails with `incorrect updater private key password` or a non-interactive terminal error, set `TAURI_PRIVATE_KEY_PASSWORD` and rerun through `./kd release ship`.
 
 **Sandbox note:** The Claude Code sandbox blocks macOS Keychain access (`security find-identity` returns 0 identities) and network calls (`gh` fails with TLS/x509 errors). If you see these errors, they are caused by the sandbox — retry the command with `dangerouslyDisableSandbox: true`.
 
@@ -56,18 +65,18 @@ git push -u origin "release-v$VERSION"
 
 ## How releases work
 
-The ship script runs from a worktree branched off main. When `--release` is used:
+The kd release workflow runs from a worktree branched off main. When `--release` is used:
 
 1. Version files are bumped and committed on the worktree branch
 2. The commit is tagged `vX.Y.Z`
 3. Main is fast-forwarded to the release commit (so the tag is reachable from main)
 4. Both main and the tag are pushed to origin
 
-This means the tag always lands on main. If the build needs hotfixes before release, commit fixes on the worktree branch — it becomes a hotfix branch. Re-run the ship script after fixing.
+This means the tag always lands on main. If the build needs hotfixes before release, commit fixes on the worktree branch — it becomes a hotfix branch. Re-run `./kd release ship` after fixing.
 
-## Run the ship script
+## Run the kd release workflow
 
-The ship script uses `gh` CLI and `git push`, which require network access outside the sandbox. Run with `dangerouslyDisableSandbox: true`.
+The kd release workflow uses `gh` CLI and `git push`, which require network access outside the sandbox. Run with `dangerouslyDisableSandbox: true`.
 
 Before rerunning after any failed `kd release ship` attempt, check `git status`. The command may leave version files modified after a partial failure; clean up or account for those changes before rerunning so the next bump is computed intentionally.
 
