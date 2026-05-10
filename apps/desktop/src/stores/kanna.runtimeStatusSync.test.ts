@@ -392,6 +392,59 @@ describe("kanna runtime status reconciliation", () => {
     expect(mockState.pipelineItems[0]?.activity).toBe("idle");
   });
 
+  it("keeps an exited task read when another open window has it selected", async () => {
+    const store = await createStore();
+    store.attachWindowWorkspace({
+      bootstrap: {
+        windowId: "window-a",
+        selectedRepoId: "repo-1",
+        selectedItemId: null,
+      },
+      loadSnapshot: vi.fn(async () => ({
+        windows: [
+          {
+            windowId: "window-a",
+            selectedRepoId: "repo-1",
+            selectedItemId: null,
+            sidebarHidden: false,
+            order: 0,
+          },
+          {
+            windowId: "window-b",
+            selectedRepoId: "repo-1",
+            selectedItemId: "task-1",
+            sidebarHidden: false,
+            order: 1,
+          },
+        ],
+      })),
+      saveSnapshot: vi.fn(async () => {}),
+      openWindow: vi.fn(async () => {}),
+      closeWindow: vi.fn(async () => {}),
+      persistSelection: vi.fn(async () => {}),
+      persistSidebarHidden: vi.fn(async () => {}),
+      invalidateSharedData: vi.fn(async () => {}),
+      restoreAdditionalWindows: vi.fn(async () => {}),
+      onSharedInvalidation: vi.fn(async () => vi.fn()),
+    });
+    await flushStore();
+
+    mockState.emit("session_exit", {
+      session_id: "task-1",
+      code: 0,
+      resume_session_id: null,
+    });
+
+    await flushStore();
+
+    expect(mockState.updatePipelineItemActivityMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "task-1",
+      "idle",
+    );
+    expect(mockState.pipelineItems[0]?.activity).toBe("idle");
+  });
+
   it("does not poll all daemon sessions for ordinary terminal output", async () => {
     const store = await createStore();
     await store.selectRepo("repo-1");

@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DbHandle, PipelineItem, Repo } from "@kanna/db";
 
@@ -92,6 +92,10 @@ describe("createSelectionApi", () => {
     mockState.reset();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("persists selection through the window workspace instead of global selected_item_id settings", async () => {
     const state = createStoreState();
     state.db.value = createDb();
@@ -127,6 +131,53 @@ describe("createSelectionApi", () => {
       "selected_item_id",
       "task-1",
     );
+  });
+
+  it("marks an unread selected task read and invalidates other windows", async () => {
+    vi.useFakeTimers();
+    const state = createStoreState();
+    state.db.value = createDb();
+    state.repos.value = [createRepo()];
+    state.items.value = [
+      createItem({
+        activity: "unread",
+        activity_changed_at: "2026-04-29T00:00:00.000Z",
+      }),
+    ];
+    state.selectedRepoId.value = "repo-1";
+
+    const persistSelection = vi.fn(async () => {});
+    const invalidateSharedData = vi.fn(async () => {});
+    const reloadSnapshot = vi.fn(async () => {});
+    const context = createStoreContext(
+      state,
+      {
+        toasts: ref([]),
+        dismiss: vi.fn(),
+        info: vi.fn(),
+        warning: vi.fn(),
+        error: vi.fn(),
+      },
+      {
+        reloadSnapshot,
+        windowWorkspace: {
+          persistSelection,
+          invalidateSharedData,
+        },
+      } as never,
+    );
+
+    const api = createSelectionApi(context);
+    await api.selectItem("task-1");
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(mockState.updatePipelineItemActivityMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "task-1",
+      "idle",
+    );
+    expect(reloadSnapshot).toHaveBeenCalled();
+    expect(invalidateSharedData).toHaveBeenCalledWith("taskActivity");
   });
 
   it("falls back to the first visible repo and task when the current selection disappears", async () => {

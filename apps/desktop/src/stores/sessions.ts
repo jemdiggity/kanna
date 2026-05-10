@@ -15,6 +15,7 @@ import {
 import { resolveActivityForRuntimeStatus, shouldIgnoreRuntimeStatusDuringSetup } from "./taskRuntimeStatus";
 import { isReadableDirectory, resolveShellSpawnCwd } from "../utils/shellCwd";
 import { readRepoConfig, requireService, type PreparedPtySession, type PtySpawnOptions, type StoreContext } from "./state";
+import { isTaskSelectedInAnyWindow } from "./windowSelection";
 
 interface DaemonSessionInfo {
   session_id?: string;
@@ -103,12 +104,13 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
       const nextActivity = resolveActivityForRuntimeStatus(
         item.activity,
         status,
-        context.state.selectedItemId.value === item.id,
+        await isTaskSelectedInAnyWindow(context, item.id),
       );
       if (nextActivity == null) return;
 
       await updatePipelineItemActivity(context.requireDb(), item.id, nextActivity);
       await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+      await context.services.windowWorkspace?.invalidateSharedData("taskActivity");
     }
   }
 
