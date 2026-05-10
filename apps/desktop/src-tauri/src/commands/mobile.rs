@@ -609,6 +609,7 @@ mod tests {
         MobileServerManager, MobileServerState, MobileServerStatus,
     };
     use std::ffi::CString;
+    use std::os::unix::process::ExitStatusExt;
     use std::path::PathBuf;
     use std::process::Stdio;
     use std::sync::{Mutex, OnceLock};
@@ -793,15 +794,32 @@ mod tests {
     async fn stop_server_on_port_escalates_to_sigkill_when_sigterm_is_ignored() {
         let port = free_loopback_port();
         let mut child = start_sigterm_ignoring_listener(port).await;
+        let child_pid = child.id().expect("listener should have pid");
 
         stop_server_on_port(port)
             .await
             .expect("shutdown should escalate and free the port");
 
-        child
+        let status = child
             .wait()
             .await
             .expect("listener process should be reaped");
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGKILL),
+            "SIGTERM-ignoring listener should be killed with SIGKILL"
+        );
+        assert!(
+            !process_is_running(child_pid),
+            "SIGTERM-ignoring listener should no longer be running"
+        );
+        assert!(
+            server_pids_on_port(port).await.unwrap().is_empty(),
+            "port should not have remaining listener pids"
+        );
+        let rebound = std::net::TcpListener::bind(("127.0.0.1", port))
+            .expect("port should be reusable after stale listener is killed");
+        drop(rebound);
     }
 
     #[test]
