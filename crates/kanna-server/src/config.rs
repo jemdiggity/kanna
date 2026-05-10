@@ -17,6 +17,7 @@ pub struct Config {
     pub desktop_id: String,
     pub desktop_secret: Option<String>,
     pub desktop_name: String,
+    pub server_version: Option<String>,
     pub lan_host: String,
     pub lan_port: u16,
     pub pairing_store_path: String,
@@ -35,6 +36,7 @@ struct RawConfig {
     desktop_id: Option<String>,
     desktop_secret: Option<String>,
     desktop_name: Option<String>,
+    server_version: Option<String>,
     lan_host: Option<String>,
     lan_port: Option<u16>,
     pairing_store_path: Option<String>,
@@ -162,6 +164,7 @@ fn load_from_path(
         desktop_id: raw.desktop_id.unwrap_or_else(default_desktop_id),
         desktop_secret: raw.desktop_secret,
         desktop_name: raw.desktop_name.unwrap_or_else(default_desktop_name),
+        server_version: raw.server_version,
         lan_host: raw.lan_host.unwrap_or_else(default_lan_host),
         lan_port: raw.lan_port.unwrap_or_else(default_lan_port),
         pairing_store_path: raw

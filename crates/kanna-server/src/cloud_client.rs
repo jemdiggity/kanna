@@ -119,6 +119,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: None,
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "0.0.0.0".to_string(),
             lan_port: 48120,
             pairing_store_path: PathBuf::from("/tmp/kanna-pairings.json")
