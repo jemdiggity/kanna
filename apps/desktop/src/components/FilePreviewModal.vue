@@ -318,14 +318,14 @@ function dismiss(): boolean {
 }
 
 function focusModal() {
-  modalRef.value?.focus();
+  nextTick(() => modalRef.value?.focus());
 }
 
 defineExpose({ zIndex, bringToFront, dismiss, focusModal });
 
 onMounted(() => {
   loadFile();
-  nextTick(() => focusModal());
+  focusModal();
 });
 </script>
 
