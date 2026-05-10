@@ -696,7 +696,10 @@ function openFilePreview(
   previewFromTree.value = fromTree;
   previewHidden.value = false;
   showFilePreviewModal.value = true;
-  nextTick(() => filePreviewRef.value?.bringToFront?.());
+  nextTick(() => {
+    filePreviewRef.value?.bringToFront?.();
+    filePreviewRef.value?.focusModal?.();
+  });
 }
 
 function selectFileFromPicker(filePath: string) {

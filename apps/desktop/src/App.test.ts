@@ -1951,6 +1951,66 @@ describe("App", () => {
     expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-mode")).toBe("rendered");
   });
 
+  it("refocuses a preserved file preview when toggling it back open", async () => {
+    const focusPreviewMock = vi.fn();
+
+    const FilePickerModalTestStub = defineComponent({
+      name: "FilePickerModal",
+      emits: ["select"],
+      template: `
+        <div data-testid="file-picker-modal">
+          <button data-testid="file-picker-select" @click="$emit('select', 'src/example.ts')">select</button>
+        </div>
+      `,
+    });
+
+    const FocusableFilePreviewModalTestStub = defineComponent({
+      name: "FilePreviewModal",
+      emits: ["close"],
+      setup(_props, { emit, expose }) {
+        function dismiss() {
+          emit("close");
+          return true;
+        }
+
+        expose({
+          dismiss,
+          zIndex: 1000,
+          bringToFront: vi.fn(),
+          focusModal: focusPreviewMock,
+        });
+
+        return {};
+      },
+      template: `
+        <div data-testid="file-preview-modal">
+          <button data-testid="file-preview-close" @click="$emit('close')">close</button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      FilePickerModal: FilePickerModalTestStub,
+      FilePreviewModal: FocusableFilePreviewModalTestStub,
+    });
+
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    await wrapper.get('[data-testid="file-picker-select"]').trigger("click");
+    await flushPromises();
+
+    focusPreviewMock.mockClear();
+
+    capturedKeyboardActions?.toggleFilePreview();
+    await flushPromises();
+    capturedKeyboardActions?.toggleFilePreview();
+    await flushPromises();
+
+    expect(focusPreviewMock).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves file picker scroll state when preview hides and resumes the picker", async () => {
     const StatefulFilePickerModalTestStub = defineComponent({
       name: "FilePickerModal",
