@@ -136,8 +136,18 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     );
   };
 
-  const runMigration = async (id: string, migrate: () => Promise<void>): Promise<void> => {
+  const runMigration = async (
+    id: string,
+    migrate: () => Promise<void>,
+    legacyIds: string[] = [],
+  ): Promise<void> => {
     if (await hasMigration(id)) return;
+    for (const legacyId of legacyIds) {
+      if (await hasMigration(legacyId)) {
+        await recordMigration(id);
+        return;
+      }
+    }
     await migrate();
     await recordMigration(id);
   };
@@ -330,13 +340,13 @@ export async function runMigrations(db: DbHandle): Promise<void> {
     }
   });
 
-  await runMigration("016_repo_sort_order", async () => {
+  await runMigration("015_repo_sort_order", async () => {
     await addColumn("repo", "sort_order", "INTEGER NOT NULL DEFAULT 0");
     const repos = await db.select<{ id: string }>("SELECT id FROM repo ORDER BY created_at ASC");
     for (const [index, repo] of repos.entries()) {
       await db.execute("UPDATE repo SET sort_order = ? WHERE id = ?", [index, repo.id]);
     }
-  });
+  }, ["016_repo_sort_order"]);
   await runMigration("016_task_teardown_state", async () => {
     await addColumn("pipeline_item", "teardown_started_at", "TEXT");
     await db.execute(`

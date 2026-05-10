@@ -43,6 +43,7 @@ function normalizeSql(query: string): string {
 function createMigrationDb(
   initialRows: PipelineItemRow[],
   initialRepos: RepoRow[] = [],
+  initialSchemaMigrations: SchemaMigrationRow[] = [],
 ): DbHandle & {
   pipelineItems: PipelineItemRow[];
   repos: RepoRow[];
@@ -51,7 +52,7 @@ function createMigrationDb(
 } {
   const pipelineItems = initialRows.map((row) => ({ ...row }));
   const repos = initialRepos.map((repo) => ({ ...repo }));
-  const schemaMigrations: SchemaMigrationRow[] = [];
+  const schemaMigrations: SchemaMigrationRow[] = initialSchemaMigrations.map((migration) => ({ ...migration }));
   let activityLogDrops = 0;
 
   return {
@@ -70,6 +71,9 @@ function createMigrationDb(
           schemaMigrations.push({ id });
         }
       } else if (sql === "ALTER TABLE repo ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0") {
+        if (repos.some((repo) => repo.sort_order !== null)) {
+          throw new Error("duplicate column name: sort_order");
+        }
         for (const repo of repos) {
           repo.sort_order = 0;
         }
@@ -293,5 +297,42 @@ describe("runMigrations", () => {
       { id: "repo-older", created_at: "2026-01-01T00:00:00.000Z", sort_order: 0 },
       { id: "repo-middle", created_at: "2026-01-02T00:00:00.000Z", sort_order: 1 },
     ]);
+  });
+
+  it("does not reset custom repo sort_order when v0.0.45 already ran the repo ordering migration", async () => {
+    db = createMigrationDb([], [
+      { id: "repo-newer", created_at: "2026-01-03T00:00:00.000Z", sort_order: 0 },
+      { id: "repo-older", created_at: "2026-01-01T00:00:00.000Z", sort_order: 2 },
+      { id: "repo-middle", created_at: "2026-01-02T00:00:00.000Z", sort_order: 1 },
+    ], [
+      { id: "015_repo_sort_order" },
+    ]);
+
+    await runMigrations(db);
+
+    expect(db.repos).toEqual([
+      { id: "repo-newer", created_at: "2026-01-03T00:00:00.000Z", sort_order: 0 },
+      { id: "repo-older", created_at: "2026-01-01T00:00:00.000Z", sort_order: 2 },
+      { id: "repo-middle", created_at: "2026-01-02T00:00:00.000Z", sort_order: 1 },
+    ]);
+  });
+
+  it("does not rerun repo sort_order backfill when the release-v0.0.46 migration id already exists", async () => {
+    db = createMigrationDb([], [
+      { id: "repo-newer", created_at: "2026-01-03T00:00:00.000Z", sort_order: 0 },
+      { id: "repo-older", created_at: "2026-01-01T00:00:00.000Z", sort_order: 2 },
+      { id: "repo-middle", created_at: "2026-01-02T00:00:00.000Z", sort_order: 1 },
+    ], [
+      { id: "016_repo_sort_order" },
+    ]);
+
+    await runMigrations(db);
+
+    expect(db.repos).toEqual([
+      { id: "repo-newer", created_at: "2026-01-03T00:00:00.000Z", sort_order: 0 },
+      { id: "repo-older", created_at: "2026-01-01T00:00:00.000Z", sort_order: 2 },
+      { id: "repo-middle", created_at: "2026-01-02T00:00:00.000Z", sort_order: 1 },
+    ]);
+    expect(db.schemaMigrations).toContainEqual({ id: "015_repo_sort_order" });
   });
 });
