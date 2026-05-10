@@ -72,10 +72,6 @@ async function waitForPeer(
   throw new Error(`timed out waiting for peer ${peerId}`);
 }
 
-async function waitForIncomingTransferVisible(timeoutMs = 20_000): Promise<void> {
-  await secondary.waitForText(".modal-card", "Primary", timeoutMs);
-}
-
 async function deleteSessionIfRunning(client: { deleteSession(): Promise<void> }): Promise<void> {
   await client.deleteSession().catch(() => undefined);
 }
@@ -107,7 +103,10 @@ describe("local transfer first milestone", () => {
     expect(peers.some((peer) => readPeerId(peer) === "peer-secondary")).toBe(true);
     expect(peers.some((peer) => readPeerDisplayName(peer) === "Secondary")).toBe(true);
     await pauseForSlowMode("secondary peer discovered");
-    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary");
+    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary", {
+      promptClient: secondary,
+      promptPeerId: "peer-primary",
+    });
 
     // Direct task creation is setup-only: the product has no UI path for creating an inert
     // transfer fixture task without also launching a real agent session.
@@ -122,27 +121,44 @@ describe("local transfer first milestone", () => {
       ["Say OK"],
     )) as PipelineRow[];
     const taskId = rows[0]?.id;
-    expect(taskId).toBeTruthy();
+    if (!taskId) {
+      throw new Error("expected source task to be created");
+    }
+    await callVueMethod(primary, "store.selectItem", taskId);
     await pauseForSlowMode("task created on primary");
 
     await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
     await pauseForSlowMode("task pushed to secondary");
 
-    await waitForIncomingTransferVisible();
-    await secondary.waitForText(".modal-card", "Primary");
-    await pauseForSlowMode("incoming transfer modal visible on secondary");
-
-    const transferRows = (await queryDb(
-      secondary,
-      "SELECT id, direction, status, source_task_id FROM task_transfer ORDER BY started_at DESC LIMIT 1",
-    )) as TransferRow[];
-
-    expect(transferRows[0]).toMatchObject({
+    const transferRow = await waitForIncomingTransferCompleted(taskId);
+    expect(transferRow).toMatchObject({
       direction: "incoming",
-      status: "pending",
+      status: "completed",
       source_task_id: taskId,
     });
-    expect(typeof transferRows[0]?.id).toBe("string");
-    expect(transferRows[0]?.id.length).toBeGreaterThan(0);
+    expect(typeof transferRow.id).toBe("string");
+    expect(transferRow.id.length).toBeGreaterThan(0);
   });
 });
+
+async function waitForIncomingTransferCompleted(
+  sourceTaskId: string,
+  timeoutMs = 20_000,
+): Promise<TransferRow> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = (await queryDb(
+      secondary,
+      `SELECT id, direction, status, source_task_id
+         FROM task_transfer
+        WHERE direction = 'incoming' AND source_task_id = ?
+        ORDER BY started_at DESC
+        LIMIT 1`,
+      [sourceTaskId],
+    )) as TransferRow[];
+    const row = rows[0];
+    if (row?.status === "completed") return row;
+    await sleep(250);
+  }
+  throw new Error(`timed out waiting for incoming transfer to complete for ${sourceTaskId}`);
+}

@@ -49,6 +49,7 @@ export interface PreparedPtySession {
   env: Record<string, string>;
   setupCmds: string[];
   agentCmd: string;
+  agentProvider: AgentProvider;
   kannaCliPath?: string;
 }
 

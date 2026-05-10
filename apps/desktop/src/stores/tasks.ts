@@ -69,6 +69,13 @@ const INSTANCE_SCOPED_WORKTREE_ENV_KEYS = [
   "KANNA_TRANSFER_REGISTRY_DIR",
 ] as const;
 
+const CODEX_SPAWN_SUBMIT_DELAY_MS = 5_000;
+const CODEX_SPAWN_COMPOSER_SUBMIT_DELAY_MS = 1_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function applyWorktreeProcessIsolation(env: Record<string, string>): Record<string, string> {
   for (const key of INSTANCE_SCOPED_WORKTREE_ENV_KEYS) {
     env[key] = "";
@@ -494,6 +501,18 @@ export function createTasksApi(
         console.log("[tasks:createItem] skipped setup auto-select", {
           taskId: id,
           selectedAfterSkip: context.state.selectedItemId.value,
+        });
+      }
+      if (agentType === "pty" && agentProvider === "codex" && prompt.trim().length > 0) {
+        await delay(CODEX_SPAWN_SUBMIT_DELAY_MS);
+        await invoke("send_input", {
+          sessionId: id,
+          data: encodeDaemonInput("\r"),
+        });
+        await delay(CODEX_SPAWN_COMPOSER_SUBMIT_DELAY_MS);
+        await invoke("send_input", {
+          sessionId: id,
+          data: encodeDaemonInput("\x1b[13u"),
         });
       }
       console.log(`[perf:setup] TOTAL (background): ${(performance.now() - s0).toFixed(1)}ms`);

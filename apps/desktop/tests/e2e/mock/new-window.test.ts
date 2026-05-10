@@ -217,6 +217,12 @@ describe("new window", () => {
 
     const sourceWindowCurrentItem = await getVueState(client, "currentItem") as { id: string };
     expect(sourceWindowCurrentItem.id).toBe(taskAId);
+
+    await switchToWindow(client, secondHandle ?? "");
+    await closeFocusedWindowThroughAppAction(client);
+    await waitForWindowCount(client, initialHandles.length);
+    await switchToWindow(client, sourceHandle);
+    await client.waitForAppReady();
   });
 
   it("closes the focused secondary window without changing the remaining window selection", async () => {

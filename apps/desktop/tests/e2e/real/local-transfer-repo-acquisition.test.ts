@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { homedir } from "node:os";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 import { cleanupWorktrees, importTestRepo, resetDatabase } from "../helpers/reset";
@@ -67,14 +68,6 @@ async function waitForPeer(peerId: string, timeoutMs = 20_000): Promise<void> {
   }
 
   throw new Error(`timed out waiting for peer ${peerId}`);
-}
-
-async function waitForIncomingTransferVisible(timeoutMs = 20_000): Promise<void> {
-  await secondary.waitForText(".modal-card", "Primary", timeoutMs);
-}
-
-async function waitForIncomingTransferHidden(timeoutMs = 20_000): Promise<void> {
-  await secondary.waitForNoElement(".modal-card", timeoutMs);
 }
 
 async function waitForLatestTransfer(
@@ -146,16 +139,12 @@ async function createSourceTask(repoId: string, repoPath: string, prompt: string
   if (!sourceTaskId) {
     throw new Error(`task not found for prompt ${prompt}`);
   }
+  await callVueMethod(primary, "store.selectItem", sourceTaskId);
   return sourceTaskId;
 }
 
 async function pushAndApproveTransfer(sourceTaskId: string): Promise<TransferRow> {
   await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
-
-  await waitForIncomingTransferVisible();
-  const approveButton = await secondary.findElement(".btn-primary");
-  await secondary.click(approveButton);
-  await waitForIncomingTransferHidden();
 
   return waitForLatestTransfer(secondary, "incoming", sourceTaskId, "completed");
 }
@@ -170,7 +159,10 @@ describe("local transfer repo acquisition", () => {
     await resetDatabase(primary);
     await resetDatabase(secondary);
     await waitForPeer("peer-secondary");
-    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary");
+    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary", {
+      promptClient: secondary,
+      promptPeerId: "peer-primary",
+    });
   });
 
   afterEach(async () => {
@@ -187,7 +179,33 @@ describe("local transfer repo acquisition", () => {
     await deleteSessionIfRunning(secondary);
   });
 
-  it("clones the repo on secondary before importing a clone-remote transfer", async () => {
+  it("reuses an existing matching repo on secondary before importing a transfer", async () => {
+    testRepoPath = await createFixtureRepo("local-transfer-reuse-local");
+    const repoId = await importTestRepo(primary, testRepoPath, "local-transfer-reuse-primary");
+    await importTestRepo(secondary, testRepoPath, "local-transfer-reuse-secondary");
+    await pauseForSlowMode("reuse-local fixture imported into both instances");
+
+    const sourceTaskId = await createSourceTask(repoId, testRepoPath, "Reuse repo on destination");
+    const incomingTransfer = await pushAndApproveTransfer(sourceTaskId);
+    expect(incomingTransfer.local_task_id).toBeTruthy();
+
+    const repoRows = (await queryDb(
+      secondary,
+      `SELECT repo.path
+         FROM repo
+         JOIN pipeline_item ON pipeline_item.repo_id = repo.id
+        WHERE pipeline_item.id = ?`,
+      [incomingTransfer.local_task_id],
+    )) as RepoRow[];
+    expect(repoRows[0]?.path).toBe(testRepoPath);
+
+    const outgoingTransfer = await waitForLatestTransfer(primary, "outgoing", sourceTaskId, "completed");
+    expect(outgoingTransfer.status).toBe("completed");
+
+    await waitForPrimaryTaskClosed(sourceTaskId);
+  });
+
+  it("clones the repo into ~/.kanna/repos on secondary before importing a clone-remote transfer", async () => {
     testRepoPath = await createFixtureRepo("local-transfer-clone-remote");
     const repoId = await importTestRepo(primary, testRepoPath, "local-transfer-clone-remote");
     await pauseForSlowMode("clone-remote fixture imported into primary");
@@ -207,10 +225,7 @@ describe("local transfer repo acquisition", () => {
     const importedRepoPath = repoRows[0]?.path;
     expect(importedRepoPath).toBeTruthy();
     expect(importedRepoPath).not.toBe(testRepoPath);
-
-    const secondaryAppDataDir = await tauriInvoke(secondary, "get_app_data_dir");
-    expect(typeof secondaryAppDataDir).toBe("string");
-    expect(importedRepoPath).toContain(`${secondaryAppDataDir}/transferred-repos/`);
+    expect(importedRepoPath).toContain(`${homedir()}/.kanna/repos/local-transfer-clone-remote`);
 
     const outgoingTransfer = await waitForLatestTransfer(primary, "outgoing", sourceTaskId, "completed");
     expect(outgoingTransfer.payload_json).toBeTruthy();
@@ -225,7 +240,7 @@ describe("local transfer repo acquisition", () => {
     await waitForPrimaryTaskClosed(sourceTaskId);
   });
 
-  it("fetches a staged bundle and materializes a new repo on secondary when no remote exists", async () => {
+  it("transfers a bundle into ~/.kanna/repos on secondary when no origin remote exists", async () => {
     testRepoPath = await createFixtureRepo("local-transfer-bundle-repo");
     const removeOrigin = await tauriInvoke(primary, "run_script", {
       script: "git remote remove origin",
@@ -242,9 +257,9 @@ describe("local transfer repo acquisition", () => {
     const sourceTaskId = await createSourceTask(repoId, testRepoPath, "Bundle repo on destination");
     await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
 
-    await waitForIncomingTransferVisible();
-    const pendingOutgoing = await waitForLatestTransfer(primary, "outgoing", sourceTaskId, "pending");
-    const pendingPayload = JSON.parse(pendingOutgoing.payload_json ?? "{}") as {
+    const incomingTransfer = await waitForLatestTransfer(secondary, "incoming", sourceTaskId, "completed");
+    const outgoingTransfer = await waitForLatestTransfer(primary, "outgoing", sourceTaskId, "completed");
+    const outgoingPayload = JSON.parse(outgoingTransfer.payload_json ?? "{}") as {
       repo?: {
         mode?: string;
         bundle?: {
@@ -253,17 +268,11 @@ describe("local transfer repo acquisition", () => {
         } | null;
       };
     };
-    expect(pendingPayload.repo).toMatchObject({
+    expect(outgoingPayload.repo).toMatchObject({
       mode: "bundle-repo",
     });
-    expect(pendingPayload.repo?.bundle?.artifact_id).toBeTruthy();
-    expect(pendingPayload.repo?.bundle?.filename).toContain(".bundle");
-
-    const approveButton = await secondary.findElement(".btn-primary");
-    await secondary.click(approveButton);
-    await waitForIncomingTransferHidden();
-
-    const incomingTransfer = await waitForLatestTransfer(secondary, "incoming", sourceTaskId, "completed");
+    expect(outgoingPayload.repo?.bundle?.artifact_id).toBeTruthy();
+    expect(outgoingPayload.repo?.bundle?.filename).toContain(".bundle");
     expect(incomingTransfer.local_task_id).toBeTruthy();
 
     const repoRows = (await queryDb(
@@ -277,10 +286,7 @@ describe("local transfer repo acquisition", () => {
     const importedRepoPath = repoRows[0]?.path;
     expect(importedRepoPath).toBeTruthy();
     expect(importedRepoPath).not.toBe(testRepoPath);
-
-    const secondaryAppDataDir = await tauriInvoke(secondary, "get_app_data_dir");
-    expect(typeof secondaryAppDataDir).toBe("string");
-    expect(importedRepoPath).toContain(`${secondaryAppDataDir}/transferred-repos/`);
+    expect(importedRepoPath).toContain(`${homedir()}/.kanna/repos/local-transfer-bundle-repo`);
 
     await waitForPrimaryTaskClosed(sourceTaskId);
   });

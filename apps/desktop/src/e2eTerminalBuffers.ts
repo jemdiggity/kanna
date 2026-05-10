@@ -19,6 +19,7 @@ export function registerE2ETerminalBuffer(sessionId: string, terminal: Terminal)
   terminals.set(sessionId, terminal);
   window.__KANNA_E2E__.terminalBuffers ??= {
     stats: getTerminalBufferStats,
+    lines: getTerminalBufferLines,
     sessionIds: () => Array.from(terminals.keys()),
   };
 
@@ -28,6 +29,20 @@ export function registerE2ETerminalBuffer(sessionId: string, terminal: Terminal)
       terminals.delete(sessionId);
     }
   };
+}
+
+function getTerminalBufferLines(sessionId: string): string[] {
+  const terminal = terminals.get(sessionId);
+  if (!terminal) {
+    throw new Error(`terminal buffer not registered for session ${sessionId}`);
+  }
+
+  const activeBuffer = terminal.buffer.active;
+  const lines: string[] = [];
+  for (let lineIndex = 0; lineIndex < activeBuffer.length; lineIndex += 1) {
+    lines.push(activeBuffer.getLine(lineIndex)?.translateToString(true).trimEnd() ?? "");
+  }
+  return lines;
 }
 
 function getTerminalBufferStats(

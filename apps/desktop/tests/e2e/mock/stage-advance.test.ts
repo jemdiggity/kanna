@@ -547,7 +547,7 @@ describe("stage advance", () => {
       "",
       "Commit stage marker for Write the commit",
     ].join("\n");
-    const expectedInput = Buffer.from(`\x1b[200~${expectedPrompt}\x1b[201~\r`, "utf8");
+    const expectedInput = Buffer.from(`${expectedPrompt}\x1b[13u`, "utf8");
     await execDb(
       client,
       `INSERT INTO pipeline_item (

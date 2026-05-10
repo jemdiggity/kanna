@@ -74,14 +74,6 @@ async function waitForPeer(peerId: string, timeoutMs = 20_000): Promise<void> {
   throw new Error(`timed out waiting for peer ${peerId}`);
 }
 
-async function waitForIncomingTransferVisible(timeoutMs = 20_000): Promise<void> {
-  await secondary.waitForText(".modal-card", "Primary", timeoutMs);
-}
-
-async function waitForIncomingTransferHidden(timeoutMs = 20_000): Promise<void> {
-  await secondary.waitForNoElement(".modal-card", timeoutMs);
-}
-
 async function waitForPrimaryOutgoingTransferCompleted(
   sourceTaskId: string,
   timeoutMs = 20_000,
@@ -160,7 +152,10 @@ describe("local transfer accept import", () => {
   it("approves the incoming transfer and imports a new local task on secondary", async () => {
     await waitForPeer("peer-secondary");
     await pauseForSlowMode("secondary peer discovered");
-    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary");
+    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary", {
+      promptClient: secondary,
+      promptPeerId: "peer-primary",
+    });
 
     // Direct task creation is setup-only: the product has no UI path for creating an inert
     // transfer fixture task without also launching a real agent session.
@@ -175,26 +170,16 @@ describe("local transfer accept import", () => {
       ["Say OK"],
     )) as PipelineRow[];
     const sourceTaskId = sourceRows[0]?.id;
-    expect(sourceTaskId).toBeTruthy();
+    if (!sourceTaskId) {
+      throw new Error("expected source task to be created");
+    }
+    await callVueMethod(primary, "store.selectItem", sourceTaskId);
     await pauseForSlowMode("task created on primary");
 
     await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
     await pauseForSlowMode("task pushed to secondary");
 
-    await waitForIncomingTransferVisible();
-    await secondary.waitForText(".modal-card", "Primary");
-    await pauseForSlowMode("incoming transfer modal visible on secondary");
-
-    const approveButton = await secondary.findElement(".btn-primary");
-    await secondary.click(approveButton);
-    await waitForIncomingTransferHidden();
-    await pauseForSlowMode("incoming transfer approved on secondary");
-
-    const transferRows = (await queryDb(
-      secondary,
-      "SELECT id, direction, status, source_peer_id, source_task_id, local_task_id FROM task_transfer ORDER BY started_at DESC LIMIT 1",
-    )) as TransferRow[];
-    const transferRow = transferRows[0];
+    const transferRow = await waitForSecondaryIncomingTransferCompleted(sourceTaskId);
     expect(transferRow).toMatchObject({
       direction: "incoming",
       status: "completed",
@@ -248,3 +233,29 @@ describe("local transfer accept import", () => {
     expect(closedSourceTask.closed_at).toBeTruthy();
   });
 });
+
+async function waitForSecondaryIncomingTransferCompleted(
+  sourceTaskId: string,
+  timeoutMs = 20_000,
+): Promise<TransferRow> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const rows = (await queryDb(
+      secondary,
+      `SELECT id, direction, status, source_peer_id, source_task_id, local_task_id
+         FROM task_transfer
+        WHERE direction = 'incoming' AND source_task_id = ?
+        ORDER BY started_at DESC
+        LIMIT 1`,
+      [sourceTaskId],
+    )) as TransferRow[];
+    const row = rows[0];
+    if (row?.status === "completed") {
+      return row;
+    }
+    await sleep(250);
+  }
+
+  throw new Error(`timed out waiting for incoming transfer to complete for ${sourceTaskId}`);
+}

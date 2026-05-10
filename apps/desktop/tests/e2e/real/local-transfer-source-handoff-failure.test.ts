@@ -5,7 +5,7 @@ import { cleanupWorktrees, importTestRepo, resetDatabase } from "../helpers/rese
 import { pauseForSlowMode } from "../helpers/slowMode";
 import { createPrimaryAndSecondaryClients } from "../helpers/twoInstance";
 import { pairWithPeerThroughUi, pushSelectedTaskToPeerThroughUi } from "../helpers/transferFlow";
-import { callVueMethod, execDb, queryDb, tauriInvoke } from "../helpers/vue";
+import { callVueMethod, queryDb, tauriInvoke } from "../helpers/vue";
 
 interface TransferPeer {
   peer_id?: string;
@@ -61,10 +61,6 @@ async function waitForPeer(peerId: string, timeoutMs = 20_000): Promise<void> {
   }
 
   throw new Error(`timed out waiting for peer ${peerId}`);
-}
-
-async function waitForIncomingTransferVisible(timeoutMs = 20_000): Promise<void> {
-  await secondary.waitForText(".modal-card", "Primary", timeoutMs);
 }
 
 async function waitForSecondaryIncomingTransferPending(
@@ -136,6 +132,22 @@ async function deleteSessionIfRunning(client: { deleteSession(): Promise<void> }
   await client.deleteSession().catch(() => undefined);
 }
 
+async function failNextIncomingTransferAutoApproval(): Promise<void> {
+  const result = await secondary.executeAsync<string>(
+    `const cb = arguments[arguments.length - 1];
+     const ctx = window.__KANNA_E2E__.setupState;
+     const originalApprove = ctx.store.approveIncomingTransfer.bind(ctx.store);
+     ctx.store.approveIncomingTransfer = async () => {
+       ctx.store.approveIncomingTransfer = originalApprove;
+       throw new Error("simulated destination import failure before acknowledgment");
+     };
+     cb("ok");`,
+  );
+  if (result !== "ok") {
+    throw new Error(`failed to install incoming transfer failure hook: ${result}`);
+  }
+}
+
 const { primary, secondary } = createPrimaryAndSecondaryClients();
 
 describe("local transfer source handoff failure", () => {
@@ -162,7 +174,10 @@ describe("local transfer source handoff failure", () => {
   it("keeps the source task open when the destination import fails before acknowledgment", async () => {
     await waitForPeer("peer-secondary");
     await pauseForSlowMode("secondary peer discovered");
-    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary");
+    await pairWithPeerThroughUi(primary, "Secondary", "peer-secondary", {
+      promptClient: secondary,
+      promptPeerId: "peer-primary",
+    });
 
     // Direct task creation is setup-only: the product has no UI path for creating an inert
     // transfer fixture task without also launching a real agent session.
@@ -177,34 +192,18 @@ describe("local transfer source handoff failure", () => {
       ["Keep source open"],
     )) as Array<{ id: string }>;
     const sourceTaskId = sourceRows[0]?.id;
-    expect(sourceTaskId).toBeTruthy();
+    if (!sourceTaskId) {
+      throw new Error("expected source task to be created");
+    }
+    await callVueMethod(primary, "store.selectItem", sourceTaskId);
     await pauseForSlowMode("task created on primary");
 
+    await failNextIncomingTransferAutoApproval();
     await pushSelectedTaskToPeerThroughUi(primary, "Secondary");
     await pauseForSlowMode("task pushed to secondary");
 
-    await waitForIncomingTransferVisible();
-    await secondary.waitForText(".modal-card", "Primary");
     const pendingTransfer = await waitForSecondaryIncomingTransferPending(sourceTaskId);
-    const pendingPayload = JSON.parse(pendingTransfer.payload_json ?? "{}") as {
-      repo?: { path?: string };
-    };
-    if (!pendingPayload.repo) {
-      throw new Error("incoming transfer payload is missing repo metadata");
-    }
-    pendingPayload.repo.path = "/tmp/kanna-e2e-missing-transfer-repo";
-    await execDb(
-      secondary,
-      "UPDATE task_transfer SET payload_json = ? WHERE id = ?",
-      [JSON.stringify(pendingPayload), pendingTransfer.id],
-    );
-    await pauseForSlowMode("secondary incoming payload corrupted");
-
-    const approveButton = await secondary.findElement(".btn-primary");
-    await secondary.click(approveButton);
-    await sleep(500);
-    await waitForIncomingTransferVisible();
-    await pauseForSlowMode("incoming transfer approval failed on secondary");
+    await pauseForSlowMode("incoming transfer auto-import failed on secondary");
 
     const secondaryTransferRows = (await queryDb(
       secondary,

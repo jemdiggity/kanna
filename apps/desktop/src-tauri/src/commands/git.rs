@@ -33,6 +33,10 @@ pub struct GraphResult {
     pub head_commit: Option<String>,
 }
 
+fn discover_repo(repo_path: &str) -> Result<Repository, String> {
+    Repository::discover(repo_path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn git_diff(repo_path: String, mode: String) -> Result<String, String> {
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
@@ -245,7 +249,7 @@ pub fn git_graph(
 
 #[tauri::command]
 pub fn git_default_branch(repo_path: String) -> Result<String, String> {
-    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+    let repo = discover_repo(&repo_path)?;
 
     // Try to detect from remote HEAD reference
     if let Ok(reference) = repo.find_reference("refs/remotes/origin/HEAD") {
@@ -279,7 +283,7 @@ pub fn git_current_branch(repo_path: String) -> Result<Option<String>, String> {
 
 #[tauri::command]
 pub fn git_list_base_branches(repo_path: String) -> Result<Vec<String>, String> {
-    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+    let repo = discover_repo(&repo_path)?;
     let mut refs = BTreeSet::new();
 
     for branch_type in [git2::BranchType::Local, git2::BranchType::Remote] {
@@ -332,7 +336,8 @@ pub fn git_branch_upstream(repo_path: String) -> Result<Option<String>, String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        format_git_command_failure, git_branch_upstream, git_current_branch, git_list_base_branches,
+        format_git_command_failure, git_branch_upstream, git_current_branch, git_default_branch,
+        git_list_base_branches,
     };
     use git2::{Repository, Signature};
     use std::{
@@ -451,6 +456,46 @@ mod tests {
                 "origin/release/x".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn git_base_branch_commands_discover_repo_from_subdirectory() {
+        let temp_repo = TempRepo::new("subdir-base");
+        let repo = Repository::init(&temp_repo.path).expect("repo should initialize");
+        let commit_id = create_commit(&repo, &temp_repo.path);
+        let commit = repo
+            .find_commit(commit_id)
+            .expect("commit should be readable");
+        repo.branch("main", &commit, true)
+            .expect("main branch should exist");
+        repo.set_head("refs/heads/main")
+            .expect("HEAD should point at main");
+        repo.reference(
+            "refs/remotes/origin/main",
+            commit_id,
+            true,
+            "create origin main tracking ref",
+        )
+        .expect("origin/main should exist");
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+            true,
+            "create symbolic origin/HEAD",
+        )
+        .expect("origin/HEAD should exist");
+
+        let nested_path = temp_repo.path.join("apps").join("desktop");
+        fs::create_dir_all(&nested_path).expect("nested path should be created");
+
+        let default_branch = git_default_branch(nested_path.to_string_lossy().into_owned())
+            .expect("default branch lookup should discover parent repo");
+        let refs = git_list_base_branches(nested_path.to_string_lossy().into_owned())
+            .expect("base branch lookup should discover parent repo");
+
+        assert_eq!(default_branch, "main");
+        assert!(refs.contains(&"main".to_string()));
+        assert!(refs.contains(&"origin/main".to_string()));
     }
 
     #[test]

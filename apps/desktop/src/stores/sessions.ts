@@ -5,6 +5,7 @@ import { isTauri } from "../tauri-mock";
 import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
 import { resolveDbName } from "./db";
 import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
+import { encodeDaemonInput } from "./daemonInput";
 import { getAgentPermissionFlags } from "./agent-permissions";
 import { buildWorktreeSessionEnv } from "./worktreeEnv";
 import {
@@ -18,6 +19,13 @@ import { readRepoConfig, requireService, type PreparedPtySession, type PtySpawnO
 interface DaemonSessionInfo {
   session_id?: string;
   status?: string;
+}
+
+const CODEX_SPAWN_SUBMIT_DELAY_MS = 5_000;
+const CODEX_SPAWN_COMPOSER_SUBMIT_DELAY_MS = 1_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export interface SessionsApi {
@@ -332,13 +340,14 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
         ? `copilot ${copilotFlags.join(" ")}`
         : `copilot ${copilotFlags.join(" ")} -i '${escapedPrompt}'`;
     } else if (provider === "codex") {
+      const codexFlags: string[] = [...permissionFlags];
+      if (options?.model) codexFlags.push(`-m ${options.model}`);
       if (options?.resumeSessionId) {
         const escapedResumeSessionId = options.resumeSessionId.replace(/'/g, "'\\''");
-        agentCmd = `codex resume '${escapedResumeSessionId}'`;
+        agentCmd = escapedPrompt
+          ? `codex resume ${codexFlags.join(" ")} '${escapedResumeSessionId}' '${escapedPrompt}'`
+          : `codex resume ${codexFlags.join(" ")} '${escapedResumeSessionId}'`;
       } else {
-        const codexFlags: string[] = [...permissionFlags];
-        if (options?.model) codexFlags.push(`-m ${options.model}`);
-
         agentCmd = escapedPrompt
           ? `codex ${codexFlags.join(" ")} '${escapedPrompt}'`
           : `codex ${codexFlags.join(" ")}`;
@@ -377,6 +386,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
       env,
       setupCmds: [...setupCmds, ...(options?.setupCmdsOverride || [])],
       agentCmd,
+      agentProvider: provider,
       kannaCliPath,
     };
   }
@@ -389,7 +399,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     rows = 24,
     options?: PtySpawnOptions,
   ) {
-    const { env, setupCmds, agentCmd, kannaCliPath } = await preparePtySession(sessionId, prompt, {
+    const { env, setupCmds, agentCmd, agentProvider, kannaCliPath } = await preparePtySession(sessionId, prompt, {
       ...options,
       worktreePath: options?.worktreePath ?? cwd,
     });
@@ -405,6 +415,18 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
       rows,
       agentProvider: options?.agentProvider ?? null,
     });
+    if (agentProvider === "codex" && prompt.trim().length > 0) {
+      await delay(CODEX_SPAWN_SUBMIT_DELAY_MS);
+      await invoke("send_input", {
+        sessionId,
+        data: encodeDaemonInput("\r"),
+      });
+      await delay(CODEX_SPAWN_COMPOSER_SUBMIT_DELAY_MS);
+      await invoke("send_input", {
+        sessionId,
+        data: encodeDaemonInput("\x1b[13u"),
+      });
+    }
     await syncTaskStatusesFromDaemon();
   }
 

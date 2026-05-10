@@ -2131,6 +2131,28 @@ describe("App", () => {
     expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-suspended")).toBe("false");
   });
 
+  it("keeps the tree explorer available while a file preview opened from the picker is active", async () => {
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      TreeExplorerModal: TreeExplorerModalTestStub,
+      FilePickerModal: FilePickerModalTestStub,
+      FilePreviewModal: FilePreviewModalTestStub,
+    });
+
+    await flushPromises();
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.toggleTreeExplorer();
+    await flushPromises();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    await wrapper.get('[data-testid="file-picker-select"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-preview-modal"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="tree-explorer-modal"]').attributes("data-suspended")).toBe("false");
+  });
+
   it("clears tree explorer maximize state when the modal closes", async () => {
     const TreeExplorerClosableStub = defineComponent({
       name: "TreeExplorerModal",
