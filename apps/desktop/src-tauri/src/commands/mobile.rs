@@ -18,6 +18,7 @@ pub struct MobileServerStatus {
     pub state: String,
     pub desktop_id: String,
     pub desktop_name: String,
+    pub server_version: Option<String>,
     pub lan_host: String,
     pub lan_port: u16,
     pub pairing_code: Option<String>,
@@ -74,26 +75,22 @@ impl MobileServerManager {
             )
         };
 
+        let expected_desktop_id = desktop_id(&config_path);
+        let existing_status = self.fetch_status(&api_base_url).await.ok();
+        if let Some(status) = existing_status {
+            ensure_server_belongs_to_desktop(&status, &expected_desktop_id)?;
+            if is_current_server_status(&status, &expected_desktop_id, current_server_version()) {
+                let mut state = self.inner.lock().await;
+                state.started = true;
+                state.status = status.state;
+                state.desktop_name = status.desktop_name;
+                return Ok(());
+            }
+            stop_server_on_port(local_server_port()).await?;
+        }
+
         let lock_path = server_lock_path_for_config(&config_path)?;
-        let claimed_lock = match try_claim_server_lock(&lock_path) {
-            Ok(lock) => lock,
-            Err(err) => match self.fetch_status(&api_base_url).await {
-                Ok(status) if status.desktop_id == desktop_id(&config_path) => {
-                    let mut state = self.inner.lock().await;
-                    state.started = true;
-                    state.status = status.state;
-                    state.desktop_name = status.desktop_name;
-                    return Ok(());
-                }
-                Ok(status) => {
-                    return Err(format!(
-                        "kanna-server port is already owned by {} ({})",
-                        status.desktop_name, status.desktop_id
-                    ));
-                }
-                Err(_) => return Err(err),
-            },
-        };
+        let claimed_lock = try_claim_server_lock(&lock_path)?;
 
         {
             let mut state = self.inner.lock().await;
@@ -375,12 +372,13 @@ fn build_server_config(state: &MobileServerState) -> Result<String, String> {
     let device_token = generate_device_token()?;
 
     Ok(format!(
-        "relay_url = \"wss://kanna-relay.run.app\"\ndevice_token = \"{}\"\ndaemon_dir = \"{}\"\ndb_path = \"{}\"\ndesktop_id = \"{}\"\ndesktop_name = \"{}\"\nlan_host = \"0.0.0.0\"\nlan_port = {}\npairing_store_path = \"{}\"\n",
+        "relay_url = \"wss://kanna-relay.run.app\"\ndevice_token = \"{}\"\ndaemon_dir = \"{}\"\ndb_path = \"{}\"\ndesktop_id = \"{}\"\ndesktop_name = \"{}\"\nserver_version = \"{}\"\nlan_host = \"0.0.0.0\"\nlan_port = {}\npairing_store_path = \"{}\"\n",
         escape_toml_string(&device_token),
         escape_toml_string(&daemon_dir),
         escape_toml_string(&db_path.to_string_lossy()),
         escape_toml_string(&desktop_id(&state.config_path)),
         escape_toml_string(&state.desktop_name),
+        escape_toml_string(current_server_version()),
         local_server_port(),
         escape_toml_string(&pairing_store_path.to_string_lossy()),
     ))
@@ -439,6 +437,23 @@ fn local_server_port() -> u16 {
 }
 
 fn find_sidecar(name: &str) -> Result<PathBuf, String> {
+    #[cfg(test)]
+    if let Ok(dir) = std::env::var("KANNA_TEST_SIDECAR_DIR") {
+        let dir = PathBuf::from(dir);
+        let suffixed = dir.join(format!(
+            "{}-{}",
+            name,
+            crate::commands::fs::current_target_triple()
+        ));
+        if suffixed.exists() {
+            return Ok(suffixed);
+        }
+        let unsuffixed = dir.join(name);
+        if unsuffixed.exists() {
+            return Ok(unsuffixed);
+        }
+    }
+
     for candidate in crate::commands::fs::sidecar_candidates(name) {
         if candidate.exists() {
             return Ok(candidate);
@@ -457,10 +472,100 @@ fn stopped_snapshot(state: &MobileServerState) -> MobileServerStatus {
         state: state.status.clone(),
         desktop_id: desktop_id(&state.config_path),
         desktop_name: state.desktop_name.clone(),
+        server_version: Some(current_server_version().to_string()),
         lan_host: "0.0.0.0".to_string(),
         lan_port: local_server_port(),
         pairing_code: None,
     }
+}
+
+fn current_server_version() -> &'static str {
+    crate::KANNA_VERSION
+}
+
+fn is_current_server_status(
+    status: &MobileServerStatus,
+    expected_desktop_id: &str,
+    expected_server_version: &str,
+) -> bool {
+    status.desktop_id == expected_desktop_id
+        && status.server_version.as_deref() == Some(expected_server_version)
+}
+
+fn ensure_server_belongs_to_desktop(
+    status: &MobileServerStatus,
+    expected_desktop_id: &str,
+) -> Result<(), String> {
+    if status.desktop_id == expected_desktop_id {
+        return Ok(());
+    }
+    Err(format!(
+        "kanna-server port is already owned by {} ({})",
+        status.desktop_name, status.desktop_id
+    ))
+}
+
+async fn stop_server_on_port(port: u16) -> Result<(), String> {
+    let pids = server_pids_on_port(port).await?;
+    if pids.is_empty() {
+        return Ok(());
+    }
+
+    for pid in &pids {
+        signal_process(*pid, libc::SIGTERM)?;
+    }
+    wait_for_server_port_to_close(port, 20).await?;
+    if server_pids_on_port(port).await?.is_empty() {
+        return Ok(());
+    }
+
+    for pid in server_pids_on_port(port).await? {
+        signal_process(pid, libc::SIGKILL)?;
+    }
+    wait_for_server_port_to_close(port, 20).await
+}
+
+async fn server_pids_on_port(port: u16) -> Result<Vec<i32>, String> {
+    let output = Command::new("/usr/sbin/lsof")
+        .args(["-nP", "-ti", &format!("TCP:{port}"), "-sTCP:LISTEN"])
+        .output()
+        .await
+        .map_err(|e| format!("failed to inspect kanna-server port owner: {}", e))?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_lsof_pids(&stdout))
+}
+
+fn parse_lsof_pids(output: &str) -> Vec<i32> {
+    output
+        .lines()
+        .filter_map(|line| line.trim().parse::<i32>().ok())
+        .collect()
+}
+
+fn signal_process(pid: i32, signal: i32) -> Result<(), String> {
+    let rc = unsafe { libc::kill(pid, signal) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to signal stale kanna-server process {}: {}",
+            pid,
+            std::io::Error::last_os_error()
+        ))
+    }
+}
+
+async fn wait_for_server_port_to_close(port: u16, attempts: usize) -> Result<(), String> {
+    for _ in 0..attempts {
+        if server_pids_on_port(port).await?.is_empty() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err(format!("stale kanna-server did not stop on port {}", port))
 }
 
 fn desktop_id(config_path: &Path) -> String {
@@ -495,14 +600,18 @@ fn escape_toml_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        app_data_dir_for_server_config, build_server_config, desktop_id, escape_toml_string,
-        resolved_db_path, server_base_url, server_config_path_for_app_data_dir,
-        server_lock_path_for_config, stopped_snapshot, try_claim_server_lock, MobileServerManager,
-        MobileServerState,
+        app_data_dir_for_server_config, build_server_config, current_server_version, desktop_id,
+        escape_toml_string, is_current_server_status, parse_lsof_pids, resolved_db_path,
+        server_base_url, server_config_path_for_app_data_dir, server_lock_path_for_config,
+        stop_server_on_port, stopped_snapshot, try_claim_server_lock, MobileServerManager,
+        MobileServerState, MobileServerStatus,
     };
     use std::ffi::CString;
     use std::path::PathBuf;
+    use std::process::Stdio;
     use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use tokio::process::{Child, Command};
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -518,6 +627,164 @@ mod tests {
     unsafe fn unset_env_var(key: &str) {
         let key = CString::new(key).expect("env key should be valid");
         assert_eq!(libc::unsetenv(key.as_ptr()), 0);
+    }
+
+    #[test]
+    fn current_server_status_requires_matching_version() {
+        let status = MobileServerStatus {
+            state: "running".to_string(),
+            desktop_id: "desktop-1".to_string(),
+            desktop_name: "Studio Mac".to_string(),
+            server_version: Some(current_server_version().to_string()),
+            lan_host: "0.0.0.0".to_string(),
+            lan_port: 48120,
+            pairing_code: None,
+        };
+
+        assert!(is_current_server_status(
+            &status,
+            "desktop-1",
+            current_server_version()
+        ));
+
+        let stale_missing_version = MobileServerStatus {
+            server_version: None,
+            ..status.clone()
+        };
+        assert!(!is_current_server_status(
+            &stale_missing_version,
+            "desktop-1",
+            current_server_version()
+        ));
+
+        let stale_wrong_version = MobileServerStatus {
+            server_version: Some("__stale__".to_string()),
+            ..status
+        };
+        assert!(!is_current_server_status(
+            &stale_wrong_version,
+            "desktop-1",
+            current_server_version()
+        ));
+    }
+
+    #[test]
+    fn parse_lsof_pids_ignores_non_pid_lines() {
+        assert_eq!(parse_lsof_pids("123\nnot-a-pid\n456\n"), vec![123, 456]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn manager_replaces_stale_server_with_same_desktop_id() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        let root = unique_test_root("replace-stale");
+        let port = free_loopback_port();
+        let app_data_dir = root.join("app-data");
+        let db_path = root.join("kanna-test.db");
+        let daemon_dir = root.join("daemon");
+        let stale_config_path = root.join("stale-server.toml");
+        configure_process_test_env(port, &db_path, &daemon_dir);
+        create_test_database(&db_path);
+        let manager = MobileServerManager::new(app_data_dir.clone());
+        let expected_desktop_id = {
+            let state = manager.inner.lock().await;
+            desktop_id(&state.config_path)
+        };
+        write_test_server_config(
+            &stale_config_path,
+            &db_path,
+            &daemon_dir,
+            &expected_desktop_id,
+            None,
+            port,
+        );
+        let mut stale_server = start_test_kanna_server(&stale_config_path, port).await;
+        let stale_pid = stale_server.id().expect("stale server should have pid");
+
+        manager
+            .start()
+            .await
+            .expect("manager should replace stale server");
+        stale_server
+            .wait()
+            .await
+            .expect("stale server should have been reaped");
+        assert!(
+            !process_is_running(stale_pid),
+            "stale kanna-server process should be stopped"
+        );
+
+        let status = manager
+            .snapshot()
+            .await
+            .expect("replacement server should report status");
+        assert_eq!(status.desktop_id, expected_desktop_id);
+        assert_eq!(
+            status.server_version.as_deref(),
+            Some(current_server_version())
+        );
+
+        stop_server_on_port(port)
+            .await
+            .expect("cleanup should stop server");
+        cleanup_process_test_env();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn manager_reuses_current_server_with_same_desktop_id() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        let root = unique_test_root("reuse-current");
+        let port = free_loopback_port();
+        let app_data_dir = root.join("app-data");
+        let db_path = root.join("kanna-test.db");
+        let daemon_dir = root.join("daemon");
+        let existing_config_path = root.join("existing-server.toml");
+        configure_process_test_env(port, &db_path, &daemon_dir);
+        create_test_database(&db_path);
+        let manager = MobileServerManager::new(app_data_dir.clone());
+        let expected_desktop_id = {
+            let state = manager.inner.lock().await;
+            desktop_id(&state.config_path)
+        };
+        write_test_server_config(
+            &existing_config_path,
+            &db_path,
+            &daemon_dir,
+            &expected_desktop_id,
+            Some(current_server_version()),
+            port,
+        );
+        let mut existing_server = start_test_kanna_server(&existing_config_path, port).await;
+
+        manager
+            .start()
+            .await
+            .expect("manager should reuse current server");
+        assert!(
+            existing_server
+                .try_wait()
+                .expect("server status should be readable")
+                .is_none(),
+            "current kanna-server should still be running"
+        );
+
+        let status = manager
+            .snapshot()
+            .await
+            .expect("reused server should report status");
+        assert_eq!(status.desktop_id, expected_desktop_id);
+        assert_eq!(
+            status.server_version.as_deref(),
+            Some(current_server_version())
+        );
+
+        existing_server
+            .kill()
+            .await
+            .expect("cleanup should stop server");
+        let _ = existing_server.wait().await;
+        cleanup_process_test_env();
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -680,6 +947,10 @@ mod tests {
 
         let config = build_server_config(&state).unwrap();
         assert!(config.contains("desktop_name = \"Studio Mac\""));
+        assert!(config.contains(&format!(
+            "server_version = \"{}\"",
+            current_server_version()
+        )));
         assert!(config.contains("db_path = \"/tmp/build.kanna/kanna-v2.db\""));
         assert!(config.contains("lan_port = 48120"));
     }
@@ -728,5 +999,164 @@ mod tests {
         assert_eq!(snapshot.desktop_name, "Studio Mac");
         assert_eq!(snapshot.lan_port, 48120);
         assert!(snapshot.pairing_code.is_none());
+    }
+
+    fn configure_process_test_env(
+        port: u16,
+        db_path: &std::path::Path,
+        daemon_dir: &std::path::Path,
+    ) {
+        let sidecar_dir = test_sidecar_dir().unwrap_or_else(|| {
+            panic!("kanna-server sidecar not found; run `./kd build sidecars` before this test")
+        });
+        unsafe {
+            set_env_var("KANNA_MOBILE_SERVER_PORT", &port.to_string());
+            set_env_var("KANNA_DB_PATH", &db_path.to_string_lossy());
+            set_env_var("KANNA_DAEMON_DIR", &daemon_dir.to_string_lossy());
+            set_env_var("KANNA_TEST_SIDECAR_DIR", &sidecar_dir.to_string_lossy());
+            unset_env_var("KANNA_DB_NAME");
+        }
+    }
+
+    fn cleanup_process_test_env() {
+        unsafe {
+            unset_env_var("KANNA_MOBILE_SERVER_PORT");
+            unset_env_var("KANNA_DB_PATH");
+            unset_env_var("KANNA_DAEMON_DIR");
+            unset_env_var("KANNA_TEST_SIDECAR_DIR");
+            unset_env_var("KANNA_DB_NAME");
+        }
+    }
+
+    fn unique_test_root(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "kanna-mobile-{prefix}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after epoch")
+                .as_nanos()
+        ))
+    }
+
+    fn free_loopback_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("free loopback port should be available");
+        listener
+            .local_addr()
+            .expect("listener should have local addr")
+            .port()
+    }
+
+    fn create_test_database(path: &std::path::Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("test db directory should be created");
+        }
+        let conn = rusqlite::Connection::open(path).expect("test db should be created");
+        conn.query_row("PRAGMA journal_mode = WAL", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .expect("test db should enable WAL");
+    }
+
+    fn write_test_server_config(
+        config_path: &std::path::Path,
+        db_path: &std::path::Path,
+        daemon_dir: &std::path::Path,
+        desktop_id: &str,
+        server_version: Option<&str>,
+        port: u16,
+    ) {
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).expect("server config directory should be created");
+        }
+        let version_line = server_version
+            .map(|version| format!("server_version = \"{}\"\n", escape_toml_string(version)))
+            .unwrap_or_default();
+        let pairing_store_path = config_path.with_file_name("pairings.json");
+        let config = format!(
+            "relay_url = \"wss://relay.example.invalid\"\ndevice_token = \"test-token\"\ndaemon_dir = \"{}\"\ndb_path = \"{}\"\ndesktop_id = \"{}\"\ndesktop_name = \"Kanna Test\"\n{}lan_host = \"127.0.0.1\"\nlan_port = {}\npairing_store_path = \"{}\"\n",
+            escape_toml_string(&daemon_dir.to_string_lossy()),
+            escape_toml_string(&db_path.to_string_lossy()),
+            escape_toml_string(desktop_id),
+            version_line,
+            port,
+            escape_toml_string(&pairing_store_path.to_string_lossy()),
+        );
+        std::fs::write(config_path, config).expect("server config should be written");
+    }
+
+    async fn start_test_kanna_server(config_path: &std::path::Path, port: u16) -> Child {
+        let sidecar = test_kanna_server_binary().unwrap_or_else(|| {
+            panic!("kanna-server sidecar not found; run `./kd build sidecars` before this test")
+        });
+        let mut child = Command::new(sidecar)
+            .env("KANNA_SERVER_CONFIG", config_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("kanna-server should spawn");
+        let base_url = server_base_url(port);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while tokio::time::Instant::now() < deadline {
+            if let Some(status) = child.try_wait().expect("server status should be readable") {
+                panic!("kanna-server exited early with {status}");
+            }
+            if reqwest::get(format!("{base_url}/v1/status"))
+                .await
+                .is_ok_and(|response| response.status().is_success())
+            {
+                return child;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let _ = child.kill().await;
+        panic!("timed out waiting for kanna-server on {base_url}");
+    }
+
+    fn test_sidecar_dir() -> Option<PathBuf> {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(|desktop| desktop.parent())
+            .and_then(|apps| apps.parent())
+            .expect("manifest should be under apps/desktop/src-tauri");
+        [
+            manifest_dir.join("binaries"),
+            repo_root
+                .join(".build")
+                .join(crate::commands::fs::current_target_triple())
+                .join("debug"),
+            repo_root.join(".build").join("debug"),
+        ]
+        .into_iter()
+        .find(|dir| {
+            dir.join(format!(
+                "kanna-server-{}",
+                crate::commands::fs::current_target_triple()
+            ))
+            .is_file()
+                || dir.join("kanna-server").is_file()
+        })
+    }
+
+    fn test_kanna_server_binary() -> Option<PathBuf> {
+        let dir = test_sidecar_dir()?;
+        let suffixed = dir.join(format!(
+            "kanna-server-{}",
+            crate::commands::fs::current_target_triple()
+        ));
+        if suffixed.is_file() {
+            return Some(suffixed);
+        }
+        let unsuffixed = dir.join("kanna-server");
+        if unsuffixed.is_file() {
+            return Some(unsuffixed);
+        }
+        None
+    }
+
+    fn process_is_running(pid: u32) -> bool {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
     }
 }

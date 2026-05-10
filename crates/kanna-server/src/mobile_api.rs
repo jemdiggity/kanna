@@ -23,6 +23,7 @@ pub struct MobileServerStatus {
     pub state: String,
     pub desktop_id: String,
     pub desktop_name: String,
+    pub server_version: Option<String>,
     pub lan_host: String,
     pub lan_port: u16,
     pub pairing_code: Option<String>,
@@ -161,6 +162,7 @@ pub fn build_mobile_server_status(
         state: "running".to_string(),
         desktop_id: config.desktop_id.clone(),
         desktop_name: config.desktop_name.clone(),
+        server_version: config.server_version.clone(),
         lan_host: config.lan_host.clone(),
         lan_port: config.lan_port,
         pairing_code,
@@ -186,6 +188,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: Some("desktop-secret".to_string()),
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "0.0.0.0".to_string(),
             lan_port: 48120,
             pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
@@ -215,6 +218,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: Some("desktop-secret".to_string()),
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "0.0.0.0".to_string(),
             lan_port: 48120,
             pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
@@ -256,6 +260,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: Some("desktop-secret".to_string()),
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "0.0.0.0".to_string(),
             lan_port: 48120,
             pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
@@ -314,6 +319,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: Some("desktop-secret".to_string()),
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "0.0.0.0".to_string(),
             lan_port: 48120,
             pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
@@ -363,6 +369,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: Some("desktop-secret".to_string()),
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "0.0.0.0".to_string(),
             lan_port: 48120,
             pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
@@ -406,6 +413,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: Some("desktop-secret".to_string()),
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "0.0.0.0".to_string(),
             lan_port: 48120,
             pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
@@ -464,6 +472,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: Some("desktop-secret".to_string()),
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "0.0.0.0".to_string(),
             lan_port: 48120,
             pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
@@ -475,6 +484,7 @@ mod tests {
         assert_eq!(status.state, "running");
         assert_eq!(status.desktop_id, "desktop-1");
         assert_eq!(status.desktop_name, "Studio Mac");
+        assert_eq!(status.server_version.as_deref(), Some("test-version"));
         assert_eq!(status.pairing_code.as_deref(), Some("ABC123"));
     }
 }

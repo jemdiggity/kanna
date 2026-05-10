@@ -134,6 +134,7 @@ mod tests {
             desktop_id: "desktop-1".to_string(),
             desktop_secret: None,
             desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
             lan_host: "127.0.0.1".to_string(),
             lan_port: 48120,
             pairing_store_path: "/tmp/kanna-pairings.json".to_string(),
@@ -256,6 +257,7 @@ mod tests {
                     "state": "running",
                     "desktopId": "desktop-1",
                     "desktopName": "Studio Mac",
+                    "serverVersion": "test-version",
                     "lanHost": "127.0.0.1",
                     "lanPort": 48120,
                     "pairingCode": null
