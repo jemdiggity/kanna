@@ -52,6 +52,7 @@ import {
   reportPrewarmSessionError,
 } from "./kannaCleanup";
 import { isTaskTearingDown } from "./taskStages";
+import { isTaskSelectedInAnyWindow } from "./windowSelection";
 import { resolveDbName } from "./db";
 import { readRepoConfig, requireService, type CreateItemOptions, type StoreContext, type WorktreeBootstrapResult } from "./state";
 
@@ -108,7 +109,7 @@ export interface TasksApi {
   unpinItem: (itemId: string) => Promise<void>;
   reorderPinned: (repoId: string, orderedIds: string[]) => Promise<void>;
   renameItem: (itemId: string, displayName: string | null) => Promise<void>;
-  handleAgentFinished: (sessionId: string) => void;
+  handleAgentFinished: (sessionId: string) => Promise<void>;
 }
 
 export async function collectTeardownCommands(item: PipelineItem, repo: Repo): Promise<string[]> {
@@ -967,13 +968,17 @@ export function createTasksApi(
     }
   }
 
-  function handleAgentFinished(sessionId: string) {
+  async function handleAgentFinished(sessionId: string) {
     const item = context.state.items.value.find((candidate) => candidate.id === sessionId);
     if (!item) return;
-    const activity = context.state.selectedItemId.value === sessionId ? "idle" : "unread";
-    updatePipelineItemActivity(context.requireDb(), item.id, activity)
-      .then(() => reloadSnapshot())
-      .catch((error) => console.error("[store] activity update failed:", error));
+    const activity = await isTaskSelectedInAnyWindow(context, sessionId) ? "idle" : "unread";
+    try {
+      await updatePipelineItemActivity(context.requireDb(), item.id, activity);
+      await reloadSnapshot();
+      await invalidateWindowWorkspace("taskActivity");
+    } catch (error) {
+      console.error("[store] activity update failed:", error);
+    }
   }
 
   async function checkUnblocked(blockerItemId: string) {

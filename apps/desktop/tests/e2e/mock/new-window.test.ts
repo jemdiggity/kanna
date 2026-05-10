@@ -115,6 +115,34 @@ async function waitForCurrentItemId(
   throw new Error(`Timed out waiting for current item ${itemId}`);
 }
 
+async function waitForTaskActivity(
+  client: WebDriverClient,
+  itemId: string,
+  activity: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastActivity: string | null = null;
+  while (Date.now() < deadline) {
+    const items = await getVueState(client, "items") as Array<{ id: string; activity?: string | null }>;
+    lastActivity = items.find((item) => item.id === itemId)?.activity ?? null;
+    if (lastActivity === activity) {
+      return;
+    }
+    await sleep(200);
+  }
+  throw new Error(`Timed out waiting for task ${itemId} activity ${activity}; last activity was ${lastActivity}`);
+}
+
+async function taskTitleFontWeight(client: WebDriverClient, title: string): Promise<string> {
+  return client.executeSync<string>(
+    `const title = ${JSON.stringify(title)};
+     const el = Array.from(document.querySelectorAll(".pipeline-item .item-title"))
+       .find((candidate) => (candidate.textContent || "").includes(title));
+     return el ? window.getComputedStyle(el).fontWeight : "";`,
+  );
+}
+
 async function findWindowHandleForItem(
   client: WebDriverClient,
   handles: string[],
@@ -217,6 +245,68 @@ describe("new window", () => {
 
     const sourceWindowCurrentItem = await getVueState(client, "currentItem") as { id: string };
     expect(sourceWindowCurrentItem.id).toBe(taskAId);
+
+    await switchToWindow(client, secondHandle ?? "");
+    await closeFocusedWindowThroughAppAction(client);
+    await waitForWindowCount(client, initialHandles.length);
+    await switchToWindow(client, sourceHandle);
+    await client.waitForAppReady();
+  });
+
+  it("syncs unread-to-read changes across open windows", async () => {
+    const repoId = await importTestRepo(client, testRepoPath, "new-window-read-sync-test");
+    const idleTaskId = randomUUID();
+    const unreadTaskId = randomUUID();
+
+    await execDb(
+      client,
+      "INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type, activity, activity_changed_at, unread_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-10 minutes'), NULL)",
+      [idleTaskId, repoId, "Read Sync Idle", "in progress", "sdk", "idle"],
+    );
+    await execDb(
+      client,
+      "INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type, activity, activity_changed_at, unread_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-10 minutes'), datetime('now', '-10 minutes'))",
+      [unreadTaskId, repoId, "Read Sync Unread", "in progress", "sdk", "unread"],
+    );
+    await callVueMethod(client, "loadItems", repoId);
+    await setSelectedItem(client, idleTaskId);
+    await waitForCurrentItemId(client, idleTaskId);
+    await waitForTaskActivity(client, unreadTaskId, "unread");
+    expect(await taskTitleFontWeight(client, "Read Sync Unread")).toMatch(/^(700|bold)$/);
+
+    const initialHandles = await getWindowHandles(client);
+    const sourceHandle = await findWindowHandleForItem(client, initialHandles, idleTaskId);
+    await switchToWindow(client, sourceHandle);
+
+    await client.executeAsync(
+      `const cb = arguments[arguments.length - 1];
+       const ctx = window.__KANNA_E2E__.setupState;
+       Promise.resolve(
+         ctx.windowWorkspace.openWindow({
+           selectedRepoId: ${JSON.stringify(repoId)},
+           selectedItemId: ${JSON.stringify(idleTaskId)},
+         })
+       ).then(() => cb("ok"))
+        .catch((error) => cb({ __error: error?.message ?? String(error) }));`,
+    );
+
+    const handles = await waitForWindowCount(client, initialHandles.length + 1);
+    const secondHandle = handles.find((handle) => !initialHandles.includes(handle));
+    expect(secondHandle).toBeTruthy();
+
+    await switchToWindow(client, secondHandle ?? "");
+    await client.waitForAppReady();
+    await dismissStartupShortcutsModal(client);
+    await waitForCurrentItemId(client, idleTaskId);
+
+    await setSelectedItem(client, unreadTaskId);
+    await waitForCurrentItemId(client, unreadTaskId);
+    await waitForTaskActivity(client, unreadTaskId, "idle");
+
+    await switchToWindow(client, sourceHandle);
+    await client.waitForAppReady();
+    await waitForTaskActivity(client, unreadTaskId, "idle");
+    expect(await taskTitleFontWeight(client, "Read Sync Unread")).toMatch(/^(400|normal)$/);
 
     await switchToWindow(client, secondHandle ?? "");
     await closeFocusedWindowThroughAppAction(client);

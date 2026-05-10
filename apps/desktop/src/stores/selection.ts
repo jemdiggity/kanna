@@ -129,6 +129,7 @@ export function createSelectionApi(context: StoreContext): SelectionApi {
       if (item.activity_changed_at && new Date(item.activity_changed_at).getTime() > selectionTime) return;
       await updatePipelineItemActivity(context.requireDb(), itemId, "idle");
       await requireService(context.services.reloadSnapshot, "reloadSnapshot")();
+      await context.services.windowWorkspace?.invalidateSharedData("taskActivity");
     },
     { debounce: 1000 },
   );

@@ -214,7 +214,7 @@ export function createInitApi(
       if (shouldClearCachedTerminalStateOnSessionExit(sessionId)) {
         clearCachedTerminalState(sessionId);
       }
-      tasks.handleAgentFinished(sessionId);
+      void tasks.handleAgentFinished(sessionId);
     });
 
     listen("daemon_ready", async () => {
