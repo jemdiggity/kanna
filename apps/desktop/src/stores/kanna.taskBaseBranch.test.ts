@@ -1097,6 +1097,40 @@ describe("kanna store task base branch integration", () => {
     });
   });
 
+  it("clears pending setup before selecting a spawned PTY task so setup output is visible", async () => {
+    const selectionGate = mockState.defer();
+    const store = await createStore();
+    store.attachWindowWorkspace({
+      bootstrap: { windowId: "test-window", selectedRepoId: null, selectedItemId: null },
+      loadSnapshot: vi.fn(async () => ({ windows: [] })),
+      saveSnapshot: vi.fn(async () => {}),
+      openWindow: vi.fn(async () => {}),
+      closeWindow: vi.fn(async () => {}),
+      persistSelection: vi.fn(async () => selectionGate.promise),
+      persistSidebarHidden: vi.fn(async () => {}),
+      invalidateSharedData: vi.fn(async () => {}),
+      restoreAdditionalWindows: vi.fn(async () => {}),
+      onSharedInvalidation: vi.fn(async () => vi.fn()),
+    });
+
+    await store.createItem("repo-1", "/tmp/repo", "Show setup output", "pty", {
+      agentProvider: "claude",
+    });
+
+    await vi.waitFor(() => {
+      expect(mockState.invokeMock).toHaveBeenCalledWith(
+        "spawn_session",
+        expect.objectContaining({
+          agentProvider: "claude",
+        }),
+      );
+      expect(store.selectedItemId).toMatch(/^[0-9a-f-]+$/);
+    });
+
+    expect(store.pendingSetupIds).not.toContain(store.selectedItemId);
+    selectionGate.resolve();
+  });
+
   it("keeps a custom task PTY provider ahead of the real E2E override", async () => {
     mockState.readEnvVarOverrides = {
       KANNA_DB_NAME: "kanna-wt-task-existing.db",

@@ -351,6 +351,10 @@ export function createTasksApi(
       console.error(logPrefix, error);
       context.toast.error(toastMessage);
     };
+    const finishPendingSetup = () => {
+      context.state.pendingSetupIds.value = context.state.pendingSetupIds.value.filter((pendingId) => pendingId !== id);
+      context.state.pendingCreateVisibility.delete(id);
+    };
 
     try {
       let s1 = performance.now();
@@ -488,6 +492,7 @@ export function createTasksApi(
       console.log(`[perf:setup] spawnSession: ${(performance.now() - s1).toFixed(1)}ms`);
 
       s1 = performance.now();
+      finishPendingSetup();
       console.log("[tasks:createItem] setup selection policy", {
         taskId: id,
         stage: opts?.stage,
@@ -517,7 +522,7 @@ export function createTasksApi(
       }
       console.log(`[perf:setup] TOTAL (background): ${(performance.now() - s0).toFixed(1)}ms`);
     } finally {
-      context.state.pendingSetupIds.value = context.state.pendingSetupIds.value.filter((pendingId) => pendingId !== id);
+      finishPendingSetup();
       await requireService(context.services.syncTaskStatusesFromDaemon, "syncTaskStatusesFromDaemon")();
     }
   }
