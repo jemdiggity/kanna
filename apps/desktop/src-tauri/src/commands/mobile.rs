@@ -514,12 +514,14 @@ async fn stop_server_on_port(port: u16) -> Result<(), String> {
     for pid in &pids {
         signal_process(*pid, libc::SIGTERM)?;
     }
-    wait_for_server_port_to_close(port, 20).await?;
-    if server_pids_on_port(port).await?.is_empty() {
+    let _ = wait_for_server_port_to_close(port, 20).await;
+
+    let remaining_pids = server_pids_on_port(port).await?;
+    if remaining_pids.is_empty() {
         return Ok(());
     }
 
-    for pid in server_pids_on_port(port).await? {
+    for pid in remaining_pids {
         signal_process(pid, libc::SIGKILL)?;
     }
     wait_for_server_port_to_close(port, 20).await
@@ -603,8 +605,8 @@ mod tests {
         app_data_dir_for_server_config, build_server_config, current_server_version, desktop_id,
         escape_toml_string, is_current_server_status, parse_lsof_pids, resolved_db_path,
         server_base_url, server_config_path_for_app_data_dir, server_lock_path_for_config,
-        stop_server_on_port, stopped_snapshot, try_claim_server_lock, MobileServerManager,
-        MobileServerState, MobileServerStatus,
+        server_pids_on_port, stop_server_on_port, stopped_snapshot, try_claim_server_lock,
+        MobileServerManager, MobileServerState, MobileServerStatus,
     };
     use std::ffi::CString;
     use std::path::PathBuf;
@@ -785,6 +787,21 @@ mod tests {
         let _ = existing_server.wait().await;
         cleanup_process_test_env();
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stop_server_on_port_escalates_to_sigkill_when_sigterm_is_ignored() {
+        let port = free_loopback_port();
+        let mut child = start_sigterm_ignoring_listener(port).await;
+
+        stop_server_on_port(port)
+            .await
+            .expect("shutdown should escalate and free the port");
+
+        child
+            .wait()
+            .await
+            .expect("listener process should be reaped");
     }
 
     #[test]
@@ -1112,6 +1129,48 @@ mod tests {
         }
         let _ = child.kill().await;
         panic!("timed out waiting for kanna-server on {base_url}");
+    }
+
+    async fn start_sigterm_ignoring_listener(port: u16) -> Child {
+        let script = r#"
+import signal
+import socket
+import sys
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("127.0.0.1", int(sys.argv[1])))
+sock.listen(1)
+while True:
+    time.sleep(1)
+"#;
+        let mut child = Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .arg(port.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("python3 should start SIGTERM-ignoring listener");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if let Some(status) = child
+                .try_wait()
+                .expect("listener status should be readable")
+            {
+                panic!("SIGTERM-ignoring listener exited early with {status}");
+            }
+            if !server_pids_on_port(port).await.unwrap().is_empty() {
+                return child;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        panic!("timed out waiting for SIGTERM-ignoring listener on port {port}");
     }
 
     fn test_sidecar_dir() -> Option<PathBuf> {
