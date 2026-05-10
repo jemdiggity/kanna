@@ -1906,9 +1906,94 @@ describe("kanna store task base branch integration", () => {
     expect(mockState.clearPipelineItemStageResultMock).toHaveBeenCalledWith(expect.anything(), "item-source");
     expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
       sessionId: "item-source",
-      data: Array.from(new TextEncoder().encode("\x1b[200~Stage prompt\x1b[201~\r")),
+      data: Array.from(new TextEncoder().encode("Stage prompt")),
+    });
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("\x1b[13u")),
     });
   });
+
+  it("submits continue-mode prompts to Codex with the terminal Enter sequence", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "commit", transition: "auto", mode: "continue", agent: "commit" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        agent_provider: "codex",
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source");
+
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("Stage prompt")),
+    });
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("\x1b[13u")),
+    });
+  });
+
+  it("relaunches Codex continue-mode stages when the previous TUI has exited", async () => {
+    mockState.pipelineDefinition = {
+      name: "default",
+      stages: [
+        { name: "in progress", transition: "manual" },
+        { name: "commit", transition: "auto", mode: "continue", agent: "commit" },
+      ],
+    };
+    mockState.pipelineItems = [
+      mockState.makeItem({
+        id: "item-source",
+        branch: "task-source",
+        stage: "in progress",
+        agent_type: "sdk",
+        agent_provider: "codex",
+        agent_session_id: "019d9a8c-9f39-7240-818f-88367a7c31df",
+      }),
+    ];
+
+    const store = await createStore();
+
+    await store.advanceStage("item-source");
+
+    expect(mockState.updatePipelineItemStageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "item-source",
+      "commit",
+    );
+    expect(mockState.invokeMock).toHaveBeenCalledWith(
+      "spawn_session",
+      expect.objectContaining({
+        sessionId: "item-source",
+        cwd: "/tmp/repo/.kanna-worktrees/task-source",
+        args: expect.arrayContaining([
+          expect.stringContaining("codex resume"),
+          expect.stringContaining("019d9a8c-9f39-7240-818f-88367a7c31df"),
+          expect.stringContaining("Stage prompt"),
+        ]),
+      }),
+    );
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("\r")),
+    });
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("\x1b[13u")),
+    });
+  }, 10_000);
 
   it("skips the post-action and advances to the next real stage when requested", async () => {
     mockState.pipelineDefinition = {
@@ -1979,7 +2064,11 @@ describe("kanna store task base branch integration", () => {
     );
     expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
       sessionId: "item-source",
-      data: Array.from(new TextEncoder().encode("\x1b[200~Stage prompt\x1b[201~\r")),
+      data: Array.from(new TextEncoder().encode("Stage prompt")),
+    });
+    expect(mockState.invokeMock).toHaveBeenCalledWith("send_input", {
+      sessionId: "item-source",
+      data: Array.from(new TextEncoder().encode("\x1b[13u")),
     });
   });
 

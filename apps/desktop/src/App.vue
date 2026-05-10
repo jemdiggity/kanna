@@ -113,6 +113,7 @@ const previewFilePath = ref("");
 const previewInitialLine = ref<number | undefined>(undefined);
 const previewHidden = ref(false);
 const previewFromPicker = ref(false);
+const previewFromTree = ref(false);
 const showDiffModal = ref(false);
 const showTreeExplorer = ref(false);
 const currentWorktreePath = computed(() => {
@@ -662,6 +663,7 @@ function closeFileFlow() {
   maximizedModal.value = maximizedModal.value === "file" ? null : maximizedModal.value;
   previewHidden.value = false;
   previewFromPicker.value = false;
+  previewFromTree.value = false;
 }
 
 watch(currentFileFlowKey, (newKey, oldKey) => {
@@ -674,11 +676,24 @@ function closeFilePicker() {
   filePickerHidden.value = false;
 }
 
-function openFilePreview(filePath: string, initialLine: number | undefined, fromPicker: boolean) {
+function showFilePickerOnTop() {
+  previewHidden.value = false;
+  showFilePickerModal.value = true;
+  filePickerHidden.value = false;
+  nextTick(() => filePickerRef.value?.bringToFront?.());
+}
+
+function openFilePreview(
+  filePath: string,
+  initialLine: number | undefined,
+  fromPicker: boolean,
+  fromTree = false
+) {
   previewFilePath.value = filePath;
   previewInitialLine.value = initialLine;
   rememberCurrentPreview(filePath, initialLine);
   previewFromPicker.value = fromPicker;
+  previewFromTree.value = fromTree;
   previewHidden.value = false;
   showFilePreviewModal.value = true;
   nextTick(() => filePreviewRef.value?.bringToFront?.());
@@ -697,10 +712,10 @@ function closeFilePreview(reopenPicker: boolean) {
 
   const shouldReopenPicker = reopenPicker && previewFromPicker.value;
   previewFromPicker.value = false;
+  previewFromTree.value = false;
 
   if (shouldReopenPicker) {
-    showFilePickerModal.value = true;
-    filePickerHidden.value = false;
+    showFilePickerOnTop();
   }
 }
 
@@ -861,9 +876,7 @@ const keyboardActions = {
         filePickerRef.value?.bringToFront();
       }
     } else {
-      previewHidden.value = false;
-      showFilePickerModal.value = true;
-      filePickerHidden.value = false;
+      showFilePickerOnTop();
     }
   },
   toggleFilePreview: () => {
@@ -871,6 +884,7 @@ const keyboardActions = {
       showFilePreviewModal.value = false;
       previewHidden.value = true;
       previewFromPicker.value = false;
+      previewFromTree.value = false;
     } else {
       const recalledPreview = getCurrentPreviewRecall();
       if (recalledPreview) {
@@ -879,7 +893,8 @@ const keyboardActions = {
       }
       previewHidden.value = false;
       previewFromPicker.value = false;
-      showFilePickerModal.value = true;
+      previewFromTree.value = false;
+      showFilePickerOnTop();
     }
   },
   toggleTreeExplorer: () => {
@@ -1638,9 +1653,9 @@ onBeforeUnmount(() => {
       :repo-root="store.selectedRepo?.path ?? treeExplorerRoot"
       :home-path="homePath"
       :maximized="maximizedModal === 'tree'"
-      :suspended="showFilePreviewModal"
+      :suspended="showFilePreviewModal && previewFromTree"
       @close="closeTreeExplorer"
-      @open-file="(f: string) => openFilePreview(f, undefined, false)"
+      @open-file="(f: string) => openFilePreview(f, undefined, false, true)"
     />
     <FilePreviewModal
       ref="filePreviewRef"

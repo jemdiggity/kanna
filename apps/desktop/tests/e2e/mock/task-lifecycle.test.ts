@@ -6,6 +6,26 @@ import { queryDb, tauriInvoke } from "../helpers/vue";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 import { buildGlobalKeydownScript } from "../helpers/keyboard";
 
+async function waitForPipelineItem<T>(
+  client: WebDriverClient,
+  sql: string,
+  params: unknown[],
+  predicate: (row: T | undefined) => boolean,
+  timeoutMs = 5_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastRow: T | undefined;
+
+  while (Date.now() < deadline) {
+    const rows = (await queryDb(client, sql, params)) as T[];
+    lastRow = rows[0];
+    if (predicate(lastRow)) return lastRow;
+    await sleep(100);
+  }
+
+  throw new Error(`Timed out waiting for pipeline item state; last row was ${JSON.stringify(lastRow)}`);
+}
+
 describe("task lifecycle", () => {
   const client = new WebDriverClient();
   let repoId = "";
@@ -95,14 +115,14 @@ describe("task lifecycle", () => {
       shift: true,
     }));
 
-    await sleep(300);
-    const stageRows = (await queryDb(
+    const stageRow = await waitForPipelineItem<{ stage: string; teardown_started_at: string | null }>(
       client,
       "SELECT stage, teardown_started_at FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
       [repoId, "Say OK"],
-    )) as Array<{ stage: string; teardown_started_at: string | null }>;
-    expect(stageRows[0]?.stage).toBe("in progress");
-    expect(stageRows[0]?.teardown_started_at).toBeTruthy();
+      (row) => row?.stage === "in progress" && Boolean(row.teardown_started_at),
+    );
+    expect(stageRow.stage).toBe("in progress");
+    expect(stageRow.teardown_started_at).toBeTruthy();
 
     const sidebarText = await client.executeSync<string>(
       `return document.querySelector(".sidebar")?.textContent || "";`
@@ -155,13 +175,13 @@ describe("task lifecycle", () => {
       shift: true,
     }));
 
-    await sleep(500);
-    const stageRows = (await queryDb(
+    const stageRow = await waitForPipelineItem<{ stage: string }>(
       client,
       "SELECT stage FROM pipeline_item WHERE repo_id = ? AND prompt = ? ORDER BY created_at DESC LIMIT 1",
       [repoId, "Close Fast"],
-    )) as Array<{ stage: string }>;
-    expect(stageRows[0]?.stage).toBe("done");
+      (row) => row?.stage === "done",
+    );
+    expect(stageRow.stage).toBe("done");
 
     const sidebarText = await client.executeSync<string>(
       `return document.querySelector(".sidebar")?.textContent || "";`

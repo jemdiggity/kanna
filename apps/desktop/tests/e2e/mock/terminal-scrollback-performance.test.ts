@@ -51,9 +51,10 @@ describe("terminal scrollback performance (real PTY)", () => {
     );
     await client.waitForElement(".shell-modal .terminal-container", 15_000);
 
-    await sendKeysToShellTerminal(
+    await sendInputToShellSession(
       client,
-      `i=1; while [ $i -le 10050 ]; do printf 'KSCROLL%05d\\n' $i; i=$((i+1)); done; printf 'KSCROLLEND\\n'\n`,
+      sessionId,
+      `awk 'BEGIN { for (i = 1; i <= 10050; i++) printf "KSCROLL%05d\\n", i; print "KSCROLLEND" }'\n`,
     );
 
     const stats = await waitForScrollbackStats(client, {
@@ -137,16 +138,15 @@ function parseScrollbackLineNumber(line: string | null): number {
   return Number.parseInt(match[1], 10);
 }
 
-async function sendKeysToShellTerminal(
+async function sendInputToShellSession(
   client: WebDriverClient,
+  sessionId: string,
   text: string,
 ): Promise<void> {
-  await client.executeSync(
-    `const el = document.querySelector(".shell-modal .xterm-helper-textarea");
-     if (el instanceof HTMLElement) el.focus();`,
-  );
-  const input = await client.waitForElement(".shell-modal .xterm-helper-textarea", 5_000);
-  await client.sendKeys(input, text);
+  await tauriInvoke(client, "send_input", {
+    sessionId,
+    data: Array.from(new TextEncoder().encode(text)),
+  });
 }
 
 async function closeShellModal(client: WebDriverClient): Promise<void> {
@@ -200,7 +200,7 @@ async function createDeterministicAgentTask(
 
 function buildNumberedOutputCommand(prefix: string, count: number, initialDelaySeconds = 0): string {
   const delay = initialDelaySeconds > 0 ? `sleep ${initialDelaySeconds}; ` : "";
-  return `${delay}prefix=${shellQuote(prefix)}; i=1; while [ $i -le ${count} ]; do printf '%s%05d\\n' "$prefix" "$i"; i=$((i+1)); done; printf '%s%s\\n' "$prefix" END; while true; do sleep 60; done`;
+  return `${delay}awk -v prefix=${shellQuote(prefix)} -v count=${count} 'BEGIN { for (i = 1; i <= count; i++) printf "%s%05d\\n", prefix, i; printf "%sEND\\n", prefix }'; while true; do sleep 60; done`;
 }
 
 function shellQuote(value: string): string {

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { homedir } from "node:os";
 import { dirname, basename, join, posix, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,43 @@ function agentCliVersionFixtureEnv(): Record<string, string> {
     KANNA_E2E_AGENT_CLI_VERSION_COPILOT: "GitHub Copilot CLI 1.0.32.\nRun 'copilot update' to check for updates.\n",
     KANNA_E2E_AGENT_CLI_VERSION_CODEX: "codex-cli 0.125.0-beta.1+20260429\n",
   };
+}
+
+async function setupIsolatedCodexHome(destination: string): Promise<string> {
+  const source = process.env.CODEX_HOME || join(homedir(), ".codex");
+  await rm(destination, { recursive: true, force: true }).catch(() => undefined);
+  await mkdir(destination, { recursive: true });
+
+  for (const filename of ["auth.json", "config.toml", "models_cache.json"]) {
+    await copyFile(join(source, filename), join(destination, filename)).catch(() => undefined);
+  }
+
+  let latestVersion = "0.0.0";
+  try {
+    const versionOutput = await new Promise<string>((resolveVersion) => {
+      const proc = spawn("codex", ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
+      let output = "";
+      proc.stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      proc.once("exit", () => resolveVersion(output.trim()));
+      proc.once("error", () => resolveVersion(""));
+    });
+    latestVersion = versionOutput.split(/\s+/).at(-1) || latestVersion;
+  } catch {
+    latestVersion = "0.0.0";
+  }
+
+  await writeFile(
+    join(destination, "version.json"),
+    JSON.stringify({
+      latest_version: latestVersion,
+      last_checked_at: new Date().toISOString(),
+      dismissed_version: latestVersion,
+    }),
+  );
+
+  return destination;
 }
 
 async function findFreePort(): Promise<number> {
@@ -245,6 +283,12 @@ async function main(): Promise<void> {
   const primaryTransferPort = await findFreePort();
   const primaryDbName = `test-${worktreeName}-primary.db`;
   const primaryDaemonDir = join(repoRoot, ".kanna-daemon-e2e", runSuffix);
+  const realE2eRuntimeEnv = realE2eAgentEnv.KANNA_E2E_REAL_AGENT_PROVIDER === "codex"
+    ? {
+        ...realE2eAgentEnv,
+        CODEX_HOME: await setupIsolatedCodexHome(join(primaryDaemonDir, "codex-home")),
+      }
+    : realE2eAgentEnv;
   const agentCliFixtureEnv = agentCliVersionFixtureEnv();
   const primary = buildInstanceConfig({
     daemonDir: primaryDaemonDir,
@@ -252,7 +296,7 @@ async function main(): Promise<void> {
     devPortEnvValue: primaryDevPort,
     effectiveWebDriverPort: primaryWebDriverPort,
     envOverrides: {
-      ...realE2eAgentEnv,
+      ...realE2eRuntimeEnv,
       KANNA_TRANSFER_DISCOVERY: "registry",
       KANNA_TRANSFER_DISPLAY_NAME: "Primary",
       KANNA_TRANSFER_PEER_ID: "peer-primary",
@@ -282,7 +326,7 @@ async function main(): Promise<void> {
         devPortEnvValue: secondaryDevPort,
         effectiveWebDriverPort: secondaryWebDriverPort,
         envOverrides: {
-          ...realE2eAgentEnv,
+          ...realE2eRuntimeEnv,
           KANNA_TRANSFER_DISCOVERY: "registry",
           KANNA_TRANSFER_DISPLAY_NAME: "Secondary",
           KANNA_TRANSFER_PEER_ID: "peer-secondary",
@@ -299,7 +343,16 @@ async function main(): Promise<void> {
     return join(primaryDaemonDir, `${perfSuffix}.perf.log`);
   }
 
-  function buildTestEnv(withSecondary: boolean, perfOutputPath: string): Record<string, string> {
+  function realE2eRuntimeEnvForTarget(testTarget: string): Record<string, string> {
+    void testTarget;
+    return realE2eRuntimeEnv;
+  }
+
+  function buildTestEnv(
+    withSecondary: boolean,
+    perfOutputPath: string,
+    runtimeEnv: Record<string, string>,
+  ): Record<string, string> {
     return toSpawnEnv({
       KANNA_DAEMON_DIR: primaryDaemonDir,
       KANNA_DB_NAME: primaryDbName,
@@ -307,28 +360,34 @@ async function main(): Promise<void> {
       KANNA_E2E_PERF_OUTPUT_PATH: perfOutputPath,
       KANNA_TRANSFER_REGISTRY_DIR: transferRegistryDir,
       KANNA_WEBDRIVER_PORT: String(primaryWebDriverPort),
-      ...realE2eAgentEnv,
+      ...runtimeEnv,
       ...(withSecondary && secondary
         ? { KANNA_E2E_TARGET_WEBDRIVER_PORT: String(secondary.webDriverPort) }
         : {}),
     });
   }
 
-  async function startInstances(withSecondary: boolean, useAgentCliFixtures: boolean): Promise<RunningInstances> {
+  async function startInstances(
+    withSecondary: boolean,
+    useAgentCliFixtures: boolean,
+    runtimeEnv: Record<string, string> = realE2eRuntimeEnv,
+  ): Promise<RunningInstances> {
     const fixtureEnv = useAgentCliFixtures ? agentCliFixtureEnv : {};
-    await runCommand(primary.startCommand, { cwd: repoRoot, env: { ...primary.env, ...fixtureEnv } });
-    const secondaryInstance = withSecondary ? secondary : null;
-    if (secondaryInstance) {
-      await runCommand(secondaryInstance.startCommand, {
-        cwd: repoRoot,
-        env: { ...secondaryInstance.env, ...fixtureEnv },
-      });
-    }
+    await runCommand(primary.startCommand, {
+      cwd: repoRoot,
+      env: { ...primary.env, ...runtimeEnv, ...fixtureEnv },
+    });
     console.log(`[e2e] waiting for primary app at ${primary.baseUrl}`);
     await waitForApp(primary.baseUrl, 10 * 60_000);
     console.log(`[e2e] primary app ready at ${primary.baseUrl}`);
     await pauseForAppReady("primary");
+
+    const secondaryInstance = withSecondary ? secondary : null;
     if (secondaryInstance) {
+      await runCommand(secondaryInstance.startCommand, {
+        cwd: repoRoot,
+        env: { ...secondaryInstance.env, ...runtimeEnv, ...fixtureEnv },
+      });
       console.log(`[e2e] waiting for secondary app at ${secondaryInstance.baseUrl}`);
       await waitForApp(secondaryInstance.baseUrl, 10 * 60_000);
       console.log(`[e2e] secondary app ready at ${secondaryInstance.baseUrl}`);
@@ -353,6 +412,10 @@ async function main(): Promise<void> {
     }).catch(() => undefined);
   }
 
+  async function resetTransferRegistry(): Promise<void> {
+    await rm(transferRegistryDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+
   let runningInstances: RunningInstances | null = null;
   let lastTargetWasReal = false;
 
@@ -369,7 +432,12 @@ async function main(): Promise<void> {
           console.log("\n[e2e] restarting app instances between real tests\n");
         }
         await stopInstances(runningInstances);
-        runningInstances = await startInstances(needsSecondaryForTarget, false);
+        await resetTransferRegistry();
+        runningInstances = await startInstances(
+          needsSecondaryForTarget,
+          false,
+          realE2eRuntimeEnvForTarget(testTarget),
+        );
       } else if (runningInstances?.secondary && !needsSecondaryForTarget) {
         await stopInstances(runningInstances);
         runningInstances = await startInstances(false, !targetIsReal);
@@ -383,7 +451,11 @@ async function main(): Promise<void> {
           ["pnpm", "exec", "vitest", "run", "--config", "./tests/e2e/vitest.config.ts", testTarget],
           {
             cwd: desktopRoot,
-            env: buildTestEnv(needsSecondaryForTarget, perfOutputPath),
+            env: buildTestEnv(
+              needsSecondaryForTarget,
+              perfOutputPath,
+              realE2eRuntimeEnvForTarget(testTarget),
+            ),
           },
         );
       } finally {

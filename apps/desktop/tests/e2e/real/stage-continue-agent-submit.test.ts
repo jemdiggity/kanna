@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 import { cleanupWorktrees, importTestRepo, resetDatabase } from "../helpers/reset";
 import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
-import { nudgeTerminalTrustPrompt } from "../helpers/terminalInput";
+import { nudgeTerminalTrustPrompt, sendKeysToActiveTerminal } from "../helpers/terminalInput";
 import { callVueMethod, execDb, queryDb, tauriInvoke } from "../helpers/vue";
 import { WebDriverClient } from "../helpers/webdriver";
 import { waitForFile, waitForNewTaskWorktree } from "../helpers/worktreeFs";
@@ -54,12 +54,15 @@ async function waitForActiveSession(client: WebDriverClient, taskId: string): Pr
   throw new Error(`timed out waiting for active session ${taskId}`);
 }
 
-async function readTaskRow(client: WebDriverClient, taskId: string): Promise<{ agent_provider: string | null }> {
+async function readTaskRow(
+  client: WebDriverClient,
+  taskId: string,
+): Promise<{ agent_provider: string | null; agent_session_id: string | null }> {
   const rows = (await queryDb(
     client,
-    "SELECT agent_provider FROM pipeline_item WHERE id = ?",
+    "SELECT agent_provider, agent_session_id FROM pipeline_item WHERE id = ?",
     [taskId],
-  )) as Array<{ agent_provider: string | null }>;
+  )) as Array<{ agent_provider: string | null; agent_session_id: string | null }>;
   const row = rows[0];
   if (!row) throw new Error(`task ${taskId} was not found`);
   return row;
@@ -95,11 +98,7 @@ describe("real continue-stage agent submission", () => {
             transition: "auto",
             mode: "continue",
             agent: "commit-real",
-            prompt: [
-              "Create a file named continue-stage-real-submit.txt in the current directory containing exactly: submitted",
-              "Then run: kanna-cli stage-complete --task-id \"$KANNA_TASK_ID\" --status success --summary 'continue submitted'",
-              "Do not wait for any additional input.",
-            ].join("\n"),
+            prompt: "Create a file named continue-stage-real-submit.txt in the current directory containing exactly: submitted. Then run: kanna-cli stage-complete --task-id \"$KANNA_TASK_ID\" --status success --summary 'continue submitted'. Do not wait for any additional input.",
           },
         ],
       }),
@@ -111,7 +110,6 @@ describe("real continue-stage agent submission", () => {
         "name: commit-real",
         "description: Real continue-stage E2E agent.",
         "---",
-        "Follow the stage instructions exactly.",
         "",
       ].join("\n"),
     );
@@ -131,12 +129,15 @@ describe("real continue-stage agent submission", () => {
   });
 
   it("advances a live real agent and submits the continue-stage prompt without a manual Enter", async () => {
+    const initialPrompt = process.env.KANNA_E2E_REAL_AGENT_PROVIDER === "codex"
+      ? "Create a file named continue-stage-initial.txt in the current directory containing exactly: ready. Then stop."
+      : "";
     const createResult = await callVueMethod(
       client,
       "store.createItem",
       repoId,
       testRepoPath,
-      "",
+      initialPrompt,
       "pty",
       {
         pipelineName,
@@ -149,12 +150,20 @@ describe("real continue-stage agent submission", () => {
     taskId = createResult;
 
     worktreePath = await waitForNewTaskWorktree(testRepoPath, new Set(), 60_000);
-    await waitForActiveSession(client, taskId);
-    await nudgeTerminalTrustPrompt(client, {
-      initialDelayMs: 5_000,
-      attempts: 4,
-      intervalMs: 5_000,
-    });
+    const initialRow = await readTaskRow(client, taskId);
+    if (initialRow.agent_provider === "codex") {
+      const initialMarkerPath = join(worktreePath, "continue-stage-initial.txt");
+      await waitForFile(initialMarkerPath, 180_000, 1_000);
+      expect((await readFile(initialMarkerPath, "utf8")).trimEnd()).toBe("ready");
+      await hydrateStoreItem(client, taskId);
+    } else {
+      await waitForActiveSession(client, taskId);
+      await nudgeTerminalTrustPrompt(client, {
+        initialDelayMs: 5_000,
+        attempts: 4,
+        intervalMs: 5_000,
+      });
+    }
 
     await execDb(
       client,
@@ -170,7 +179,6 @@ describe("real continue-stage agent submission", () => {
     await waitForFile(markerPath, 180_000, 1_000);
     expect((await readFile(markerPath, "utf8")).trimEnd()).toBe("submitted");
 
-    const row = await readTaskRow(client, taskId);
-    expect(["codex", "claude", "copilot"]).toContain(row.agent_provider);
+    expect(["codex", "claude", "copilot"]).toContain(initialRow.agent_provider);
   }, 300_000);
 });
