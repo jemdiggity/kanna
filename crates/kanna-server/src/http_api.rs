@@ -2516,6 +2516,189 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn request_revision_route_resolves_branch_style_task_id() {
+        use kanna_daemon::protocol::{Command as DaemonCommand, Event as DaemonEvent};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixListener;
+
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let repo_root = std::env::temp_dir().join(format!("kanna-http-revision-branch-{unique}"));
+        init_test_git_repo(&repo_root);
+        std::fs::create_dir_all(repo_root.join(".kanna/pipelines")).unwrap();
+        std::fs::create_dir_all(repo_root.join(".kanna/agents/implement")).unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/pipelines/qa.json"),
+            r#"{
+  "stages": [
+    { "name": "in progress", "transition": "manual", "agent": "implement", "prompt": "$TASK_PROMPT" },
+    { "name": "review", "transition": "auto" },
+    { "name": "pr", "transition": "manual" }
+  ]
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo_root.join(".kanna/agents/implement/AGENT.md"),
+            "---\nagent_provider: claude\n---\nImplement revision:\n$TASK_PROMPT",
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .args(["add", ".kanna"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "add pipeline"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "task-710917fb"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let daemon_dir = std::env::temp_dir().join(format!("kanna-http-revision-daemon-{unique}"));
+        std::fs::create_dir_all(&daemon_dir).unwrap();
+        let socket_path = daemon_socket_path_for_dir(&daemon_dir.to_string_lossy());
+        let _ = std::fs::remove_file(&socket_path);
+        // Full daemon/agent E2E would require staged sidecars plus a runnable agent CLI.
+        // This fake daemon keeps the real HTTP handler, DB lookup, revision preparation,
+        // Spawn protocol, stage-result persistence, and source-task close in scope.
+        let daemon_listener = UnixListener::bind(&socket_path).unwrap();
+        let daemon_server = tokio::spawn(async move {
+            let (stream, _) = daemon_listener.accept().await.unwrap();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let command: DaemonCommand = serde_json::from_str(line.trim()).unwrap();
+            let session_id = match command {
+                DaemonCommand::Spawn {
+                    session_id, cwd, ..
+                } => {
+                    assert!(cwd.contains(".kanna-worktrees/task-"));
+                    session_id
+                }
+                other => panic!("expected spawn command, got {:?}", other),
+            };
+            write_half
+                .write_all(
+                    format!(
+                        "{}\n",
+                        serde_json::to_string(&DaemonEvent::SessionCreated { session_id }).unwrap()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: daemon_dir.to_string_lossy().to_string(),
+            db_path: Db::test_db_path(&format!("http-api-revision-branch-{unique}")),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
+            lan_host: "127.0.0.1".to_string(),
+            lan_port: 48120,
+            pairing_store_path: format!("/tmp/kanna-pairings-revision-branch-{unique}.json"),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.insert_test_pipeline_item(
+            "710917fb",
+            "repo-1",
+            "Review branch",
+            Some("Review branch"),
+            "review",
+            "2026-05-11 10:00:00",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_stage_context(
+            "710917fb",
+            "task-710917fb",
+            "qa",
+            None,
+            "claude",
+        )
+        .unwrap();
+        drop(db);
+
+        let app = super::router(Arc::new(super::AppState::new(config.clone())));
+        let response = app
+            .oneshot(
+                Request::post("/v1/tasks/task-710917fb/actions/request-revision")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "targetStage": "in progress",
+                            "summary": "missing e2e coverage",
+                            "prompt": "Add e2e coverage for task creation."
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        if response.status() != StatusCode::OK {
+            daemon_server.abort();
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            panic!(
+                "expected request revision to resolve branch-style task id, got {status}: {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created: TaskActionResponse = from_slice(&body).unwrap();
+        assert_ne!(created.task_id, "710917fb");
+
+        let db = Db::open(&config.db_path).unwrap();
+        let source = db.get_task_stage_source("710917fb").unwrap().unwrap();
+        assert_eq!(source.stage.as_deref(), Some("done"));
+        assert!(source.closed_at.is_some());
+        let stage_result = source.stage_result.as_deref().unwrap();
+        assert!(stage_result.contains("\"status\":\"failure\""));
+        assert!(stage_result.contains("missing e2e coverage"));
+
+        let revision = db.get_task_stage_source(&created.task_id).unwrap().unwrap();
+        assert_eq!(revision.stage.as_deref(), Some("in progress"));
+        assert_eq!(revision.base_ref.as_deref(), Some("task-710917fb"));
+
+        daemon_server.await.unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_dir_all(&daemon_dir);
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[tokio::test]
     async fn task_terminal_route_streams_output_events() {
         use futures_util::StreamExt;
         use serde_json::Value;
