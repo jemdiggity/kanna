@@ -199,7 +199,7 @@ export function createWindowWorkspace(input: {
   async function closeCurrentWindow(): Promise<void> {
     if (isTauri) {
       const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      await getCurrentWebviewWindow().close();
+      await getCurrentWebviewWindow().destroy();
       return;
     }
 
