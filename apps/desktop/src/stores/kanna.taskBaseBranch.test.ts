@@ -1371,7 +1371,14 @@ describe("kanna store task base branch integration", () => {
     ];
     const store = await createStore();
 
-    await store.undoClose();
+    vi.useFakeTimers();
+    try {
+      const undoClose = store.undoClose();
+      await vi.advanceTimersByTimeAsync(6_000);
+      await undoClose;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(mockState.invokeMock).toHaveBeenCalledWith(
       "spawn_session",
