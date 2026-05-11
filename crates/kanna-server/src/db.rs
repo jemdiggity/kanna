@@ -454,6 +454,31 @@ impl Db {
         }
     }
 
+    pub fn resolve_pipeline_item_id(
+        &self,
+        task_or_branch_id: &str,
+    ) -> Result<Option<String>, rusqlite::Error> {
+        let exact = self
+            .conn
+            .query_row(
+                "SELECT id FROM pipeline_item WHERE id = ?",
+                [task_or_branch_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if exact.is_some() {
+            return Ok(exact);
+        }
+
+        self.conn
+            .query_row(
+                "SELECT id FROM pipeline_item WHERE branch = ?",
+                [task_or_branch_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
     pub fn get_repo(&self, id: &str) -> Result<Option<Repo>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, path, name, default_branch, hidden, created_at, last_opened_at
@@ -940,6 +965,37 @@ mod tests {
         assert!(closed_at.is_some());
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn resolves_pipeline_item_id_from_task_branch_name() {
+        let path = Db::test_db_path("resolve-task-branch-name");
+        let db = Db::open_for_tests(&path).expect("open test db");
+        db.insert_test_repo("repo-1", "Repo One").unwrap();
+        db.insert_test_pipeline_item(
+            "710917fb",
+            "repo-1",
+            "Review branch",
+            Some("Review branch"),
+            "review",
+            "2026-05-11 10:00:00",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_stage_context(
+            "710917fb",
+            "task-710917fb",
+            "default",
+            None,
+            "claude",
+        )
+        .unwrap();
+
+        assert_eq!(
+            db.resolve_pipeline_item_id("task-710917fb")
+                .unwrap()
+                .as_deref(),
+            Some("710917fb")
+        );
     }
 
     #[test]

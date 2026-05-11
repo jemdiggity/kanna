@@ -275,21 +275,24 @@ fn write_server_config(state: &MobileServerState) -> Result<(), String> {
 }
 
 fn server_config_path_for_app_data_dir(app_data_dir: &Path) -> PathBuf {
-    app_data_dir
-        .join("Kanna")
-        .join("servers")
-        .join(server_config_scope())
-        .join("server.toml")
+    match server_config_scope() {
+        Some(scope) => app_data_dir
+            .join("Kanna")
+            .join("servers")
+            .join(scope)
+            .join("server.toml"),
+        None => app_data_dir.join("Kanna").join("server.toml"),
+    }
 }
 
-fn server_config_scope() -> String {
+fn server_config_scope() -> Option<String> {
     if let Ok(db_name) = std::env::var("KANNA_DB_NAME") {
-        return sanitize_server_scope(
+        return Some(sanitize_server_scope(
             Path::new(&db_name)
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or(&db_name),
-        );
+        ));
     }
 
     if let Ok(db_path) = std::env::var("KANNA_DB_PATH") {
@@ -298,10 +301,14 @@ fn server_config_scope() -> String {
             .file_stem()
             .and_then(|value| value.to_str())
             .unwrap_or("custom-db");
-        return format!("{}-{:08x}", sanitize_server_scope(stem), path_hash(path));
+        return Some(format!(
+            "{}-{:08x}",
+            sanitize_server_scope(stem),
+            path_hash(path)
+        ));
     }
 
-    "kanna-v2".to_string()
+    None
 }
 
 fn sanitize_server_scope(value: &str) -> String {
@@ -860,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    fn default_config_path_remains_production_database_scoped() {
+    fn default_config_path_preserves_legacy_production_location() {
         let _guard = env_lock().lock().expect("env lock should not be poisoned");
         unsafe {
             unset_env_var("KANNA_DB_NAME");
@@ -869,7 +876,7 @@ mod tests {
 
         assert_eq!(
             server_config_path_for_app_data_dir(&PathBuf::from("/tmp/build.kanna")),
-            PathBuf::from("/tmp/build.kanna/Kanna/servers/kanna-v2/server.toml")
+            PathBuf::from("/tmp/build.kanna/Kanna/server.toml")
         );
     }
 
@@ -908,7 +915,7 @@ mod tests {
             status: "stopped".to_string(),
             desktop_name: "Studio Mac".to_string(),
             api_base_url: server_base_url(48120),
-            config_path: PathBuf::from("/tmp/build.kanna/Kanna/servers/kanna-v2/server.toml"),
+            config_path: PathBuf::from("/tmp/build.kanna/Kanna/server.toml"),
             started: false,
         };
 
@@ -976,7 +983,7 @@ mod tests {
             status: "stopped".to_string(),
             desktop_name: "Studio Mac".to_string(),
             api_base_url: server_base_url(48120),
-            config_path: PathBuf::from("/tmp/build.kanna/Kanna/servers/kanna-v2/server.toml"),
+            config_path: PathBuf::from("/tmp/build.kanna/Kanna/server.toml"),
             started: false,
         };
 

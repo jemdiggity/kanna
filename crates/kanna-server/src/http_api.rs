@@ -710,14 +710,28 @@ async fn request_revision(
             format!("invalid revision result: {}", e),
         )
     })?;
-    let prepared = {
+    let (source_task_id, prepared) = {
         let db = Db::open(&state.config.db_path).map_err(|e| {
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 format!("db error: {}", e),
             )
         })?;
-        db.update_pipeline_item_stage_result(&task_id, &stage_result)
+        let source_task_id = db
+            .resolve_pipeline_item_id(&task_id)
+            .map_err(|e| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("db error: {}", e),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    axum::http::StatusCode::NOT_FOUND,
+                    format!("task not found: {}", task_id),
+                )
+            })?;
+        db.update_pipeline_item_stage_result(&source_task_id, &stage_result)
             .map_err(|e| {
                 (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -727,10 +741,11 @@ async fn request_revision(
         crate::task_creator::prepare_revision_task_for_api(
             &db,
             &state.config,
-            &task_id,
+            &source_task_id,
             &payload.target_stage,
             &payload.prompt,
         )
+        .map(|prepared| (source_task_id, prepared))
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?
     };
 
@@ -751,7 +766,7 @@ async fn request_revision(
             format!("db error: {}", e),
         )
     })?;
-    db.close_pipeline_item(&task_id).map_err(|e| {
+    db.close_pipeline_item(&source_task_id).map_err(|e| {
         (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             format!("db error: {}", e),
