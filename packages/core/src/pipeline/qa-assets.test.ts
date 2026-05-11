@@ -13,6 +13,7 @@ describe("QA pipeline assets", () => {
     const commitAgent = readRepoFile(".kanna/agents/commit/AGENT.md");
 
     expect(commitAgent).toContain("Your job is to commit the relevant changes before PR creation");
+    expect(commitAgent).toContain("Only report success if `git status --short` prints no output");
     expect(commitAgent).not.toContain("same Kanna task session");
   });
 
