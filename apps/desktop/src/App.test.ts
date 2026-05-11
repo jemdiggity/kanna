@@ -16,6 +16,14 @@ async function flushPromises() {
   await nextTick();
 }
 
+async function waitForNativeCloseRequestedHandler() {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (closeRequestedHandler) return closeRequestedHandler;
+    await flushPromises();
+  }
+  return closeRequestedHandler;
+}
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -37,6 +45,7 @@ function createDeferred<T>(): Deferred<T> {
 
 const listenHandlers = new Map<string, (event: unknown) => void | Promise<void>>();
 const currentWebviewWindowListenHandlers = new Map<string, (event: unknown) => void | Promise<void>>();
+let closeRequestedHandler: ((event: { preventDefault: () => void }) => void | Promise<void>) | null = null;
 const dbSelectMock = vi.fn(async () => []);
 const dbMock = {
   select: dbSelectMock,
@@ -160,6 +169,21 @@ vi.mock("./stores/kanna", () => ({
 
 vi.mock("./invoke", () => ({
   invoke: (command: string, args?: { name?: string; repoPath?: string }) => invokeMock(command, args),
+}));
+
+vi.mock("./tauri-mock", () => ({
+  isTauri: true,
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    onCloseRequested: vi.fn(async (handler: (event: { preventDefault: () => void }) => void | Promise<void>) => {
+      closeRequestedHandler = handler;
+      return () => {
+        closeRequestedHandler = null;
+      };
+    }),
+  }),
 }));
 
 vi.mock("./listen", () => ({
@@ -497,6 +521,7 @@ describe("App", () => {
     store.sortedItemsAllRepos = [];
     listenHandlers.clear();
     currentWebviewWindowListenHandlers.clear();
+    closeRequestedHandler = null;
     capturedKeyboardActions = null;
     mockWindowWorkspace.loadSnapshot.mockClear();
     mockWindowWorkspace.saveSnapshot.mockClear();
@@ -816,6 +841,18 @@ describe("App", () => {
 
     await handler?.({});
 
+    expect(mockWindowWorkspace.closeWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists workspace closure before allowing a native window close request", async () => {
+    await mountApp(SidebarWithRepoStub);
+    const handler = await waitForNativeCloseRequestedHandler();
+    expect(handler).toBeTypeOf("function");
+    const event = { preventDefault: vi.fn() };
+
+    await handler?.(event);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
     expect(mockWindowWorkspace.closeWindow).toHaveBeenCalledTimes(1);
   });
 
