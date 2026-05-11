@@ -26,15 +26,30 @@ export function buildKannaCliEnv(options: BuildKannaCliEnvOptions): Record<strin
 interface BuildTaskRuntimeEnvOptions extends BuildKannaCliEnvOptions {
   portEnv?: Record<string, string>;
   kannaCliPath?: string | null;
+  path?: string | null;
+}
+
+function directoryName(path: string): string | null {
+  const lastSlash = path.lastIndexOf("/");
+  if (lastSlash <= 0) return null;
+  return path.slice(0, lastSlash);
+}
+
+function prependPathEntry(path: string | null | undefined, entry: string): string {
+  const existingEntries = (path ?? "").split(":").filter((part) => part.length > 0);
+  return [entry, ...existingEntries.filter((part) => part !== entry)].join(":");
 }
 
 export function buildTaskRuntimeEnv(options: BuildTaskRuntimeEnvOptions): Record<string, string> {
-  const { portEnv, kannaCliPath, ...kannaCliEnvOptions } = options;
+  const { portEnv, kannaCliPath, path, ...kannaCliEnvOptions } = options;
+  const kannaCliDir = kannaCliPath ? directoryName(kannaCliPath) : null;
+  const runtimePath = kannaCliDir && path ? prependPathEntry(path, kannaCliDir) : null;
 
   return {
     KANNA_WORKTREE: "1",
     ...(portEnv ?? {}),
     ...(kannaCliPath ? { KANNA_CLI_PATH: kannaCliPath } : {}),
+    ...(runtimePath ? { PATH: runtimePath } : {}),
     ...buildKannaCliEnv(kannaCliEnvOptions),
   };
 }

@@ -1614,7 +1614,9 @@ describe("incoming transfer approval", () => {
         return "main";
       }
       if (cmd === "which_binary") {
-        return args?.name === "codex" ? "/usr/bin/codex" : null;
+        if (args?.name === "codex") return "/usr/bin/codex";
+        if (args?.name === "kanna-cli") return "/Applications/Kanna.app/Contents/MacOS/kanna-cli";
+        return null;
       }
       if (cmd === "get_app_data_dir") {
         return "/tmp/kanna-mock-data";
@@ -1630,7 +1632,10 @@ describe("incoming transfer approval", () => {
         };
       }
       if (cmd === "read_env_var") {
-        return "/Users/tester";
+        if (args?.name === "HOME") return "/Users/tester";
+        if (args?.name === "PATH") return "/usr/local/bin:/usr/bin:/bin";
+        if (args?.name === "KANNA_MOBILE_SERVER_PORT") return "";
+        return "";
       }
       if (
         cmd === "ensure_directory" ||
@@ -1669,8 +1674,11 @@ describe("incoming transfer approval", () => {
         sessionId: localTaskId,
         agentProvider: "codex",
         args: expect.arrayContaining([
-          expect.stringContaining("codex resume '019d9a8c-9f39-7240-818f-88367a7c31df'"),
+          expect.stringMatching(/codex resume(?: [^']+)* '019d9a8c-9f39-7240-818f-88367a7c31df'/),
         ]),
+        env: expect.objectContaining({
+          PATH: "/Applications/Kanna.app/Contents/MacOS:/usr/local/bin:/usr/bin:/bin",
+        }),
       }),
     );
   });
@@ -1724,13 +1732,21 @@ describe("incoming transfer approval", () => {
         return "main";
       }
       if (cmd === "which_binary") {
-        return args?.name === "codex" ? "/usr/bin/codex" : null;
+        if (args?.name === "codex") return "/usr/bin/codex";
+        if (args?.name === "kanna-cli") return "/Applications/Kanna.app/Contents/MacOS/kanna-cli";
+        return null;
       }
       if (cmd === "get_app_data_dir") {
         return "/tmp/kanna-mock-data";
       }
       if (cmd === "get_pipeline_socket_path") {
         return "/tmp/kanna.sock";
+      }
+      if (cmd === "read_env_var") {
+        if (args?.name === "HOME") return "/Users/tester";
+        if (args?.name === "PATH") return "/usr/local/bin:/usr/bin:/bin";
+        if (args?.name === "KANNA_MOBILE_SERVER_PORT") return "";
+        return "";
       }
       if (cmd === "fetch_transfer_artifact") {
         return {
@@ -1780,8 +1796,11 @@ describe("incoming transfer approval", () => {
         sessionId: localTaskId,
         agentProvider: "codex",
         args: expect.arrayContaining([
-          expect.stringContaining("codex resume '019d9a8c-9f39-7240-818f-88367a7c31df'"),
+          expect.stringMatching(/codex resume(?: [^']+)* '019d9a8c-9f39-7240-818f-88367a7c31df'/),
         ]),
+        env: expect.objectContaining({
+          PATH: "/Applications/Kanna.app/Contents/MacOS:/usr/local/bin:/usr/bin:/bin",
+        }),
       }),
     );
   });

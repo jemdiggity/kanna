@@ -506,6 +506,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
         const worktreePath = buildWorktreePath(repo.path, item.branch);
         try {
           const portEnv = parseTaskPortEnv(item.port_env);
+          const inheritedPath = await invoke<string>("read_env_var", { name: "PATH" }).catch(() => null);
           const scriptEnv = buildTaskRuntimeEnv({
             taskId,
             dbName: await resolveDbName(),
@@ -516,6 +517,7 @@ export function createPipelineApi(context: StoreContext): PipelineApi {
             ),
             portEnv,
             kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
+            path: inheritedPath,
           });
           for (const script of env.setup) {
             await invoke("run_script", { script, cwd: worktreePath, env: scriptEnv });

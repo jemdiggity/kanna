@@ -282,15 +282,30 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn which_binary(name: String) -> Result<String, String> {
-    for candidate in sidecar_candidates(&name) {
+    resolve_binary_from_candidates(&name, sidecar_candidates(&name))
+}
+
+fn requires_instance_local_sidecar(name: &str) -> bool {
+    name == "kanna-cli"
+}
+
+fn resolve_binary_from_candidates(name: &str, candidates: Vec<PathBuf>) -> Result<String, String> {
+    for candidate in candidates {
         if candidate.exists() {
             return Ok(candidate.to_string_lossy().to_string());
         }
     }
 
+    if requires_instance_local_sidecar(name) {
+        return Err(format!(
+            "instance-local binary '{}' not found; run ./kd build sidecars",
+            name
+        ));
+    }
+
     // Fall back to PATH
     let output = Command::new("which")
-        .arg(&name)
+        .arg(name)
         .output()
         .map_err(|e| format!("failed to run which: {}", e))?;
 
@@ -423,7 +438,10 @@ pub fn append_log(message: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_target_triple, format_log_timestamp, sidecar_candidates_for_exe};
+    use super::{
+        current_target_triple, format_log_timestamp, requires_instance_local_sidecar,
+        resolve_binary_from_candidates, sidecar_candidates_for_exe,
+    };
     use chrono::{Duration, FixedOffset, TimeZone};
     use std::path::Path;
 
@@ -444,10 +462,13 @@ mod tests {
         let current_exe = Path::new("/repo/.build/debug/kanna-desktop");
         let candidates = sidecar_candidates_for_exe(current_exe, "kanna-daemon");
 
-        assert_eq!(candidates[0], Path::new(&format!(
-            "/repo/.build/debug/kanna-daemon-{}",
-            current_target_triple()
-        )));
+        assert_eq!(
+            candidates[0],
+            Path::new(&format!(
+                "/repo/.build/debug/kanna-daemon-{}",
+                current_target_triple()
+            ))
+        );
         assert_eq!(candidates[1], Path::new("/repo/.build/debug/kanna-daemon"));
         assert!(candidates.contains(
             &Path::new(&format!(
@@ -474,6 +495,21 @@ mod tests {
             &Path::new("/Applications/Kanna.app/Contents/MacOS/../Resources/kanna-server")
                 .to_path_buf()
         ));
+    }
+
+    #[test]
+    fn kanna_cli_requires_instance_local_sidecar() {
+        assert!(requires_instance_local_sidecar("kanna-cli"));
+        assert!(!requires_instance_local_sidecar("claude"));
+        assert!(!requires_instance_local_sidecar("codex"));
+    }
+
+    #[test]
+    fn kanna_cli_does_not_fallback_to_path() {
+        let error = resolve_binary_from_candidates("kanna-cli", Vec::new())
+            .expect_err("kanna-cli should require a current-instance sidecar");
+
+        assert!(error.contains("instance-local binary 'kanna-cli' not found"));
     }
 }
 

@@ -289,6 +289,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
     } else if (portEnv) {
       Object.assign(env, portEnv);
     }
+    const runtimePath = await readInheritedPath(env.PATH);
 
     let resolvedKannaCliPath: string | null = null;
     try {
@@ -313,6 +314,7 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
           await invoke<string>("read_env_var", { name: "KANNA_MOBILE_SERVER_PORT" }).catch(() => null),
         ),
         kannaCliPath: resolvedKannaCliPath,
+        path: runtimePath,
       }));
     } catch (error) {
       console.error("[store] failed to resolve kanna-cli env:", error);

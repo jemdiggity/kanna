@@ -401,11 +401,12 @@ export function createTasksApi(
         }
 
         if (agentType !== "pty") {
+          const inheritedPath = await invoke<string>("read_env_var", { name: "PATH" }).catch(() => null);
           const sdkBaseEnv = buildWorktreeSessionEnv({
             worktreePath,
             repoConfig,
             portEnv,
-            inheritedPath: await invoke<string>("read_env_var", { name: "PATH" }).catch(() => null),
+            inheritedPath,
           });
           const sdkEnv = {
             ...sdkBaseEnv,
@@ -418,6 +419,7 @@ export function createTasksApi(
                 await invoke<string>("read_env_var", { name: "KANNA_MOBILE_SERVER_PORT" }).catch(() => null),
               ),
               kannaCliPath: await invoke<string>("which_binary", { name: "kanna-cli" }).catch(() => null),
+              path: sdkBaseEnv.PATH ?? inheritedPath,
             }),
           };
           await invoke("create_agent_session", {

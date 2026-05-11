@@ -887,6 +887,10 @@ describe("kanna store task base branch integration", () => {
   });
 
   it("passes task-scoped port and kanna-cli env to sdk agent sessions", async () => {
+    mockState.readEnvVarOverrides = {
+      ...mockState.readEnvVarOverrides,
+      PATH: "/usr/local/bin:/bin",
+    };
     mockState.repoConfig = {
       ports: {
         KANNA_DEV_PORT: 1420,
@@ -911,6 +915,7 @@ describe("kanna store task base branch integration", () => {
             KANNA_DEV_PORT: "1421",
             API_PORT: "3001",
             KANNA_CLI_PATH: "/usr/bin/kanna-cli",
+            PATH: "/usr/bin:/usr/local/bin:/bin",
             KANNA_TASK_ID: createdItem?.id,
             KANNA_CLI_DB_PATH: "/tmp/kanna/kanna-wt-task-existing.db",
             KANNA_SOCKET_PATH: "/tmp/kanna.sock",
@@ -980,7 +985,7 @@ describe("kanna store task base branch integration", () => {
         expect.objectContaining({
           env: expect.objectContaining({
             FOO: "bar",
-            PATH: `/tmp/repo/.kanna-worktrees/task-${createdItem?.id}/bin:/usr/local/bin:/usr/bin:/bin:/tmp/repo/.kanna-worktrees/task-${createdItem?.id}/vendor/tools`,
+            PATH: `/usr/bin:/tmp/repo/.kanna-worktrees/task-${createdItem?.id}/bin:/usr/local/bin:/bin:/tmp/repo/.kanna-worktrees/task-${createdItem?.id}/vendor/tools`,
           }),
         }),
       );
@@ -1024,7 +1029,7 @@ describe("kanna store task base branch integration", () => {
         cwd: "/tmp/repo/.kanna-worktrees/task-pty-env",
         env: expect.objectContaining({
           FOO: "bar",
-          PATH: "/tmp/repo/.kanna-worktrees/task-pty-env/bin:/usr/local/bin:/usr/bin:/bin:/tmp/repo/.kanna-worktrees/task-pty-env/vendor/tools",
+          PATH: "/usr/bin:/tmp/repo/.kanna-worktrees/task-pty-env/bin:/usr/local/bin:/bin:/tmp/repo/.kanna-worktrees/task-pty-env/vendor/tools",
           KANNA_WORKTREE: "1",
           KANNA_CLI_PATH: "/usr/bin/kanna-cli",
         }),
@@ -1171,6 +1176,10 @@ describe("kanna store task base branch integration", () => {
   });
 
   it("passes task-scoped port and kanna-cli env to rerun stage setup scripts", async () => {
+    mockState.readEnvVarOverrides = {
+      ...mockState.readEnvVarOverrides,
+      PATH: "/usr/local/bin:/bin",
+    };
     mockState.pipelineDefinition = {
       name: "default",
       environments: {
@@ -1210,6 +1219,7 @@ describe("kanna store task base branch integration", () => {
           KANNA_DEV_PORT: "1421",
           API_PORT: "3001",
           KANNA_CLI_PATH: "/usr/bin/kanna-cli",
+          PATH: "/usr/bin:/usr/local/bin:/bin",
           KANNA_TASK_ID: "item-existing",
           KANNA_CLI_DB_PATH: "/tmp/kanna/kanna-wt-task-existing.db",
           KANNA_SOCKET_PATH: "/tmp/kanna.sock",
@@ -1361,7 +1371,14 @@ describe("kanna store task base branch integration", () => {
     ];
     const store = await createStore();
 
-    await store.undoClose();
+    vi.useFakeTimers();
+    try {
+      const undoClose = store.undoClose();
+      await vi.advanceTimersByTimeAsync(6_000);
+      await undoClose;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(mockState.invokeMock).toHaveBeenCalledWith(
       "spawn_session",
