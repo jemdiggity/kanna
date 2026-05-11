@@ -91,8 +91,20 @@ const windowWorkspace = inject<WindowWorkspaceController>("windowWorkspace")!;
 const { tasks: customTasks, scan: scanCustomTasks } = useCustomTasks();
 const appUpdate = useAppUpdate();
 const appUnlisteners: Array<() => void> = [];
+let closingCurrentWindow = false;
 useOperatorEvents(computed(() => db) as unknown as Ref<DbHandle | null>);
 store.attachWindowWorkspace(windowWorkspace);
+
+async function requestCloseCurrentWindow() {
+  if (closingCurrentWindow) return;
+  closingCurrentWindow = true;
+  try {
+    await windowWorkspace.closeWindow();
+  } catch (error: unknown) {
+    closingCurrentWindow = false;
+    throw error;
+  }
+}
 
 // UI state
 const showNewTaskModal = ref(false);
@@ -864,7 +876,7 @@ const keyboardActions = {
     });
   },
   closeWindow: async () => {
-    await windowWorkspace.closeWindow();
+    await requestCloseCurrentWindow();
   },
   openFile: () => {
     if (showFilePickerModal.value) {
@@ -1309,6 +1321,26 @@ onMounted(async () => {
     appUnlisteners.push(unlistenNativeCloseWindow);
   } catch (e: unknown) {
     console.error("[App] native close-window listener registration failed:", e);
+  }
+
+  if (isTauri) {
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const unlistenNativeWindowCloseRequest = await getCurrentWindow().onCloseRequested(async (event) => {
+          if (closingCurrentWindow) return;
+          event.preventDefault();
+          try {
+            await requestCloseCurrentWindow();
+          } catch (error: unknown) {
+            console.error("[App] native window close request failed:", error);
+          }
+        });
+        appUnlisteners.push(unlistenNativeWindowCloseRequest);
+      } catch (e: unknown) {
+        console.error("[App] native window close-request listener registration failed:", e);
+      }
+    })();
   }
 
   listenNativeMenuAction(

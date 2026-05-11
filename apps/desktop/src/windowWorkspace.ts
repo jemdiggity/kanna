@@ -199,7 +199,7 @@ export function createWindowWorkspace(input: {
   async function closeCurrentWindow(): Promise<void> {
     if (isTauri) {
       const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      await getCurrentWebviewWindow().close();
+      await getCurrentWebviewWindow().destroy();
       return;
     }
 
@@ -239,7 +239,7 @@ export function createWindowWorkspace(input: {
     },
     closeWindow: async () => {
       const snapshot = await loadSnapshot();
-      await saveSnapshot(removeWindowFromWorkspaceSnapshot(snapshot, bootstrap.windowId));
+      await writeWorkspaceSnapshot(db, removeWindowFromWorkspaceSnapshot(snapshot, bootstrap.windowId));
       await closeCurrentWindow();
     },
     persistSelection: async (selection) => {

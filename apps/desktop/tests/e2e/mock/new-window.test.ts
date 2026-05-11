@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cleanupFixtureRepos, createFixtureRepo } from "../helpers/fixture-repo";
 import { dismissStartupShortcutsModal } from "../helpers/startupOverlays";
 import { importTestRepo, resetDatabase } from "../helpers/reset";
-import { callVueMethod, execDb, getVueState } from "../helpers/vue";
+import { callVueMethod, execDb, getVueState, queryDb } from "../helpers/vue";
 import { WebDriverClient } from "../helpers/webdriver";
 
 interface WebDriverErrorValue {
@@ -159,6 +159,20 @@ async function findWindowHandleForItem(
   }
 
   throw new Error(`Unable to find a window containing item ${itemId}`);
+}
+
+async function readWorkspaceWindowIds(client: WebDriverClient): Promise<string[]> {
+  const rows = await queryDb(
+    client,
+    "SELECT value FROM settings WHERE key = ?",
+    ["window_workspace_v1"],
+  ) as Array<{ value?: string | null }>;
+  const raw = rows[0]?.value;
+  if (!raw) return [];
+  const snapshot = JSON.parse(raw) as { windows?: Array<{ windowId?: string | null }> };
+  return (snapshot.windows ?? [])
+    .map((entry) => entry.windowId)
+    .filter((windowId): windowId is string => typeof windowId === "string" && windowId.length > 0);
 }
 
 describe("new window", () => {
@@ -360,6 +374,10 @@ describe("new window", () => {
     await dismissStartupShortcutsModal(client);
     await setSelectedItem(client, taskBId);
     await waitForCurrentItemId(client, taskBId);
+    const closingWindowId = await client.executeSync<string>(
+      "return window.__KANNA_E2E__.setupState.windowWorkspace.bootstrap.windowId;",
+    );
+    expect(await readWorkspaceWindowIds(client)).toContain(closingWindowId);
 
     await closeFocusedWindowThroughAppAction(client);
 
@@ -369,6 +387,7 @@ describe("new window", () => {
 
     await switchToWindow(client, sourceHandle);
     await client.waitForAppReady();
+    expect(await readWorkspaceWindowIds(client)).not.toContain(closingWindowId);
     await waitForCurrentItemId(client, taskAId);
 
     const sourceWindowCurrentItem = await getVueState(client, "currentItem") as { id: string };

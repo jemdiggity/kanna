@@ -1,14 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createWindowWorkspace,
   removeWindowFromWorkspaceSnapshot,
   parseWindowBootstrap,
   reconcileWorkspaceSnapshot,
   resolveWindowBootstrap,
+  WINDOW_WORKSPACE_SETTINGS_KEY,
   type WorkspaceSnapshot,
 } from "./windowWorkspace";
 
+const settingStore = vi.hoisted(() => new Map<string, string>());
+
+vi.mock("@kanna/db", () => ({
+  getSetting: vi.fn(async (_db, key: string) => settingStore.get(key) ?? null),
+  setSetting: vi.fn(async (_db, key: string, value: string) => {
+    settingStore.set(key, value);
+  }),
+}));
+
 describe("windowWorkspace", () => {
+  beforeEach(() => {
+    settingStore.clear();
+    vi.spyOn(window, "close").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("parses bootstrap selection from the query string", () => {
     expect(
       parseWindowBootstrap("?windowId=win-2&selectedRepoId=repo-1&selectedItemId=task-9"),
@@ -126,6 +146,53 @@ describe("windowWorkspace", () => {
           selectedRepoId: "repo-2",
           selectedItemId: null,
           order: 1,
+          sidebarHidden: false,
+        },
+      ],
+    });
+  });
+
+  it("persists removal of the current window when closing", async () => {
+    settingStore.set(
+      WINDOW_WORKSPACE_SETTINGS_KEY,
+      JSON.stringify({
+        windows: [
+          {
+            windowId: "main",
+            selectedRepoId: "repo-1",
+            selectedItemId: "task-1",
+            order: 0,
+            sidebarHidden: false,
+          },
+          {
+            windowId: "win-2",
+            selectedRepoId: "repo-1",
+            selectedItemId: "task-2",
+            order: 1,
+            sidebarHidden: true,
+          },
+        ],
+      } satisfies WorkspaceSnapshot),
+    );
+    const workspace = createWindowWorkspace({
+      db: {} as never,
+      bootstrap: {
+        windowId: "win-2",
+        selectedRepoId: null,
+        selectedItemId: null,
+      },
+    });
+
+    await workspace.closeWindow();
+
+    const saved = JSON.parse(settingStore.get(WINDOW_WORKSPACE_SETTINGS_KEY) ?? "") as WorkspaceSnapshot;
+    expect(saved).toEqual({
+      windows: [
+        {
+          windowId: "main",
+          selectedRepoId: "repo-1",
+          selectedItemId: "task-1",
+          order: 0,
           sidebarHidden: false,
         },
       ],
