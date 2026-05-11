@@ -239,7 +239,7 @@ export function createWindowWorkspace(input: {
     },
     closeWindow: async () => {
       const snapshot = await loadSnapshot();
-      await saveSnapshot(removeWindowFromWorkspaceSnapshot(snapshot, bootstrap.windowId));
+      await writeWorkspaceSnapshot(db, removeWindowFromWorkspaceSnapshot(snapshot, bootstrap.windowId));
       await closeCurrentWindow();
     },
     persistSelection: async (selection) => {
