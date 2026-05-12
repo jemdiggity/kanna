@@ -50,6 +50,8 @@ describe("kanna-cli PATH in spawned tasks", () => {
   const client = new WebDriverClient();
   let testRepoPath = "";
   let taskId = "";
+  let worktreePath = "";
+  let shellSessionId = "";
 
   beforeAll(async () => {
     await client.createSession();
@@ -76,6 +78,9 @@ describe("kanna-cli PATH in spawned tasks", () => {
   });
 
   afterAll(async () => {
+    if (shellSessionId) {
+      await tauriInvoke(client, "kill_session", { sessionId: shellSessionId }).catch(() => undefined);
+    }
     if (taskId) {
       await tauriInvoke(client, "kill_session", { sessionId: taskId }).catch(() => undefined);
     }
@@ -86,7 +91,9 @@ describe("kanna-cli PATH in spawned tasks", () => {
     await client.deleteSession();
   });
 
-  it("prepends the instance-local kanna-cli directory for task setup commands", async () => {
+  async function createTaskAndWaitForWorktree(): Promise<string> {
+    if (worktreePath) return worktreePath;
+
     const rows = (await queryDb(
       client,
       "SELECT id FROM repo WHERE path = ?",
@@ -94,11 +101,6 @@ describe("kanna-cli PATH in spawned tasks", () => {
     )) as Array<{ id: string }>;
     const repoId = rows[0]?.id;
     if (!repoId) throw new Error("fixture repo was not imported");
-
-    const expectedKannaCliPath = await tauriInvoke(client, "which_binary", { name: "kanna-cli" });
-    if (typeof expectedKannaCliPath !== "string" || expectedKannaCliPath.length === 0) {
-      throw new Error(`unexpected kanna-cli path: ${JSON.stringify(expectedKannaCliPath)}`);
-    }
 
     const createResult = await callVueMethod(
       client,
@@ -116,12 +118,68 @@ describe("kanna-cli PATH in spawned tasks", () => {
     taskId = createResult;
 
     const branch = await waitForTaskBranch(client, taskId);
-    const worktreePath = join(testRepoPath, ".kanna-worktrees", branch);
-    const markerPath = join(worktreePath, ".kanna-cli-from-path");
+    worktreePath = join(testRepoPath, ".kanna-worktrees", branch);
+
+    return worktreePath;
+  }
+
+  it("prepends the instance-local kanna-cli directory for task setup commands", async () => {
+    const expectedKannaCliPath = await tauriInvoke(client, "which_binary", { name: "kanna-cli" });
+    if (typeof expectedKannaCliPath !== "string" || expectedKannaCliPath.length === 0) {
+      throw new Error(`unexpected kanna-cli path: ${JSON.stringify(expectedKannaCliPath)}`);
+    }
+
+    const taskWorktreePath = await createTaskAndWaitForWorktree();
+    const markerPath = join(taskWorktreePath, ".kanna-cli-from-path");
     await waitForFile(markerPath, 60_000, 250);
 
     const resolvedFromTaskPath = (await readFile(markerPath, "utf8")).trim();
     expect(dirname(resolvedFromTaskPath)).toBe(dirname(expectedKannaCliPath));
     expect(resolvedFromTaskPath.endsWith("/kanna-cli")).toBe(true);
   }, 90_000);
+
+  it("prepends the instance-local kanna-cli directory for task worktree shell sessions", async () => {
+    const expectedKannaCliPath = await tauriInvoke(client, "which_binary", { name: "kanna-cli" });
+    if (typeof expectedKannaCliPath !== "string" || expectedKannaCliPath.length === 0) {
+      throw new Error(`unexpected kanna-cli path: ${JSON.stringify(expectedKannaCliPath)}`);
+    }
+
+    const taskWorktreePath = await createTaskAndWaitForWorktree();
+    const rows = (await queryDb(
+      client,
+      "SELECT port_env FROM pipeline_item WHERE id = ?",
+      [taskId],
+    )) as Array<{ port_env?: string | null }>;
+    const markerPath = join(taskWorktreePath, ".kanna-cli-from-shell-path");
+    shellSessionId = `shell-${taskId}`;
+
+    const spawnResult = await callVueMethod(
+      client,
+      "store.spawnShellSession",
+      shellSessionId,
+      taskWorktreePath,
+      rows[0]?.port_env ?? null,
+      true,
+      testRepoPath,
+    );
+    if (isVueCallError(spawnResult)) throw new Error(spawnResult.__error);
+
+    await tauriInvoke(client, "send_input", {
+      sessionId: shellSessionId,
+      data: Array.from(
+        new TextEncoder().encode(
+          `set -eu; resolved=$(command -v kanna-cli); test -n "$resolved"; printf '%s\\n' "$resolved" > ${shellQuote(markerPath)}\n`,
+        ),
+      ),
+    });
+
+    await waitForFile(markerPath, 30_000, 250);
+    const resolvedFromShellPath = (await readFile(markerPath, "utf8")).trim();
+    expect(dirname(resolvedFromShellPath)).toBe(dirname(expectedKannaCliPath));
+    expect(resolvedFromShellPath.endsWith("/kanna-cli")).toBe(true);
+  }, 90_000);
 });
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}

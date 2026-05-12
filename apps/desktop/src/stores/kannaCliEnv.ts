@@ -40,16 +40,23 @@ function prependPathEntry(path: string | null | undefined, entry: string): strin
   return [entry, ...existingEntries.filter((part) => part !== entry)].join(":");
 }
 
-export function buildTaskRuntimeEnv(options: BuildTaskRuntimeEnvOptions): Record<string, string> {
-  const { portEnv, kannaCliPath, path, ...kannaCliEnvOptions } = options;
+export function buildKannaCliPathEnv(kannaCliPath?: string | null, path?: string | null): Record<string, string> {
   const kannaCliDir = kannaCliPath ? directoryName(kannaCliPath) : null;
   const runtimePath = kannaCliDir && path ? prependPathEntry(path, kannaCliDir) : null;
 
   return {
-    KANNA_WORKTREE: "1",
-    ...(portEnv ?? {}),
     ...(kannaCliPath ? { KANNA_CLI_PATH: kannaCliPath } : {}),
     ...(runtimePath ? { PATH: runtimePath } : {}),
+  };
+}
+
+export function buildTaskRuntimeEnv(options: BuildTaskRuntimeEnvOptions): Record<string, string> {
+  const { portEnv, kannaCliPath, path, ...kannaCliEnvOptions } = options;
+
+  return {
+    KANNA_WORKTREE: "1",
+    ...(portEnv ?? {}),
+    ...buildKannaCliPathEnv(kannaCliPath, path),
     ...buildKannaCliEnv(kannaCliEnvOptions),
   };
 }

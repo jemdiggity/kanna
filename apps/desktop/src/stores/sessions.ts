@@ -4,7 +4,7 @@ import { invoke } from "../invoke";
 import { isTauri } from "../tauri-mock";
 import { buildTaskShellCommand, getTaskTerminalEnv } from "../composables/terminalSessionRecovery";
 import { resolveDbName } from "./db";
-import { buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
+import { buildKannaCliPathEnv, buildTaskRuntimeEnv, resolveKannaServerBaseUrl } from "./kannaCliEnv";
 import { encodeDaemonInput } from "./daemonInput";
 import { getAgentPermissionFlags } from "./agent-permissions";
 import { buildWorktreeSessionEnv } from "./worktreeEnv";
@@ -197,6 +197,13 @@ export function createSessionsApi(context: StoreContext): SessionsApi {
       });
     } else if (Object.keys(parsedPortEnv).length > 0) {
       Object.assign(env, parsedPortEnv);
+    }
+    const runtimePath = await readInheritedPath(env.PATH);
+    try {
+      const kannaCliPath = await invoke<string>("which_binary", { name: "kanna-cli" });
+      Object.assign(env, buildKannaCliPathEnv(kannaCliPath, runtimePath));
+    } catch (error) {
+      console.error("[store] failed to resolve shell kanna-cli path:", error);
     }
     try {
       env.ZDOTDIR = await invoke<string>("ensure_term_init");
