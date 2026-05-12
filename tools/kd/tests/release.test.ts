@@ -1,8 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CommandRunner } from "../src/runtime/process";
 import { createUpdaterBundle, type ReleaseShipInput } from "../src/runtime/release";
@@ -13,28 +12,6 @@ interface CommandCall {
   options?: { cwd?: string; env?: NodeJS.ProcessEnv };
 }
 
-function runSystemCommand(command: string, args: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) {
-  const result = spawnSync(command, args, {
-    cwd: options?.cwd,
-    env: options?.env,
-    encoding: "utf8"
-  });
-
-  return {
-    exitCode: result.status ?? 1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? result.error?.message ?? ""
-  };
-}
-
-function maybeAddMacExtendedAttribute(path: string): void {
-  if (process.platform !== "darwin") return;
-
-  spawnSync("xattr", ["-w", "com.kanna.appledouble-test", "present", path], {
-    encoding: "utf8"
-  });
-}
-
 describe("release updater bundling", () => {
   // A regular full kd release ship -> updater install E2E would need signed release
   // artifacts, both macOS architectures, GitHub release metadata/assets, and a
@@ -43,30 +20,25 @@ describe("release updater bundling", () => {
   // A feasible regular E2E would need a hermetic release backend with small signed
   // fixtures and a local updater manifest server. This test keeps the regression
   // guard at the production bundle helper boundary: command-runner env propagation,
-  // real tar archive contents, and signer output placement.
-  it("runs tar with COPYFILE_DISABLE, avoids AppleDouble entries, and renames the generated signature", async () => {
+  // copying the Bazel-created updater archive, and signer output placement.
+  it("copies the Bazel updater bundle and renames the generated signature", async () => {
     const root = await mkdtemp(join(tmpdir(), "kd-release-"));
     try {
       const repoRoot = join(root, "repo");
-      const appSource = join(repoRoot, "bazel-out", "release", "arm64", "Kanna.app");
+      const bundleSource = join(repoRoot, "bazel-out", "release", "Kanna-arm64.app.tar.gz");
       const bundlePath = join(repoRoot, ".build", "release", "Kanna_1.2.4_arm64.app.tar.gz");
       const signaturePath = join(repoRoot, ".build", "release", "custom-updater.sig");
       const privateKeyPath = join(root, "updater-private.key");
 
-      mkdirSync(join(appSource, "Contents"), { recursive: true });
+      mkdirSync(join(repoRoot, "bazel-out", "release"), { recursive: true });
       mkdirSync(join(repoRoot, ".build", "release"), { recursive: true });
-      writeFileSync(join(appSource, "Contents", "Info.plist"), "<plist />\n");
+      writeFileSync(bundleSource, "bazel updater archive\n");
       writeFileSync(privateKeyPath, "private key\n");
-      maybeAddMacExtendedAttribute(appSource);
 
       const calls: CommandCall[] = [];
       const runner: CommandRunner = {
         async run(command, args, options) {
           calls.push({ command, args, options });
-
-          if (command === "tar") {
-            return runSystemCommand(command, args, options);
-          }
 
           if (command === "pnpm") {
             const signedBundlePath = args.at(-1);
@@ -93,19 +65,11 @@ describe("release updater bundling", () => {
         runner
       };
 
-      await createUpdaterBundle(input, appSource, bundlePath, signaturePath);
+      await createUpdaterBundle(input, bundleSource, bundlePath, signaturePath);
 
-      const tarCall = calls.find((call) => call.command === "tar");
-      expect(tarCall?.args).toEqual(["-C", join(repoRoot, "bazel-out", "release", "arm64"), "-czf", bundlePath, basename(appSource)]);
-      expect(tarCall?.options?.env?.COPYFILE_DISABLE).toBe("1");
-
-      const archiveList = runSystemCommand("tar", ["-tzf", bundlePath]);
-      expect(archiveList.exitCode).toBe(0);
-      const entries = archiveList.stdout.trim().split("\n").filter(Boolean);
-      expect(entries).toContain("Kanna.app/");
-      expect(entries.some((entry) => entry === "._Kanna.app" || entry.includes("/._"))).toBe(false);
-
+      expect(readFileSync(bundlePath, "utf8")).toBe("bazel updater archive\n");
       expect(readFileSync(signaturePath, "utf8")).toBe("signed bundle\n");
+      expect(calls.some((call) => call.command === "tar")).toBe(false);
       expect(calls.find((call) => call.command === "pnpm")?.args).toEqual([
         "--dir",
         join(repoRoot, "apps", "desktop"),

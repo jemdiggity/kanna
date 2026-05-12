@@ -12,6 +12,7 @@ import {
   releaseRepoSlug,
   signedAppTargetForLabel,
   updaterAssetName,
+  updaterBundleTargetForLabel,
   updaterPlatformKey,
   updaterSignatureName
 } from "../src/runtime/release";
@@ -67,6 +68,7 @@ describe("release runtime", () => {
     expect(bazelTargetForLabel("arm64", true)).toBe("//:kanna_signed_dmg_release_arm64");
     expect(bazelTargetForLabel("arm64", false)).toBe("//:kanna_notarized_dmg_release_arm64");
     expect(signedAppTargetForLabel("x86_64")).toBe("//:kanna_signed_app_release_x86_64");
+    expect(updaterBundleTargetForLabel("x86_64")).toBe("//:kanna_updater_bundle_release_x86_64");
     expect(releaseRepoSlug("git@github.com:jemdiggity/kanna.git")).toBe("jemdiggity/kanna");
   });
 });

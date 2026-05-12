@@ -26,6 +26,8 @@ describe("full-bundle app update E2E script", () => {
     expect(script).toMatch(/tauri signer sign\s+\\\n\s+--private-key-path/);
     expect(script).toMatch(/tauri build\s+\\\n\s+--debug\s+\\\n\s+--bundles app\s+\\\n\s+--no-sign/);
     expect(script).toContain("create_updater_bundle");
+    expect(script).toContain("make_app_dirs_readonly \"$NEW_APP_SOURCE\"");
+    expect(script).toContain("find \"$stage_app\" -type d -exec chmod u+rwx,go+rx {} +");
     expect(script).toContain("COPYFILE_DISABLE=1 tar");
     expect(script).toContain("latest.json");
   });

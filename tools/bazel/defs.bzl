@@ -776,6 +776,39 @@ python3 "$@"
 
     return [DefaultInfo(files = depset([out_dir]))]
 
+def _macos_updater_bundle_impl(ctx):
+    srcs = ctx.attr.app[DefaultInfo].files.to_list()
+    app_candidates = [src for src in srcs if src.basename.endswith(".app")]
+    if len(app_candidates) != 1:
+        fail("app must provide exactly one .app directory, got %s" % [src.basename for src in srcs])
+
+    app = app_candidates[0]
+    output = ctx.actions.declare_file(ctx.attr.output_name)
+
+    ctx.actions.run_shell(
+        inputs = depset(direct = [app]),
+        outputs = [output],
+        command = """
+set -euo pipefail
+app_path="$1"
+output="$2"
+app_name="$3"
+stage_root="${TMPDIR:-/tmp}/kanna-updater-bundle.$$"
+rm -rf "$stage_root"
+trap 'rm -rf "$stage_root"' EXIT
+mkdir -p "$stage_root"
+cp -RL "$app_path" "$stage_root/$app_name"
+find "$stage_root/$app_name" -type d -exec chmod 755 {} +
+COPYFILE_DISABLE=1 tar -C "$stage_root" -czf "$output" "$app_name"
+""",
+        arguments = [app.path, output.path, app.basename],
+        mnemonic = "KannaMacosUpdaterBundle",
+        progress_message = "Creating updater bundle for %s" % ctx.label.name,
+        use_default_shell_env = True,
+    )
+
+    return [DefaultInfo(files = depset([output]))]
+
 def _macos_codesign_file_impl(ctx):
     srcs = ctx.attr.src[DefaultInfo].files.to_list()
     if len(srcs) != 1:
@@ -864,6 +897,14 @@ macos_codesign_app = rule(
             allow_single_file = True,
             default = "//tools/bazel:build_macos_signed_app.py",
         ),
+    },
+)
+
+macos_updater_bundle = rule(
+    implementation = _macos_updater_bundle_impl,
+    attrs = {
+        "app": attr.label(mandatory = True),
+        "output_name": attr.string(mandatory = True),
     },
 )
 

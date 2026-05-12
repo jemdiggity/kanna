@@ -427,6 +427,7 @@ describe("updater release assets", () => {
     );
 
     expect(releaseRuntime).toContain("Kanna_${version}_${label}.app.tar.gz");
+    expect(releaseRuntime).toContain("updaterBundleTargetForLabel");
     expect(releaseRuntime).toContain('"tauri", "signer", "sign"');
     expect(releaseRuntime).toContain("const generatedSig = `${bundlePath}.sig`");
     expect(releaseRuntime).toContain("generatedSig !== signaturePath");
@@ -435,6 +436,19 @@ describe("updater release assets", () => {
       'pnpm --dir "$ROOT/apps/desktop" exec tauri signer sign "$bundle_path" > "$signature_path"',
     );
     expect(releaseRuntime).toContain("updaterSignatureName");
+  });
+
+  it("builds updater tarballs inside Bazel so app directory modes are normalized before release signing", () => {
+    const rootBuild = readFileSync(resolve(repoRoot, "BUILD.bazel"), "utf8");
+    const bazelDefs = readFileSync(resolve(repoRoot, "tools/bazel/defs.bzl"), "utf8");
+
+    expect(rootBuild).toContain("macos_updater_bundle(");
+    expect(rootBuild).toContain('name = "kanna_updater_bundle_release_arm64"');
+    expect(rootBuild).toContain('name = "kanna_updater_bundle_release_x86_64"');
+    expect(bazelDefs).toContain("KannaMacosUpdaterBundle");
+    expect(bazelDefs).toContain('cp -RL "$app_path" "$stage_root/$app_name"');
+    expect(bazelDefs).toContain('find "$stage_root/$app_name" -type d -exec chmod 755 {} +');
+    expect(bazelDefs).toContain("COPYFILE_DISABLE=1 tar");
   });
 
   it("publishes a latest.json manifest alongside the release assets", () => {
