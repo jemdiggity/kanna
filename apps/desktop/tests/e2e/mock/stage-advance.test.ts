@@ -361,6 +361,16 @@ describe("stage advance", () => {
       }),
     );
     await writeFile(
+      join(kannaDir, "pipelines", "revision-e2e.json"),
+      JSON.stringify({
+        name: "revision-e2e",
+        stages: [
+          { name: "in progress", transition: "manual" },
+          { name: "review", transition: "manual" },
+        ],
+      }),
+    );
+    await writeFile(
       join(kannaDir, "agents", "commit-e2e", "AGENT.md"),
       [
         "---",
@@ -683,6 +693,95 @@ describe("stage advance", () => {
       expect(rows.filter((candidate) => candidate.branch === branch)).toHaveLength(1);
     } finally {
       server.child.kill();
+    }
+  });
+
+  it("preserves the source task title when request-revision creates a new in-progress task", async () => {
+    const taskId = "server-request-revision-task";
+    const branch = "task-server-request-revision";
+    const originalTitle = "Preserve this review title";
+    const originalPrompt = "Original implementation prompt should not become the visible title";
+    const revisionPrompt = "Fix the review feedback without changing the visible title";
+
+    await tauriInvoke(client, "git_worktree_add", {
+      repoPath: testRepoPath,
+      branch,
+      path: join(testRepoPath, ".kanna-worktrees", branch),
+      startPoint: "main",
+    });
+    await execDb(
+      client,
+      `INSERT INTO pipeline_item (
+         id, repo_id, prompt, pipeline, stage, stage_result, tags, branch,
+         agent_type, agent_provider, activity, display_name, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [
+        taskId,
+        repoId,
+        originalPrompt,
+        "revision-e2e",
+        "review",
+        null,
+        "[]",
+        branch,
+        "pty",
+        "codex",
+        "idle",
+        originalTitle,
+      ],
+    );
+
+    const existingInProgressTaskIds = await getStageTaskIds(client, repoId, "in progress");
+    const server = await startTestKannaServer(client, join(testRepoPath, ".kanna"));
+    let revisionTaskId = "";
+    try {
+      const response = await fetch(`${server.baseUrl}/v1/tasks/${encodeURIComponent(taskId)}/actions/request-revision`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          targetStage: "in progress",
+          summary: "review requested changes",
+          prompt: revisionPrompt,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`request-revision failed: ${response.status} ${await response.text()}`);
+      }
+      const created = await response.json() as { taskId?: string };
+      revisionTaskId = created.taskId ?? "";
+      expect(revisionTaskId).toBeTruthy();
+      expect(existingInProgressTaskIds.has(revisionTaskId)).toBe(false);
+
+      const rows = (await queryDb(
+        client,
+        "SELECT prompt, display_name, stage, closed_at FROM pipeline_item WHERE id = ?",
+        [revisionTaskId],
+      )) as Array<{
+        prompt: string | null;
+        display_name: string | null;
+        stage: string | null;
+        closed_at: string | null;
+      }>;
+      expect(rows[0]).toEqual({
+        prompt: revisionPrompt,
+        display_name: originalTitle,
+        stage: "in progress",
+        closed_at: null,
+      });
+
+      const sourceRows = (await queryDb(
+        client,
+        "SELECT stage, closed_at, stage_result FROM pipeline_item WHERE id = ?",
+        [taskId],
+      )) as Array<{ stage: string | null; closed_at: string | null; stage_result: string | null }>;
+      expect(sourceRows[0]?.stage).toBe("done");
+      expect(sourceRows[0]?.closed_at).toBeTruthy();
+      expect(sourceRows[0]?.stage_result).toContain("review requested changes");
+    } finally {
+      server.child.kill();
+      if (revisionTaskId) {
+        await tauriInvoke(client, "kill_session", { sessionId: revisionTaskId }).catch(() => undefined);
+      }
     }
   });
 
