@@ -107,9 +107,12 @@ function writeLatestJson(path: string, version: string, notes: string, pubDate: 
   writeFileSync(path, JSON.stringify({ version, notes, pub_date: pubDate, platforms }, null, 2) + "\n");
 }
 
-async function createUpdaterBundle(input: ReleaseShipInput, appSource: string, bundlePath: string, signaturePath: string): Promise<void> {
+export async function createUpdaterBundle(input: ReleaseShipInput, appSource: string, bundlePath: string, signaturePath: string): Promise<void> {
   rmSync(bundlePath, { force: true });
-  await mustRun(input.runner, "tar", ["-C", dirname(appSource), "-czf", bundlePath, appSource.split("/").at(-1) ?? "Kanna.app"], input.repoRoot, input.env);
+  await mustRun(input.runner, "tar", ["-C", dirname(appSource), "-czf", bundlePath, appSource.split("/").at(-1) ?? "Kanna.app"], input.repoRoot, {
+    ...input.env,
+    COPYFILE_DISABLE: "1"
+  });
   const signerArgs = ["--dir", join(input.repoRoot, "apps", "desktop"), "exec", "tauri", "signer", "sign", "--private-key-path", input.env.TAURI_PRIVATE_KEY_PATH ?? ""];
   if ("TAURI_PRIVATE_KEY_PASSWORD" in input.env) {
     signerArgs.push("--password", input.env.TAURI_PRIVATE_KEY_PASSWORD ?? "");
