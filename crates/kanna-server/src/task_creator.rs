@@ -109,6 +109,7 @@ pub(crate) fn prepare_merge_agent_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
+            display_name: None,
         },
     )
 }
@@ -220,6 +221,7 @@ pub(crate) fn prepare_advance_stage_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
+            display_name: None,
         },
     )
     .map(PreparedStageTransition::Spawn)
@@ -321,6 +323,7 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
+            display_name: None,
         },
     )
     .map(PreparedStageTransition::Spawn)
@@ -368,7 +371,7 @@ pub(crate) fn prepare_revision_task_for_api(
     let explicit_provider = if target_stage.agent.is_some() {
         None
     } else {
-        source_task.agent_provider
+        source_task.agent_provider.clone()
     };
 
     prepare_task_spawn(
@@ -386,6 +389,10 @@ pub(crate) fn prepare_revision_task_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
+            display_name: source_task
+                .display_name
+                .clone()
+                .or_else(|| source_task.prompt.clone()),
         },
     )
 }
@@ -401,6 +408,7 @@ struct TaskCreationRequest {
     model: Option<String>,
     permission_mode: Option<String>,
     allowed_tools: Vec<String>,
+    display_name: Option<String>,
 }
 
 struct CreatedTask {
@@ -469,6 +477,7 @@ pub(crate) fn prepare_task_for_api(
             model: request.model,
             permission_mode: request.permission_mode,
             allowed_tools: request.allowed_tools.unwrap_or_default(),
+            display_name: None,
         },
     )
 }
@@ -588,6 +597,7 @@ fn prepare_task_spawn(
             .stored_base_ref
             .as_deref()
             .or(request.base_ref.as_deref()),
+        display_name: request.display_name.as_deref(),
     })
     .map_err(|e| format!("db error: {}", e))?;
 
@@ -623,12 +633,16 @@ fn prepare_task_spawn(
         worktree_repo_config.setup.as_deref().unwrap_or(&[]),
         spawn_env.get("KANNA_CLI_PATH").map(String::as_str),
     );
+    let title = request
+        .display_name
+        .clone()
+        .unwrap_or_else(|| original_prompt.clone());
 
     Ok(PreparedTaskSpawn {
         created_task: CreatedTask {
             task_id: task_id.clone(),
             repo_id: repo.id.clone(),
-            title: original_prompt,
+            title,
             stage: stage_name,
         },
         session_id: task_id,
@@ -2601,10 +2615,12 @@ mod tests {
 
         assert_eq!(prepared.created_task.repo_id, "repo-1");
         assert_eq!(prepared.created_task.stage, "in progress");
-        assert_eq!(
-            prepared.created_task.title,
-            "Implement revision:\nAdd e2e coverage for task creation.\n\nAdd e2e coverage for task creation."
-        );
+        assert_eq!(prepared.created_task.title, "Mobile shell");
+        let revision = db
+            .get_task_stage_source(&prepared.created_task.task_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(revision.display_name.as_deref(), Some("Mobile shell"));
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
     }
 }

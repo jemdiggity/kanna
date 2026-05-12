@@ -46,6 +46,7 @@ pub struct Repo {
 pub struct TaskStageSource {
     pub repo_id: String,
     pub prompt: Option<String>,
+    pub display_name: Option<String>,
     pub stage: Option<String>,
     pub stage_result: Option<String>,
     pub active_post_action: Option<String>,
@@ -70,6 +71,7 @@ pub struct NewPipelineItem<'a> {
     pub port_offset: Option<i64>,
     pub port_env_json: Option<&'a str>,
     pub base_ref: Option<&'a str>,
+    pub display_name: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -506,21 +508,22 @@ impl Db {
         id: &str,
     ) -> Result<Option<TaskStageSource>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT repo_id, prompt, stage, stage_result, active_post_action, branch, base_ref, pipeline, agent_provider, closed_at
+            "SELECT repo_id, prompt, display_name, stage, stage_result, active_post_action, branch, base_ref, pipeline, agent_provider, closed_at
              FROM pipeline_item WHERE id = ?",
         )?;
         let mut rows = stmt.query_map([id], |row| {
             Ok(TaskStageSource {
                 repo_id: row.get(0)?,
                 prompt: row.get(1)?,
-                stage: row.get(2)?,
-                stage_result: row.get(3)?,
-                active_post_action: row.get(4)?,
-                branch: row.get(5)?,
-                base_ref: row.get(6)?,
-                pipeline: row.get(7)?,
-                agent_provider: row.get(8)?,
-                closed_at: row.get(9)?,
+                display_name: row.get(2)?,
+                stage: row.get(3)?,
+                stage_result: row.get(4)?,
+                active_post_action: row.get(5)?,
+                branch: row.get(6)?,
+                base_ref: row.get(7)?,
+                pipeline: row.get(8)?,
+                agent_provider: row.get(9)?,
+                closed_at: row.get(10)?,
             })
         })?;
         match rows.next() {
@@ -533,8 +536,8 @@ impl Db {
         self.conn.execute(
             "INSERT INTO pipeline_item
              (id, repo_id, prompt, pipeline, stage, tags, branch, agent_type, agent_provider,
-              activity, activity_changed_at, port_offset, port_env, base_ref)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)",
+              activity, activity_changed_at, port_offset, port_env, base_ref, display_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)",
             (
                 item.id,
                 item.repo_id,
@@ -549,6 +552,7 @@ impl Db {
                 item.port_offset,
                 item.port_env_json,
                 item.base_ref,
+                item.display_name,
             ),
         )?;
         Ok(())
@@ -1019,6 +1023,7 @@ mod tests {
               port_offset INTEGER,
               port_env TEXT,
               base_ref TEXT,
+              display_name TEXT,
               created_at TEXT NOT NULL DEFAULT (datetime('now')),
               updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -1042,6 +1047,7 @@ mod tests {
             port_offset: Some(1422),
             port_env_json: Some("{\"KANNA_DEV_PORT\":\"1422\"}"),
             base_ref: None,
+            display_name: None,
         })
         .expect("insert pipeline item");
 
