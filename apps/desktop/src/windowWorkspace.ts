@@ -12,6 +12,7 @@ export interface WindowBootstrap {
 
 export interface WorkspaceWindowState extends WindowBootstrap {
   sidebarHidden: boolean;
+  sidebarWidth: number;
   order: number;
 }
 
@@ -33,6 +34,7 @@ export interface WindowWorkspaceController {
     selectedItemId: string | null;
   }) => Promise<void>;
   persistSidebarHidden: (hidden: boolean) => Promise<void>;
+  persistSidebarWidth: (width: number) => Promise<void>;
   invalidateSharedData: (reason: string) => Promise<void>;
   restoreAdditionalWindows: () => Promise<void>;
   onSharedInvalidation: (handler: (payload: { reason?: string; sourceWindowId?: string }) => void | Promise<void>) => Promise<() => void>;
@@ -46,6 +48,15 @@ export const WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT = "kanna://native-na
 export const WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT = "kanna://native-navigate-task-down";
 export const WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT = "kanna://native-navigate-repo-up";
 export const WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT = "kanna://native-navigate-repo-down";
+export const DEFAULT_SIDEBAR_WIDTH = 260;
+export const MIN_SIDEBAR_WIDTH = 220;
+export const MAX_SIDEBAR_WIDTH = 420;
+
+export function normalizeSidebarWidth(width: unknown): number {
+  return typeof width === "number" && Number.isFinite(width) && width >= MIN_SIDEBAR_WIDTH && width <= MAX_SIDEBAR_WIDTH
+    ? Math.round(width)
+    : DEFAULT_SIDEBAR_WIDTH;
+}
 
 export function parseWindowBootstrap(search: string): WindowBootstrap {
   const params = new URLSearchParams(search);
@@ -61,18 +72,21 @@ export function reconcileWorkspaceSnapshot(
   snapshot: WorkspaceSnapshot,
   windowId: string,
 ): WorkspaceSnapshot {
-  if (snapshot.windows.some((entry) => entry.windowId === windowId)) {
-    return snapshot;
+  const normalized = normalizeWorkspaceSnapshot(snapshot);
+
+  if (normalized.windows.some((entry) => entry.windowId === windowId)) {
+    return normalized;
   }
 
   return {
     windows: [
-      ...snapshot.windows,
+      ...normalized.windows,
       {
         windowId,
         selectedRepoId: null,
         selectedItemId: null,
         sidebarHidden: false,
+        sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
         order: snapshot.windows.length,
       },
     ],
@@ -97,6 +111,7 @@ function normalizeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnaps
       selectedRepoId: entry.selectedRepoId,
       selectedItemId: entry.selectedItemId,
       sidebarHidden: entry.sidebarHidden,
+      sidebarWidth: normalizeSidebarWidth(entry.sidebarWidth),
       order: index,
     })),
   };
@@ -129,6 +144,7 @@ export async function readWorkspaceSnapshot(db: DbHandle): Promise<WorkspaceSnap
         selectedRepoId: typeof entry?.selectedRepoId === "string" ? entry.selectedRepoId : null,
         selectedItemId: typeof entry?.selectedItemId === "string" ? entry.selectedItemId : null,
         sidebarHidden: entry?.sidebarHidden === true,
+        sidebarWidth: normalizeSidebarWidth(entry?.sidebarWidth),
         order: typeof entry?.order === "number" ? entry.order : index,
       })) : [],
     });
@@ -230,6 +246,7 @@ export function createWindowWorkspace(input: {
         selectedRepoId: selection.selectedRepoId,
         selectedItemId: selection.selectedItemId,
         sidebarHidden: false,
+        sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
         order: snapshot.windows.length,
       };
       await saveSnapshot({
@@ -253,6 +270,12 @@ export function createWindowWorkspace(input: {
       await updateCurrentWindow((entry) => ({
         ...entry,
         sidebarHidden: hidden,
+      }));
+    },
+    persistSidebarWidth: async (width) => {
+      await updateCurrentWindow((entry) => ({
+        ...entry,
+        sidebarWidth: normalizeSidebarWidth(width),
       }));
     },
     invalidateSharedData: async (reason) => {

@@ -48,6 +48,7 @@ describe("windowWorkspace", () => {
           selectedItemId: "task-1",
           order: 0,
           sidebarHidden: false,
+          sidebarWidth: 260,
         },
       ],
     };
@@ -60,6 +61,7 @@ describe("windowWorkspace", () => {
           selectedItemId: "task-1",
           order: 0,
           sidebarHidden: false,
+          sidebarWidth: 260,
         },
         {
           windowId: "win-2",
@@ -67,9 +69,55 @@ describe("windowWorkspace", () => {
           selectedItemId: null,
           order: 1,
           sidebarHidden: false,
+          sidebarWidth: 260,
         },
       ],
     });
+  });
+
+  it("preserves valid sidebar widths and defaults invalid widths", () => {
+    const snapshot = reconcileWorkspaceSnapshot(
+      {
+        windows: [
+          {
+            windowId: "main",
+            selectedRepoId: "repo-1",
+            selectedItemId: null,
+            order: 1,
+            sidebarHidden: false,
+            sidebarWidth: 360,
+          },
+          {
+            windowId: "win-2",
+            selectedRepoId: "repo-2",
+            selectedItemId: null,
+            order: 0,
+            sidebarHidden: false,
+            sidebarWidth: 999,
+          },
+        ],
+      },
+      "main",
+    );
+
+    expect(snapshot.windows).toEqual([
+      {
+        windowId: "win-2",
+        selectedRepoId: "repo-2",
+        selectedItemId: null,
+        order: 0,
+        sidebarHidden: false,
+        sidebarWidth: 260,
+      },
+      {
+        windowId: "main",
+        selectedRepoId: "repo-1",
+        selectedItemId: null,
+        order: 1,
+        sidebarHidden: false,
+        sidebarWidth: 360,
+      },
+    ]);
   });
 
   it("hydrates the main window selection from the saved workspace snapshot", async () => {
@@ -93,6 +141,7 @@ describe("windowWorkspace", () => {
             selectedItemId: "task-2",
             order: 0,
             sidebarHidden: false,
+            sidebarWidth: 260,
           },
         ],
       },
@@ -114,6 +163,7 @@ describe("windowWorkspace", () => {
           selectedItemId: "task-1",
           order: 0,
           sidebarHidden: false,
+          sidebarWidth: 260,
         },
         {
           windowId: "win-2",
@@ -121,6 +171,7 @@ describe("windowWorkspace", () => {
           selectedItemId: "task-2",
           order: 1,
           sidebarHidden: true,
+          sidebarWidth: 260,
         },
         {
           windowId: "win-3",
@@ -128,6 +179,7 @@ describe("windowWorkspace", () => {
           selectedItemId: null,
           order: 2,
           sidebarHidden: false,
+          sidebarWidth: 260,
         },
       ],
     };
@@ -140,6 +192,7 @@ describe("windowWorkspace", () => {
           selectedItemId: "task-1",
           order: 0,
           sidebarHidden: false,
+          sidebarWidth: 260,
         },
         {
           windowId: "win-3",
@@ -147,9 +200,66 @@ describe("windowWorkspace", () => {
           selectedItemId: null,
           order: 1,
           sidebarHidden: false,
+          sidebarWidth: 260,
         },
       ],
     });
+  });
+
+  it("persists sidebar width for the current window", async () => {
+    settingStore.set(
+      WINDOW_WORKSPACE_SETTINGS_KEY,
+      JSON.stringify({
+        windows: [
+          {
+            windowId: "main",
+            selectedRepoId: "repo-1",
+            selectedItemId: "task-1",
+            order: 0,
+            sidebarHidden: false,
+            sidebarWidth: 260,
+          },
+          {
+            windowId: "win-2",
+            selectedRepoId: "repo-2",
+            selectedItemId: "task-2",
+            order: 1,
+            sidebarHidden: false,
+            sidebarWidth: 280,
+          },
+        ],
+      } satisfies WorkspaceSnapshot),
+    );
+    const workspace = createWindowWorkspace({
+      db: {} as never,
+      bootstrap: {
+        windowId: "win-2",
+        selectedRepoId: null,
+        selectedItemId: null,
+      },
+    });
+
+    await workspace.persistSidebarWidth(320);
+
+    const saved = JSON.parse(settingStore.get(WINDOW_WORKSPACE_SETTINGS_KEY) ?? "") as WorkspaceSnapshot;
+    expect(saved.windows).toEqual([
+      {
+        windowId: "main",
+        selectedRepoId: "repo-1",
+        selectedItemId: "task-1",
+        order: 0,
+        sidebarHidden: false,
+        sidebarWidth: 260,
+      },
+      {
+        windowId: "win-2",
+        selectedRepoId: "repo-2",
+        selectedItemId: "task-2",
+        order: 1,
+        sidebarHidden: false,
+        sidebarWidth: 320,
+      },
+    ]);
   });
 
   it("persists removal of the current window when closing", async () => {
@@ -163,6 +273,7 @@ describe("windowWorkspace", () => {
             selectedItemId: "task-1",
             order: 0,
             sidebarHidden: false,
+            sidebarWidth: 260,
           },
           {
             windowId: "win-2",
@@ -170,6 +281,7 @@ describe("windowWorkspace", () => {
             selectedItemId: "task-2",
             order: 1,
             sidebarHidden: true,
+            sidebarWidth: 260,
           },
         ],
       } satisfies WorkspaceSnapshot),
@@ -194,6 +306,7 @@ describe("windowWorkspace", () => {
           selectedItemId: "task-1",
           order: 0,
           sidebarHidden: false,
+          sidebarWidth: 260,
         },
       ],
     });

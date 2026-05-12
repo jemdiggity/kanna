@@ -407,6 +407,7 @@ describe("kanna runtime status reconciliation", () => {
             selectedRepoId: "repo-1",
             selectedItemId: null,
             sidebarHidden: false,
+            sidebarWidth: 260,
             order: 0,
           },
           {
@@ -414,6 +415,7 @@ describe("kanna runtime status reconciliation", () => {
             selectedRepoId: "repo-1",
             selectedItemId: "task-1",
             sidebarHidden: false,
+            sidebarWidth: 260,
             order: 1,
           },
         ],
@@ -423,6 +425,7 @@ describe("kanna runtime status reconciliation", () => {
       closeWindow: vi.fn(async () => {}),
       persistSelection: vi.fn(async () => {}),
       persistSidebarHidden: vi.fn(async () => {}),
+      persistSidebarWidth: vi.fn(async () => {}),
       invalidateSharedData: vi.fn(async () => {}),
       restoreAdditionalWindows: vi.fn(async () => {}),
       onSharedInvalidation: vi.fn(async () => vi.fn()),
