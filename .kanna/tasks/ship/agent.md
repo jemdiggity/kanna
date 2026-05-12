@@ -17,7 +17,7 @@ You are the shipping agent. Your job is to rename the current worktree branch to
    - Developer ID Application certificate installed
    - `KANNA_UPDATER_PUBKEY` env var set
    - `TAURI_PRIVATE_KEY_PATH` env var set and points to the Tauri updater private key
-   - `TAURI_PRIVATE_KEY_PASSWORD` env var set if the updater private key is encrypted
+   - `TAURI_PRIVATE_KEY_PASSWORD` env var set. For the standard updater keypair this is intentionally empty (`TAURI_PRIVATE_KEY_PASSWORD=''`).
    - `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` env vars set (unless dry-run)
    - `gh` CLI authenticated (unless dry-run)
    - Both Rust targets installed: `aarch64-apple-darwin` and `x86_64-apple-darwin`
@@ -27,9 +27,10 @@ Updater signing is required for both `--release` and `--dry-run`. If the standar
 ```bash
 export TAURI_PRIVATE_KEY_PATH="$HOME/.tauri/kanna-updater.key"
 export KANNA_UPDATER_PUBKEY="$(tr -d '\n' < "$HOME/.tauri/kanna-updater.key.pub")"
+export TAURI_PRIVATE_KEY_PASSWORD=''
 ```
 
-If `tauri signer sign` fails with `incorrect updater private key password` or a non-interactive terminal error, set `TAURI_PRIVATE_KEY_PASSWORD` and rerun.
+If `tauri signer sign` fails with `incorrect updater private key password` or a non-interactive terminal error, make sure `TAURI_PRIVATE_KEY_PASSWORD` is explicitly set. For the standard updater keypair, set it to an empty string and rerun.
 
 **Sandbox note:** The Claude Code sandbox blocks macOS Keychain access (`security find-identity` returns 0 identities) and network calls (`gh` fails with TLS/x509 errors). If you see these errors, they are caused by the sandbox — retry the command with `dangerouslyDisableSandbox: true`.
 
