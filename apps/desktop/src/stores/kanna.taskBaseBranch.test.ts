@@ -1351,8 +1351,9 @@ describe("kanna store task base branch integration", () => {
           ZDOTDIR: "/tmp/kanna-zdotdir",
           KANNA_WORKTREE: "1",
           KANNA_DEV_PORT: "1421",
+          KANNA_CLI_PATH: "/usr/bin/kanna-cli",
           FOO: "bar",
-          PATH: "/tmp/repo/.kanna-worktrees/task-shell/bin:/usr/local/bin:/usr/bin:/bin:/tmp/repo/.kanna-worktrees/task-shell/vendor/tools",
+          PATH: "/usr/bin:/tmp/repo/.kanna-worktrees/task-shell/bin:/usr/local/bin:/bin:/tmp/repo/.kanna-worktrees/task-shell/vendor/tools",
         }),
       }),
     );
