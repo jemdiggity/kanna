@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, cpSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { CommandRunner } from "./process";
 
 export type ReleaseBump = "major" | "minor" | "patch";
@@ -67,6 +67,10 @@ export function signedAppTargetForLabel(label: ReleaseArchLabel): string {
   return label === "arm64" ? "//:kanna_signed_app_release_arm64" : "//:kanna_signed_app_release_x86_64";
 }
 
+export function updaterBundleTargetForLabel(label: ReleaseArchLabel): string {
+  return label === "arm64" ? "//:kanna_updater_bundle_release_arm64" : "//:kanna_updater_bundle_release_x86_64";
+}
+
 export function releaseRepoSlug(remoteUrl: string): string {
   let normalized = remoteUrl.trim();
   if (normalized.startsWith("git@github.com:")) normalized = normalized.slice("git@github.com:".length);
@@ -107,12 +111,9 @@ function writeLatestJson(path: string, version: string, notes: string, pubDate: 
   writeFileSync(path, JSON.stringify({ version, notes, pub_date: pubDate, platforms }, null, 2) + "\n");
 }
 
-export async function createUpdaterBundle(input: ReleaseShipInput, appSource: string, bundlePath: string, signaturePath: string): Promise<void> {
+export async function createUpdaterBundle(input: ReleaseShipInput, bundleSource: string, bundlePath: string, signaturePath: string): Promise<void> {
   rmSync(bundlePath, { force: true });
-  await mustRun(input.runner, "tar", ["-C", dirname(appSource), "-czf", bundlePath, appSource.split("/").at(-1) ?? "Kanna.app"], input.repoRoot, {
-    ...input.env,
-    COPYFILE_DISABLE: "1"
-  });
+  cpSync(bundleSource, bundlePath);
   const signerArgs = ["--dir", join(input.repoRoot, "apps", "desktop"), "exec", "tauri", "signer", "sign", "--private-key-path", input.env.TAURI_PRIVATE_KEY_PATH ?? ""];
   if ("TAURI_PRIVATE_KEY_PASSWORD" in input.env) {
     signerArgs.push("--password", input.env.TAURI_PRIVATE_KEY_PASSWORD ?? "");
@@ -140,7 +141,7 @@ export async function shipRelease(input: ReleaseShipInput): Promise<ReleaseShipR
   syncVersionFiles(input.repoRoot, version);
 
   const bazelArgs = [input.dryRun ? "-c" : "--config=notarize", input.dryRun ? "opt" : "-c", ...(input.dryRun ? [] : ["opt"])];
-  const targets = input.archLabels.flatMap((label) => [bazelTargetForLabel(label, input.dryRun), signedAppTargetForLabel(label)]);
+  const targets = input.archLabels.flatMap((label) => [bazelTargetForLabel(label, input.dryRun), updaterBundleTargetForLabel(label)]);
   await mustRun(input.runner, "bazel", ["build", ...bazelArgs, ...targets], input.repoRoot, input.env);
 
   const releaseDir = join(input.repoRoot, ".build", "release");
@@ -157,10 +158,10 @@ export async function shipRelease(input: ReleaseShipInput): Promise<ReleaseShipR
     cpSync(dmgSource, dmgDest);
     dmgPaths.push(dmgDest);
 
-    const appSource = await resolveBazelOutput(input, signedAppTargetForLabel(label));
+    const bundleSource = await resolveBazelOutput(input, updaterBundleTargetForLabel(label));
     const bundlePath = join(releaseDir, updaterAssetName(version, label));
     const sigPath = join(releaseDir, updaterSignatureName(version, label));
-    await createUpdaterBundle(input, appSource, bundlePath, sigPath);
+    await createUpdaterBundle(input, bundleSource, bundlePath, sigPath);
     updaterPaths.push(bundlePath, sigPath);
     platforms[updaterPlatformKey(label)] = {
       url: `${downloadBase}/${updaterAssetName(version, label)}`,

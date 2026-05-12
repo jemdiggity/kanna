@@ -4,7 +4,7 @@ exports_files(["VERSION"])
 
 load("@kanna_npm//:defs.bzl", "npm_link_all_packages")
 load("@rules_tauri//tauri:defs.bzl", "tauri_bundle_inputs", "tauri_macos_app")
-load("//tools/bazel:defs.bzl", "exec_target", "macos_codesign_app", "macos_codesign_file", "macos_dmg", "macos_notarize_dmg")
+load("//tools/bazel:defs.bzl", "exec_target", "macos_codesign_app", "macos_codesign_file", "macos_dmg", "macos_notarize_dmg", "macos_updater_bundle")
 
 npm_link_all_packages(
     name = "node_modules",
@@ -274,6 +274,12 @@ macos_codesign_app(
     output_name = "release/arm64/Kanna.app",
 )
 
+macos_updater_bundle(
+    name = "kanna_updater_bundle_release_arm64",
+    app = ":kanna_signed_app_release_arm64",
+    output_name = "release/Kanna-arm64.app.tar.gz",
+)
+
 macos_dmg(
     name = "kanna_dmg_release_arm64",
     app = ":kanna_signed_app_release_arm64",
@@ -339,6 +345,12 @@ macos_codesign_app(
     output_name = "release/x86_64/Kanna.app",
 )
 
+macos_updater_bundle(
+    name = "kanna_updater_bundle_release_x86_64",
+    app = ":kanna_signed_app_release_x86_64",
+    output_name = "release/Kanna-x86_64.app.tar.gz",
+)
+
 macos_dmg(
     name = "kanna_dmg_release_x86_64",
     app = ":kanna_signed_app_release_x86_64",
@@ -380,6 +392,14 @@ filegroup(
     srcs = [
         ":kanna_signed_app_release_arm64",
         ":kanna_signed_app_release_x86_64",
+    ],
+)
+
+filegroup(
+    name = "release_updater_bundles",
+    srcs = [
+        ":kanna_updater_bundle_release_arm64",
+        ":kanna_updater_bundle_release_x86_64",
     ],
 )
 

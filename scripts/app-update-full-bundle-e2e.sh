@@ -157,8 +157,20 @@ build_app_bundle() {
 create_updater_bundle() {
     local app_source="$1"
     local bundle_dest="$2"
+    local stage_root="$bundle_dest.stage"
+    local stage_app="$stage_root/$(basename "$app_source")"
     rm -f "$bundle_dest"
-    COPYFILE_DISABLE=1 tar -C "$(dirname "$app_source")" -czf "$bundle_dest" "$(basename "$app_source")"
+    rm -rf "$stage_root"
+    mkdir -p "$stage_root"
+    cp -R "$app_source" "$stage_app"
+    find "$stage_app" -type d -exec chmod u+rwx,go+rx {} +
+    COPYFILE_DISABLE=1 tar -C "$stage_root" -czf "$bundle_dest" "$(basename "$app_source")"
+    rm -rf "$stage_root"
+}
+
+make_app_dirs_readonly() {
+    local app_source="$1"
+    find "$app_source" -type d -exec chmod a-w {} +
 }
 
 sign_updater_bundle() {
@@ -318,6 +330,7 @@ EOF
 
 build_app_bundle "$OLD_VERSION" "$OLD_APP_SOURCE"
 build_app_bundle "$NEW_VERSION" "$NEW_APP_SOURCE"
+make_app_dirs_readonly "$NEW_APP_SOURCE"
 
 BUNDLE_NAME="Kanna_${NEW_VERSION}_${ARCH_SUFFIX}.app.tar.gz"
 BUNDLE_PATH="$RELEASE_DIR/$BUNDLE_NAME"

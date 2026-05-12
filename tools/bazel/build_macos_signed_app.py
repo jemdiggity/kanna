@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -30,6 +31,13 @@ def detect_signing_identity() -> str:
     raise SystemExit("no Developer ID Application signing identity found")
 
 
+def normalize_bundle_directory_modes(app_path: Path) -> None:
+    for root, dirs, _files in os.walk(app_path):
+        Path(root).chmod(0o755)
+        for dirname in dirs:
+            (Path(root) / dirname).chmod(0o755)
+
+
 def main() -> None:
     args = parse_args()
 
@@ -45,6 +53,7 @@ def main() -> None:
         shutil.rmtree(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(app_path, output_path, symlinks=False)
+    normalize_bundle_directory_modes(output_path)
 
     subprocess.run(
         [
@@ -60,6 +69,8 @@ def main() -> None:
         ],
         check=True,
     )
+
+    normalize_bundle_directory_modes(output_path)
 
     subprocess.run(
         [
