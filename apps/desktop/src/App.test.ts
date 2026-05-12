@@ -146,6 +146,7 @@ const mockWindowWorkspace = {
   closeWindow: vi.fn(async () => {}),
   persistSelection: vi.fn(async () => {}),
   persistSidebarHidden: vi.fn(async () => {}),
+  persistSidebarWidth: vi.fn(async () => {}),
   invalidateSharedData: vi.fn(async () => {}),
   restoreAdditionalWindows: vi.fn(async () => {}),
 };
@@ -529,6 +530,7 @@ describe("App", () => {
     mockWindowWorkspace.closeWindow.mockClear();
     mockWindowWorkspace.persistSelection.mockClear();
     mockWindowWorkspace.persistSidebarHidden.mockClear();
+    mockWindowWorkspace.persistSidebarWidth.mockClear();
     mockWindowWorkspace.invalidateSharedData.mockClear();
     mockWindowWorkspace.restoreAdditionalWindows.mockClear();
     dbSelectMock.mockReset();
@@ -581,6 +583,75 @@ describe("App", () => {
 
     expect(dragOverEvent.defaultPrevented).toBe(true);
     expect(dropEvent.defaultPrevented).toBe(true);
+
+    wrapper.unmount();
+  });
+
+  it("restores the saved sidebar width for the current window", async () => {
+    mockWindowWorkspace.loadSnapshot.mockResolvedValueOnce({
+      windows: [
+        {
+          windowId: "main",
+          selectedRepoId: "repo-1",
+          selectedItemId: null,
+          order: 0,
+          sidebarHidden: false,
+          sidebarWidth: 340,
+        },
+      ],
+    });
+
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="sidebar-shell"]').attributes("style")).toContain("width: 340px");
+
+    wrapper.unmount();
+  });
+
+  it("resizes the sidebar by dragging the desktop handle and persists the final width", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    await wrapper.get('[data-testid="sidebar-resize-handle"]').trigger("pointerdown", {
+      clientX: 260,
+      pointerId: 1,
+    });
+    document.dispatchEvent(new MouseEvent("pointermove", { clientX: 320 }));
+    document.dispatchEvent(new MouseEvent("pointerup", { clientX: 320 }));
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="sidebar-shell"]').attributes("style")).toContain("width: 320px");
+    expect(mockWindowWorkspace.persistSidebarWidth).toHaveBeenCalledWith(320);
+
+    wrapper.unmount();
+  });
+
+  it("clamps the resized sidebar width before persisting", async () => {
+    const wrapper = await mountApp(SidebarWithRepoStub);
+    await flushPromises();
+
+    await wrapper.get('[data-testid="sidebar-resize-handle"]').trigger("pointerdown", {
+      clientX: 260,
+      pointerId: 1,
+    });
+    document.dispatchEvent(new MouseEvent("pointermove", { clientX: 80 }));
+    document.dispatchEvent(new MouseEvent("pointerup", { clientX: 80 }));
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="sidebar-shell"]').attributes("style")).toContain("width: 220px");
+    expect(mockWindowWorkspace.persistSidebarWidth).toHaveBeenLastCalledWith(220);
+
+    await wrapper.get('[data-testid="sidebar-resize-handle"]').trigger("pointerdown", {
+      clientX: 220,
+      pointerId: 2,
+    });
+    document.dispatchEvent(new MouseEvent("pointermove", { clientX: 900 }));
+    document.dispatchEvent(new MouseEvent("pointerup", { clientX: 900 }));
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="sidebar-shell"]').attributes("style")).toContain("width: 420px");
+    expect(mockWindowWorkspace.persistSidebarWidth).toHaveBeenLastCalledWith(420);
 
     wrapper.unmount();
   });

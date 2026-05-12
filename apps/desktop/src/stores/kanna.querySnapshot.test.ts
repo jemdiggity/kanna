@@ -340,6 +340,7 @@ async function createStore() {
     openWindow: vi.fn(async () => {}),
     persistSelection: vi.fn(async () => {}),
     persistSidebarHidden: vi.fn(async () => {}),
+    persistSidebarWidth: vi.fn(async () => {}),
     invalidateSharedData: invalidateSharedDataMock,
     restoreAdditionalWindows: vi.fn(async () => {}),
     onSharedInvalidation: onSharedInvalidationMock,

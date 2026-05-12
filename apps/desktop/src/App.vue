@@ -54,12 +54,16 @@ import { NEW_CUSTOM_TASK_PROMPT } from "@kanna/core";
 import type { CustomTaskConfig } from "@kanna/core";
 import type { DynamicCommand } from "./components/CommandPaletteModal.vue";
 import {
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
   WINDOW_WORKSPACE_NATIVE_CLOSE_WINDOW_EVENT,
   WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_DOWN_EVENT,
   WINDOW_WORKSPACE_NATIVE_NAVIGATE_REPO_UP_EVENT,
   WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_DOWN_EVENT,
   WINDOW_WORKSPACE_NATIVE_NAVIGATE_TASK_UP_EVENT,
   WINDOW_WORKSPACE_NATIVE_NEW_WINDOW_EVENT,
+  normalizeSidebarWidth,
   type WindowWorkspaceController,
 } from "./windowWorkspace";
 
@@ -229,6 +233,7 @@ function getCurrentPreviewRecall(): FilePreviewRecallState | undefined {
 }
 
 const sidebarHidden = ref(false);
+const sidebarWidth = ref(DEFAULT_SIDEBAR_WIDTH);
 const maximizedModal = ref<ShortcutContext | null>(null);
 const maximized = computed(() => maximizedModal.value !== null);
 const homePath = ref("");
@@ -242,6 +247,70 @@ const treeExplorerRef = ref<InstanceType<typeof TreeExplorerModal> | null>(null)
 const filePickerRef = ref<InstanceType<typeof FilePickerModal> | null>(null);
 const filePreviewRef = ref<InstanceType<typeof FilePreviewModal> | null>(null);
 const preferencesRef = ref<InstanceType<typeof PreferencesPanel> | null>(null);
+const sidebarShellStyle = computed(() => ({
+  width: `${sidebarWidth.value}px`,
+  minWidth: `${sidebarWidth.value}px`,
+  maxWidth: `${sidebarWidth.value}px`,
+}));
+const canResizeSidebar = computed(() => !isMobile);
+let sidebarResizeStartX = 0;
+let sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
+let sidebarResizeActive = false;
+
+function clampSidebarWidth(width: number): number {
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)));
+}
+
+function stopSidebarResize() {
+  if (!sidebarResizeActive) return;
+  sidebarResizeActive = false;
+  document.removeEventListener("pointermove", handleSidebarResizeMove);
+  document.removeEventListener("pointerup", handleSidebarResizeEnd);
+  document.body.classList.remove("is-resizing-sidebar");
+}
+
+function handleSidebarResizeMove(event: PointerEvent) {
+  if (!sidebarResizeActive) return;
+  sidebarWidth.value = clampSidebarWidth(
+    sidebarResizeStartWidth + event.clientX - sidebarResizeStartX,
+  );
+}
+
+async function handleSidebarResizeEnd(event: PointerEvent) {
+  handleSidebarResizeMove(event);
+  stopSidebarResize();
+  try {
+    await windowWorkspace.persistSidebarWidth(sidebarWidth.value);
+  } catch (error: unknown) {
+    console.error("[App] failed to persist sidebar width:", error);
+  }
+}
+
+function startSidebarResize(event: PointerEvent) {
+  if (!canResizeSidebar.value) return;
+  event.preventDefault();
+  sidebarResizeActive = true;
+  sidebarResizeStartX = event.clientX;
+  sidebarResizeStartWidth = sidebarWidth.value;
+  document.addEventListener("pointermove", handleSidebarResizeMove);
+  document.addEventListener("pointerup", handleSidebarResizeEnd);
+  document.body.classList.add("is-resizing-sidebar");
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+}
+
+async function restoreSidebarWidth() {
+  try {
+    const snapshot = await windowWorkspace.loadSnapshot();
+    const savedWindow = snapshot.windows.find((entry) =>
+      entry.windowId === windowWorkspace.bootstrap.windowId
+    );
+    sidebarWidth.value = normalizeSidebarWidth(savedWindow?.sidebarWidth);
+  } catch (error: unknown) {
+    console.error("[App] failed to restore sidebar width:", error);
+  }
+}
 
 interface PendingIncomingTransferRow {
   id: string;
@@ -1299,6 +1368,7 @@ onMounted(async () => {
   window.addEventListener("drop", suppressFileDropNavigation);
   document.addEventListener("file-link-activate", handleFileLinkActivate);
 
+  await restoreSidebarWidth();
   await store.init(db);
   await importPendingIncomingTransfers();
   if (import.meta.env.DEV && window.__KANNA_E2E__) {
@@ -1548,6 +1618,7 @@ onUnmounted(() => {
 });
 
 onBeforeUnmount(() => {
+  stopSidebarResize();
   window.removeEventListener("dragenter", suppressFileDropNavigation);
   window.removeEventListener("dragover", suppressFileDropNavigation);
   window.removeEventListener("drop", suppressFileDropNavigation);
@@ -1558,26 +1629,41 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app" :class="{ mobile: isMobile }">
-    <Sidebar
-      ref="sidebarRef"
+    <div
       v-if="!maximized && !sidebarHidden && (!isMobile || !store.selectedItemId)"
-      :repos="store.repos"
-      :pipeline-items="store.items"
-      :selected-repo-id="store.selectedRepoId"
-      :selected-item-id="store.selectedItemId"
-      :blocker-names="sidebarBlockerNames"
-      @select-repo="store.selectRepo"
-      @select-item="handleSelectItem"
-      @new-task="(repoId: string) => openNewTaskModal(repoId).catch((e) => console.error('[App] openNewTaskModal failed:', e))"
-      @pin-item="store.pinItem"
-      @unpin-item="store.unpinItem"
-      @reorder-pinned="store.reorderPinned"
-      @rename-item="store.renameItem"
-      @rename-done="focusAgentTerminal"
-      @hide-repo="store.hideRepo"
-      @rename-repo="store.renameRepo"
-      @reorder-repos="store.reorderRepos"
-    />
+      class="sidebar-shell"
+      :style="sidebarShellStyle"
+      data-testid="sidebar-shell"
+    >
+      <Sidebar
+        ref="sidebarRef"
+        :repos="store.repos"
+        :pipeline-items="store.items"
+        :selected-repo-id="store.selectedRepoId"
+        :selected-item-id="store.selectedItemId"
+        :blocker-names="sidebarBlockerNames"
+        @select-repo="store.selectRepo"
+        @select-item="handleSelectItem"
+        @new-task="(repoId: string) => openNewTaskModal(repoId).catch((e) => console.error('[App] openNewTaskModal failed:', e))"
+        @pin-item="store.pinItem"
+        @unpin-item="store.unpinItem"
+        @reorder-pinned="store.reorderPinned"
+        @rename-item="store.renameItem"
+        @rename-done="focusAgentTerminal"
+        @hide-repo="store.hideRepo"
+        @rename-repo="store.renameRepo"
+        @reorder-repos="store.reorderRepos"
+      />
+      <div
+        v-if="canResizeSidebar"
+        class="sidebar-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        tabindex="0"
+        data-testid="sidebar-resize-handle"
+        @pointerdown="startSidebarResize"
+      />
+    </div>
     <div v-if="!isMobile || store.selectedItemId" class="main-column">
       <MainPanel
         ref="mainPanelRef"
@@ -1776,6 +1862,49 @@ html, body, #app {
   width: 100%;
 }
 
+.sidebar-shell {
+  position: relative;
+  flex: 0 0 auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.sidebar-shell :deep(.sidebar) {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.sidebar-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after {
+  background: #4a90e2;
+}
+
+:global(body.is-resizing-sidebar) {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .main-column {
   flex: 1;
   min-width: 0;
@@ -1803,6 +1932,13 @@ html, body, #app {
   max-width: none;
   height: 100%;
   border-right: none;
+}
+
+.app.mobile .sidebar-shell {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: 100%;
 }
 
 .app.mobile .main-panel {
