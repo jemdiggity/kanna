@@ -238,19 +238,64 @@ function escapeTomlString(value: string): string {
 
 async function resolveKannaServerBinary(): Promise<string> {
   const repoRoot = join(process.cwd(), "../..");
-  const candidates = [
+  const explicitBinary = process.env.KANNA_E2E_KANNA_SERVER_BINARY;
+  if (explicitBinary) {
+    if (await stat(explicitBinary).then((stats) => stats.isFile()).catch(() => false)) {
+      return explicitBinary;
+    }
+    throw new Error(`KANNA_E2E_KANNA_SERVER_BINARY does not point to a file: ${explicitBinary}`);
+  }
+
+  const hostTarget = await resolveRustHostTarget();
+  const hostCandidates = [
+    join(repoRoot, ".build", hostTarget, "debug", "kanna-server"),
+    join(process.cwd(), "src-tauri", "binaries", `kanna-server-${hostTarget}`),
+  ];
+  const hostMatches = await existingFiles(hostCandidates);
+  if (hostMatches.length > 0) {
+    hostMatches.sort((left, right) => right.mtimeMs - left.mtimeMs);
+    return hostMatches[0].path;
+  }
+
+  const fallbackCandidates = [
+    join(repoRoot, ".build", "debug", "kanna-server"),
     join(process.cwd(), "src-tauri", "binaries", "kanna-server-aarch64-apple-darwin"),
     join(process.cwd(), "src-tauri", "binaries", "kanna-server-x86_64-apple-darwin"),
     join(repoRoot, ".build", "aarch64-apple-darwin", "debug", "kanna-server"),
     join(repoRoot, ".build", "x86_64-apple-darwin", "debug", "kanna-server"),
-    join(repoRoot, ".build", "debug", "kanna-server"),
   ];
-  for (const candidate of candidates) {
+  for (const candidate of fallbackCandidates) {
     if (await stat(candidate).then((stats) => stats.isFile()).catch(() => false)) {
       return candidate;
     }
   }
-  throw new Error(`kanna-server sidecar not found in ${candidates.join(", ")}`);
+  throw new Error(`kanna-server sidecar not found in ${[...hostCandidates, ...fallbackCandidates].join(", ")}`);
+}
+
+async function resolveRustHostTarget(): Promise<string> {
+  const output = await execFileAsync("rustc", ["-vV"])
+    .then(({ stdout }) => stdout)
+    .catch(() => "");
+  const hostLine = output
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("host:"));
+  const hostTarget = hostLine?.replace("host:", "").trim();
+  if (hostTarget) return hostTarget;
+  if (process.platform === "darwin" && process.arch === "arm64") return "aarch64-apple-darwin";
+  if (process.platform === "darwin" && process.arch === "x64") return "x86_64-apple-darwin";
+  return `${process.arch}-${process.platform}`;
+}
+
+async function existingFiles(paths: string[]): Promise<Array<{ path: string; mtimeMs: number }>> {
+  const matches: Array<{ path: string; mtimeMs: number }> = [];
+  for (const path of paths) {
+    const stats = await stat(path).catch(() => null);
+    if (stats?.isFile()) {
+      matches.push({ path, mtimeMs: stats.mtimeMs });
+    }
+  }
+  return matches;
 }
 
 async function startTestKannaServer(
