@@ -2,6 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resetDatabase } from "../helpers/reset";
+import { queryDb } from "../helpers/vue";
 import { WebDriverClient } from "../helpers/webdriver";
 
 interface WorkspaceSnapshot {
@@ -27,25 +28,46 @@ async function getCurrentWindowId(client: WebDriverClient): Promise<string> {
   );
 }
 
-async function readWorkspaceSnapshot(client: WebDriverClient): Promise<WorkspaceSnapshot> {
-  const result = await client.executeAsync<WorkspaceSnapshot | { __error: string }>(
-    `const cb = arguments[arguments.length - 1];
-     const ctx = window.__KANNA_E2E__.setupState;
-     Promise.resolve(ctx.windowWorkspace.loadSnapshot())
-       .then((snapshot) => cb(snapshot))
-       .catch((error) => cb({ __error: error && error.message ? error.message : String(error) }));`,
-  );
-  if (typeof result === "object" && result !== null && "__error" in result) {
-    throw new Error(result.__error);
+async function readWorkspaceSnapshotFromDb(client: WebDriverClient): Promise<WorkspaceSnapshot> {
+  const rows = await queryDb(
+    client,
+    "SELECT value FROM settings WHERE key = ?",
+    ["window_workspace_v1"],
+  ) as Array<{ value?: string | null }>;
+  const raw = rows[0]?.value;
+  if (!raw) return { windows: [] };
+
+  try {
+    const parsed = JSON.parse(raw) as WorkspaceSnapshot;
+    return {
+      windows: Array.isArray(parsed.windows) ? parsed.windows : [],
+    };
+  } catch (error) {
+    throw new Error(
+      `Failed to parse window_workspace_v1: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-  return result;
+}
+
+async function waitForWorkspaceSetting(client: WebDriverClient, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = await queryDb(
+      client,
+      "SELECT key FROM settings WHERE key = ?",
+      ["window_workspace_v1"],
+    );
+    if (rows.length > 0) return;
+    await sleep(100);
+  }
+  throw new Error("Timed out waiting for window_workspace_v1 setting");
 }
 
 async function getPersistedSidebarWidth(
   client: WebDriverClient,
   windowId: string,
 ): Promise<number | undefined> {
-  const snapshot = await readWorkspaceSnapshot(client);
+  const snapshot = await readWorkspaceSnapshotFromDb(client);
   const windowState = snapshot.windows?.find((entry) => entry.windowId === windowId);
   return typeof windowState?.sidebarWidth === "number" ? windowState.sidebarWidth : undefined;
 }
@@ -105,7 +127,7 @@ async function dragSidebarHandleToWidth(
        y: Math.round(handleRect.top + handleRect.height / 2),
      };
      const pointerId = 42;
-     const buildEvent = (type, point, buttons) => {
+     const buildPointerDown = (point) => {
        const init = {
          bubbles: true,
          cancelable: true,
@@ -117,10 +139,28 @@ async function dragSidebarHandleToWidth(
          screenX: point.x,
          screenY: point.y,
          button: 0,
-         buttons,
+         buttons: 1,
        };
-       if (typeof PointerEvent === "function") return new PointerEvent(type, init);
-       const event = new MouseEvent(type, init);
+       if (typeof PointerEvent === "function") return new PointerEvent("pointerdown", init);
+       const event = new MouseEvent("pointerdown", init);
+       Object.defineProperties(event, {
+         pointerId: { value: pointerId },
+         pointerType: { value: "mouse" },
+         isPrimary: { value: true },
+       });
+       return event;
+     };
+     const buildMousePointerEvent = (type, point, buttons) => {
+       const event = new MouseEvent(type, {
+         bubbles: true,
+         cancelable: true,
+         clientX: point.x,
+         clientY: point.y,
+         screenX: point.x,
+         screenY: point.y,
+         button: 0,
+         buttons,
+       });
        Object.defineProperties(event, {
          pointerId: { value: pointerId },
          pointerType: { value: "mouse" },
@@ -133,9 +173,9 @@ async function dragSidebarHandleToWidth(
      // can throw even though the app's resize listeners are wired correctly.
      handle.setPointerCapture = () => {};
      try {
-       handle.dispatchEvent(buildEvent("pointerdown", start, 1));
-       document.dispatchEvent(buildEvent("pointermove", end, 1));
-       document.dispatchEvent(buildEvent("pointerup", end, 0));
+       handle.dispatchEvent(buildPointerDown(start));
+       document.dispatchEvent(buildMousePointerEvent("pointermove", end, 1));
+       document.dispatchEvent(buildMousePointerEvent("pointerup", end, 0));
        return "ok";
      } catch (error) {
        return { __error: error && error.message ? error.message : String(error) };
@@ -181,6 +221,7 @@ describe("sidebar resize", () => {
 
     await client.executeSync("location.reload()");
     await client.waitForAppReady();
+    await waitForWorkspaceSetting(client);
     await waitForSidebarWidth(client, 420);
     expect(await getPersistedSidebarWidth(client, windowId)).toBe(420);
   });
