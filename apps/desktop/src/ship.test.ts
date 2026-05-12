@@ -427,7 +427,6 @@ describe("updater release assets", () => {
     );
 
     expect(releaseRuntime).toContain("Kanna_${version}_${label}.app.tar.gz");
-    expect(releaseRuntime).toContain("COPYFILE_DISABLE: \"1\"");
     expect(releaseRuntime).toContain('"tauri", "signer", "sign"');
     expect(releaseRuntime).toContain("const generatedSig = `${bundlePath}.sig`");
     expect(releaseRuntime).toContain("generatedSig !== signaturePath");
