@@ -2059,6 +2059,68 @@ describe("App", () => {
     expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-mode")).toBe("rendered");
   });
 
+  it("remembers markdown render mode when reopening a preview window", async () => {
+    const MarkdownFilePickerModalTestStub = defineComponent({
+      name: "FilePickerModal",
+      emits: ["select"],
+      template: `
+        <div data-testid="file-picker-modal">
+          <button data-testid="file-picker-select" @click="$emit('select', 'docs/example.md')">select</button>
+        </div>
+      `,
+    });
+
+    const MarkdownModeFilePreviewModalTestStub = defineComponent({
+      name: "FilePreviewModal",
+      props: {
+        initialMarkdownMode: {
+          type: String,
+          default: "raw",
+        },
+      },
+      emits: ["close", "update-markdown-mode"],
+      setup(_props, { emit, expose }) {
+        function dismiss() {
+          emit("close");
+          return true;
+        }
+
+        expose({ dismiss, zIndex: 1000, bringToFront: vi.fn() });
+
+        return { emit };
+      },
+      template: `
+        <div data-testid="file-preview-modal" :data-mode="initialMarkdownMode">
+          <button data-testid="toggle-markdown-render" @click="emit('update-markdown-mode', 'rendered')">rendered</button>
+        </div>
+      `,
+    });
+
+    const wrapper = await mountAppWithOverrides(SidebarWithRepoStub, {
+      FilePickerModal: MarkdownFilePickerModalTestStub,
+      FilePreviewModal: MarkdownModeFilePreviewModalTestStub,
+    });
+
+    expect(capturedKeyboardActions).not.toBeNull();
+
+    capturedKeyboardActions?.openFile();
+    await flushPromises();
+    await wrapper.get('[data-testid="file-picker-select"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-mode")).toBe("raw");
+
+    await wrapper.get('[data-testid="toggle-markdown-render"]').trigger("click");
+    await flushPromises();
+
+    capturedKeyboardActions?.dismiss();
+    await flushPromises();
+    capturedKeyboardActions?.toggleFilePreview();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="file-preview-modal"]').attributes("data-mode")).toBe("rendered");
+  });
+
   it("preserves file picker scroll state when preview hides and resumes the picker", async () => {
     const StatefulFilePickerModalTestStub = defineComponent({
       name: "FilePickerModal",

@@ -18,9 +18,13 @@ const props = defineProps<{
   ideCommand?: string;
   maximized?: boolean;
   initialLine?: number;
+  initialMarkdownMode?: "raw" | "rendered";
 }>();
 
-const emit = defineEmits<{ (e: "close"): void }>();
+const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "update-markdown-mode", mode: "raw" | "rendered"): void;
+}>();
 
 const contentRef = ref<HTMLElement | null>(null);
 const modalRef = ref<HTMLElement | null>(null);
@@ -63,11 +67,10 @@ const currentLang = ref("text");
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-const renderMarkdown = ref(false);
-
 const isMarkdownFile = computed(() =>
   props.filePath.toLowerCase().endsWith(".md")
 );
+const renderMarkdown = ref(props.initialMarkdownMode === "rendered" && isMarkdownFile.value);
 
 const lineCount = computed(() => {
   if (!content.value) return 0;
@@ -143,7 +146,6 @@ watch([renderMarkdown, content], async ([shouldRender, raw]) => {
 async function loadFile() {
   loading.value = true;
   error.value = null;
-  renderMarkdown.value = false;
   try {
     const fullPath = `${props.worktreePath}/${props.filePath}`;
     const raw = await invoke<string>("read_text_file", { path: fullPath });
@@ -166,6 +168,12 @@ async function loadFile() {
   } finally {
     loading.value = false;
   }
+}
+
+function toggleMarkdownMode() {
+  if (!isMarkdownFile.value) return;
+  renderMarkdown.value = !renderMarkdown.value;
+  emit("update-markdown-mode", renderMarkdown.value ? "rendered" : "raw");
 }
 
 // Debounce Shiki re-tokenization: content/lang changes render immediately,
@@ -299,7 +307,7 @@ useLessScroll(contentRef, {
     ) {
       e.preventDefault();
       if (isSearching.value) closeSearch();
-      renderMarkdown.value = !renderMarkdown.value;
+      toggleMarkdownMode();
       return true;
     }
     return false;
@@ -331,7 +339,7 @@ onMounted(() => {
       <div class="preview-header">
         <span class="file-path">{{ filePath }}</span>
         <div class="header-actions">
-          <span v-if="isMarkdownFile" class="mode-badge" @click="renderMarkdown = !renderMarkdown" title="m">
+          <span v-if="isMarkdownFile" class="mode-badge" @click="toggleMarkdownMode" title="m">
             {{ renderMarkdown ? $t('filePreview.rendered') : $t('filePreview.raw') }}
           </span>
           <button class="btn-open" @click="openInIDE" :title="$t('filePreview.openInIDETooltip')">{{ $t('filePreview.openInIDE') }}</button>
