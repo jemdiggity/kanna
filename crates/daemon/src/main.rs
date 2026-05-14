@@ -1730,15 +1730,6 @@ fn stream_output(
                         );
                     }
                 }
-                if should_mirror_output_to_recovery(has_live_terminal_client) {
-                    let sequence = recovery_manager.next_sequence(&session_id);
-                    rt.block_on(async {
-                        recovery_manager
-                            .write_output(&session_id, &data, sequence)
-                            .await;
-                    });
-                }
-
                 // Check if observers exist before cloning data (avoids clone on hot path with zero observers)
                 let has_observers = rt.block_on(async {
                     let guard = session_observers.lock().await;
@@ -1753,7 +1744,7 @@ fn stream_output(
 
                 let evt = Event::Output {
                     session_id: session_id.clone(),
-                    data,
+                    data: data.clone(),
                 };
                 rt.block_on(async {
                     let mut writers = session_writers.lock().await;
@@ -1794,6 +1785,15 @@ fn stream_output(
                         }
                     }
                 });
+
+                if should_mirror_output_to_recovery(has_live_terminal_client) {
+                    let sequence = recovery_manager.next_sequence(&session_id);
+                    rt.block_on(async {
+                        recovery_manager
+                            .write_output(&session_id, &data, sequence)
+                            .await;
+                    });
+                }
 
                 // Tee output to passive observers concurrently, removing dead ones
                 if let Some(obs_data) = obs_data {
@@ -2155,6 +2155,34 @@ mod tests {
     fn recovery_output_is_mirrored_even_with_live_terminal_client() {
         assert!(should_mirror_output_to_recovery(false));
         assert!(should_mirror_output_to_recovery(true));
+    }
+
+    #[test]
+    fn stream_output_prioritizes_live_delivery_before_recovery_persistence() {
+        let source = include_str!("main.rs");
+        let stream_body = source
+            .split("fn stream_output(")
+            .nth(1)
+            .expect("stream_output function should exist");
+
+        let live_delivery_index = stream_body
+            .find("let evt = Event::Output")
+            .expect("stream_output should emit live Output events");
+        let headless_mirror_index = stream_body
+            .find(".mirror_output(&session_id")
+            .expect("stream_output should mirror output into the headless terminal");
+        let recovery_write_index = stream_body
+            .find(".write_output(&session_id")
+            .expect("stream_output should persist output for recovery");
+
+        assert!(
+            headless_mirror_index < live_delivery_index,
+            "headless mirroring must stay before live delivery so new attaches cannot snapshot stale terminal state",
+        );
+        assert!(
+            live_delivery_index < recovery_write_index,
+            "live terminal output should be emitted before recovery persistence so interactive echo is not delayed by bookkeeping",
+        );
     }
 
     #[test]
