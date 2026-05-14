@@ -17,7 +17,7 @@ const props = defineProps<{
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
-const { terminal, init, startListening, fit, fitDeferred, redraw, ensureConnected, dispose } = useTerminal(props.sessionId, props.spawnOptions, {
+const { terminal, init, startListening, fit, fitDeferred, redraw, ensureConnected, pause, dispose } = useTerminal(props.sessionId, props.spawnOptions, {
   kittyKeyboard: props.kittyKeyboard,
   agentProvider: props.agentProvider,
   worktreePath: props.worktreePath,
@@ -34,6 +34,7 @@ defineExpose({
 let resizeObserver: ResizeObserver | null = null
 let started = false
 let focusRafId = 0
+let observingWindowFocus = false
 
 async function startWhenActive() {
   if (!shouldStartTerminalSession(props.active) || started || !containerRef.value) return
@@ -61,6 +62,38 @@ async function focusWhenActive() {
   })
 }
 
+function handleWindowBlur() {
+  if (focusRafId) {
+    cancelAnimationFrame(focusRafId)
+    focusRafId = 0
+  }
+  pause()
+  started = false
+}
+
+function handleWindowFocus() {
+  startWhenActive()
+    .then(() => {
+      fitDeferred()
+      return focusWhenActive()
+    })
+    .catch((error) => console.error("[terminal] window focus reconnect failed:", error))
+}
+
+function startObservingWindowFocus() {
+  if (observingWindowFocus) return
+  observingWindowFocus = true
+  window.addEventListener("blur", handleWindowBlur)
+  window.addEventListener("focus", handleWindowFocus)
+}
+
+function stopObservingWindowFocus() {
+  if (!observingWindowFocus) return
+  observingWindowFocus = false
+  window.removeEventListener("blur", handleWindowBlur)
+  window.removeEventListener("focus", handleWindowFocus)
+}
+
 async function waitForStableLayout(el: HTMLElement) {
   let last = { width: 0, height: 0 }
   for (let i = 0; i < 10; i++) {
@@ -83,6 +116,7 @@ onMounted(async () => {
     init(containerRef.value)
     resizeObserver = new ResizeObserver(() => fitDeferred())
     resizeObserver.observe(containerRef.value)
+    startObservingWindowFocus()
     if (props.agentTerminal && props.active !== false) {
       markTaskSwitchMounted(props.sessionId)
     }
@@ -95,9 +129,11 @@ onMounted(async () => {
 })
 
 onActivated(async () => {
+  startObservingWindowFocus()
   if (props.agentTerminal && props.active !== false) {
     markTaskSwitchMounted(props.sessionId)
   }
+  await startWhenActive()
   fitDeferred()
   await focusWhenActive()
   if (props.agentTerminal && props.active !== false) {
@@ -106,10 +142,13 @@ onActivated(async () => {
 })
 
 onDeactivated(() => {
+  stopObservingWindowFocus()
   if (focusRafId) {
     cancelAnimationFrame(focusRafId)
     focusRafId = 0
   }
+  pause()
+  started = false
 })
 
 watch(
@@ -123,6 +162,7 @@ watch(
 )
 
 onUnmounted(() => {
+  stopObservingWindowFocus()
   if (focusRafId) cancelAnimationFrame(focusRafId)
   resizeObserver?.disconnect()
   dispose()

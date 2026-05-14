@@ -2142,6 +2142,50 @@ describe("useTerminal", () => {
     second.unmount();
   });
 
+  it("pauses a kept-alive terminal by detaching and removing live output listeners", async () => {
+    const { useTerminal } = await import("./useTerminal");
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening, pause } = useTerminal("session-1");
+        return { init, startListening, pause };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+    await wrapper.vm.startListening();
+
+    expect(eventListeners.get("terminal_output")).toHaveLength(1);
+
+    const terminal = terminals[0];
+    terminal.write.mockClear();
+    wrapper.vm.pause();
+
+    expect(invokeMock).toHaveBeenCalledWith("detach_session", { sessionId: "session-1" });
+    expect(eventListeners.get("terminal_output")).toHaveLength(0);
+
+    const outputListener = eventListeners.get("terminal_output")?.[0];
+    outputListener?.({
+      payload: {
+        session_id: "session-1",
+        data: Array.from(new TextEncoder().encode("hidden output")),
+      },
+    });
+
+    expect(terminal.write).not.toHaveBeenCalled();
+
+    wrapper.unmount();
+  });
+
   it("keeps the prompt visible when resizing from the bottom of scrollback", async () => {
     const { useTerminal } = await import("./useTerminal");
 

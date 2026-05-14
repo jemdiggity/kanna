@@ -216,6 +216,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let fitRafId = 0
   let attached = false
   let connecting = false
+  let paused = false
+  let connectionGeneration = 0
   let disposed = false
   let hasAttachedOnce = false
   let preserveRecoveredScrollbackForNextSnapshot = false
@@ -902,7 +904,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   }
 
   async function connectSession() {
+    if (paused) return
     if (shouldSkipReconnect(connecting, attached)) return
+    const generation = connectionGeneration
     connecting = true
     const recoveryMode = getTerminalRecoveryMode(spawnOptions, options)
     const shouldApplyReconnectEffects = hasAttachedOnce
@@ -924,6 +928,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     try {
       const shouldHydrateFromSnapshot = true
       await invoke("attach_session_with_snapshot", { sessionId })
+      if (paused || generation !== connectionGeneration) {
+        await invoke("detach_session", { sessionId }).catch(() => {})
+        return
+      }
       console.warn("[terminal][connect] attach:ok", {
         sessionId,
         instanceId,
@@ -1066,6 +1074,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           return
         }
         await invoke("attach_session_with_snapshot", { sessionId })
+        if (paused || generation !== connectionGeneration) {
+          await invoke("detach_session", { sessionId }).catch(() => {})
+          return
+        }
         attached = true
         hasAttachedOnce = true
         const attachedTerminal = getLiveTerminal()
@@ -1086,6 +1098,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   }
 
   async function startListening() {
+    paused = false
+    connectionGeneration += 1
     const teardownId = `td-${sessionId}`
     console.warn("[terminal][instance] startListening", {
       sessionId,
@@ -1243,6 +1257,64 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     await connectSession()
   }
 
+  function pause() {
+    paused = true
+    connectionGeneration += 1
+    const shouldDetach = attached || connecting || hasAttachedOnce
+    attached = false
+    connecting = false
+    if (shouldDetach) {
+      invoke("detach_session", { sessionId }).catch((error) => {
+        console.warn("[terminal] Failed to detach session during pause:", error)
+      })
+    }
+    if (unlistenOutput) {
+      unlistenOutput()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "terminal_output",
+      })
+      unlistenOutput = null
+    }
+    if (unlistenSnapshot) {
+      unlistenSnapshot()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "terminal_snapshot",
+      })
+      unlistenSnapshot = null
+    }
+    if (unlistenExit) {
+      unlistenExit()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "session_exit",
+      })
+      unlistenExit = null
+    }
+    if (unlistenDaemonReady) {
+      unlistenDaemonReady()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "daemon_ready",
+      })
+      unlistenDaemonReady = null
+    }
+    if (unlistenStreamLost) {
+      unlistenStreamLost()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "session_stream_lost",
+      })
+      unlistenStreamLost = null
+    }
+  }
+
   function fit() {
     if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) return
     const liveTerminal = terminal.value
@@ -1395,5 +1467,5 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     }
   }
 
-  return { terminal, init, startListening, fit, fitDeferred, redraw, ensureConnected, dispose }
+  return { terminal, init, startListening, fit, fitDeferred, redraw, ensureConnected, pause, dispose }
 }
