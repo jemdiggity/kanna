@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -212,6 +212,15 @@ async function waitForFileSize(path: string, expectedSize: number, timeoutMs = 5
   throw new Error(`timed out waiting for ${path} to reach ${expectedSize} bytes`);
 }
 
+async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await stat(path).then((stats) => stats.isFile()).catch(() => false)) return;
+    await sleep(100);
+  }
+  throw new Error(`timed out waiting for ${path}`);
+}
+
 async function findFreePort(): Promise<number> {
   return await new Promise<number>((resolvePort, reject) => {
     const server = createServer();
@@ -366,6 +375,16 @@ describe("stage advance", () => {
     const kannaDir = join(testRepoPath, ".kanna");
     await mkdir(join(kannaDir, "pipelines"), { recursive: true });
     await mkdir(join(kannaDir, "agents", "commit-e2e"), { recursive: true });
+    await mkdir(join(kannaDir, "agents", "revision-e2e"), { recursive: true });
+    await mkdir(join(kannaDir, "fake-bin"), { recursive: true });
+    await writeFile(
+      join(kannaDir, "config.json"),
+      JSON.stringify({
+        setup: [
+          "export PATH=\"$PWD/.kanna/fake-bin:$PATH\"",
+        ],
+      }),
+    );
     await writeFile(
       join(kannaDir, "pipelines", `${pipelineName}.json`),
       JSON.stringify({
@@ -410,8 +429,13 @@ describe("stage advance", () => {
       JSON.stringify({
         name: "revision-e2e",
         stages: [
-          { name: "in progress", transition: "manual" },
-          { name: "review", transition: "manual" },
+          {
+            name: "in progress",
+            transition: "manual",
+            agent: "revision-e2e",
+          },
+          { name: "review", transition: "auto" },
+          { name: "pr", transition: "manual" },
         ],
       }),
     );
@@ -426,6 +450,31 @@ describe("stage advance", () => {
         "",
       ].join("\n"),
     );
+    await writeFile(
+      join(kannaDir, "agents", "revision-e2e", "AGENT.md"),
+      [
+        "---",
+        "name: Revision E2E",
+        "description: Captures request-revision prompts.",
+        "agent_provider: codex",
+        "---",
+        "Implement revision:",
+        "$TASK_PROMPT",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(kannaDir, "fake-bin", "codex"),
+      [
+        "#!/bin/sh",
+        "mkdir -p .kanna",
+        "printf '%s\\n' \"$@\" > .kanna/revision-codex-args.txt",
+        "",
+      ].join("\n"),
+    );
+    await chmod(join(kannaDir, "fake-bin", "codex"), 0o755);
+    await git(testRepoPath, ["add", ".kanna"]);
+    await git(testRepoPath, ["commit", "-m", "test: add kanna stage fixtures"]);
 
     repoId = await importTestRepo(client, testRepoPath, "stage-advance-test");
   });
@@ -741,17 +790,22 @@ describe("stage advance", () => {
     }
   });
 
-  it("preserves the source task title when request-revision creates a new in-progress task", async () => {
-    const taskId = "server-request-revision-task";
-    const branch = "task-server-request-revision";
-    const originalTitle = "Preserve this review title";
-    const originalPrompt = "Original implementation prompt should not become the visible title";
-    const revisionPrompt = "Fix the review feedback without changing the visible title";
+  it("requests a revision through the server API without replacing the reviewed task title", async () => {
+    const taskId = "server-request-revision-title-task";
+    const branch = "task-server-request-revision-title";
+    const worktreePath = join(testRepoPath, ".kanna-worktrees", branch);
+    const originalTitle = "Preserve reviewed task title";
+    const reviewPrompt = "Review prompt that should be hidden after revision.";
+    const revisionPrompt = "Add E2E coverage for the request-revision title path.";
+    const expectedAgentPrompt = [
+      "Implement revision:",
+      revisionPrompt,
+    ].join("\n");
 
     await tauriInvoke(client, "git_worktree_add", {
       repoPath: testRepoPath,
       branch,
-      path: join(testRepoPath, ".kanna-worktrees", branch),
+      path: worktreePath,
       startPoint: "main",
     });
     await execDb(
@@ -763,10 +817,10 @@ describe("stage advance", () => {
       [
         taskId,
         repoId,
-        originalPrompt,
+        reviewPrompt,
         "revision-e2e",
         "review",
-        null,
+        JSON.stringify({ status: "success", summary: "ready for review" }),
         "[]",
         branch,
         "pty",
@@ -775,58 +829,74 @@ describe("stage advance", () => {
         originalTitle,
       ],
     );
+    await hydrateStoreItem(client, taskId);
 
     const existingInProgressTaskIds = await getStageTaskIds(client, repoId, "in progress");
     const server = await startTestKannaServer(client, join(testRepoPath, ".kanna"));
-    let revisionTaskId = "";
     try {
       const response = await fetch(`${server.baseUrl}/v1/tasks/${encodeURIComponent(taskId)}/actions/request-revision`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           targetStage: "in progress",
-          summary: "review requested changes",
+          summary: "missing request-revision title coverage",
           prompt: revisionPrompt,
+          metadata: { source: "e2e" },
         }),
       });
       if (!response.ok) {
         throw new Error(`request-revision failed: ${response.status} ${await response.text()}`);
       }
-      const created = await response.json() as { taskId?: string };
-      revisionTaskId = created.taskId ?? "";
+
+      const body = await response.json() as { taskId: string };
+      const revisionTaskId = body.taskId;
       expect(revisionTaskId).toBeTruthy();
       expect(existingInProgressTaskIds.has(revisionTaskId)).toBe(false);
 
       const rows = (await queryDb(
         client,
-        "SELECT prompt, display_name, stage, closed_at FROM pipeline_item WHERE id = ?",
-        [revisionTaskId],
+        `SELECT id, prompt, display_name, stage, closed_at, branch
+         FROM pipeline_item
+         WHERE id IN (?, ?)
+         ORDER BY id`,
+        [taskId, revisionTaskId],
       )) as Array<{
+        id: string | null;
         prompt: string | null;
         display_name: string | null;
         stage: string | null;
         closed_at: string | null;
+        branch: string | null;
       }>;
-      expect(rows[0]).toEqual({
-        prompt: revisionPrompt,
-        display_name: originalTitle,
-        stage: "in progress",
-        closed_at: null,
-      });
+      const reviewed = rows.find((row) => row.id === taskId);
+      const revision = rows.find((row) => row.id === revisionTaskId);
+      expect(reviewed?.stage).toBe("done");
+      expect(reviewed?.closed_at).toBeTruthy();
+      expect(revision?.stage).toBe("in progress");
+      expect(revision?.display_name).toBe(originalTitle);
+      expect(revision?.prompt).toBe(expectedAgentPrompt);
+      expect(revision?.branch).toMatch(/^task-/);
 
-      const sourceRows = (await queryDb(
-        client,
-        "SELECT stage, closed_at, stage_result FROM pipeline_item WHERE id = ?",
-        [taskId],
-      )) as Array<{ stage: string | null; closed_at: string | null; stage_result: string | null }>;
-      expect(sourceRows[0]?.stage).toBe("done");
-      expect(sourceRows[0]?.closed_at).toBeTruthy();
-      expect(sourceRows[0]?.stage_result).toContain("review requested changes");
+      const createdWorktreePath = join(testRepoPath, ".kanna-worktrees", revision?.branch ?? "");
+      const capturedArgsPath = join(createdWorktreePath, ".kanna", "revision-codex-args.txt");
+      await waitForFile(capturedArgsPath, 20_000);
+      const capturedArgs = await readFile(capturedArgsPath, "utf8");
+      expect(capturedArgs).toContain("--yolo\n");
+      expect(capturedArgs).toContain(`${expectedAgentPrompt}\n`);
+
+      const tasksResponse = await fetch(`${server.baseUrl}/v1/repos/${encodeURIComponent(repoId)}/tasks`);
+      if (!tasksResponse.ok) {
+        throw new Error(`list tasks failed: ${tasksResponse.status} ${await tasksResponse.text()}`);
+      }
+      const tasks = await tasksResponse.json() as Array<{ id: string; title: string; stage: string | null }>;
+      expect(tasks.find((task) => task.id === taskId)).toBeUndefined();
+      expect(tasks.find((task) => task.id === revisionTaskId)).toMatchObject({
+        id: revisionTaskId,
+        title: originalTitle,
+        stage: "in progress",
+      });
     } finally {
       server.child.kill();
-      if (revisionTaskId) {
-        await tauriInvoke(client, "kill_session", { sessionId: revisionTaskId }).catch(() => undefined);
-      }
     }
   });
 
