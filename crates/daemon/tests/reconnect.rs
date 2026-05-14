@@ -9,11 +9,12 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -128,6 +129,18 @@ struct DaemonHandle {
 
 impl DaemonHandle {
     fn start() -> Self {
+        Self::start_with_env([])
+    }
+
+    fn start_with_env<const N: usize>(envs: [(&str, &str); N]) -> Self {
+        Self::start_with_options(envs, false)
+    }
+
+    fn start_with_fake_recovery<const N: usize>(envs: [(&str, &str); N]) -> Self {
+        Self::start_with_options(envs, true)
+    }
+
+    fn start_with_options<const N: usize>(envs: [(&str, &str); N], fake_recovery: bool) -> Self {
         let instance = TEST_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
             "kanna-daemon-test-{}-{}",
@@ -143,10 +156,18 @@ impl DaemonHandle {
 
         let daemon_bin = PathBuf::from(env!("CARGO_BIN_EXE_kanna-daemon"));
 
-        let child = Command::new(&daemon_bin)
-            .env("KANNA_DAEMON_DIR", dir.to_str().unwrap())
-            .spawn()
-            .expect("failed to start daemon");
+        let mut command = Command::new(&daemon_bin);
+        command.env("KANNA_DAEMON_DIR", dir.to_str().unwrap());
+        if fake_recovery {
+            command.env(
+                "KANNA_TERMINAL_RECOVERY_BIN",
+                write_fake_recovery_sidecar(&dir),
+            );
+        }
+        for (key, value) in envs {
+            command.env(key, value);
+        }
+        let child = command.spawn().expect("failed to start daemon");
 
         // Wait for this daemon instance to be ready, not merely for a stale socket path to exist.
         for _ in 0..50 {
@@ -187,6 +208,31 @@ impl DaemonHandle {
             writer: stream,
         }
     }
+}
+
+fn write_fake_recovery_sidecar(dir: &Path) -> PathBuf {
+    let path = dir.join("fake-terminal-recovery");
+    std::fs::write(
+        &path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"StartSession"'*|*'"type":"ResizeSession"'*) printf '{"type":"Ok"}\n' ;;
+    *'"type":"GetSnapshot"'*) printf '{"type":"NotFound"}\n' ;;
+    *'"type":"FlushAndShutdown"'*) printf '{"type":"Ok"}\n'; exit 0 ;;
+    *'"type":"WriteOutput"'*|*'"type":"EndSession"'*) : ;;
+    *) printf '{"type":"Error","message":"unexpected fake recovery command"}\n' ;;
+  esac
+done
+"#,
+    )
+    .expect("should write fake recovery sidecar");
+    let mut permissions = std::fs::metadata(&path)
+        .expect("should stat fake recovery sidecar")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).expect("should chmod fake recovery sidecar");
+    path
 }
 
 impl Drop for DaemonHandle {
@@ -274,6 +320,52 @@ impl ClientConn {
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         collected
+    }
+
+    fn collect_output_until_contains_with_timeout(
+        &mut self,
+        needle: &str,
+        timeout: Duration,
+    ) -> Vec<u8> {
+        let deadline = Instant::now() + timeout;
+        let mut collected = Vec::new();
+
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let read_timeout = remaining.min(Duration::from_millis(50));
+            self.reader
+                .get_mut()
+                .set_read_timeout(Some(read_timeout))
+                .unwrap();
+
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if let Ok(Evt::Output { data, .. }) = serde_json::from_str(line.trim()) {
+                        collected.extend_from_slice(&data);
+                        if String::from_utf8_lossy(&collected).contains(needle) {
+                            self.reader
+                                .get_mut()
+                                .set_read_timeout(Some(Duration::from_secs(5)))
+                                .unwrap();
+                            return collected;
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+
+        self.reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        panic!(
+            "timed out waiting for output containing {:?}; collected {:?}",
+            needle,
+            String::from_utf8_lossy(&collected)
+        );
     }
 }
 
@@ -759,6 +851,44 @@ fn test_broadcast_both_clients_receive_output() {
         String::from_utf8_lossy(&output_b).contains("BROADCAST"),
         "client B should receive broadcast output, got: {:?}",
         String::from_utf8_lossy(&output_b)
+    );
+}
+
+#[test]
+fn stream_output_prioritizes_live_delivery_before_recovery_persistence() {
+    // The desktop E2E runner can prove user-visible input/render latency through
+    // the real app stack, but it cannot deterministically make only recovery
+    // persistence slow for a live daemon. This daemon-level hook supplies that
+    // missing control point and guards the ordering that protects PTY echo.
+    let daemon = DaemonHandle::start_with_fake_recovery([(
+        "KANNA_DAEMON_TEST_SLOW_RECOVERY_WRITE_MS",
+        "1200",
+    )]);
+
+    let mut shared = daemon.connect();
+    spawn_echo_session(&mut shared, "sess-slow-recovery");
+
+    let mut attached = daemon.connect();
+    attach(&mut attached, "sess-slow-recovery");
+    attached.drain_output(Duration::from_millis(200));
+
+    let marker = "LIVE_BEFORE_SLOW_RECOVERY";
+    let started = Instant::now();
+    send_input(
+        &mut shared,
+        "sess-slow-recovery",
+        format!("{marker}\n").as_bytes(),
+    );
+
+    let output =
+        attached.collect_output_until_contains_with_timeout(marker, Duration::from_millis(700));
+    assert!(
+        String::from_utf8_lossy(&output).contains(marker),
+        "attached PTY client should receive echoed input before slow recovery bookkeeping"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(900),
+        "live PTY echo should not wait for the injected recovery persistence delay"
     );
 }
 
