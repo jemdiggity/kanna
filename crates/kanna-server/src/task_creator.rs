@@ -223,7 +223,6 @@ pub(crate) fn prepare_advance_stage_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
-            display_name: None,
         },
     )
     .map(PreparedStageTransition::Spawn)
@@ -335,7 +334,6 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
-            display_name: None,
         },
     )
     .map(PreparedStageTransition::Spawn)
@@ -488,7 +486,6 @@ pub(crate) fn prepare_task_for_api(
             model: request.model,
             permission_mode: request.permission_mode,
             allowed_tools: request.allowed_tools.unwrap_or_default(),
-            display_name: None,
         },
     )
 }

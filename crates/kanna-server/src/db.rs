@@ -555,7 +555,6 @@ impl Db {
                 item.port_offset,
                 item.port_env_json,
                 item.base_ref,
-                item.display_name,
             ),
         )?;
         Ok(())
