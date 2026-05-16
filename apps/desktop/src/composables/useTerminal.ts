@@ -216,6 +216,8 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   let fitRafId = 0
   let attached = false
   let connecting = false
+  let paused = false
+  let connectionGeneration = 0
   let disposed = false
   let hasAttachedOnce = false
   let preserveRecoveredScrollbackForNextSnapshot = false
@@ -230,6 +232,34 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
   function getLiveTerminal(): Terminal | null {
     return disposed ? null : terminal.value
+  }
+
+  function isCurrentListeningGeneration(generation: number): boolean {
+    return !paused && !disposed && generation === connectionGeneration
+  }
+
+  function acceptRegisteredListener(
+    generation: number,
+    event: string,
+    unlisten: () => void,
+  ): boolean {
+    if (isCurrentListeningGeneration(generation)) {
+      console.warn("[terminal][instance] listener:add", {
+        sessionId,
+        instanceId,
+        event,
+      })
+      return true
+    }
+
+    unlisten()
+    console.warn("[terminal][instance] listener:remove", {
+      sessionId,
+      instanceId,
+      event,
+      reason: "late-registration",
+    })
+    return false
   }
 
   function isScrolledToBottom(term: Terminal) {
@@ -902,7 +932,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   }
 
   async function connectSession() {
+    if (paused) return
     if (shouldSkipReconnect(connecting, attached)) return
+    const generation = connectionGeneration
     connecting = true
     const recoveryMode = getTerminalRecoveryMode(spawnOptions, options)
     const shouldApplyReconnectEffects = hasAttachedOnce
@@ -924,6 +956,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     try {
       const shouldHydrateFromSnapshot = true
       await invoke("attach_session_with_snapshot", { sessionId })
+      if (paused || generation !== connectionGeneration) {
+        await invoke("detach_session", { sessionId }).catch(() => {})
+        return
+      }
       console.warn("[terminal][connect] attach:ok", {
         sessionId,
         instanceId,
@@ -1066,6 +1102,10 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           return
         }
         await invoke("attach_session_with_snapshot", { sessionId })
+        if (paused || generation !== connectionGeneration) {
+          await invoke("detach_session", { sessionId }).catch(() => {})
+          return
+        }
         attached = true
         hasAttachedOnce = true
         const attachedTerminal = getLiveTerminal()
@@ -1086,6 +1126,9 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
   }
 
   async function startListening() {
+    paused = false
+    connectionGeneration += 1
+    const listeningGeneration = connectionGeneration
     const teardownId = `td-${sessionId}`
     console.warn("[terminal][instance] startListening", {
       sessionId,
@@ -1102,7 +1145,7 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
 
     if (!unlistenOutput) {
       let outputChunkCount = 0
-      unlistenOutput = await subscribeTerminalOutput([sessionId, teardownId], (payload) => {
+      const outputUnlisten = await subscribeTerminalOutput([sessionId, teardownId], (payload) => {
         const sid = payload.session_id
         if (!sid || !terminal.value) return
         outputChunkCount += 1
@@ -1140,15 +1183,12 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           terminal.value.write(bytes)
         }
       })
-      console.warn("[terminal][instance] listener:add", {
-        sessionId,
-        instanceId,
-        event: "terminal_output",
-      })
+      if (!acceptRegisteredListener(listeningGeneration, "terminal_output", outputUnlisten)) return
+      unlistenOutput = outputUnlisten
     }
 
     if (!unlistenSnapshot) {
-      unlistenSnapshot = await listen("terminal_snapshot", (event) => {
+      const snapshotUnlisten = await listen("terminal_snapshot", (event) => {
         const payload = event.payload as TerminalSnapshotEventPayload | undefined
         const sid = payload?.session_id
         if (!payload?.snapshot) return
@@ -1163,15 +1203,12 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           terminal.value.write(payload.snapshot.vt)
         }
       })
-      console.warn("[terminal][instance] listener:add", {
-        sessionId,
-        instanceId,
-        event: "terminal_snapshot",
-      })
+      if (!acceptRegisteredListener(listeningGeneration, "terminal_snapshot", snapshotUnlisten)) return
+      unlistenSnapshot = snapshotUnlisten
     }
 
     if (!unlistenExit) {
-      unlistenExit = await listen(
+      const exitUnlisten = await listen(
         "session_exit",
         (event) => {
           const sid = event.payload.session_id
@@ -1185,15 +1222,12 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           }
         }
       )
-      console.warn("[terminal][instance] listener:add", {
-        sessionId,
-        instanceId,
-        event: "session_exit",
-      })
+      if (!acceptRegisteredListener(listeningGeneration, "session_exit", exitUnlisten)) return
+      unlistenExit = exitUnlisten
     }
 
     if (!unlistenDaemonReady && shouldReattachOnDaemonReady(spawnOptions, options)) {
-      unlistenDaemonReady = await listen("daemon_ready", () => {
+      const daemonReadyUnlisten = await listen("daemon_ready", () => {
         markDaemonReadyObserved()
         console.warn("[terminal][event] daemon_ready", {
           sessionId,
@@ -1207,15 +1241,12 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           console.error("[terminal] daemon_ready re-attach failed:", e)
         )
       })
-      console.warn("[terminal][instance] listener:add", {
-        sessionId,
-        instanceId,
-        event: "daemon_ready",
-      })
+      if (!acceptRegisteredListener(listeningGeneration, "daemon_ready", daemonReadyUnlisten)) return
+      unlistenDaemonReady = daemonReadyUnlisten
     }
 
     if (!unlistenStreamLost) {
-      unlistenStreamLost = await listen("session_stream_lost", (event) => {
+      const streamLostUnlisten = await listen("session_stream_lost", (event) => {
         const sid = event.payload?.session_id
         if (sid === sessionId) {
           attached = false
@@ -1233,14 +1264,70 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
           }
         }
       })
-      console.warn("[terminal][instance] listener:add", {
+      if (!acceptRegisteredListener(listeningGeneration, "session_stream_lost", streamLostUnlisten)) return
+      unlistenStreamLost = streamLostUnlisten
+    }
+
+    if (!isCurrentListeningGeneration(listeningGeneration)) return
+    await connectSession()
+  }
+
+  function pause() {
+    paused = true
+    connectionGeneration += 1
+    const shouldDetach = attached || connecting || hasAttachedOnce
+    attached = false
+    connecting = false
+    if (shouldDetach) {
+      invoke("detach_session", { sessionId }).catch((error) => {
+        console.warn("[terminal] Failed to detach session during pause:", error)
+      })
+    }
+    if (unlistenOutput) {
+      unlistenOutput()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "terminal_output",
+      })
+      unlistenOutput = null
+    }
+    if (unlistenSnapshot) {
+      unlistenSnapshot()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "terminal_snapshot",
+      })
+      unlistenSnapshot = null
+    }
+    if (unlistenExit) {
+      unlistenExit()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "session_exit",
+      })
+      unlistenExit = null
+    }
+    if (unlistenDaemonReady) {
+      unlistenDaemonReady()
+      console.warn("[terminal][instance] listener:remove", {
+        sessionId,
+        instanceId,
+        event: "daemon_ready",
+      })
+      unlistenDaemonReady = null
+    }
+    if (unlistenStreamLost) {
+      unlistenStreamLost()
+      console.warn("[terminal][instance] listener:remove", {
         sessionId,
         instanceId,
         event: "session_stream_lost",
       })
+      unlistenStreamLost = null
     }
-
-    await connectSession()
   }
 
   function fit() {
@@ -1395,5 +1482,5 @@ export function useTerminal(sessionId: string, spawnOptions?: SpawnOptions, opti
     }
   }
 
-  return { terminal, init, startListening, fit, fitDeferred, redraw, ensureConnected, dispose }
+  return { terminal, init, startListening, fit, fitDeferred, redraw, ensureConnected, pause, dispose }
 }

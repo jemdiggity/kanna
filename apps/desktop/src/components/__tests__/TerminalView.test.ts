@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { mount } from "@vue/test-utils";
-import { nextTick, ref } from "vue";
+import { KeepAlive, defineComponent, h, nextTick, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalView from "../TerminalView.vue";
 
@@ -15,6 +15,7 @@ const useTerminalMock = vi.fn(() => ({
   fitDeferred: fitDeferredMock,
   redraw: redrawMock,
   ensureConnected: ensureConnectedMock,
+  pause: pauseMock,
   dispose: disposeMock,
 }));
 
@@ -25,6 +26,7 @@ const fitMock = vi.fn();
 const fitDeferredMock = vi.fn();
 const redrawMock = vi.fn();
 const ensureConnectedMock = vi.fn(async () => {});
+const pauseMock = vi.fn();
 const disposeMock = vi.fn();
 const originalResizeObserver = globalThis.ResizeObserver;
 const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
@@ -60,6 +62,7 @@ describe("TerminalView", () => {
     fitDeferredMock.mockReset();
     redrawMock.mockReset();
     ensureConnectedMock.mockReset();
+    pauseMock.mockReset();
     disposeMock.mockReset();
     markTaskSwitchMountedMock.mockReset();
     markTaskSwitchReadyMock.mockReset();
@@ -126,5 +129,76 @@ describe("TerminalView", () => {
 
     wrapper.unmount();
     modal.remove();
+  });
+
+  it("pauses the daemon stream while kept-alive terminals are deactivated", async () => {
+    const Harness = defineComponent({
+      props: {
+        visible: {
+          type: Boolean,
+          required: true,
+        },
+      },
+      setup(props) {
+        return () =>
+          h(KeepAlive, null, () =>
+            props.visible
+              ? h(TerminalView, {
+                  sessionId: "session-1",
+                  active: true,
+                  agentTerminal: true,
+                })
+              : null,
+          );
+      },
+    });
+
+    const wrapper = mount(Harness, {
+      attachTo: document.body,
+      props: {
+        visible: true,
+      },
+    });
+    await flushLifecycle();
+
+    expect(startListeningMock).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ visible: false });
+    await flushLifecycle();
+
+    expect(pauseMock).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ visible: true });
+    await flushLifecycle();
+
+    expect(startListeningMock).toHaveBeenCalledTimes(2);
+
+    wrapper.unmount();
+  });
+
+  it("pauses the daemon stream while the app window is unfocused", async () => {
+    const wrapper = mount(TerminalView, {
+      attachTo: document.body,
+      props: {
+        sessionId: "session-1",
+        active: true,
+        agentTerminal: true,
+      },
+    });
+    await flushLifecycle();
+
+    expect(startListeningMock).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event("blur"));
+    await flushLifecycle();
+
+    expect(pauseMock).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event("focus"));
+    await flushLifecycle();
+
+    expect(startListeningMock).toHaveBeenCalledTimes(2);
+
+    wrapper.unmount();
   });
 });
