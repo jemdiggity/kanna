@@ -172,6 +172,8 @@ async function restartUpdate() {
   bottom: 16px;
   z-index: 1150;
   width: min(420px, calc(100vw - 32px));
+  max-height: min(640px, calc(100vh - 32px));
+  box-sizing: border-box;
   padding: 16px;
   border: 1px solid rgba(88, 166, 255, 0.28);
   border-radius: 16px;
@@ -180,6 +182,8 @@ async function restartUpdate() {
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(16px);
   color: #e6edf3;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .update-prompt__header {
@@ -226,8 +230,11 @@ async function restartUpdate() {
 
 .update-prompt__body {
   margin-top: 12px;
+  min-height: 0;
   display: grid;
   gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .update-prompt__version {
@@ -245,6 +252,7 @@ async function restartUpdate() {
 
 .update-prompt__notes {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .update-prompt__progress-row {

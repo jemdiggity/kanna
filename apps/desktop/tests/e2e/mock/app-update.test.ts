@@ -75,4 +75,38 @@ describe("app update prompt", () => {
     await client.click(await client.waitForElement('[data-testid="update-later"]', 2000));
     await client.waitForNoElement(".update-prompt", 2000);
   });
+
+  it("keeps long release notes within the visible prompt", async () => {
+    await injectUpdate(client, {
+      version: "9.9.11",
+      body: Array.from({ length: 80 }, (_, index) => `Release note ${index + 1}`).join("\n"),
+    });
+
+    await client.waitForText(".update-prompt", "Update available", 2000);
+    await client.waitForText(".update-prompt", "Release note 1", 2000);
+
+    const metrics = await client.executeSync<{
+      promptHeight: number;
+      viewportHeight: number;
+      bodyClientHeight: number;
+      bodyScrollHeight: number;
+    }>(`
+      const prompt = document.querySelector(".update-prompt");
+      const body = document.querySelector(".update-prompt__body");
+      if (!prompt || !body) throw new Error("update prompt missing");
+      const promptRect = prompt.getBoundingClientRect();
+      return {
+        promptHeight: promptRect.height,
+        viewportHeight: window.innerHeight,
+        bodyClientHeight: body.clientHeight,
+        bodyScrollHeight: body.scrollHeight,
+      };
+    `);
+
+    expect(metrics.promptHeight).toBeLessThanOrEqual(metrics.viewportHeight - 32);
+    expect(metrics.bodyScrollHeight).toBeGreaterThan(metrics.bodyClientHeight);
+
+    await client.click(await client.waitForElement('[data-testid="update-dismiss"]', 2000));
+    await client.waitForNoElement(".update-prompt", 2000);
+  });
 });

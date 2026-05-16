@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 
 import { mount } from "@vue/test-utils";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { computed, ref } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AppUpdatePrompt from "../AppUpdatePrompt.vue";
@@ -153,5 +155,13 @@ describe("AppUpdatePrompt", () => {
     expect(wrapper.text()).toContain("app.update.error");
     expect(wrapper.text()).toContain("download failed");
     expect(wrapper.get('[data-testid="update-retry"]').text()).toBe("app.update.retry");
+  });
+
+  it("keeps long release notes inside a bounded prompt", () => {
+    const source = readFileSync(resolve(__dirname, "../AppUpdatePrompt.vue"), "utf8");
+
+    expect(source).toMatch(/\.update-prompt\s*{[^}]*max-height:\s*min\(640px,\s*calc\(100vh - 32px\)\)/s);
+    expect(source).toMatch(/\.update-prompt\s*{[^}]*display:\s*grid/s);
+    expect(source).toMatch(/\.update-prompt__body\s*{[^}]*overflow-y:\s*auto/s);
   });
 });
