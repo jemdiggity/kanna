@@ -37,4 +37,14 @@ describe("QA pipeline assets", () => {
     expect(prAgent).not.toContain("latest main");
     expect(prAgent).not.toContain("origin/main");
   });
+
+  it("keeps stacked PR base branches until the full stack is merged", () => {
+    const mergeAgent = readRepoFile(".kanna/agents/merge/AGENT.md");
+
+    expect(mergeAgent).toContain("Inspect each PR's title, description, head branch, and base branch");
+    expect(mergeAgent).toContain("Do not delete a PR branch while any unmerged PR still uses it as its base");
+    expect(mergeAgent).toContain("After the full detected stack has merged, delete the stack branches that are no longer needed");
+    expect(mergeAgent).toContain("gh pr merge <PR_NUMBER> --merge");
+    expect(mergeAgent).not.toContain("gh pr merge <PR_NUMBER> --merge --delete-branch");
+  });
 });
