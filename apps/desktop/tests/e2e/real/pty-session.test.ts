@@ -25,6 +25,10 @@ interface TerminalBufferStats {
   lastMatchingLine: string | null;
 }
 
+interface SessionRecoveryStatePayload {
+  serialized: string;
+}
+
 interface WindowRectInput {
   x?: number;
   y?: number;
@@ -256,6 +260,32 @@ async function waitForTerminalBufferMatch(
   );
 }
 
+async function waitForSessionRecoveryText(
+  client: WebDriverClient,
+  sessionId: string,
+  text: string,
+  timeoutMs = 10_000,
+): Promise<SessionRecoveryStatePayload> {
+  const deadline = Date.now() + timeoutMs;
+  let latest: SessionRecoveryStatePayload | null = null;
+
+  while (Date.now() < deadline) {
+    latest = await invokeOrThrow(client, "get_session_recovery_state", {
+      sessionId,
+    }) as SessionRecoveryStatePayload | null;
+    if (latest?.serialized.includes(text)) {
+      return latest;
+    }
+    await sleep(200);
+  }
+
+  throw new Error(
+    `Timed out waiting for recovery state text "${text}" in ${sessionId}; latest was ${
+      latest?.serialized.slice(-200) ?? "null"
+    }`,
+  );
+}
+
 async function probePtySize(
   client: WebDriverClient,
   sessionId: string,
@@ -329,7 +359,7 @@ describe("pty session (real CLI)", () => {
   const client = new WebDriverClient();
   let testRepoPath = "";
   let repoId = "";
-  let deterministicSessionId = "";
+  const deterministicSessionIds: string[] = [];
 
   beforeAll(async () => {
     await client.createSession();
@@ -342,8 +372,8 @@ describe("pty session (real CLI)", () => {
   });
 
   afterAll(async () => {
-    if (deterministicSessionId) {
-      await invokeOrThrow(client, "kill_session", { sessionId: deterministicSessionId }).catch(() => undefined);
+    for (const sessionId of deterministicSessionIds) {
+      await invokeOrThrow(client, "kill_session", { sessionId }).catch(() => undefined);
     }
     if (testRepoPath) {
       await cleanupWorktrees(client, testRepoPath);
@@ -385,8 +415,60 @@ describe("pty session (real CLI)", () => {
     expect(container).toBeTruthy();
   });
 
+  it("renders typed input promptly while terminal recovery persistence remains enabled", async () => {
+    // The desktop harness exercises the real app -> Tauri -> daemon -> PTY -> xterm path,
+    // but it cannot currently slow only the daemon's recovery persistence worker without
+    // restarting the app under a special daemon env. The paired daemon reconnect regression
+    // uses that testability hook to force slow recovery bookkeeping.
+    const sessionId = `pty-latency-${randomUUID()}`;
+    deterministicSessionIds.push(sessionId);
+    const readyMarker = `KREADY_${randomUUID().replaceAll("-", "")}`;
+    const inputMarker = `KINPUT_${randomUUID().replaceAll("-", "")}`;
+    const script = [
+      `printf '${readyMarker}\\n'`,
+      "while IFS= read -r line; do printf 'ECHO:%s\\n' \"$line\"; done",
+    ].join("; ");
+
+    await execDb(
+      client,
+      "INSERT INTO pipeline_item (id, repo_id, prompt, stage, agent_type) VALUES (?, ?, ?, ?, ?)",
+      [sessionId, repoId, "Deterministic PTY latency fixture", "in progress", "pty"],
+    );
+    await invokeOrThrow(client, "spawn_session", {
+      sessionId,
+      cwd: testRepoPath,
+      executable: "/bin/zsh",
+      args: ["-f", "-c", script],
+      env: { TERM: "xterm-256color" },
+      cols: 80,
+      rows: 24,
+    });
+    await callVueMethod(client, "loadItems", repoId);
+    await setSelectedItem(client, sessionId);
+    await waitForCurrentItemId(client, sessionId);
+    await waitForTerminalBufferText(client, sessionId, readyMarker, 15_000);
+    await waitForSessionRecoveryText(client, sessionId, readyMarker, 10_000);
+
+    const startedAt = Date.now();
+    await sendKeysToActiveTerminal(client, inputMarker);
+    await client.pressKey("\uE007");
+
+    const echoStats = await waitForTerminalBufferText(
+      client,
+      sessionId,
+      `ECHO:${inputMarker}`,
+      2_000,
+    );
+    const renderMs = Date.now() - startedAt;
+
+    expect(echoStats.lastMatchingLine).toContain(inputMarker);
+    expect(renderMs).toBeLessThan(2_000);
+    await waitForSessionRecoveryText(client, sessionId, `ECHO:${inputMarker}`, 10_000);
+  });
+
   it("keeps an existing PTY stream alive when a secondary window attaches and detaches", async () => {
-    deterministicSessionId = `pty-window-${randomUUID()}`;
+    const deterministicSessionId = `pty-window-${randomUUID()}`;
+    deterministicSessionIds.push(deterministicSessionId);
     const readyMarker = `KREADY_${randomUUID().replaceAll("-", "")}`;
     const liveMarker = `KLIVE_${randomUUID().replaceAll("-", "")}`;
     const afterDetachMarker = `KAFTER_${randomUUID().replaceAll("-", "")}`;

@@ -271,6 +271,10 @@ impl RecoveryManager {
     }
 
     pub async fn write_output(&self, session_id: &str, data: &[u8], sequence: u64) {
+        if let Some(delay) = test_slow_recovery_write_delay() {
+            tokio::time::sleep(delay).await;
+        }
+
         self.fire_and_forget(RecoveryCommand::WriteOutput {
             session_id: session_id.to_string(),
             data: data.to_vec(),
@@ -786,6 +790,18 @@ fn now_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn test_slow_recovery_write_delay() -> Option<std::time::Duration> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+
+    let millis = std::env::var("KANNA_DAEMON_TEST_SLOW_RECOVERY_WRITE_MS")
+        .ok()?
+        .parse::<u64>()
+        .ok()?;
+    (millis > 0).then(|| std::time::Duration::from_millis(millis))
 }
 
 fn daemon_support_dir() -> PathBuf {
