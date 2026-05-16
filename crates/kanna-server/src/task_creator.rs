@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::daemon_client::DaemonClient;
-use crate::db::{Db, NewPipelineItem, Repo};
+use crate::db::{Db, NewPipelineItem, Repo, TaskStageSource};
 use kanna_daemon::protocol::{
     AgentProvider as DaemonAgentProvider, Command as DaemonCommand, Event as DaemonEvent,
 };
@@ -100,6 +100,7 @@ pub(crate) fn prepare_merge_agent_for_api(
         &repo,
         TaskCreationRequest {
             task_prompt: merge_agent.prompt,
+            display_name: None,
             pipeline_name: None,
             base_ref: None,
             stored_base_ref: None,
@@ -109,7 +110,6 @@ pub(crate) fn prepare_merge_agent_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
-            display_name: None,
         },
     )
 }
@@ -145,6 +145,7 @@ pub(crate) fn prepare_advance_stage_for_api(
     let current_stage = &pipeline.stages[current_stage_index];
     let source_branch =
         resolve_current_source_worktree_branch(&repo.path, source_task.branch.as_deref());
+    let display_name = resolve_inherited_task_title(&source_task);
 
     if source_task.active_post_action.is_none() {
         if let Some(post_action) = current_stage.post_action.as_ref() {
@@ -212,6 +213,7 @@ pub(crate) fn prepare_advance_stage_for_api(
         &repo,
         TaskCreationRequest {
             task_prompt,
+            display_name,
             pipeline_name: Some(pipeline_name),
             base_ref: source_branch,
             stored_base_ref: source_task.base_ref,
@@ -221,10 +223,17 @@ pub(crate) fn prepare_advance_stage_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
-            display_name: None,
         },
     )
     .map(PreparedStageTransition::Spawn)
+}
+
+fn resolve_inherited_task_title(source_task: &TaskStageSource) -> Option<String> {
+    source_task
+        .display_name
+        .clone()
+        .or_else(|| source_task.issue_title.clone())
+        .or_else(|| source_task.prompt.clone())
 }
 
 pub(crate) fn prepare_auto_stage_completion_for_api(
@@ -278,6 +287,7 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
     };
     let source_branch =
         resolve_current_source_worktree_branch(&repo.path, source_task.branch.as_deref());
+    let display_name = resolve_inherited_task_title(&source_task);
 
     let task_prompt = build_target_stage_prompt(
         &repo.path,
@@ -314,6 +324,7 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
         &repo,
         TaskCreationRequest {
             task_prompt,
+            display_name,
             pipeline_name: Some(pipeline_name),
             base_ref: source_branch,
             stored_base_ref: source_task.base_ref,
@@ -323,7 +334,6 @@ pub(crate) fn prepare_auto_stage_completion_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
-            display_name: None,
         },
     )
     .map(PreparedStageTransition::Spawn)
@@ -358,6 +368,7 @@ pub(crate) fn prepare_revision_task_for_api(
         .ok_or_else(|| format!("stage not found in pipeline: {}", target_stage_name))?;
     let source_branch =
         resolve_current_source_worktree_branch(&repo.path, source_task.branch.as_deref());
+    let display_name = resolve_inherited_task_title(&source_task);
 
     let task_prompt = build_target_stage_prompt(
         &repo.path,
@@ -380,6 +391,7 @@ pub(crate) fn prepare_revision_task_for_api(
         &repo,
         TaskCreationRequest {
             task_prompt,
+            display_name,
             pipeline_name: Some(pipeline_name),
             base_ref: source_branch,
             stored_base_ref: source_task.base_ref,
@@ -389,16 +401,13 @@ pub(crate) fn prepare_revision_task_for_api(
             model: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
-            display_name: source_task
-                .display_name
-                .clone()
-                .or_else(|| source_task.prompt.clone()),
         },
     )
 }
 
 struct TaskCreationRequest {
     task_prompt: String,
+    display_name: Option<String>,
     pipeline_name: Option<String>,
     base_ref: Option<String>,
     stored_base_ref: Option<String>,
@@ -408,7 +417,6 @@ struct TaskCreationRequest {
     model: Option<String>,
     permission_mode: Option<String>,
     allowed_tools: Vec<String>,
-    display_name: Option<String>,
 }
 
 struct CreatedTask {
@@ -468,6 +476,7 @@ pub(crate) fn prepare_task_for_api(
         &repo,
         TaskCreationRequest {
             task_prompt: request.prompt.clone(),
+            display_name: None,
             pipeline_name: request.pipeline_name,
             base_ref: request.base_ref,
             stored_base_ref: None,
@@ -477,7 +486,6 @@ pub(crate) fn prepare_task_for_api(
             model: request.model,
             permission_mode: request.permission_mode,
             allowed_tools: request.allowed_tools.unwrap_or_default(),
-            display_name: None,
         },
     )
 }
@@ -499,6 +507,7 @@ fn prepare_task_spawn(
     request: TaskCreationRequest,
 ) -> Result<PreparedTaskSpawn, String> {
     let original_prompt = request.task_prompt.clone();
+    let display_name = request.display_name.clone();
     let repo_config = read_repo_config(&repo.path)?;
     let pipeline_name = request
         .pipeline_name
@@ -584,6 +593,7 @@ fn prepare_task_spawn(
         id: &task_id,
         repo_id: &repo.id,
         prompt: &original_prompt,
+        display_name: display_name.as_deref(),
         pipeline: &pipeline_name,
         stage: &stage_name,
         tags_json: &tags_json,
@@ -597,7 +607,6 @@ fn prepare_task_spawn(
             .stored_base_ref
             .as_deref()
             .or(request.base_ref.as_deref()),
-        display_name: request.display_name.as_deref(),
     })
     .map_err(|e| format!("db error: {}", e))?;
 
@@ -1655,9 +1664,11 @@ mod tests {
 
         assert_eq!(prepared.created_task.repo_id, "repo-1");
         assert_eq!(prepared.created_task.stage, "pr");
+        assert_eq!(prepared.created_task.title, "Mobile shell");
+        assert_eq!(created_source.display_name.as_deref(), Some("Mobile shell"));
         assert_eq!(
-            prepared.created_task.title,
-            "Review task: Fix the mobile shell\n\nReview branch task-old-branch against origin/main with result {\"status\":\"success\"}"
+            created_source.prompt.as_deref(),
+            Some("Review task: Fix the mobile shell\n\nReview branch task-old-branch against origin/main with result {\"status\":\"success\"}")
         );
         assert_eq!(created_source.base_ref.as_deref(), Some("origin/main"));
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
@@ -1803,9 +1814,15 @@ mod tests {
 
         assert_eq!(prepared.created_task.repo_id, "repo-1");
         assert_eq!(prepared.created_task.stage, "pr");
+        assert_eq!(prepared.created_task.title, "Mobile shell");
+        let created_source = db
+            .get_task_stage_source(&prepared.created_task.task_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(created_source.display_name.as_deref(), Some("Mobile shell"));
         assert_eq!(
-            prepared.created_task.title,
-            "Review task: Fix the mobile shell\n\nReview branch renamed/source-branch against origin/dev"
+            created_source.prompt.as_deref(),
+            Some("Review task: Fix the mobile shell\n\nReview branch renamed/source-branch against origin/dev")
         );
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
         let _ = std::fs::remove_dir_all(&repo_root);
@@ -2267,19 +2284,25 @@ mod tests {
         assert_eq!(spawn.created_task.repo_id, "repo-1");
         assert_eq!(spawn.created_task.stage, "pr");
         assert_ne!(spawn.created_task.task_id, "task-1");
-        assert_eq!(
-            spawn.created_task.title,
-            format!(
-                "PR agent for Fix stage promotion\n\nCreate PR for task-source from {} after {{\"status\":\"success\",\"summary\":\"committed\"}}",
-                source_worktree.to_string_lossy()
-            )
-        );
-        assert!(spawn.cwd.contains(".kanna-worktrees/task-"));
-        assert!(!spawn.cwd.ends_with("task-source"));
+        assert_eq!(spawn.created_task.title, "Fix stage promotion");
         let created_source = db
             .get_task_stage_source(&spawn.created_task.task_id)
             .unwrap()
             .unwrap();
+        assert_eq!(
+            created_source.display_name.as_deref(),
+            Some("Fix stage promotion")
+        );
+        let expected_prompt = format!(
+            "PR agent for Fix stage promotion\n\nCreate PR for task-source from {} after {{\"status\":\"success\",\"summary\":\"committed\"}}",
+            source_worktree.to_string_lossy()
+        );
+        assert_eq!(
+            created_source.prompt.as_deref(),
+            Some(expected_prompt.as_str())
+        );
+        assert!(spawn.cwd.contains(".kanna-worktrees/task-"));
+        assert!(!spawn.cwd.ends_with("task-source"));
         assert_eq!(created_source.base_ref.as_deref(), Some("origin/main"));
 
         let _ = std::fs::remove_dir_all(&repo_root);
@@ -2616,11 +2639,15 @@ mod tests {
         assert_eq!(prepared.created_task.repo_id, "repo-1");
         assert_eq!(prepared.created_task.stage, "in progress");
         assert_eq!(prepared.created_task.title, "Mobile shell");
-        let revision = db
-            .get_task_stage_source(&prepared.created_task.task_id)
+        let created_source = db
+            .get_pipeline_item(&prepared.created_task.task_id)
             .unwrap()
             .unwrap();
-        assert_eq!(revision.display_name.as_deref(), Some("Mobile shell"));
+        assert_eq!(created_source.display_name.as_deref(), Some("Mobile shell"));
+        assert_eq!(
+            created_source.prompt.as_deref(),
+            Some("Implement revision:\nAdd e2e coverage for task creation.\n\nAdd e2e coverage for task creation.")
+        );
         assert!(prepared.cwd.contains(".kanna-worktrees/task-"));
     }
 }

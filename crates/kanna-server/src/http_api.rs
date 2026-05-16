@@ -2699,6 +2699,203 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn request_revision_route_preserves_title_and_sends_revision_prompt() {
+        use kanna_daemon::protocol::{
+            AgentProvider, Command as DaemonCommand, Event as DaemonEvent,
+        };
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixListener;
+
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let repo_root = std::env::temp_dir().join(format!("kanna-http-revision-title-{unique}"));
+        init_test_git_repo(&repo_root);
+        let kanna_dir = repo_root.join(".kanna");
+        std::fs::create_dir_all(kanna_dir.join("pipelines")).unwrap();
+        std::fs::create_dir_all(kanna_dir.join("agents/revision")).unwrap();
+        std::fs::write(
+            kanna_dir.join("pipelines/revision.json"),
+            serde_json::json!({
+                "name": "revision",
+                "stages": [
+                    {
+                        "name": "in progress",
+                        "transition": "manual",
+                        "agent": "revision"
+                    },
+                    { "name": "review", "transition": "auto" }
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            kanna_dir.join("agents/revision/AGENT.md"),
+            [
+                "---",
+                "name: Revision",
+                "agent_provider: codex",
+                "---",
+                "Implement revision:",
+                "$TASK_PROMPT",
+                "",
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .args(["add", ".kanna"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "add revision pipeline"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "task-reviewed"])
+            .current_dir(&repo_root)
+            .status()
+            .unwrap()
+            .success());
+
+        let daemon_dir = std::env::temp_dir().join(format!("kanna-http-revision-daemon-{unique}"));
+        std::fs::create_dir_all(&daemon_dir).unwrap();
+        let socket_path = daemon_socket_path_for_dir(&daemon_dir.to_string_lossy());
+        let _ = std::fs::remove_file(&socket_path);
+        let daemon_listener = UnixListener::bind(&socket_path).unwrap();
+        let daemon_server = tokio::spawn(async move {
+            let (stream, _) = daemon_listener.accept().await.unwrap();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let command: DaemonCommand = serde_json::from_str(line.trim()).unwrap();
+            let session_id = match command {
+                DaemonCommand::Spawn {
+                    session_id,
+                    cwd,
+                    args,
+                    agent_provider,
+                    ..
+                } => {
+                    assert_eq!(agent_provider, Some(AgentProvider::Codex));
+                    assert!(cwd.contains(".kanna-worktrees/task-"));
+                    let shell_command = args.join(" ");
+                    assert!(shell_command.contains("Implement revision:"));
+                    assert!(shell_command.contains("Add E2E coverage for title preservation."));
+                    assert!(!shell_command.contains("Review prompt that should stay hidden."));
+                    session_id
+                }
+                other => panic!("expected spawn command, got {:?}", other),
+            };
+            write_half
+                .write_all(
+                    format!(
+                        "{}\n",
+                        serde_json::to_string(&DaemonEvent::SessionCreated { session_id }).unwrap()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+
+        let config = Config {
+            relay_url: "wss://relay.example".to_string(),
+            device_token: "device-token".to_string(),
+            cloud_base_url: "http://127.0.0.1:5001/kanna-local/us-central1".to_string(),
+            firebase_project_id: "kanna-local".to_string(),
+            firebase_auth_emulator_url: Some("http://127.0.0.1:9099".to_string()),
+            firebase_firestore_emulator_host: Some("127.0.0.1:8080".to_string()),
+            daemon_dir: daemon_dir.to_string_lossy().to_string(),
+            db_path: Db::test_db_path(&format!("http-api-revision-title-{unique}")),
+            desktop_id: "desktop-1".to_string(),
+            desktop_secret: Some("desktop-secret".to_string()),
+            desktop_name: "Studio Mac".to_string(),
+            server_version: Some("test-version".to_string()),
+            lan_host: "127.0.0.1".to_string(),
+            lan_port: 48120,
+            pairing_store_path: format!("/tmp/kanna-pairings-revision-title-{unique}.json"),
+        };
+        let db = Db::open_for_tests(&config.db_path).unwrap();
+        db.insert_test_repo_with_path("repo-1", &repo_root.to_string_lossy(), "Repo One")
+            .unwrap();
+        db.insert_test_pipeline_item(
+            "review-task",
+            "repo-1",
+            "Review prompt that should stay hidden.",
+            Some("Preserved review title"),
+            "review",
+            "2026-05-12 07:00:00",
+        )
+        .unwrap();
+        db.update_test_pipeline_item_stage_context(
+            "review-task",
+            "task-reviewed",
+            "revision",
+            Some("{\"status\":\"success\",\"summary\":\"ready for review\"}"),
+            "codex",
+        )
+        .unwrap();
+        drop(db);
+
+        let app = super::router(Arc::new(super::AppState::new(config.clone())));
+        let response = app
+            .oneshot(
+                Request::post("/v1/tasks/review-task/actions/request-revision")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "targetStage": "in progress",
+                            "summary": "missing title coverage",
+                            "prompt": "Add E2E coverage for title preservation."
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created: TaskActionResponse = from_slice(&body).unwrap();
+        assert_ne!(created.task_id, "review-task");
+
+        let db = Db::open(&config.db_path).unwrap();
+        let reviewed = db.get_task_stage_source("review-task").unwrap().unwrap();
+        let revision = db.get_task_stage_source(&created.task_id).unwrap().unwrap();
+        assert_eq!(reviewed.stage.as_deref(), Some("done"));
+        assert!(reviewed.closed_at.is_some());
+        assert_eq!(revision.stage.as_deref(), Some("in progress"));
+        assert_eq!(
+            revision.display_name.as_deref(),
+            Some("Preserved review title")
+        );
+        assert_eq!(
+            revision.prompt.as_deref(),
+            Some("Implement revision:\nAdd E2E coverage for title preservation.")
+        );
+
+        daemon_server.await.unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_dir_all(&daemon_dir);
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[tokio::test]
     async fn task_terminal_route_streams_output_events() {
         use futures_util::StreamExt;
         use serde_json::Value;
