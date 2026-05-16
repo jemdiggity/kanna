@@ -2186,6 +2186,87 @@ describe("useTerminal", () => {
     wrapper.unmount();
   });
 
+  it("removes terminal output listeners that finish registering after pause", async () => {
+    const { useTerminal } = await import("./useTerminal");
+    let resolveTerminalOutputListen: ((unlisten: () => void) => void) | null = null;
+    const lateTerminalOutputUnlisten = vi.fn();
+
+    listenMock.mockImplementation((eventName: string, handler: (event: unknown) => void) => {
+      if (eventName === "terminal_output") {
+        return new Promise<() => void>((resolve) => {
+          resolveTerminalOutputListen = (unlisten) => {
+            const listeners = eventListeners.get(eventName) ?? [];
+            listeners.push(handler);
+            eventListeners.set(eventName, listeners);
+            resolve(() => {
+              unlisten();
+              const current = eventListeners.get(eventName) ?? [];
+              eventListeners.set(
+                eventName,
+                current.filter((listener) => listener !== handler),
+              );
+            });
+          };
+        });
+      }
+
+      const listeners = eventListeners.get(eventName) ?? [];
+      listeners.push(handler);
+      eventListeners.set(eventName, listeners);
+      return Promise.resolve(() => {
+        const current = eventListeners.get(eventName) ?? [];
+        eventListeners.set(
+          eventName,
+          current.filter((listener) => listener !== handler),
+        );
+      });
+    });
+
+    const TestHarness = defineComponent({
+      setup() {
+        const { init, startListening, pause } = useTerminal("session-1");
+        return { init, startListening, pause };
+      },
+      render() {
+        return h("div");
+      },
+    });
+
+    const wrapper = mount(TestHarness);
+    const terminalElement = document.createElement("div");
+    Object.defineProperty(terminalElement, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(terminalElement, "offsetHeight", { configurable: true, value: 600 });
+    terminalElement.querySelector = vi.fn(() => null) as typeof terminalElement.querySelector;
+    terminalElement.closest = vi.fn(() => null) as typeof terminalElement.closest;
+    wrapper.vm.init(terminalElement);
+
+    const startPromise = wrapper.vm.startListening();
+    await Promise.resolve();
+    wrapper.vm.pause();
+
+    resolveTerminalOutputListen?.(lateTerminalOutputUnlisten);
+    await startPromise;
+
+    expect(lateTerminalOutputUnlisten).toHaveBeenCalledTimes(1);
+    expect(eventListeners.get("terminal_output")).toHaveLength(0);
+    expect(eventListeners.get("terminal_snapshot") ?? []).toHaveLength(0);
+    expect(invokeMock).not.toHaveBeenCalledWith("attach_session_with_snapshot", { sessionId: "session-1" });
+
+    const terminal = terminals[0];
+    terminal.write.mockClear();
+    const outputListener = eventListeners.get("terminal_output")?.[0];
+    outputListener?.({
+      payload: {
+        session_id: "session-1",
+        data: Array.from(new TextEncoder().encode("hidden late output")),
+      },
+    });
+
+    expect(terminal.write).not.toHaveBeenCalled();
+
+    wrapper.unmount();
+  });
+
   it("keeps the prompt visible when resizing from the bottom of scrollback", async () => {
     const { useTerminal } = await import("./useTerminal");
 
