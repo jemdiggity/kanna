@@ -192,6 +192,7 @@ interface DiffViewState {
 interface FilePreviewRecallState {
   filePath: string;
   initialLine?: number;
+  markdownMode?: "raw" | "rendered";
 }
 
 const diffViewStates = reactive<Record<string, DiffViewState>>({});
@@ -224,12 +225,29 @@ const currentFileFlowKey = computed(() => buildCurrentFileFlowKey());
 function rememberCurrentPreview(filePath: string, initialLine: number | undefined) {
   const key = buildCurrentFileFlowKey();
   if (!key) return;
-  filePreviewRecallStates[key] = { filePath, initialLine };
+  filePreviewRecallStates[key] = {
+    filePath,
+    initialLine,
+    markdownMode: filePreviewRecallStates[key]?.markdownMode ?? "raw",
+  };
 }
 
 function getCurrentPreviewRecall(): FilePreviewRecallState | undefined {
   const key = buildCurrentFileFlowKey();
   return key ? filePreviewRecallStates[key] : undefined;
+}
+
+const currentPreviewMarkdownMode = computed<"raw" | "rendered">(() => {
+  const key = currentFileFlowKey.value;
+  return (key ? filePreviewRecallStates[key]?.markdownMode : undefined) ?? "raw";
+});
+
+function updateCurrentPreviewMarkdownMode(mode: "raw" | "rendered") {
+  const key = buildCurrentFileFlowKey();
+  if (!key) return;
+  const current = filePreviewRecallStates[key];
+  if (!current) return;
+  filePreviewRecallStates[key] = { ...current, markdownMode: mode };
 }
 
 const sidebarHidden = ref(false);
@@ -1784,8 +1802,10 @@ onBeforeUnmount(() => {
       :worktree-path="activeWorktreePath"
       :ide-command="store.ideCommand"
       :initial-line="previewInitialLine"
+      :initial-markdown-mode="currentPreviewMarkdownMode"
       :maximized="maximizedModal === 'file'"
       @close="closeFilePreview(true)"
+      @update-markdown-mode="updateCurrentPreviewMarkdownMode"
     />
     <AnalyticsModal
       v-if="showAnalyticsModal"
